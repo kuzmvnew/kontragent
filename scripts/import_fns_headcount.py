@@ -66,7 +66,6 @@ def main():
             "Файл не найден:",
             path,
         )
-
         sys.exit(1)
 
     print()
@@ -124,7 +123,6 @@ def main():
             "Повторная загрузка отменена."
         )
         print()
-
         return
 
     run_id = start_ingestion(
@@ -164,60 +162,103 @@ def main():
             )
         )
 
-        finish_ingestion_success(
+    except KeyboardInterrupt:
+        finish_ingestion_failure(
             run_id=run_id,
-            rows_read=(
-                totals[
-                    "rows_read"
-                ]
+            error_message=(
+                "Импорт остановлен "
+                "пользователем"
             ),
-            rows_inserted=(
-                totals[
-                    "inserted"
-                ]
-            ),
-            rows_updated=(
-                totals[
-                    "updated"
-                ]
-            ),
-            rows_skipped=(
-                totals[
-                    "skipped"
-                ]
-            ),
-            errors_count=(
-                totals[
-                    "invalid"
-                ]
-            ),
-            data_date=date(
-                args.year,
-                12,
-                31,
-            ),
-            details=totals,
+            errors_count=1,
+            details={
+                "interrupted": True,
+            },
         )
 
-    except Exception as error:
+        print()
+        print(
+            "=========================================="
+        )
+        print(
+            "ИМПОРТ ОСТАНОВЛЕН"
+        )
+        print(
+            "=========================================="
+        )
+        print()
+        print(
+            "Ingestion run отмечен "
+            "как failed."
+        )
+        print(
+            "Повторный запуск безопасен: "
+            "данные записываются через upsert."
+        )
+        print()
 
+        sys.exit(130)
+
+    except Exception as error:
         finish_ingestion_failure(
             run_id=run_id,
             error_message=str(
                 error
             ),
+            errors_count=1,
         )
 
         print()
         print(
-            "ОШИБКА ИМПОРТА:"
+            "=========================================="
         )
+        print(
+            "ОШИБКА ИМПОРТА"
+        )
+        print(
+            "=========================================="
+        )
+        print()
         print(
             str(error)
         )
         print()
 
         raise
+
+    finish_ingestion_success(
+        run_id=run_id,
+        rows_read=(
+            totals[
+                "rows_read"
+            ]
+        ),
+        rows_inserted=(
+            totals[
+                "inserted"
+            ]
+        ),
+        rows_updated=(
+            totals[
+                "updated"
+            ]
+        ),
+        rows_skipped=(
+            totals[
+                "skipped"
+            ]
+        ),
+        errors_count=(
+            totals[
+                "invalid"
+            ]
+        ),
+        data_date=date(
+            args.year,
+            12,
+            31,
+        ),
+        details=totals,
+    )
 
     print()
     print(
