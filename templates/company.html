@@ -15,7 +15,7 @@
 
     <meta
         name="description"
-        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели и сведения о компании."
+        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели, налоговая задолженность и сведения о компании."
     >
 
     <link
@@ -26,641 +26,454 @@
 
 <body>
 
-<header class="header">
+    {% macro money(value) -%}
+        {{ "{:,.2f}".format(value).replace(",", " ").replace(".", ",") }}
+    {%- endmacro %}
 
-    <div class="container">
 
-        <div class="header-inner">
+    <header class="header">
 
-            <a
-                href="/"
-                class="logo"
-            >
-                Проверка контрагентов
-            </a>
+        <div class="container">
 
-            <form
-                action="/search"
-                method="get"
-                class="header-search"
-            >
+            <div class="header-inner">
 
-                <input
-                    type="text"
-                    name="q"
-                    placeholder="ИНН или название компании"
-                    autocomplete="off"
+                <a
+                    href="/"
+                    class="logo"
+                >
+                    Проверка контрагентов
+                </a>
+
+                <form
+                    action="/search"
+                    method="get"
+                    class="header-search"
                 >
 
-                <button type="submit">
-                    Найти
-                </button>
+                    <input
+                        type="text"
+                        name="q"
+                        placeholder="ИНН или название компании"
+                        autocomplete="off"
+                    >
 
-            </form>
+                    <button type="submit">
+                        Найти
+                    </button>
+
+                </form>
+
+            </div>
 
         </div>
 
-    </div>
-
-</header>
+    </header>
 
 
-<main class="company-page">
+    <main class="company-page">
 
-    <div class="container">
+        <div class="container">
 
 
-        <!-- ================================ -->
-        <!-- ЗАГОЛОВОК КОМПАНИИ -->
-        <!-- ================================ -->
+            <!-- ======================================== -->
+            <!-- ЗАГОЛОВОК -->
+            <!-- ======================================== -->
 
-        <section class="card company-header-card">
+            <section class="card company-header-card">
 
-            <div class="company-title-block">
+                <div class="company-title-block">
 
-                <div>
+                    <div>
 
-                    <h1>
-                        {{ company.name }}
-                        — проверка контрагента
-                    </h1>
+                        <h1>
+                            {{ company.name }}
+                            — проверка контрагента
+                        </h1>
 
-                    {% if company.full_name %}
+                        {% if company.full_name %}
 
-                        <p class="company-full-name">
-                            {{ company.full_name }}
-                        </p>
+                            <p class="company-full-name">
+                                {{ company.full_name }}
+                            </p>
+
+                        {% endif %}
+
+                    </div>
+
+                </div>
+
+
+                <div class="company-status-block">
+
+                    {% if company.status == "ACTIVE" %}
+
+                        <span class="status-badge status-active">
+                            Действующая организация
+                        </span>
+
+                    {% elif company.status %}
+
+                        <span class="status-badge">
+                            {{ company.status }}
+                        </span>
+
+                    {% else %}
+
+                        <span class="status-badge">
+                            Статус пока не определён
+                        </span>
 
                     {% endif %}
 
                 </div>
 
-            </div>
+            </section>
 
 
-            <div class="company-status-block">
+            <!-- ======================================== -->
+            <!-- ИНДЕКС НАДЁЖНОСТИ -->
+            <!-- ======================================== -->
 
-                {% if company.status == "ACTIVE" %}
+            <section class="card">
 
-                    <span class="status-badge status-active">
-                        Действующая организация
-                    </span>
+                <h2>
+                    Индекс надёжности
+                </h2>
 
-                {% elif company.status %}
+                {% if company.risk_score is not none %}
 
-                    <span class="status-badge">
-                        {{ company.status }}
-                    </span>
+                    <div class="risk-score">
+
+                        <div class="risk-score-number">
+                            {{ company.risk_score }} / 100
+                        </div>
+
+                        {% if company.risk_label %}
+
+                            <div class="risk-score-label">
+                                {{ company.risk_label }}
+                            </div>
+
+                        {% endif %}
+
+                    </div>
 
                 {% else %}
 
-                    <span class="status-badge">
-                        Статус пока не определён
-                    </span>
+                    <div class="risk-placeholder">
+
+                        <div class="risk-placeholder-title">
+                            Пока не рассчитан
+                        </div>
+
+                        <p>
+                            Индекс появится после подключения
+                            анализа официальных источников
+                            и факторов риска.
+                        </p>
+
+                    </div>
 
                 {% endif %}
 
-            </div>
-
-        </section>
+            </section>
 
 
-        <!-- ================================ -->
-        <!-- ИНДЕКС НАДЁЖНОСТИ -->
-        <!-- ================================ -->
+            <!-- ======================================== -->
+            <!-- ОСНОВНЫЕ СВЕДЕНИЯ -->
+            <!-- ======================================== -->
 
-        <section class="card">
+            <section class="card">
 
-            <h2>
-                Индекс надёжности
-            </h2>
+                <h2>
+                    Основные сведения
+                </h2>
 
-            {% if company.risk_score is not none %}
+                <div class="info-grid">
 
-                <div class="risk-score">
+                    <div class="info-item">
 
-                    <div class="risk-score-number">
-                        {{ company.risk_score }} / 100
+                        <div class="info-label">
+                            ИНН
+                        </div>
+
+                        <div class="info-value">
+                            {{ company.inn or "—" }}
+                        </div>
+
                     </div>
 
-                    {% if company.risk_label %}
 
-                        <div class="risk-score-label">
-                            {{ company.risk_label }}
+                    <div class="info-item">
+
+                        <div class="info-label">
+                            КПП
+                        </div>
+
+                        <div class="info-value">
+                            {{ company.kpp or "—" }}
+                        </div>
+
+                    </div>
+
+
+                    <div class="info-item">
+
+                        <div class="info-label">
+                            ОГРН / ОГРНИП
+                        </div>
+
+                        <div class="info-value">
+                            {{ company.ogrn or "—" }}
+                        </div>
+
+                    </div>
+
+
+                    <div class="info-item">
+
+                        <div class="info-label">
+                            ОКПО
+                        </div>
+
+                        <div class="info-value">
+                            {{ company.okpo or "—" }}
+                        </div>
+
+                    </div>
+
+
+                    <div class="info-item">
+
+                        <div class="info-label">
+                            ОКВЭД
+                        </div>
+
+                        <div class="info-value">
+                            {{ company.okved or "—" }}
+                        </div>
+
+                    </div>
+
+
+                    <div class="info-item">
+
+                        <div class="info-label">
+                            Статус
+                        </div>
+
+                        <div class="info-value">
+
+                            {% if company.status == "ACTIVE" %}
+
+                                Действующая
+
+                            {% elif company.status %}
+
+                                {{ company.status }}
+
+                            {% else %}
+
+                                —
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- ======================================== -->
+            <!-- О КОМПАНИИ -->
+            <!-- ======================================== -->
+
+            <section class="card">
+
+                <h2>
+                    О компании
+                </h2>
+
+
+                {% if company.full_name %}
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            Полное наименование
+                        </div>
+
+                        <div class="detail-value">
+                            {{ company.full_name }}
+                        </div>
+
+                    </div>
+
+                {% endif %}
+
+
+                <div class="detail-row">
+
+                    <div class="detail-label">
+                        Адрес
+                    </div>
+
+                    <div class="detail-value">
+                        {{ company.address or "Нет данных" }}
+                    </div>
+
+                </div>
+
+
+                <div class="detail-row">
+
+                    <div class="detail-label">
+                        Основной вид деятельности
+                    </div>
+
+                    <div class="detail-value">
+                        {{ company.activity or "Нет данных" }}
+                    </div>
+
+                </div>
+
+
+                {% if company.okved %}
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            Код ОКВЭД
+                        </div>
+
+                        <div class="detail-value">
+                            {{ company.okved }}
+                        </div>
+
+                    </div>
+
+                {% endif %}
+
+
+                {% if company.registration_date %}
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            Дата регистрации
+                        </div>
+
+                        <div class="detail-value">
+                            {{ company.registration_date }}
+                        </div>
+
+                    </div>
+
+                {% endif %}
+
+
+                {% if company.website %}
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            Сайт
+                        </div>
+
+                        <div class="detail-value">
+                            {{ company.website }}
+                        </div>
+
+                    </div>
+
+                {% endif %}
+
+            </section>
+
+
+            <!-- ======================================== -->
+            <!-- РУКОВОДИТЕЛЬ -->
+            <!-- ======================================== -->
+
+            <section class="card">
+
+                <h2>
+                    Руководитель
+                </h2>
+
+
+                {% if company.director_name %}
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            ФИО
+                        </div>
+
+                        <div class="detail-value">
+                            {{ company.director_name }}
+                        </div>
+
+                    </div>
+
+
+                    {% if company.director_position %}
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Должность
+                            </div>
+
+                            <div class="detail-value">
+                                {{ company.director_position }}
+                            </div>
+
                         </div>
 
                     {% endif %}
 
-                </div>
-
-            {% else %}
-
-                <div class="risk-placeholder">
-
-                    <div class="risk-placeholder-title">
-                        Пока не рассчитан
-                    </div>
+                {% else %}
 
                     <p>
-                        Индекс появится после подключения
-                        анализа официальных источников
-                        и факторов риска.
+                        Нет данных о руководителе.
                     </p>
 
-                </div>
-
-            {% endif %}
-
-        </section>
-
-
-        <!-- ================================ -->
-        <!-- ОСНОВНЫЕ СВЕДЕНИЯ -->
-        <!-- ================================ -->
-
-        <section class="card">
-
-            <h2>
-                Основные сведения
-            </h2>
-
-            <div class="info-grid">
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        ИНН
-                    </div>
-
-                    <div class="info-value">
-                        {{ company.inn or "—" }}
-                    </div>
-
-                </div>
-
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        КПП
-                    </div>
-
-                    <div class="info-value">
-                        {{ company.kpp or "—" }}
-                    </div>
-
-                </div>
-
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        ОГРН
-                    </div>
-
-                    <div class="info-value">
-                        {{ company.ogrn or "—" }}
-                    </div>
-
-                </div>
-
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        ОКПО
-                    </div>
-
-                    <div class="info-value">
-                        {{ company.okpo or "—" }}
-                    </div>
-
-                </div>
-
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        ОКВЭД
-                    </div>
-
-                    <div class="info-value">
-                        {{ company.okved or "—" }}
-                    </div>
-
-                </div>
-
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        Статус
-                    </div>
-
-                    <div class="info-value">
-
-                        {% if company.status == "ACTIVE" %}
-
-                            Действующая
-
-                        {% elif company.status %}
-
-                            {{ company.status }}
-
-                        {% else %}
-
-                            —
-
-                        {% endif %}
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </section>
-
-
-        <!-- ================================ -->
-        <!-- О КОМПАНИИ -->
-        <!-- ================================ -->
-
-        <section class="card">
-
-            <h2>
-                О компании
-            </h2>
-
-
-            {% if company.full_name %}
-
-                <div class="detail-row">
-
-                    <div class="detail-label">
-                        Полное наименование
-                    </div>
-
-                    <div class="detail-value">
-                        {{ company.full_name }}
-                    </div>
-
-                </div>
-
-            {% endif %}
-
-
-            <div class="detail-row">
-
-                <div class="detail-label">
-                    Адрес
-                </div>
-
-                <div class="detail-value">
-                    {{ company.address or "Нет данных" }}
-                </div>
-
-            </div>
-
-
-            <div class="detail-row">
-
-                <div class="detail-label">
-                    Основной вид деятельности
-                </div>
-
-                <div class="detail-value">
-                    {{ company.activity or "Нет данных" }}
-                </div>
-
-            </div>
-
-
-            {% if company.okved %}
-
-                <div class="detail-row">
-
-                    <div class="detail-label">
-                        Код ОКВЭД
-                    </div>
-
-                    <div class="detail-value">
-                        {{ company.okved }}
-                    </div>
-
-                </div>
-
-            {% endif %}
-
-
-            {% if company.registration_date %}
-
-                <div class="detail-row">
-
-                    <div class="detail-label">
-                        Дата регистрации
-                    </div>
-
-                    <div class="detail-value">
-                        {{ company.registration_date }}
-                    </div>
-
-                </div>
-
-            {% endif %}
-
-
-            {% if company.website %}
-
-                <div class="detail-row">
-
-                    <div class="detail-label">
-                        Сайт
-                    </div>
-
-                    <div class="detail-value">
-                        {{ company.website }}
-                    </div>
-
-                </div>
-
-            {% endif %}
-
-        </section>
-
-
-        <!-- ================================ -->
-        <!-- РУКОВОДИТЕЛЬ -->
-        <!-- ================================ -->
-
-        <section class="card">
-
-            <h2>
-                Руководитель
-            </h2>
-
-
-            {% if company.director_name %}
-
-                <div class="detail-row">
-
-                    <div class="detail-label">
-                        ФИО
-                    </div>
-
-                    <div class="detail-value">
-                        {{ company.director_name }}
-                    </div>
-
-                </div>
-
-
-                {% if company.director_position %}
-
-                    <div class="detail-row">
-
-                        <div class="detail-label">
-                            Должность
-                        </div>
-
-                        <div class="detail-value">
-                            {{ company.director_position }}
-                        </div>
-
-                    </div>
-
-                {% endif %}
-
-            {% else %}
-
-                <p>
-                    Нет данных о руководителе.
-                </p>
-
-            {% endif %}
-
-        </section>
-
-
-        <!-- ================================ -->
-        <!-- ФИНАНСЫ -->
-        <!-- ================================ -->
-
-        <section class="card">
-
-            <h2>
-                Финансовые показатели
-            </h2>
-
-            <div class="info-grid">
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        Выручка
-                    </div>
-
-                    <div class="info-value">
-
-                        {% if company.revenue is not none %}
-
-                            {{ company.revenue | number }} ₽
-
-                        {% else %}
-
-                            Нет данных
-
-                        {% endif %}
-
-                    </div>
-
-                </div>
-
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        Стоимость
-                    </div>
-
-                    <div class="info-value">
-
-                        {% if company.company_value is not none %}
-
-                            {{ company.company_value | number }} ₽
-
-                        {% else %}
-
-                            Нет данных
-
-                        {% endif %}
-
-                    </div>
-
-                </div>
-
-
-                <div class="info-item">
-
-                    <div class="info-label">
-                        Количество сотрудников
-                    </div>
-
-                    <div class="info-value">
-
-                        {% if company.employee_count is not none %}
-
-                            {{ company.employee_count | number }}
-
-                        {% else %}
-
-                            Нет данных
-
-                        {% endif %}
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </section>
-
-
-        <!-- ================================ -->
-        <!-- КОНТАКТЫ -->
-        <!-- ================================ -->
-
-        {% if company.phones or company.emails or company.websites %}
-
-            <section class="card">
-
-                <h2>
-                    Контакты
-                </h2>
-
-
-                {% if company.phones %}
-
-                    <div class="detail-row">
-
-                        <div class="detail-label">
-                            Телефоны
-                        </div>
-
-                        <div class="detail-value">
-
-                            {% for phone in company.phones %}
-
-                                <div>
-                                    {{ phone }}
-                                </div>
-
-                            {% endfor %}
-
-                        </div>
-
-                    </div>
-
-                {% endif %}
-
-
-                {% if company.emails %}
-
-                    <div class="detail-row">
-
-                        <div class="detail-label">
-                            Email
-                        </div>
-
-                        <div class="detail-value">
-
-                            {% for email in company.emails %}
-
-                                <div>
-                                    {{ email }}
-                                </div>
-
-                            {% endfor %}
-
-                        </div>
-
-                    </div>
-
-                {% endif %}
-
-
-                {% if company.websites %}
-
-                    <div class="detail-row">
-
-                        <div class="detail-label">
-                            Сайты
-                        </div>
-
-                        <div class="detail-value">
-
-                            {% for website in company.websites %}
-
-                                <div>
-                                    {{ website }}
-                                </div>
-
-                            {% endfor %}
-
-                        </div>
-
-                    </div>
-
                 {% endif %}
 
             </section>
 
-        {% endif %}
 
-
-        <!-- ================================ -->
-        <!-- ФИЛИАЛЫ -->
-        <!-- ================================ -->
-
-        {% if company.branches %}
+            <!-- ======================================== -->
+            <!-- ФИНАНСЫ -->
+            <!-- ======================================== -->
 
             <section class="card">
 
                 <h2>
-                    Филиалы и подразделения
+                    Финансовые показатели
                 </h2>
 
+                <div class="info-grid">
 
-                {% for branch in company.branches %}
+                    <div class="info-item">
 
-                    <div class="detail-row">
+                        <div class="info-label">
+                            Выручка
+                        </div>
 
-                        <div class="detail-value">
+                        <div class="info-value">
 
-                            {% if branch.name %}
+                            {% if company.revenue is not none %}
 
-                                <strong>
-                                    {{ branch.name }}
-                                </strong>
+                                {{ company.revenue | number }} ₽
 
-                            {% endif %}
+                            {% else %}
 
-
-                            {% if branch.address %}
-
-                                <div>
-                                    {{ branch.address }}
-                                </div>
-
-                            {% endif %}
-
-
-                            {% if branch.kpp %}
-
-                                <div>
-                                    КПП: {{ branch.kpp }}
-                                </div>
+                                Нет данных
 
                             {% endif %}
 
@@ -668,86 +481,526 @@
 
                     </div>
 
-                {% endfor %}
+
+                    <div class="info-item">
+
+                        <div class="info-label">
+                            Стоимость
+                        </div>
+
+                        <div class="info-value">
+
+                            {% if company.company_value is not none %}
+
+                                {{ company.company_value | number }} ₽
+
+                            {% else %}
+
+                                Нет данных
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="info-item">
+
+                        <div class="info-label">
+                            Количество сотрудников
+                        </div>
+
+                        <div class="info-value">
+
+                            {% if company.employee_count is not none %}
+
+                                {{ company.employee_count | number }}
+
+                                {% if company.employee_count_year %}
+
+                                    <div>
+                                        за {{ company.employee_count_year }} год
+                                    </div>
+
+                                {% endif %}
+
+                            {% else %}
+
+                                Нет данных
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+                </div>
 
             </section>
 
-        {% endif %}
+
+            <!-- ======================================== -->
+            <!-- НАЛОГОВАЯ ЗАДОЛЖЕННОСТЬ -->
+            <!-- ======================================== -->
+
+            {% if company.tax_debt %}
+
+                <section class="card">
+
+                    <h2>
+                        Налоговая задолженность
+                    </h2>
 
 
-        <!-- ================================ -->
-        <!-- ИСТОЧНИКИ -->
-        <!-- ================================ -->
+                    {% if company.tax_debt["total_debt"] > 0 %}
 
-        {% if company.sources_used %}
+                        <div class="risk-placeholder">
 
-            <section class="card">
+                            <div class="risk-placeholder-title">
+                                Есть налоговая задолженность
+                            </div>
 
-                <h2>
-                    Источники данных
-                </h2>
+                            <p>
+                                По данным ФНС у организации
+                                имеется налоговая задолженность
+                                на дату опубликованного среза.
+                            </p>
 
-                <p>
-                    Карточка сформирована
-                    агрегатором из доступных источников.
-                </p>
+                        </div>
 
-                <div class="source-list">
-
-
-                    {% for source in company.sources_used %}
+                    {% endif %}
 
 
-                        {% if source == "dadata" %}
+                    <div class="info-grid">
 
-                            <span class="source-badge">
-                                DaData
-                            </span>
+                        <div class="info-item">
 
+                            <div class="info-label">
+                                Общая задолженность
+                            </div>
 
-                        {% elif source == "excel_import" %}
+                            <div class="info-value">
+                                {{ money(company.tax_debt["total_debt"]) }} ₽
+                            </div>
 
-                            <span class="source-badge">
-                                База сервиса
-                            </span>
-
-
-                        {% elif source == "fns" %}
-
-                            <span class="source-badge">
-                                ФНС России
-                            </span>
+                        </div>
 
 
-                        {% elif source == "girbo" %}
+                        <div class="info-item">
 
-                            <span class="source-badge">
-                                ГИР БО
-                            </span>
+                            <div class="info-label">
+                                Недоимка
+                            </div>
+
+                            <div class="info-value">
+                                {{ money(company.tax_debt["total_arrears"]) }} ₽
+                            </div>
+
+                        </div>
 
 
-                        {% else %}
+                        <div class="info-item">
 
-                            <span class="source-badge">
-                                {{ source }}
-                            </span>
+                            <div class="info-label">
+                                Пени
+                            </div>
+
+                            <div class="info-value">
+                                {{ money(company.tax_debt["total_penalties"]) }} ₽
+                            </div>
+
+                        </div>
 
 
-                        {% endif %}
+                        <div class="info-item">
 
+                            <div class="info-label">
+                                Штрафы
+                            </div>
+
+                            <div class="info-value">
+                                {{ money(company.tax_debt["total_fines"]) }} ₽
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            Дата состояния данных
+                        </div>
+
+                        <div class="detail-value">
+
+                            {% if company.tax_debt["data_date"] %}
+
+                                {{ company.tax_debt["data_date"].strftime("%d.%m.%Y") }}
+
+                            {% else %}
+
+                                —
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+
+                    {% if company.tax_debt["document_date"] %}
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Дата публикации документа
+                            </div>
+
+                            <div class="detail-value">
+                                {{ company.tax_debt["document_date"].strftime("%d.%m.%Y") }}
+                            </div>
+
+                        </div>
+
+                    {% endif %}
+
+
+                    {% if company.tax_debt["items"] %}
+
+                        <h2>
+                            Детализация задолженности
+                        </h2>
+
+                        {% for debt_item in company.tax_debt["items"] %}
+
+                            <div class="detail-row">
+
+                                <div class="detail-label">
+                                    {{ debt_item["tax_name"] }}
+                                </div>
+
+                                <div class="detail-value">
+
+                                    <strong>
+                                        {{ money(debt_item["total"]) }} ₽
+                                    </strong>
+
+
+                                    {% if debt_item["arrears"] > 0 %}
+
+                                        <div>
+                                            Недоимка:
+                                            {{ money(debt_item["arrears"]) }} ₽
+                                        </div>
+
+                                    {% endif %}
+
+
+                                    {% if debt_item["penalties"] > 0 %}
+
+                                        <div>
+                                            Пени:
+                                            {{ money(debt_item["penalties"]) }} ₽
+                                        </div>
+
+                                    {% endif %}
+
+
+                                    {% if debt_item["fines"] > 0 %}
+
+                                        <div>
+                                            Штраф:
+                                            {{ money(debt_item["fines"]) }} ₽
+                                        </div>
+
+                                    {% endif %}
+
+                                </div>
+
+                            </div>
+
+                        {% endfor %}
+
+                    {% endif %}
+
+
+                    {% if company.tax_debt_history and company.tax_debt_history | length > 1 %}
+
+                        <h2>
+                            История задолженности
+                        </h2>
+
+                        {% for snapshot in company.tax_debt_history %}
+
+                            <div class="detail-row">
+
+                                <div class="detail-label">
+
+                                    {% if snapshot["data_date"] %}
+
+                                        {{ snapshot["data_date"].strftime("%d.%m.%Y") }}
+
+                                    {% else %}
+
+                                        Дата не указана
+
+                                    {% endif %}
+
+                                </div>
+
+                                <div class="detail-value">
+
+                                    <strong>
+                                        {{ money(snapshot["total_debt"]) }} ₽
+                                    </strong>
+
+                                </div>
+
+                            </div>
+
+                        {% endfor %}
+
+                    {% endif %}
+
+
+                    <p>
+                        Источник: Федеральная налоговая служба.
+                        Показатели отражают состояние задолженности
+                        на дату опубликованного набора данных.
+                    </p>
+
+                </section>
+
+            {% endif %}
+
+
+            <!-- ======================================== -->
+            <!-- КОНТАКТЫ -->
+            <!-- ======================================== -->
+
+            {% if company.phones or company.emails or company.websites %}
+
+                <section class="card">
+
+                    <h2>
+                        Контакты
+                    </h2>
+
+
+                    {% if company.phones %}
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Телефоны
+                            </div>
+
+                            <div class="detail-value">
+
+                                {% for phone in company.phones %}
+
+                                    <div>
+                                        {{ phone }}
+                                    </div>
+
+                                {% endfor %}
+
+                            </div>
+
+                        </div>
+
+                    {% endif %}
+
+
+                    {% if company.emails %}
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Email
+                            </div>
+
+                            <div class="detail-value">
+
+                                {% for email in company.emails %}
+
+                                    <div>
+                                        {{ email }}
+                                    </div>
+
+                                {% endfor %}
+
+                            </div>
+
+                        </div>
+
+                    {% endif %}
+
+
+                    {% if company.websites %}
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Сайты
+                            </div>
+
+                            <div class="detail-value">
+
+                                {% for website in company.websites %}
+
+                                    <div>
+                                        {{ website }}
+                                    </div>
+
+                                {% endfor %}
+
+                            </div>
+
+                        </div>
+
+                    {% endif %}
+
+                </section>
+
+            {% endif %}
+
+
+            <!-- ======================================== -->
+            <!-- ФИЛИАЛЫ -->
+            <!-- ======================================== -->
+
+            {% if company.branches %}
+
+                <section class="card">
+
+                    <h2>
+                        Филиалы и подразделения
+                    </h2>
+
+                    {% for branch in company.branches %}
+
+                        <div class="detail-row">
+
+                            <div class="detail-value">
+
+                                {% if branch.name %}
+
+                                    <strong>
+                                        {{ branch.name }}
+                                    </strong>
+
+                                {% endif %}
+
+
+                                {% if branch.address %}
+
+                                    <div>
+                                        {{ branch.address }}
+                                    </div>
+
+                                {% endif %}
+
+
+                                {% if branch.kpp %}
+
+                                    <div>
+                                        КПП: {{ branch.kpp }}
+                                    </div>
+
+                                {% endif %}
+
+                            </div>
+
+                        </div>
 
                     {% endfor %}
 
-                </div>
+                </section>
 
-            </section>
-
-        {% endif %}
+            {% endif %}
 
 
-    </div>
+            <!-- ======================================== -->
+            <!-- ИСТОЧНИКИ -->
+            <!-- ======================================== -->
 
-</main>
+            {% if company.sources_used %}
+
+                <section class="card">
+
+                    <h2>
+                        Источники данных
+                    </h2>
+
+                    <p>
+                        Карточка сформирована агрегатором
+                        из доступных источников.
+                    </p>
+
+                    <div class="source-list">
+
+                        {% for source in company.sources_used %}
+
+                            {% if source == "dadata" %}
+
+                                <span class="source-badge">
+                                    DaData
+                                </span>
+
+                            {% elif source == "excel_import" %}
+
+                                <span class="source-badge">
+                                    База сервиса
+                                </span>
+
+                            {% elif source == "fns" %}
+
+                                <span class="source-badge">
+                                    ФНС — реестровые данные
+                                </span>
+
+                            {% elif source == "fns_headcount" %}
+
+                                <span class="source-badge">
+                                    ФНС — численность
+                                </span>
+
+                            {% elif source == "fns_tax_debt" %}
+
+                                <span class="source-badge">
+                                    ФНС — задолженность
+                                </span>
+
+                            {% elif source == "girbo" %}
+
+                                <span class="source-badge">
+                                    ГИР БО
+                                </span>
+
+                            {% else %}
+
+                                <span class="source-badge">
+                                    {{ source }}
+                                </span>
+
+                            {% endif %}
+
+                        {% endfor %}
+
+                    </div>
+
+                </section>
+
+            {% endif %}
+
+
+        </div>
+
+    </main>
 
 </body>
 
