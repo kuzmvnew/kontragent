@@ -6,6 +6,10 @@ from app.models.company import (
     CompanyIdentifier,
     CompanyManager,
 )
+from app.models.source import (
+    CompanySourceData,
+    DataSource,
+)
 
 
 __all__ = [
@@ -15,4 +19,6 @@ __all__ = [
     "CompanyFinancial",
     "CompanyIdentifier",
     "CompanyManager",
+    "CompanySourceData",
+    "DataSource",
 ]
