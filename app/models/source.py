@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -18,7 +19,32 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database.base import Base
 
 
+# =========================================================
+# DATA SOURCE
+# =========================================================
+
+
 class DataSource(Base):
+    """
+    Организация или система,
+    из которой мы получаем данные.
+
+    Примеры:
+
+    fns
+    girbo
+    dadata
+    excel_import
+
+    ВАЖНО:
+
+    DataSource — это не конкретный файл
+    или набор данных.
+
+    Например ФНС является одним source,
+    но внутри неё может быть много datasets.
+    """
+
     __tablename__ = "data_sources"
 
     id: Mapped[int] = mapped_column(
@@ -45,6 +71,11 @@ class DataSource(Base):
         index=True,
     )
 
+    # Старый общий priority пока сохраняем,
+    # чтобы не ломать Aggregator v1.
+    #
+    # Позже основным станет priority
+    # конкретного dataset/domain.
     priority: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -83,7 +114,305 @@ class DataSource(Base):
     )
 
 
+# =========================================================
+# DATA SET
+# =========================================================
+
+
+class DataSet(Base):
+    """
+    Конкретный набор данных внутри source.
+
+    Например:
+
+    source:
+        fns
+
+    datasets:
+        fns_egrul
+        fns_egrip
+        fns_msp
+        fns_headcount
+        fns_tax_paid
+        fns_tax_debt
+    """
+
+    __tablename__ = "data_sets"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(),
+        primary_key=True,
+    )
+
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "data_sources.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    code: Mapped[str] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(250),
+        nullable=False,
+    )
+
+    # Какой тип информации содержит dataset.
+    #
+    # registry
+    # financials
+    # headcount
+    # taxes
+    # tax_debt
+    # procurement
+    # enforcement
+    # bankruptcy
+    # ...
+    domain: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+    )
+
+    # Как получаем данные:
+    #
+    # bulk
+    # delta
+    # api
+    # import
+    update_mode: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        index=True,
+    )
+
+    # Формат исходных данных:
+    #
+    # xml
+    # json
+    # csv
+    # xlsx
+    data_format: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    # Логическая периодичность.
+    #
+    # daily
+    # monthly
+    # annual
+    # on_demand
+    # manual
+    refresh_schedule: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    # Приоритет именно этого набора
+    # внутри своего domain.
+    #
+    # Чем меньше число,
+    # тем выше приоритет.
+    priority: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=100,
+        index=True,
+    )
+
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        index=True,
+    )
+
+    source_url: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # Когда последний ingestion
+    # закончился успешно.
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # За какую дату были исходные данные.
+    last_data_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+# =========================================================
+# INGESTION RUN
+# =========================================================
+
+
+class IngestionRun(Base):
+    """
+    Журнал каждой загрузки dataset.
+
+    Например:
+
+    fns_headcount
+    2026-09-13
+    source_file = ...
+    rows_read = 5 000 000
+    rows_updated = 4 700 000
+    status = success
+    """
+
+    __tablename__ = "ingestion_runs"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(),
+        primary_key=True,
+    )
+
+    dataset_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "data_sets.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="running",
+        index=True,
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
+    )
+
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    data_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    source_file_name: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    source_url: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # SHA-256 или другой checksum файла.
+    #
+    # Позже поможет не импортировать
+    # один и тот же файл дважды.
+    file_checksum: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+
+    rows_read: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+
+    rows_inserted: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+
+    rows_updated: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+
+    rows_skipped: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+
+    errors_count: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # Дополнительная техническая информация.
+    details: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+
+# =========================================================
+# API / SOURCE SNAPSHOT
+# =========================================================
+
+
 class CompanySourceData(Base):
+    """
+    Текущий snapshot источника для компании.
+
+    Пока эта таблица продолжает обслуживать
+    наш Aggregator v1 и DaData.
+
+    Bulk datasets позже будут писать
+    информацию в специализированные
+    domain-таблицы.
+    """
+
     __tablename__ = "company_source_data"
 
     __table_args__ = (

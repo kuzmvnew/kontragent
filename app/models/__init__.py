@@ -8,7 +8,9 @@ from app.models.company import (
 )
 from app.models.source import (
     CompanySourceData,
+    DataSet,
     DataSource,
+    IngestionRun,
 )
 
 
@@ -20,5 +22,7 @@ __all__ = [
     "CompanyIdentifier",
     "CompanyManager",
     "CompanySourceData",
+    "DataSet",
     "DataSource",
+    "IngestionRun",
 ]
