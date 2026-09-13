@@ -22,6 +22,10 @@ from app.services.tax_debt_service import (
     get_latest_tax_debt_for_company,
     get_tax_debt_history,
 )
+from app.services.tax_offence_service import (
+    get_latest_tax_offence_for_company,
+    get_tax_offence_history,
+)
 
 
 # =========================================================
@@ -354,15 +358,17 @@ def load_domain_candidates(
     company_id,
 ):
     """
-    Domain datasets, которые можно
-    представить как обычные scalar fields.
+    Простые domain datasets,
+    которые можно представить
+    обычными scalar fields.
 
     Сейчас:
     - FNS headcount
 
-    Tax debt подключается отдельно,
-    потому что это самостоятельный
-    сложный объект с детализацией.
+    Налоговая задолженность и
+    налоговые правонарушения
+    являются самостоятельными
+    сложными объектами.
     """
 
     candidates = []
@@ -411,9 +417,19 @@ def load_structured_domain_data(
 ):
     """
     Сложные domain objects,
-    которые не нужно смешивать
+    которые не смешиваются
     с обычными scalar fields.
+
+    Сейчас:
+    - налоговая задолженность
+    - история задолженности
+    - налоговые правонарушения
+    - история налоговых правонарушений
     """
+
+    # -----------------------------------------------------
+    # TAX DEBT
+    # -----------------------------------------------------
 
     tax_debt = (
         get_latest_tax_debt_for_company(
@@ -429,12 +445,35 @@ def load_structured_domain_data(
         )
     )
 
+    # -----------------------------------------------------
+    # TAX OFFENCE
+    # -----------------------------------------------------
+
+    tax_offence = (
+        get_latest_tax_offence_for_company(
+            company_id=company_id,
+        )
+    )
+
+    tax_offence_history = (
+        get_tax_offence_history(
+            company_id=company_id,
+            limit=20,
+        )
+    )
+
     return {
         "tax_debt": (
             tax_debt
         ),
         "tax_debt_history": (
             tax_debt_history
+        ),
+        "tax_offence": (
+            tax_offence
+        ),
+        "tax_offence_history": (
+            tax_offence_history
         ),
     }
 
@@ -677,6 +716,7 @@ def aggregate_company(
     - cached API snapshots
     - FNS headcount
     - FNS tax debt
+    - FNS tax offence
     - optional external API refresh
     """
 
@@ -916,6 +956,10 @@ def aggregate_company(
         )
     )
 
+    # =====================================================
+    # 7. STRUCTURED DOMAIN DATA
+    # =====================================================
+
     if company_id is not None:
 
         result["id"] = (
@@ -931,6 +975,10 @@ def aggregate_company(
         result.update(
             structured
         )
+
+        # ---------------------------------------------
+        # TAX DEBT SOURCE
+        # ---------------------------------------------
 
         if (
             structured[
@@ -949,11 +997,43 @@ def aggregate_company(
                 "fns_tax_debt"
             )
 
+        # ---------------------------------------------
+        # TAX OFFENCE SOURCE
+        # ---------------------------------------------
+
+        if (
+            structured[
+                "tax_offence"
+            ]
+            is not None
+            and "fns_tax_offence"
+            not in result[
+                "sources_used"
+            ]
+        ):
+
+            result[
+                "sources_used"
+            ].append(
+                "fns_tax_offence"
+            )
+
     else:
 
-        result["tax_debt"] = None
+        result[
+            "tax_debt"
+        ] = None
+
         result[
             "tax_debt_history"
+        ] = []
+
+        result[
+            "tax_offence"
+        ] = None
+
+        result[
+            "tax_offence_history"
         ] = []
 
     return result
