@@ -6,6 +6,9 @@ from app.models.company import (
     CompanyIdentifier,
     CompanyManager,
 )
+from app.models.headcount import (
+    CompanyHeadcount,
+)
 from app.models.source import (
     CompanySourceData,
     DataSet,
@@ -19,6 +22,7 @@ __all__ = [
     "CompanyBranch",
     "CompanyContact",
     "CompanyFinancial",
+    "CompanyHeadcount",
     "CompanyIdentifier",
     "CompanyManager",
     "CompanySourceData",
