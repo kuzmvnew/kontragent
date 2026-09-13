@@ -51,6 +51,16 @@ def parse_arguments():
         ),
     )
 
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Разрешить повторный импорт "
+            "файла, который уже был "
+            "успешно обработан"
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -62,10 +72,15 @@ def main():
     )
 
     if not path.exists():
+        print()
         print(
-            "Файл не найден:",
-            path,
+            "Файл не найден:"
         )
+        print(
+            path
+        )
+        print()
+
         sys.exit(1)
 
     print()
@@ -90,15 +105,23 @@ def main():
         args.year,
     )
 
+    print(
+        "Batch size:",
+        args.batch_size,
+    )
+
+    print(
+        "Force:",
+        args.force,
+    )
+
     print()
     print(
         "Считаем SHA-256..."
     )
 
-    checksum = (
-        calculate_file_checksum(
-            path
-        )
+    checksum = calculate_file_checksum(
+        path
     )
 
     print(
@@ -113,17 +136,56 @@ def main():
         )
     )
 
-    if duplicate:
+    if (
+        duplicate
+        and not args.force
+    ):
         print()
         print(
             "Этот файл уже был "
             "успешно импортирован."
         )
+
         print(
             "Повторная загрузка отменена."
         )
+
         print()
+        print(
+            "Если нужно повторно "
+            "сопоставить этот файл "
+            "с обновлённым Master Registry,"
+        )
+
+        print(
+            "запусти команду "
+            "с параметром --force."
+        )
+
+        print()
+
         return
+
+    if (
+        duplicate
+        and args.force
+    ):
+        print()
+        print(
+            "Файл уже импортировался ранее."
+        )
+
+        print(
+            "--force включён."
+        )
+
+        print(
+            "Запускаем повторное "
+            "сопоставление с текущей "
+            "базой companies."
+        )
+
+        print()
 
     run_id = start_ingestion(
         dataset_code=DATASET_CODE,
@@ -141,14 +203,17 @@ def main():
             "batch_size": (
                 args.batch_size
             ),
+            "force": (
+                args.force
+            ),
         },
     )
 
-    print()
     print(
         "Ingestion run:",
         run_id,
     )
+
     print()
 
     try:
@@ -172,6 +237,9 @@ def main():
             errors_count=1,
             details={
                 "interrupted": True,
+                "force": (
+                    args.force
+                ),
             },
         )
 
@@ -186,14 +254,22 @@ def main():
             "=========================================="
         )
         print()
+
         print(
             "Ingestion run отмечен "
             "как failed."
         )
+
         print(
-            "Повторный запуск безопасен: "
-            "данные записываются через upsert."
+            "Уже записанные batches "
+            "останутся в PostgreSQL."
         )
+
+        print(
+            "Повторный запуск безопасен, "
+            "потому что используется UPSERT."
+        )
+
         print()
 
         sys.exit(130)
@@ -205,6 +281,11 @@ def main():
                 error
             ),
             errors_count=1,
+            details={
+                "force": (
+                    args.force
+                ),
+            },
         )
 
         print()
@@ -218,9 +299,11 @@ def main():
             "=========================================="
         )
         print()
+
         print(
             str(error)
         )
+
         print()
 
         raise
@@ -257,7 +340,12 @@ def main():
             12,
             31,
         ),
-        details=totals,
+        details={
+            **totals,
+            "force": (
+                args.force
+            ),
+        },
     )
 
     print()
@@ -270,35 +358,55 @@ def main():
     print(
         "=========================================="
     )
+    print()
 
     print(
         "Прочитано:",
-        totals["rows_read"],
+        totals[
+            "rows_read"
+        ],
     )
 
     print(
         "Совпало с нашей БД:",
-        totals["matched"],
+        totals[
+            "matched"
+        ],
     )
 
     print(
         "Добавлено:",
-        totals["inserted"],
+        totals[
+            "inserted"
+        ],
     )
 
     print(
         "Обновлено:",
-        totals["updated"],
+        totals[
+            "updated"
+        ],
     )
 
     print(
         "Не найдено в нашей БД:",
-        totals["skipped"],
+        totals[
+            "skipped"
+        ],
+    )
+
+    print(
+        "Некорректных:",
+        totals[
+            "invalid"
+        ],
     )
 
     print(
         "XML-файлов:",
-        totals["xml_files"],
+        totals[
+            "xml_files"
+        ],
     )
 
     print()
