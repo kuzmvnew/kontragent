@@ -17,7 +17,11 @@ from app.services.company_service import (
 )
 
 
-# Поля, где нам нужно выбрать одно лучшее значение.
+# =========================================================
+# FIELDS
+# =========================================================
+
+
 SCALAR_FIELDS = [
     "inn",
     "kpp",
@@ -40,8 +44,6 @@ SCALAR_FIELDS = [
 ]
 
 
-# Поля, которые можно объединять
-# сразу из нескольких источников.
 LIST_FIELDS = [
     "phones",
     "emails",
@@ -50,52 +52,53 @@ LIST_FIELDS = [
 ]
 
 
-# Здесь будут подключаться все наши providers.
-#
-# Пока реально работает только DaData.
-# Позже добавим:
-#
-# "fns": FnsCompanyProvider,
-# "girbo": GirboProvider,
-#
+# =========================================================
+# PROVIDERS
+# =========================================================
+
+
 PROVIDERS = {
     "dadata": DadataCompanyProvider,
 }
 
 
-def has_value(value):
-    """
-    Проверяет, содержит ли поле полезное значение.
-    """
+# Позже здесь появятся:
+#
+# "fns": FnsCompanyProvider,
+# "girbo": GirboProvider,
+# "fedresurs": FedresursProvider,
+# ...
 
+
+# =========================================================
+# HELPERS
+# =========================================================
+
+
+def has_value(value):
     if value is None:
         return False
 
     if isinstance(value, str):
-        return bool(value.strip())
+        return bool(
+            value.strip()
+        )
 
-    if isinstance(value, (list, dict)):
+    if isinstance(
+        value,
+        (list, dict),
+    ):
         return bool(value)
 
     return True
 
 
+# =========================================================
+# SOURCE REGISTRY
+# =========================================================
+
+
 def get_source_registry():
-    """
-    Загружает Source Registry из PostgreSQL.
-
-    Возвращает словарь вида:
-
-    {
-        "dadata": {
-            "id": 3,
-            "priority": 50,
-            "enabled": True,
-            ...
-        }
-    }
-    """
-
     session = get_session()
 
     try:
@@ -108,7 +111,9 @@ def get_source_registry():
         )
 
         sources = (
-            session.execute(statement)
+            session.execute(
+                statement
+            )
             .scalars()
             .all()
         )
@@ -121,9 +126,15 @@ def get_source_registry():
                 "id": source.id,
                 "code": source.code,
                 "name": source.name,
-                "source_type": source.source_type,
-                "priority": source.priority,
-                "enabled": source.enabled,
+                "source_type": (
+                    source.source_type
+                ),
+                "priority": (
+                    source.priority
+                ),
+                "enabled": (
+                    source.enabled
+                ),
             }
 
         return registry
@@ -132,19 +143,23 @@ def get_source_registry():
         session.close()
 
 
-def normalize_base_company(company):
-    """
-    Приводит нашу локальную карточку
-    к единому формату Aggregator.
-    """
+# =========================================================
+# NORMALIZATION
+# =========================================================
 
+
+def normalize_base_company(
+    company,
+):
     if company is None:
         return None
 
     result = {}
 
     for field in SCALAR_FIELDS:
-        result[field] = company.get(field)
+        result[field] = (
+            company.get(field)
+        )
 
     for field in LIST_FIELDS:
         result[field] = (
@@ -155,31 +170,38 @@ def normalize_base_company(company):
     return result
 
 
-def normalize_provider_payload(payload):
-    """
-    Приводит ответ внешнего provider
-    к единому формату Aggregator.
-    """
-
+def normalize_provider_payload(
+    payload,
+):
     if payload is None:
         return None
 
     result = {}
 
     for field in SCALAR_FIELDS:
-        result[field] = payload.get(field)
+        result[field] = (
+            payload.get(field)
+        )
 
     for field in LIST_FIELDS:
 
         value = payload.get(field)
 
-        if isinstance(value, list):
+        if isinstance(
+            value,
+            list,
+        ):
             result[field] = value
 
         else:
             result[field] = []
 
     return result
+
+
+# =========================================================
+# SOURCE SNAPSHOTS
+# =========================================================
 
 
 def save_source_payload(
@@ -189,17 +211,6 @@ def save_source_payload(
     status="success",
     error_message=None,
 ):
-    """
-    Сохраняет последний нормализованный ответ
-    конкретного источника.
-
-    Например:
-
-    company_id = 1
-    source = DaData
-    payload = {...}
-    """
-
     session = get_session()
 
     try:
@@ -215,7 +226,9 @@ def save_source_payload(
             normalized_payload=payload,
             fetched_at=now,
             status=status,
-            error_message=error_message,
+            error_message=(
+                error_message
+            ),
         )
 
         statement = (
@@ -224,7 +237,9 @@ def save_source_payload(
                     "uq_company_source_data"
                 ),
                 set_={
-                    "normalized_payload": payload,
+                    "normalized_payload": (
+                        payload
+                    ),
                     "fetched_at": now,
                     "status": status,
                     "error_message": (
@@ -234,7 +249,9 @@ def save_source_payload(
             )
         )
 
-        session.execute(statement)
+        session.execute(
+            statement
+        )
 
         session.commit()
 
@@ -246,39 +263,132 @@ def save_source_payload(
         session.close()
 
 
+def load_cached_source_candidates(
+    company_id,
+    source_registry,
+):
+    """
+    Загружает уже сохранённые snapshots
+    внешних источников из PostgreSQL.
+
+    Никаких API-запросов здесь нет.
+    """
+
+    session = get_session()
+
+    try:
+        statement = (
+            select(
+                CompanySourceData
+            )
+            .where(
+                CompanySourceData.company_id
+                == company_id,
+                CompanySourceData.status
+                == "success",
+            )
+        )
+
+        snapshots = (
+            session.execute(
+                statement
+            )
+            .scalars()
+            .all()
+        )
+
+        sources_by_id = {
+            source["id"]: source
+            for source
+            in source_registry.values()
+        }
+
+        results = []
+
+        for snapshot in snapshots:
+
+            source = sources_by_id.get(
+                snapshot.source_id
+            )
+
+            if source is None:
+                continue
+
+            payload = (
+                snapshot.normalized_payload
+                or {}
+            )
+
+            if not payload:
+                continue
+
+            normalized = (
+                normalize_provider_payload(
+                    payload
+                )
+            )
+
+            results.append(
+                {
+                    "source": (
+                        source["code"]
+                    ),
+                    "source_id": (
+                        source["id"]
+                    ),
+                    "priority": (
+                        source["priority"]
+                    ),
+                    "payload": normalized,
+                    "cached": True,
+                }
+            )
+
+        return results
+
+    finally:
+        session.close()
+
+
+# =========================================================
+# EXTERNAL PROVIDERS
+# =========================================================
+
+
 def fetch_external_sources(
     inn,
     source_registry,
 ):
-    """
-    Вызывает все включённые providers.
-
-    Сейчас это фактически только DaData.
-    """
-
     results = []
 
-    for source_code, source in (
-        source_registry.items()
-    ):
+    for (
+        source_code,
+        source,
+    ) in source_registry.items():
 
-        # Источник отключён.
         if not source["enabled"]:
             continue
 
-        # Для источника ещё нет provider.
-        provider_class = PROVIDERS.get(
-            source_code
+        provider_class = (
+            PROVIDERS.get(
+                source_code
+            )
         )
 
+        # Источник есть в Registry,
+        # но provider ещё не написан.
         if provider_class is None:
             continue
 
         try:
-            provider = provider_class()
+            provider = (
+                provider_class()
+            )
 
-            payload = provider.get_company(
-                inn
+            payload = (
+                provider.get_company(
+                    inn
+                )
             )
 
             if payload is None:
@@ -292,12 +402,18 @@ def fetch_external_sources(
 
             results.append(
                 {
-                    "source": source_code,
-                    "source_id": source["id"],
+                    "source": (
+                        source_code
+                    ),
+                    "source_id": (
+                        source["id"]
+                    ),
                     "priority": (
                         source["priority"]
                     ),
-                    "payload": normalized,
+                    "payload": (
+                        normalized
+                    ),
                     "error": None,
                 }
             )
@@ -306,8 +422,12 @@ def fetch_external_sources(
 
             results.append(
                 {
-                    "source": source_code,
-                    "source_id": source["id"],
+                    "source": (
+                        source_code
+                    ),
+                    "source_id": (
+                        source["id"]
+                    ),
                     "priority": (
                         source["priority"]
                     ),
@@ -319,22 +439,19 @@ def fetch_external_sources(
     return results
 
 
-def merge_candidates(candidates):
-    """
-    Объединяет данные разных источников.
+# =========================================================
+# MERGE
+# =========================================================
 
-    Меньшее значение priority =
-    более приоритетный источник.
 
-    Для обычных полей выбираем первое
-    непустое значение.
-
-    Для списков объединяем значения.
-    """
-
+def merge_candidates(
+    candidates,
+):
     candidates = sorted(
         candidates,
-        key=lambda item: item["priority"],
+        key=lambda item: (
+            item["priority"]
+        ),
     )
 
     merged = {}
@@ -343,35 +460,39 @@ def merge_candidates(candidates):
 
     sources_used = []
 
-    # Сначала создаём пустые списки.
     for field in LIST_FIELDS:
         merged[field] = []
 
     for candidate in candidates:
 
-        source_code = candidate[
-            "source"
-        ]
+        source_code = (
+            candidate["source"]
+        )
 
-        payload = candidate[
-            "payload"
-        ]
+        payload = (
+            candidate["payload"]
+        )
 
-        if source_code not in sources_used:
+        if (
+            source_code
+            not in sources_used
+        ):
             sources_used.append(
                 source_code
             )
 
-        # -------------------------
-        # Одиночные поля
-        # -------------------------
+        # ---------------------------------
+        # Одиночные значения
+        # ---------------------------------
 
         for field in SCALAR_FIELDS:
 
-            value = payload.get(field)
-
-            current_value = merged.get(
+            value = payload.get(
                 field
+            )
+
+            current_value = (
+                merged.get(field)
             )
 
             if (
@@ -380,16 +501,15 @@ def merge_candidates(candidates):
                 )
                 and has_value(value)
             ):
-
                 merged[field] = value
 
                 field_sources[
                     field
                 ] = source_code
 
-        # -------------------------
-        # Списочные поля
-        # -------------------------
+        # ---------------------------------
+        # Списочные значения
+        # ---------------------------------
 
         for field in LIST_FIELDS:
 
@@ -404,8 +524,9 @@ def merge_candidates(candidates):
                     value
                     not in merged[field]
                 ):
-
-                    merged[field].append(
+                    merged[
+                        field
+                    ].append(
                         value
                     )
 
@@ -414,28 +535,33 @@ def merge_candidates(candidates):
                 and field
                 not in field_sources
             ):
-
                 field_sources[
                     field
                 ] = source_code
 
-    # Добавляем отсутствующие scalar-поля.
     for field in SCALAR_FIELDS:
 
         if field not in merged:
             merged[field] = None
 
-    merged["field_sources"] = (
-        field_sources
-    )
+    merged[
+        "field_sources"
+    ] = field_sources
 
-    merged["sources_used"] = (
-        sources_used
-    )
+    merged[
+        "sources_used"
+    ] = sources_used
 
-    merged["source"] = "aggregator"
+    merged[
+        "source"
+    ] = "aggregator"
 
     return merged
+
+
+# =========================================================
+# MAIN AGGREGATOR
+# =========================================================
 
 
 def aggregate_company(
@@ -443,27 +569,39 @@ def aggregate_company(
     refresh_external: bool = False,
 ):
     """
-    Главная функция Aggregator.
-
     refresh_external=False
-        использует только нашу БД.
+
+        Использует:
+        - основную PostgreSQL
+        - сохранённые source snapshots
+
+        Никаких внешних запросов.
+
 
     refresh_external=True
-        дополнительно вызывает
-        включённые внешние providers.
+
+        Дополнительно обращается
+        к включённым providers,
+        сохраняет свежие snapshots
+        и объединяет их.
     """
 
     inn = str(inn).strip()
 
-    registry = get_source_registry()
+    registry = (
+        get_source_registry()
+    )
 
-    candidates = []
+    # Используем словарь,
+    # чтобы один источник
+    # не появился дважды.
+    candidates_by_source = {}
 
     company_id = None
 
-    # ==================================
-    # 1. Наша PostgreSQL
-    # ==================================
+    # =====================================================
+    # 1. MAIN DATABASE
+    # =====================================================
 
     base_company = (
         get_company_from_database(
@@ -473,45 +611,66 @@ def aggregate_company(
 
     if base_company is not None:
 
-        company_id = base_company[
-            "id"
-        ]
+        company_id = (
+            base_company["id"]
+        )
 
         base_source_code = (
-            base_company.get("source")
+            base_company.get(
+                "source"
+            )
             or "excel_import"
         )
 
-        source_info = registry.get(
-            base_source_code
+        source_info = (
+            registry.get(
+                base_source_code
+            )
         )
 
-        # Если почему-то источник
-        # отсутствует в Registry,
-        # ставим самый низкий приоритет.
         priority = (
             source_info["priority"]
             if source_info
             else 100
         )
 
-        candidates.append(
-            {
-                "source": (
-                    base_source_code
-                ),
-                "priority": priority,
-                "payload": (
-                    normalize_base_company(
-                        base_company
-                    )
-                ),
-            }
+        candidates_by_source[
+            base_source_code
+        ] = {
+            "source": (
+                base_source_code
+            ),
+            "priority": priority,
+            "payload": (
+                normalize_base_company(
+                    base_company
+                )
+            ),
+        }
+
+    # =====================================================
+    # 2. CACHED SOURCE SNAPSHOTS
+    # =====================================================
+
+    if company_id is not None:
+
+        cached_candidates = (
+            load_cached_source_candidates(
+                company_id,
+                registry,
+            )
         )
 
-    # ==================================
-    # 2. Внешние providers
-    # ==================================
+        for candidate in (
+            cached_candidates
+        ):
+            candidates_by_source[
+                candidate["source"]
+            ] = candidate
+
+    # =====================================================
+    # 3. OPTIONAL EXTERNAL REFRESH
+    # =====================================================
 
     if refresh_external:
 
@@ -522,21 +681,24 @@ def aggregate_company(
             )
         )
 
-        for result in external_results:
+        for result in (
+            external_results
+        ):
 
-            payload = result.get(
-                "payload"
+            payload = (
+                result.get(
+                    "payload"
+                )
             )
 
-            error = result.get(
-                "error"
+            error = (
+                result.get(
+                    "error"
+                )
             )
 
-            # --------------------------
-            # Компании вообще не было
-            # в нашей БД.
-            # --------------------------
-
+            # Компания отсутствовала
+            # в нашей PostgreSQL.
             if (
                 payload is not None
                 and company_id is None
@@ -554,20 +716,20 @@ def aggregate_company(
 
                 if new_company:
                     company_id = (
-                        new_company["id"]
+                        new_company[
+                            "id"
+                        ]
                     )
 
-            # --------------------------
-            # Сохраняем snapshot
-            # внешнего источника.
-            # --------------------------
-
+            # Сохраняем свежий snapshot.
             if company_id is not None:
 
                 if payload is not None:
 
                     save_source_payload(
-                        company_id=company_id,
+                        company_id=(
+                            company_id
+                        ),
                         source_id=result[
                             "source_id"
                         ],
@@ -578,7 +740,9 @@ def aggregate_company(
                 elif error:
 
                     save_source_payload(
-                        company_id=company_id,
+                        company_id=(
+                            company_id
+                        ),
                         source_id=result[
                             "source_id"
                         ],
@@ -587,38 +751,78 @@ def aggregate_company(
                         error_message=error,
                     )
 
-            # --------------------------
-            # Добавляем provider
-            # в кандидаты для merge.
-            # --------------------------
-
+            # Свежий provider-result
+            # заменяет старый cached snapshot
+            # этого же источника.
             if payload is not None:
 
-                candidates.append(
-                    {
-                        "source": result[
-                            "source"
-                        ],
-                        "priority": result[
+                candidates_by_source[
+                    result["source"]
+                ] = {
+                    "source": (
+                        result["source"]
+                    ),
+                    "priority": (
+                        result[
                             "priority"
-                        ],
-                        "payload": payload,
-                    }
-                )
+                        ]
+                    ),
+                    "payload": payload,
+                }
 
-    # Ничего не нашли.
-    if not candidates:
+    # =====================================================
+    # 4. NOTHING FOUND
+    # =====================================================
+
+    if not candidates_by_source:
         return None
 
-    # ==================================
-    # 3. Merge
-    # ==================================
+    # =====================================================
+    # 5. MERGE
+    # =====================================================
 
     result = merge_candidates(
-        candidates
+        list(
+            candidates_by_source.values()
+        )
     )
 
     if company_id is not None:
-        result["id"] = company_id
+        result["id"] = (
+            company_id
+        )
 
     return result
+
+
+# =========================================================
+# WEB READ MODE
+# =========================================================
+
+
+def get_company_for_web(
+    inn: str,
+):
+    """
+    Используется сайтом.
+
+    1. Сначала только локальный кэш.
+    2. Если компании вообще нет —
+       разрешаем один внешний запрос.
+
+    Поэтому просмотр существующей
+    карточки НЕ расходует API.
+    """
+
+    company = aggregate_company(
+        inn=inn,
+        refresh_external=False,
+    )
+
+    if company is not None:
+        return company
+
+    return aggregate_company(
+        inn=inn,
+        refresh_external=True,
+    )
