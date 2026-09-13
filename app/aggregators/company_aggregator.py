@@ -15,6 +15,9 @@ from app.services.company_service import (
     get_company_from_database,
     save_provider_company,
 )
+from app.services.headcount_service import (
+    get_latest_headcount_for_company,
+)
 
 
 # =========================================================
@@ -41,6 +44,7 @@ SCALAR_FIELDS = [
     "revenue",
     "company_value",
     "employee_count",
+    "employee_count_year",
 ]
 
 
@@ -53,7 +57,7 @@ LIST_FIELDS = [
 
 
 # =========================================================
-# PROVIDERS
+# API PROVIDERS
 # =========================================================
 
 
@@ -62,20 +66,23 @@ PROVIDERS = {
 }
 
 
-# Позже здесь появятся:
-#
-# "fns": FnsCompanyProvider,
-# "girbo": GirboProvider,
-# "fedresurs": FedresursProvider,
-# ...
-
-
 # =========================================================
 # HELPERS
 # =========================================================
 
 
 def has_value(value):
+    """
+    Проверяет наличие реального значения.
+
+    ВАЖНО:
+    число 0 является значением.
+
+    Например:
+    employee_count = 0
+    не должно считаться отсутствием данных.
+    """
+
     if value is None:
         return False
 
@@ -102,27 +109,20 @@ def get_source_registry():
     session = get_session()
 
     try:
-        statement = (
-            select(DataSource)
-            .order_by(
-                DataSource.priority,
-                DataSource.name,
-            )
-        )
-
         sources = (
             session.execute(
-                statement
+                select(DataSource)
+                .order_by(
+                    DataSource.priority,
+                    DataSource.name,
+                )
             )
             .scalars()
             .all()
         )
 
-        registry = {}
-
-        for source in sources:
-
-            registry[source.code] = {
+        return {
+            source.code: {
                 "id": source.id,
                 "code": source.code,
                 "name": source.name,
@@ -136,8 +136,8 @@ def get_source_registry():
                     source.enabled
                 ),
             }
-
-        return registry
+            for source in sources
+        }
 
     finally:
         session.close()
@@ -268,30 +268,26 @@ def load_cached_source_candidates(
     source_registry,
 ):
     """
-    Загружает уже сохранённые snapshots
-    внешних источников из PostgreSQL.
+    Загружает API snapshots,
+    которые уже сохранены в PostgreSQL.
 
-    Никаких API-запросов здесь нет.
+    Внешних запросов здесь нет.
     """
 
     session = get_session()
 
     try:
-        statement = (
-            select(
-                CompanySourceData
-            )
-            .where(
-                CompanySourceData.company_id
-                == company_id,
-                CompanySourceData.status
-                == "success",
-            )
-        )
-
         snapshots = (
             session.execute(
-                statement
+                select(
+                    CompanySourceData
+                )
+                .where(
+                    CompanySourceData.company_id
+                    == company_id,
+                    CompanySourceData.status
+                    == "success",
+                )
             )
             .scalars()
             .all()
@@ -307,8 +303,10 @@ def load_cached_source_candidates(
 
         for snapshot in snapshots:
 
-            source = sources_by_id.get(
-                snapshot.source_id
+            source = (
+                sources_by_id.get(
+                    snapshot.source_id
+                )
             )
 
             if source is None:
@@ -322,12 +320,6 @@ def load_cached_source_candidates(
             if not payload:
                 continue
 
-            normalized = (
-                normalize_provider_payload(
-                    payload
-                )
-            )
-
             results.append(
                 {
                     "source": (
@@ -339,7 +331,11 @@ def load_cached_source_candidates(
                     "priority": (
                         source["priority"]
                     ),
-                    "payload": normalized,
+                    "payload": (
+                        normalize_provider_payload(
+                            payload
+                        )
+                    ),
                     "cached": True,
                 }
             )
@@ -351,7 +347,79 @@ def load_cached_source_candidates(
 
 
 # =========================================================
-# EXTERNAL PROVIDERS
+# DOMAIN DATASETS
+# =========================================================
+
+
+def load_domain_candidates(
+    company_id,
+):
+    """
+    Загружает нормализованные данные
+    специализированных datasets.
+
+    В отличие от API snapshots,
+    это bulk/delta данные, уже
+    разложенные по domain-таблицам.
+
+    Сейчас подключён:
+    - fns_headcount
+
+    Позже здесь появятся:
+    - girbo_reports
+    - fns_tax_debt
+    - fns_tax_paid
+    - fssp_enforcement
+    - и другие.
+    """
+
+    candidates = []
+
+    # -----------------------------------------------------
+    # FNS HEADCOUNT
+    # -----------------------------------------------------
+
+    headcount = (
+        get_latest_headcount_for_company(
+            company_id
+        )
+    )
+
+    if headcount is not None:
+
+        candidates.append(
+            {
+                "source": (
+                    headcount[
+                        "dataset_code"
+                    ]
+                ),
+                "priority": (
+                    headcount[
+                        "priority"
+                    ]
+                ),
+                "payload": {
+                    "employee_count": (
+                        headcount[
+                            "employee_count"
+                        ]
+                    ),
+                    "employee_count_year": (
+                        headcount[
+                            "year"
+                        ]
+                    ),
+                },
+                "cached": True,
+            }
+        )
+
+    return candidates
+
+
+# =========================================================
+# EXTERNAL API PROVIDERS
 # =========================================================
 
 
@@ -375,8 +443,6 @@ def fetch_external_sources(
             )
         )
 
-        # Источник есть в Registry,
-        # но provider ещё не написан.
         if provider_class is None:
             continue
 
@@ -447,6 +513,19 @@ def fetch_external_sources(
 def merge_candidates(
     candidates,
 ):
+    """
+    Объединяет источники по priority.
+
+    Чем меньше priority,
+    тем выше доверие.
+
+    Для scalar:
+    берём первое непустое значение.
+
+    Для list:
+    объединяем значения.
+    """
+
     candidates = sorted(
         candidates,
         key=lambda item: (
@@ -481,9 +560,9 @@ def merge_candidates(
                 source_code
             )
 
-        # ---------------------------------
-        # Одиночные значения
-        # ---------------------------------
+        # ---------------------------------------------
+        # SCALAR
+        # ---------------------------------------------
 
         for field in SCALAR_FIELDS:
 
@@ -499,17 +578,20 @@ def merge_candidates(
                 not has_value(
                     current_value
                 )
-                and has_value(value)
+                and has_value(
+                    value
+                )
             ):
+
                 merged[field] = value
 
                 field_sources[
                     field
                 ] = source_code
 
-        # ---------------------------------
-        # Списочные значения
-        # ---------------------------------
+        # ---------------------------------------------
+        # LIST
+        # ---------------------------------------------
 
         for field in LIST_FIELDS:
 
@@ -571,36 +653,35 @@ def aggregate_company(
     """
     refresh_external=False
 
-        Использует:
-        - основную PostgreSQL
-        - сохранённые source snapshots
+        Только локальные данные:
 
-        Никаких внешних запросов.
+        - companies
+        - API snapshots
+        - domain datasets
+
+        Никаких запросов наружу.
 
 
     refresh_external=True
 
-        Дополнительно обращается
-        к включённым providers,
-        сохраняет свежие snapshots
-        и объединяет их.
+        Дополнительно вызывает
+        включённые API providers.
     """
 
-    inn = str(inn).strip()
+    inn = str(
+        inn
+    ).strip()
 
     registry = (
         get_source_registry()
     )
 
-    # Используем словарь,
-    # чтобы один источник
-    # не появился дважды.
     candidates_by_source = {}
 
     company_id = None
 
     # =====================================================
-    # 1. MAIN DATABASE
+    # 1. MASTER / BASE COMPANY
     # =====================================================
 
     base_company = (
@@ -649,7 +730,7 @@ def aggregate_company(
         }
 
     # =====================================================
-    # 2. CACHED SOURCE SNAPSHOTS
+    # 2. API SNAPSHOT CACHE
     # =====================================================
 
     if company_id is not None:
@@ -664,12 +745,33 @@ def aggregate_company(
         for candidate in (
             cached_candidates
         ):
+
             candidates_by_source[
                 candidate["source"]
             ] = candidate
 
     # =====================================================
-    # 3. OPTIONAL EXTERNAL REFRESH
+    # 3. DOMAIN DATASETS
+    # =====================================================
+
+    if company_id is not None:
+
+        domain_candidates = (
+            load_domain_candidates(
+                company_id
+            )
+        )
+
+        for candidate in (
+            domain_candidates
+        ):
+
+            candidates_by_source[
+                candidate["source"]
+            ] = candidate
+
+    # =====================================================
+    # 4. OPTIONAL EXTERNAL API REFRESH
     # =====================================================
 
     if refresh_external:
@@ -697,8 +799,10 @@ def aggregate_company(
                 )
             )
 
-            # Компания отсутствовала
-            # в нашей PostgreSQL.
+            # ---------------------------------------------
+            # Компании ещё нет в companies
+            # ---------------------------------------------
+
             if (
                 payload is not None
                 and company_id is None
@@ -721,7 +825,10 @@ def aggregate_company(
                         ]
                     )
 
-            # Сохраняем свежий snapshot.
+            # ---------------------------------------------
+            # Сохраняем API snapshot
+            # ---------------------------------------------
+
             if company_id is not None:
 
                 if payload is not None:
@@ -751,9 +858,12 @@ def aggregate_company(
                         error_message=error,
                     )
 
-            # Свежий provider-result
-            # заменяет старый cached snapshot
-            # этого же источника.
+            # ---------------------------------------------
+            # Свежий API результат
+            # заменяет cached результат
+            # того же provider.
+            # ---------------------------------------------
+
             if payload is not None:
 
                 candidates_by_source[
@@ -767,18 +877,40 @@ def aggregate_company(
                             "priority"
                         ]
                     ),
-                    "payload": payload,
+                    "payload": (
+                        payload
+                    ),
                 }
 
+        # Если компания была создана
+        # только что через API,
+        # пробуем также найти
+        # domain-data для неё.
+        if company_id is not None:
+
+            domain_candidates = (
+                load_domain_candidates(
+                    company_id
+                )
+            )
+
+            for candidate in (
+                domain_candidates
+            ):
+
+                candidates_by_source[
+                    candidate["source"]
+                ] = candidate
+
     # =====================================================
-    # 4. NOTHING FOUND
+    # 5. NOTHING FOUND
     # =====================================================
 
     if not candidates_by_source:
         return None
 
     # =====================================================
-    # 5. MERGE
+    # 6. MERGE
     # =====================================================
 
     result = merge_candidates(
@@ -804,14 +936,21 @@ def get_company_for_web(
     inn: str,
 ):
     """
-    Используется сайтом.
+    Основной режим сайта.
 
-    1. Сначала только локальный кэш.
-    2. Если компании вообще нет —
-       разрешаем один внешний запрос.
+    Существующая компания:
 
-    Поэтому просмотр существующей
-    карточки НЕ расходует API.
+    PostgreSQL
+        +
+    cached API snapshots
+        +
+    official domain datasets
+
+    Никаких внешних API-вызовов.
+
+    Только если компании вообще
+    нет локально, допускается
+    fallback API.
     """
 
     company = aggregate_company(
