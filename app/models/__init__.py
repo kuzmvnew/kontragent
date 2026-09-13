@@ -18,6 +18,10 @@ from app.models.source import (
     DataSource,
     IngestionRun,
 )
+from app.models.tax_debt import (
+    CompanyTaxDebtItem,
+    CompanyTaxDebtSnapshot,
+)
 
 
 __all__ = [
@@ -30,6 +34,8 @@ __all__ = [
     "CompanyManager",
     "CompanyMspProfile",
     "CompanySourceData",
+    "CompanyTaxDebtItem",
+    "CompanyTaxDebtSnapshot",
     "DataSet",
     "DataSource",
     "IngestionRun",
