@@ -18,6 +18,10 @@ from app.services.company_service import (
 from app.services.headcount_service import (
     get_latest_headcount_for_company,
 )
+from app.services.tax_debt_service import (
+    get_latest_tax_debt_for_company,
+    get_tax_debt_history,
+)
 
 
 # =========================================================
@@ -73,14 +77,10 @@ PROVIDERS = {
 
 def has_value(value):
     """
-    Проверяет наличие реального значения.
+    Проверяет наличие значения.
 
     ВАЖНО:
-    число 0 является значением.
-
-    Например:
-    employee_count = 0
-    не должно считаться отсутствием данных.
+    0 является реальным значением.
     """
 
     if value is None:
@@ -268,8 +268,7 @@ def load_cached_source_candidates(
     source_registry,
 ):
     """
-    Загружает API snapshots,
-    которые уже сохранены в PostgreSQL.
+    Загружает сохранённые API snapshots.
 
     Внешних запросов здесь нет.
     """
@@ -355,29 +354,18 @@ def load_domain_candidates(
     company_id,
 ):
     """
-    Загружает нормализованные данные
-    специализированных datasets.
+    Domain datasets, которые можно
+    представить как обычные scalar fields.
 
-    В отличие от API snapshots,
-    это bulk/delta данные, уже
-    разложенные по domain-таблицам.
+    Сейчас:
+    - FNS headcount
 
-    Сейчас подключён:
-    - fns_headcount
-
-    Позже здесь появятся:
-    - girbo_reports
-    - fns_tax_debt
-    - fns_tax_paid
-    - fssp_enforcement
-    - и другие.
+    Tax debt подключается отдельно,
+    потому что это самостоятельный
+    сложный объект с детализацией.
     """
 
     candidates = []
-
-    # -----------------------------------------------------
-    # FNS HEADCOUNT
-    # -----------------------------------------------------
 
     headcount = (
         get_latest_headcount_for_company(
@@ -416,6 +404,39 @@ def load_domain_candidates(
         )
 
     return candidates
+
+
+def load_structured_domain_data(
+    company_id,
+):
+    """
+    Сложные domain objects,
+    которые не нужно смешивать
+    с обычными scalar fields.
+    """
+
+    tax_debt = (
+        get_latest_tax_debt_for_company(
+            company_id=company_id,
+            include_items=True,
+        )
+    )
+
+    tax_debt_history = (
+        get_tax_debt_history(
+            company_id=company_id,
+            limit=24,
+        )
+    )
+
+    return {
+        "tax_debt": (
+            tax_debt
+        ),
+        "tax_debt_history": (
+            tax_debt_history
+        ),
+    }
 
 
 # =========================================================
@@ -514,16 +535,11 @@ def merge_candidates(
     candidates,
 ):
     """
-    Объединяет источники по priority.
+    Объединяет обычные поля
+    по priority.
 
     Чем меньше priority,
     тем выше доверие.
-
-    Для scalar:
-    берём первое непустое значение.
-
-    Для list:
-    объединяем значения.
     """
 
     candidates = sorted(
@@ -583,7 +599,9 @@ def merge_candidates(
                 )
             ):
 
-                merged[field] = value
+                merged[field] = (
+                    value
+                )
 
                 field_sources[
                     field
@@ -606,6 +624,7 @@ def merge_candidates(
                     value
                     not in merged[field]
                 ):
+
                     merged[
                         field
                     ].append(
@@ -617,6 +636,7 @@ def merge_candidates(
                 and field
                 not in field_sources
             ):
+
                 field_sources[
                     field
                 ] = source_code
@@ -651,21 +671,13 @@ def aggregate_company(
     refresh_external: bool = False,
 ):
     """
-    refresh_external=False
+    Собирает компанию из:
 
-        Только локальные данные:
-
-        - companies
-        - API snapshots
-        - domain datasets
-
-        Никаких запросов наружу.
-
-
-    refresh_external=True
-
-        Дополнительно вызывает
-        включённые API providers.
+    - master company
+    - cached API snapshots
+    - FNS headcount
+    - FNS tax debt
+    - optional external API refresh
     """
 
     inn = str(
@@ -721,7 +733,9 @@ def aggregate_company(
             "source": (
                 base_source_code
             ),
-            "priority": priority,
+            "priority": (
+                priority
+            ),
             "payload": (
                 normalize_base_company(
                     base_company
@@ -730,7 +744,7 @@ def aggregate_company(
         }
 
     # =====================================================
-    # 2. API SNAPSHOT CACHE
+    # 2. API CACHE
     # =====================================================
 
     if company_id is not None:
@@ -751,7 +765,7 @@ def aggregate_company(
             ] = candidate
 
     # =====================================================
-    # 3. DOMAIN DATASETS
+    # 3. SIMPLE DOMAIN DATASETS
     # =====================================================
 
     if company_id is not None:
@@ -799,10 +813,6 @@ def aggregate_company(
                 )
             )
 
-            # ---------------------------------------------
-            # Компании ещё нет в companies
-            # ---------------------------------------------
-
             if (
                 payload is not None
                 and company_id is None
@@ -819,15 +829,12 @@ def aggregate_company(
                 )
 
                 if new_company:
+
                     company_id = (
                         new_company[
                             "id"
                         ]
                     )
-
-            # ---------------------------------------------
-            # Сохраняем API snapshot
-            # ---------------------------------------------
 
             if company_id is not None:
 
@@ -858,12 +865,6 @@ def aggregate_company(
                         error_message=error,
                     )
 
-            # ---------------------------------------------
-            # Свежий API результат
-            # заменяет cached результат
-            # того же provider.
-            # ---------------------------------------------
-
             if payload is not None:
 
                 candidates_by_source[
@@ -882,10 +883,6 @@ def aggregate_company(
                     ),
                 }
 
-        # Если компания была создана
-        # только что через API,
-        # пробуем также найти
-        # domain-data для неё.
         if company_id is not None:
 
             domain_candidates = (
@@ -920,9 +917,44 @@ def aggregate_company(
     )
 
     if company_id is not None:
+
         result["id"] = (
             company_id
         )
+
+        structured = (
+            load_structured_domain_data(
+                company_id
+            )
+        )
+
+        result.update(
+            structured
+        )
+
+        if (
+            structured[
+                "tax_debt"
+            ]
+            is not None
+            and "fns_tax_debt"
+            not in result[
+                "sources_used"
+            ]
+        ):
+
+            result[
+                "sources_used"
+            ].append(
+                "fns_tax_debt"
+            )
+
+    else:
+
+        result["tax_debt"] = None
+        result[
+            "tax_debt_history"
+        ] = []
 
     return result
 
@@ -936,21 +968,13 @@ def get_company_for_web(
     inn: str,
 ):
     """
-    Основной режим сайта.
+    Режим сайта.
 
-    Существующая компания:
+    Сначала только PostgreSQL.
 
-    PostgreSQL
-        +
-    cached API snapshots
-        +
-    official domain datasets
-
-    Никаких внешних API-вызовов.
-
-    Только если компании вообще
-    нет локально, допускается
-    fallback API.
+    Внешний API вызывается только,
+    если компании вообще нет
+    в нашей локальной базе.
     """
 
     company = aggregate_company(
