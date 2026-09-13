@@ -15,7 +15,7 @@
 
     <meta
         name="description"
-        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели, налоговая задолженность и сведения о компании."
+        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели, налоговая задолженность, налоговые правонарушения и сведения о компании."
     >
 
     <link
@@ -778,6 +778,209 @@
 
 
             <!-- ======================================== -->
+            <!-- НАЛОГОВЫЕ ПРАВОНАРУШЕНИЯ -->
+            <!-- ======================================== -->
+
+            {% if company.tax_offence %}
+
+                <section class="card">
+
+                    <h2>
+                        Налоговые правонарушения
+                    </h2>
+
+
+                    <div class="risk-placeholder">
+
+                        <div class="risk-placeholder-title">
+                            Есть сведения о налоговом правонарушении
+                        </div>
+
+                        <p>
+                            В открытом наборе ФНС имеются сведения
+                            о налоговом правонарушении и применённой
+                            мере ответственности в виде штрафа.
+                        </p>
+
+                    </div>
+
+
+                    <div class="info-grid">
+
+                        <div class="info-item">
+
+                            <div class="info-label">
+                                Сумма штрафа
+                            </div>
+
+                            <div class="info-value">
+                                {{ money(company.tax_offence["fine_amount"]) }} ₽
+                            </div>
+
+                        </div>
+
+
+                        <div class="info-item">
+
+                            <div class="info-label">
+                                Количество документов
+                            </div>
+
+                            <div class="info-value">
+                                {{ company.tax_offence["document_count"] }}
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            Дата состояния сведений
+                        </div>
+
+                        <div class="detail-value">
+
+                            {% if company.tax_offence["data_date"] %}
+
+                                {{ company.tax_offence["data_date"].strftime("%d.%m.%Y") }}
+
+                            {% else %}
+
+                                —
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+
+                    {% if company.tax_offence["document_date"] %}
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Дата документа ФНС
+                            </div>
+
+                            <div class="detail-value">
+                                {{ company.tax_offence["document_date"].strftime("%d.%m.%Y") }}
+                            </div>
+
+                        </div>
+
+                    {% endif %}
+
+
+                    {% if company.tax_offence["documents"] and company.tax_offence["documents"] | length > 1 %}
+
+                        <h2>
+                            Документы ФНС
+                        </h2>
+
+                        {% for offence_document in company.tax_offence["documents"] %}
+
+                            <div class="detail-row">
+
+                                <div class="detail-label">
+
+                                    {% if offence_document["document_date"] %}
+
+                                        {{ offence_document["document_date"].strftime("%d.%m.%Y") }}
+
+                                    {% else %}
+
+                                        Документ ФНС
+
+                                    {% endif %}
+
+                                </div>
+
+                                <div class="detail-value">
+
+                                    <strong>
+                                        {{ money(offence_document["fine_amount"]) }} ₽
+                                    </strong>
+
+                                    {% if offence_document["source_document_id"] %}
+
+                                        <div>
+                                            ID документа:
+                                            {{ offence_document["source_document_id"] }}
+                                        </div>
+
+                                    {% endif %}
+
+                                </div>
+
+                            </div>
+
+                        {% endfor %}
+
+                    {% endif %}
+
+
+                    {% if company.tax_offence_history and company.tax_offence_history | length > 1 %}
+
+                        <h2>
+                            История сведений
+                        </h2>
+
+                        {% for offence_snapshot in company.tax_offence_history %}
+
+                            <div class="detail-row">
+
+                                <div class="detail-label">
+
+                                    {% if offence_snapshot["data_date"] %}
+
+                                        {{ offence_snapshot["data_date"].strftime("%d.%m.%Y") }}
+
+                                    {% else %}
+
+                                        Дата не указана
+
+                                    {% endif %}
+
+                                </div>
+
+                                <div class="detail-value">
+
+                                    <strong>
+                                        {{ money(offence_snapshot["fine_amount"]) }} ₽
+                                    </strong>
+
+                                </div>
+
+                            </div>
+
+                        {% endfor %}
+
+                    {% endif %}
+
+
+                    <p>
+                        Источник: Федеральная налоговая служба.
+                        В используемом открытом наборе ФНС
+                        конкретный вид налогового правонарушения
+                        не раскрывается.
+                    </p>
+
+                    <p>
+                        Отсутствие сведений в этом наборе
+                        само по себе не означает отсутствие
+                        налоговых правонарушений в другие периоды.
+                    </p>
+
+                </section>
+
+            {% endif %}
+
+
+            <!-- ======================================== -->
             <!-- КОНТАКТЫ -->
             <!-- ======================================== -->
 
@@ -973,6 +1176,12 @@
 
                                 <span class="source-badge">
                                     ФНС — задолженность
+                                </span>
+
+                            {% elif source == "fns_tax_offence" %}
+
+                                <span class="source-badge">
+                                    ФНС — налоговые правонарушения
                                 </span>
 
                             {% elif source == "girbo" %}
