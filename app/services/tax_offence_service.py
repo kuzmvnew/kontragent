@@ -1,43 +1,149 @@
-from sqlalchemy import (
-    func,
-    select,
-)
+from decimal import Decimal
+
+from sqlalchemy import func, select
 
 from app.database.postgres import get_session
+from app.models.company import Company
+from app.models.source import DataSet
 from app.models.tax_offence import CompanyTaxOffence
+
+
+DATASET_CODE = "fns_tax_offence"
+
+ZERO = Decimal("0.00")
+
+
+def _get_dataset_data_date(
+    session,
+    dataset,
+):
+    """
+    Определяет дату актуального загруженного
+    набора taxoffence.
+
+    Основной источник — DataSet.last_data_date.
+
+    Если она почему-то не заполнена,
+    используем максимальную дату среди
+    реально импортированных документов.
+    """
+
+    if (
+        dataset is not None
+        and dataset.last_data_date
+        is not None
+    ):
+        return dataset.last_data_date
+
+    if dataset is None:
+        return None
+
+    return (
+        session.execute(
+            select(
+                func.max(
+                    CompanyTaxOffence.data_date
+                )
+            )
+            .where(
+                CompanyTaxOffence.dataset_id
+                == dataset.id
+            )
+        )
+        .scalar_one_or_none()
+    )
 
 
 def get_latest_tax_offence_for_company(
     company_id: int,
 ):
     """
-    Возвращает последний доступный срез
-    налоговых правонарушений компании.
+    Возвращает результат проверки компании
+    по актуальному загруженному набору
+    taxoffence ФНС.
 
-    Если на одну дату существует несколько
-    документов ФНС, их штрафы суммируются.
+    Для юридического лица возможны два
+    корректных результата:
+
+    1. has_offence = True
+       В актуальном наборе ФНС есть запись.
+
+    2. has_offence = False
+       Набор проверен, но запись компании
+       в актуальном опубликованном срезе
+       не найдена.
+
+    Для ИП возвращается None, потому что
+    текущий набор содержит ИННЮЛ.
     """
 
     session = get_session()
 
     try:
-        latest_date = (
+        # -------------------------------------------------
+        # COMPANY
+        # -------------------------------------------------
+
+        company = (
             session.execute(
                 select(
-                    func.max(
-                        CompanyTaxOffence.data_date
-                    )
+                    Company.inn,
+                    Company.entity_type,
                 )
                 .where(
-                    CompanyTaxOffence.company_id
+                    Company.id
                     == company_id
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+        if company is None:
+            return None
+
+        inn = str(
+            company["inn"]
+            or ""
+        ).strip()
+
+        # taxoffence содержит юридические лица.
+        if len(inn) != 10:
+            return None
+
+        # -------------------------------------------------
+        # DATASET
+        # -------------------------------------------------
+
+        dataset = (
+            session.execute(
+                select(DataSet)
+                .where(
+                    DataSet.code
+                    == DATASET_CODE
                 )
             )
             .scalar_one_or_none()
         )
 
-        if latest_date is None:
+        if dataset is None:
             return None
+
+        dataset_data_date = (
+            _get_dataset_data_date(
+                session=session,
+                dataset=dataset,
+            )
+        )
+
+        # Если мы вообще не знаем дату набора,
+        # нельзя говорить, что проверка выполнена.
+        if dataset_data_date is None:
+            return None
+
+        # -------------------------------------------------
+        # CURRENT DATASET
+        # -------------------------------------------------
 
         rows = (
             session.execute(
@@ -47,8 +153,10 @@ def get_latest_tax_offence_for_company(
                 .where(
                     CompanyTaxOffence.company_id
                     == company_id,
+                    CompanyTaxOffence.dataset_id
+                    == dataset.id,
                     CompanyTaxOffence.data_date
-                    == latest_date,
+                    == dataset_data_date,
                 )
                 .order_by(
                     CompanyTaxOffence.fine_amount.desc(),
@@ -59,15 +167,41 @@ def get_latest_tax_offence_for_company(
             .all()
         )
 
+        # -------------------------------------------------
+        # NO OFFENCE IN CURRENT DATASET
+        # -------------------------------------------------
+
         if not rows:
-            return None
+            return {
+                "checked": True,
+                "applicable": True,
+                "has_offence": False,
+                "result": "not_found",
+                "data_date": (
+                    dataset_data_date
+                ),
+                "document_date": None,
+                "fine_amount": ZERO,
+                "document_count": 0,
+                "documents": [],
+                "dataset_code": (
+                    DATASET_CODE
+                ),
+                "source": (
+                    "fns_tax_offence"
+                ),
+            }
+
+        # -------------------------------------------------
+        # OFFENCE FOUND
+        # -------------------------------------------------
 
         total_fine = sum(
             (
                 row.fine_amount
                 for row in rows
             ),
-            0,
+            ZERO,
         )
 
         document_dates = [
@@ -101,7 +235,13 @@ def get_latest_tax_offence_for_company(
         ]
 
         return {
-            "data_date": latest_date,
+            "checked": True,
+            "applicable": True,
+            "has_offence": True,
+            "result": "found",
+            "data_date": (
+                dataset_data_date
+            ),
             "document_date": (
                 document_date
             ),
@@ -114,7 +254,9 @@ def get_latest_tax_offence_for_company(
             "documents": (
                 documents
             ),
-            "has_offence": True,
+            "dataset_code": (
+                DATASET_CODE
+            ),
             "source": (
                 "fns_tax_offence"
             ),
@@ -129,11 +271,11 @@ def get_tax_offence_history(
     limit: int = 20,
 ):
     """
-    История официальных документов ФНС.
+    История документов taxoffence.
 
-    Позже, когда появятся новые годовые
-    наборы, здесь автоматически появятся
-    дополнительные периоды.
+    Здесь хранятся предыдущие периоды,
+    даже если в самом свежем наборе
+    компания уже отсутствует.
     """
 
     session = get_session()
