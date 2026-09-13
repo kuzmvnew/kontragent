@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -17,7 +18,22 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.base import Base
 
 
+# =========================================================
+# COMPANY
+# =========================================================
+
+
 class Company(Base):
+    """
+    Master entity контрагента.
+
+    Одна строка = одно юридическое лицо
+    или один индивидуальный предприниматель.
+
+    Главный идентификатор дедупликации:
+    ИНН.
+    """
+
     __tablename__ = "companies"
 
     id: Mapped[int] = mapped_column(
@@ -25,6 +41,10 @@ class Company(Base):
         Identity(),
         primary_key=True,
     )
+
+    # -----------------------------------------------------
+    # IDENTIFIERS
+    # -----------------------------------------------------
 
     inn: Mapped[str] = mapped_column(
         String(12),
@@ -52,6 +72,26 @@ class Company(Base):
         index=True,
     )
 
+    # -----------------------------------------------------
+    # ENTITY TYPE
+    # -----------------------------------------------------
+
+    # legal
+    # individual_entrepreneur
+    #
+    # Пока nullable=True, потому что
+    # у нас уже есть 9 799 старых записей.
+    # После backfill сможем сделать строже.
+    entity_type: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+        index=True,
+    )
+
+    # -----------------------------------------------------
+    # NAMES
+    # -----------------------------------------------------
+
     name: Mapped[str] = mapped_column(
         String(500),
         nullable=False,
@@ -68,10 +108,50 @@ class Company(Base):
         nullable=True,
     )
 
+    # -----------------------------------------------------
+    # REGISTRATION
+    # -----------------------------------------------------
+
+    status: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    registration_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+        index=True,
+    )
+
+    termination_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+        index=True,
+    )
+
+    # -----------------------------------------------------
+    # ADDRESS
+    # -----------------------------------------------------
+
     address: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
+
+    # Код субъекта РФ.
+    #
+    # Храним строкой, потому что
+    # возможны ведущие нули.
+    region_code: Mapped[str | None] = mapped_column(
+        String(3),
+        nullable=True,
+        index=True,
+    )
+
+    # -----------------------------------------------------
+    # ACTIVITY
+    # -----------------------------------------------------
 
     activity: Mapped[str | None] = mapped_column(
         Text,
@@ -89,12 +169,41 @@ class Company(Base):
         nullable=True,
     )
 
-    status: Mapped[str | None] = mapped_column(
-        String(50),
+    # -----------------------------------------------------
+    # MASTER REGISTRY
+    # -----------------------------------------------------
+
+    # Dataset, который сейчас является
+    # master-источником регистрационных данных.
+    #
+    # Например:
+    #
+    # fns_msp
+    # fns_egrul
+    # fns_egrip
+    master_dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "data_sets.id",
+            ondelete="SET NULL",
+        ),
         nullable=True,
         index=True,
     )
 
+    # Дата состояния master dataset.
+    master_data_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+        index=True,
+    )
+
+    # -----------------------------------------------------
+    # LEGACY / COMPATIBILITY SOURCE
+    # -----------------------------------------------------
+
+    # Поле пока сохраняем,
+    # чтобы не сломать Aggregator v1
+    # и существующий Excel importer.
     source: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
@@ -104,6 +213,10 @@ class Company(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    # -----------------------------------------------------
+    # TIMESTAMPS
+    # -----------------------------------------------------
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -117,6 +230,10 @@ class Company(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    # -----------------------------------------------------
+    # RELATIONSHIPS
+    # -----------------------------------------------------
 
     managers: Mapped[list["CompanyManager"]] = relationship(
         back_populates="company",
@@ -142,6 +259,11 @@ class Company(Base):
         back_populates="company",
         cascade="all, delete-orphan",
     )
+
+
+# =========================================================
+# MANAGER
+# =========================================================
 
 
 class CompanyManager(Base):
@@ -210,6 +332,11 @@ class CompanyManager(Base):
     )
 
 
+# =========================================================
+# CONTACT
+# =========================================================
+
+
 class CompanyContact(Base):
     __tablename__ = "company_contacts"
 
@@ -270,6 +397,11 @@ class CompanyContact(Base):
     )
 
 
+# =========================================================
+# FINANCIAL
+# =========================================================
+
+
 class CompanyFinancial(Base):
     __tablename__ = "company_financials"
 
@@ -325,6 +457,11 @@ class CompanyFinancial(Base):
     )
 
 
+# =========================================================
+# IDENTIFIER
+# =========================================================
+
+
 class CompanyIdentifier(Base):
     __tablename__ = "company_identifiers"
 
@@ -377,6 +514,11 @@ class CompanyIdentifier(Base):
     company: Mapped["Company"] = relationship(
         back_populates="identifiers",
     )
+
+
+# =========================================================
+# BRANCH
+# =========================================================
 
 
 class CompanyBranch(Base):
