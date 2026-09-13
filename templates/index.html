@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Проверка контрагентов по ИНН и названию
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="/static/css/style.css"
+    >
+
+</head>
+
+
+<body>
+
+
+<header class="header">
+
+    <div class="container header-inner">
+
+        <a
+            href="/"
+            class="logo"
+        >
+            Контрагент
+        </a>
+
+        <div class="header-text">
+            Проверка российских компаний
+        </div>
+
+    </div>
+
+</header>
+
+
+
+<main>
+
+
+<section class="hero">
+
+    <div class="container">
+
+        <h1>
+            Проверка контрагентов
+        </h1>
+
+        <p class="hero-description">
+            Найдите компанию или ИП
+            по названию или ИНН
+        </p>
+
+
+        <form
+            action="/search"
+            method="get"
+            class="search-form"
+        >
+
+            <input
+                type="text"
+                name="q"
+                value="{{ query or '' }}"
+                placeholder="Например: Крымавтодор или 9102309919"
+                autocomplete="off"
+                required
+            >
+
+            <button type="submit">
+                Найти
+            </button>
+
+        </form>
+
+
+        {% if error %}
+
+            <div class="error">
+                {{ error }}
+            </div>
+
+        {% endif %}
+
+
+        {% if results %}
+
+            <div class="search-results">
+
+                <div class="search-results-header">
+
+                    <h2>
+                        Результаты поиска
+                    </h2>
+
+                    <div class="search-results-count">
+                        Найдено: {{ results|length }}
+                    </div>
+
+                </div>
+
+
+                {% for company in results %}
+
+                    <a
+                        href="/company/{{ company.inn }}"
+                        class="search-result"
+                    >
+
+                        <div class="search-result-main">
+
+                            <div class="search-result-name">
+                                {{ company.name }}
+                            </div>
+
+
+                            <div class="search-result-meta">
+
+                                ИНН {{ company.inn }}
+
+                                {% if company.kpp %}
+
+                                    · КПП {{ company.kpp }}
+
+                                {% endif %}
+
+                                {% if company.ogrn %}
+
+                                    · ОГРН {{ company.ogrn }}
+
+                                {% endif %}
+
+                            </div>
+
+
+                            {% if company.address %}
+
+                                <div class="search-result-address">
+                                    {{ company.address }}
+                                </div>
+
+                            {% endif %}
+
+
+                            {% if company.activity %}
+
+                                <div class="search-result-activity">
+                                    {{ company.activity }}
+                                </div>
+
+                            {% endif %}
+
+                        </div>
+
+
+                        <div class="search-result-arrow">
+                            →
+                        </div>
+
+                    </a>
+
+                {% endfor %}
+
+            </div>
+
+        {% endif %}
+
+    </div>
+
+</section>
+
+
+{% if not results %}
+
+<section class="features">
+
+    <div class="container">
+
+        <div class="features-grid">
+
+            <div class="feature">
+
+                <h3>
+                    Регистрационные данные
+                </h3>
+
+                <p>
+                    ИНН, КПП, ОГРН,
+                    адрес и основные сведения
+                    о компании.
+                </p>
+
+            </div>
+
+
+            <div class="feature">
+
+                <h3>
+                    Финансовые показатели
+                </h3>
+
+                <p>
+                    Выручка, стоимость бизнеса
+                    и другие доступные показатели.
+                </p>
+
+            </div>
+
+
+            <div class="feature">
+
+                <h3>
+                    Контакты
+                </h3>
+
+                <p>
+                    Телефоны, электронная почта,
+                    сайты и подразделения.
+                </p>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+{% endif %}
+
+
+</main>
+
+
+
+<footer class="footer">
+
+    <div class="container">
+        Контрагент · MVP
+    </div>
+
+</footer>
+
+
+</body>
+
+</html>
