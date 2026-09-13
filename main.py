@@ -1,26 +1,56 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+)
+from fastapi.responses import (
+    HTMLResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.aggregators.company_aggregator import (
+    get_company_for_web,
+)
 from app.services.company_service import (
-    get_company_by_inn,
     search_companies,
 )
 
 
+# =========================================================
+# FASTAPI
+# =========================================================
+
+
 app = FastAPI(
-    title="Контрагент",
-    description="Сервис проверки российских компаний",
-    version="0.3.0",
+    title="Проверка контрагентов",
+    description=(
+        "Сервис проверки российских "
+        "компаний и индивидуальных "
+        "предпринимателей"
+    ),
+    version="0.5.0",
 )
+
+
+# =========================================================
+# STATIC FILES
+# =========================================================
 
 
 app.mount(
     "/static",
-    StaticFiles(directory="static"),
+    StaticFiles(
+        directory="static",
+    ),
     name="static",
 )
+
+
+# =========================================================
+# TEMPLATES
+# =========================================================
 
 
 templates = Jinja2Templates(
@@ -28,71 +58,224 @@ templates = Jinja2Templates(
 )
 
 
+# =========================================================
+# JINJA FILTERS
+# =========================================================
+
+
+def format_number(value):
+    """
+    Форматирует большие числа:
+
+    11469690000
+        ↓
+    11 469 690 000
+    """
+
+    if value is None:
+        return "—"
+
+    try:
+        number = int(value)
+
+        return (
+            f"{number:,}"
+            .replace(
+                ",",
+                " ",
+            )
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return str(value)
+
+
+templates.env.filters[
+    "number"
+] = format_number
+
+
+# =========================================================
+# HELPERS
+# =========================================================
+
+
+def normalize_inn(
+    value: str,
+):
+    """
+    Оставляем в ИНН только цифры.
+
+    Юридическое лицо:
+    10 цифр
+
+    ИП:
+    12 цифр
+    """
+
+    return "".join(
+        symbol
+        for symbol in str(value)
+        if symbol.isdigit()
+    )
+
+
+def is_full_inn(
+    value: str,
+):
+    inn = normalize_inn(
+        value
+    )
+
+    return len(inn) in (
+        10,
+        12,
+    )
+
+
+def prepare_company_for_template(
+    company,
+):
+    """
+    Подготавливает карточку
+    для HTML-шаблона.
+
+    Настоящий Risk Engine
+    мы добавим позже.
+
+    Поэтому сейчас НЕ создаём
+    фальшивую оценку 0/100.
+    """
+
+    if company is None:
+        return None
+
+    result = dict(
+        company
+    )
+
+    result.setdefault(
+        "risk_score",
+        None,
+    )
+
+    result.setdefault(
+        "risk_level",
+        None,
+    )
+
+    result.setdefault(
+        "risk_label",
+        "Оценка пока не рассчитана",
+    )
+
+    result.setdefault(
+        "risk_factors",
+        [],
+    )
+
+    result.setdefault(
+        "phones",
+        [],
+    )
+
+    result.setdefault(
+        "emails",
+        [],
+    )
+
+    result.setdefault(
+        "websites",
+        [],
+    )
+
+    result.setdefault(
+        "branches",
+        [],
+    )
+
+    return result
+
+
+# =========================================================
+# HOME
+# =========================================================
+
+
 @app.get(
     "/",
     response_class=HTMLResponse,
 )
-def home(request: Request):
-
+async def home(
+    request: Request,
+):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "query": "",
-            "results": [],
-            "error": None,
+            "results": None,
         },
     )
+
+
+# =========================================================
+# SEARCH
+# =========================================================
 
 
 @app.get(
     "/search",
     response_class=HTMLResponse,
 )
-def search(
+async def search(
     request: Request,
     q: str = "",
 ):
-
     query = q.strip()
 
     if not query:
-
         return templates.TemplateResponse(
             request=request,
             name="index.html",
             context={
                 "query": "",
                 "results": [],
-                "error": (
-                    "Введите название компании или ИНН"
-                ),
             },
         )
 
-    # Если пользователь ввёл полный ИНН,
-    # сразу открываем карточку компании.
-    if query.isdigit() and len(query) in (10, 12):
+    # -----------------------------------------------------
+    # Если введён полный ИНН,
+    # отправляем пользователя
+    # на постоянную страницу компании.
+    # -----------------------------------------------------
 
-        company = get_company_by_inn(
+    if is_full_inn(
+        query
+    ):
+        inn = normalize_inn(
             query
         )
 
-        if company is not None:
+        return RedirectResponse(
+            url=f"/company/{inn}",
+            status_code=302,
+        )
 
-            return templates.TemplateResponse(
-                request=request,
-                name="company.html",
-                context={
-                    "company": company,
-                },
-            )
+    # -----------------------------------------------------
+    # Поиск по названию
+    # или части ИНН.
+    #
+    # Здесь внешний API
+    # вообще не используется.
+    # -----------------------------------------------------
 
-    # Если введено название или часть ИНН,
-    # показываем список результатов.
     results = search_companies(
         query=query,
-        limit=30,
+        limit=20,
     )
 
     return templates.TemplateResponse(
@@ -101,36 +284,33 @@ def search(
         context={
             "query": query,
             "results": results,
-            "error": (
-                None
-                if results
-                else "Компании не найдены"
-            ),
         },
     )
+
+
+# =========================================================
+# COMPANY PAGE
+# =========================================================
 
 
 @app.get(
     "/company/{inn}",
     response_class=HTMLResponse,
 )
-def company_page(
+async def company_page(
     request: Request,
     inn: str,
 ):
+    clean_inn = normalize_inn(
+        inn
+    )
 
-    if not inn.isdigit():
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "ИНН должен содержать "
-                "только цифры"
-            ),
-        )
-
-    if len(inn) not in (10, 12):
-
+    if len(
+        clean_inn
+    ) not in (
+        10,
+        12,
+    ):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -139,16 +319,42 @@ def company_page(
             ),
         )
 
-    company = get_company_by_inn(
-        inn
+    # -----------------------------------------------------
+    # ВАЖНО:
+    #
+    # Здесь теперь работает
+    # наш Aggregator.
+    #
+    # Для существующей компании:
+    #
+    # PostgreSQL
+    # + cached source snapshots
+    #
+    # без нового обращения
+    # к DaData.
+    #
+    # Если компании вообще нет,
+    # Aggregator может попробовать
+    # внешний источник.
+    # -----------------------------------------------------
+
+    company = get_company_for_web(
+        clean_inn
     )
 
     if company is None:
-
         raise HTTPException(
             status_code=404,
-            detail="Компания не найдена",
+            detail=(
+                "Компания не найдена"
+            ),
         )
+
+    company = (
+        prepare_company_for_template(
+            company
+        )
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -159,21 +365,27 @@ def company_page(
     )
 
 
-@app.get("/api/company/{inn}")
-def company_api(inn: str):
+# =========================================================
+# API: COMPANY
+# =========================================================
 
-    if not inn.isdigit():
 
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "ИНН должен содержать "
-                "только цифры"
-            ),
-        )
+@app.get(
+    "/api/company/{inn}",
+)
+async def api_company(
+    inn: str,
+):
+    clean_inn = normalize_inn(
+        inn
+    )
 
-    if len(inn) not in (10, 12):
-
+    if len(
+        clean_inn
+    ) not in (
+        10,
+        12,
+    ):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -182,45 +394,67 @@ def company_api(inn: str):
             ),
         )
 
-    company = get_company_by_inn(
-        inn
+    company = get_company_for_web(
+        clean_inn
     )
 
     if company is None:
-
         raise HTTPException(
             status_code=404,
-            detail="Компания не найдена",
+            detail=(
+                "Компания не найдена"
+            ),
         )
 
     return company
 
 
-@app.get("/api/search")
-def search_api(
-    q: str,
-    limit: int = 20,
+# =========================================================
+# API: SEARCH
+# =========================================================
+
+
+@app.get(
+    "/api/search",
+)
+async def api_search(
+    q: str = "",
 ):
+    query = q.strip()
 
-    if limit < 1:
-        limit = 1
+    if not query:
+        return {
+            "query": "",
+            "count": 0,
+            "results": [],
+        }
 
-    if limit > 100:
-        limit = 100
+    results = search_companies(
+        query=query,
+        limit=20,
+    )
 
     return {
-        "query": q,
-        "results": search_companies(
-            query=q,
-            limit=limit,
+        "query": query,
+        "count": len(
+            results
         ),
+        "results": results,
     }
 
 
-@app.get("/api/health")
-def health():
+# =========================================================
+# HEALTH
+# =========================================================
 
+
+@app.get(
+    "/api/health",
+)
+async def health():
     return {
         "status": "ok",
-        "service": "kontragent",
+        "version": "0.5.0",
+        "database": "postgresql",
+        "aggregator": True,
     }
