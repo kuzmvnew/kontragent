@@ -1,0 +1,190 @@
+<!-- ======================================== -->
+<!-- ФИНАНСЫ -->
+<!-- ======================================== -->
+
+<section class="card">
+
+    <h2>
+        Финансовые показатели
+    </h2>
+
+    {% if company.revenue_expense_check %}
+
+        {% if company.revenue_expense_check["result"] == "found" %}
+
+            <div class="info-grid">
+
+                <div class="info-item">
+
+                    <div class="info-label">
+                        Доходы
+                    </div>
+
+                    <div class="info-value">
+                        {{ company.revenue_expense_check["revenue"] | number }} ₽
+                    </div>
+
+                    <div>
+                        за {{ company.revenue_expense_check["data_year"] }} год
+                    </div>
+
+                </div>
+
+                <div class="info-item">
+
+                    <div class="info-label">
+                        Расходы
+                    </div>
+
+                    <div class="info-value">
+                        {{ company.revenue_expense_check["expenses"] | number }} ₽
+                    </div>
+
+                    <div>
+                        за {{ company.revenue_expense_check["data_year"] }} год
+                    </div>
+
+                </div>
+
+                <div class="info-item">
+
+                    <div class="info-label">
+                        Разница доходов и расходов
+                    </div>
+
+                    <div class="info-value">
+                        {{ company.revenue_expense_check["calculated_difference"] | number }} ₽
+                    </div>
+
+                    <div>
+                        Расчёт сервиса, не показатель чистой прибыли
+                    </div>
+
+                </div>
+
+            </div>
+
+            {% if company.revenue_expense_check["has_unusual_values"] %}
+
+                <div class="risk-placeholder">
+
+                    <div class="risk-placeholder-title">
+                        В исходных данных есть отрицательное значение
+                    </div>
+
+                    <p>
+                        Значения показаны без исправления и соответствуют
+                        опубликованному XML ФНС. Расчётная разница не должна
+                        использоваться как самостоятельная оценка компании.
+                    </p>
+
+                </div>
+
+            {% endif %}
+
+            <div class="detail-row">
+
+                <div class="detail-label">
+                    Дата состояния данных
+                </div>
+
+                <div class="detail-value">
+                    {{ company.revenue_expense_check["data_date"].strftime("%d.%m.%Y") }}
+                </div>
+
+            </div>
+
+            {% if company.revenue_expense_check["document_date"] %}
+
+                <div class="detail-row">
+
+                    <div class="detail-label">
+                        Дата документа
+                    </div>
+
+                    <div class="detail-value">
+                        {{ company.revenue_expense_check["document_date"].strftime("%d.%m.%Y") }}
+                    </div>
+
+                </div>
+
+            {% endif %}
+
+        {% elif company.revenue_expense_check["result"] == "not_found" %}
+
+            <p>
+                В опубликованном наборе ФНС за
+                {{ company.revenue_expense_check["data_year"] }} год
+                сведения по этой организации не найдены.
+            </p>
+
+            <p>
+                Это не является отрицательным выводом о компании:
+                отсутствие записи может быть связано с применимостью
+                правил публикации и составом текущего набора.
+            </p>
+
+        {% elif company.revenue_expense_check["result"] == "not_applicable" %}
+
+            <p>
+                Открытый набор REVEXP содержит сведения
+                о юридических лицах и не применяется к ИП.
+            </p>
+
+        {% else %}
+
+            <p>
+                Проверка доходов и расходов временно недоступна:
+                актуальный набор не зарегистрирован или не загружен.
+            </p>
+
+        {% endif %}
+
+    {% else %}
+
+        <p>
+            Сведения о доходах и расходах пока недоступны.
+        </p>
+
+    {% endif %}
+
+    <div class="info-grid">
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Количество сотрудников
+            </div>
+
+            <div class="info-value">
+
+                {% if company.employee_count is not none %}
+
+                    {{ company.employee_count | number }}
+
+                    {% if company.employee_count_year %}
+
+                        <div>
+                            за {{ company.employee_count_year }} год
+                        </div>
+
+                    {% endif %}
+
+                {% else %}
+
+                    Нет данных
+
+                {% endif %}
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <p>
+        Источник финансовых показателей:
+        Федеральная налоговая служба, открытый набор REVEXP.
+    </p>
+
+</section>

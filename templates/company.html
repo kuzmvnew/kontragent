@@ -388,83 +388,7 @@
             </section>
 
 
-            <!-- ======================================== -->
-            <!-- ФИНАНСЫ -->
-            <!-- ======================================== -->
-
-            <section class="card">
-
-                <h2>
-                    Финансовые показатели
-                </h2>
-
-                <div class="info-grid">
-
-                    <div class="info-item">
-
-                        <div class="info-label">
-                            Выручка
-                        </div>
-
-                        <div class="info-value">
-
-                            {% if company.revenue is not none %}
-                                {{ company.revenue | number }} ₽
-                            {% else %}
-                                Нет данных
-                            {% endif %}
-
-                        </div>
-
-                    </div>
-
-                    <div class="info-item">
-
-                        <div class="info-label">
-                            Стоимость
-                        </div>
-
-                        <div class="info-value">
-
-                            {% if company.company_value is not none %}
-                                {{ company.company_value | number }} ₽
-                            {% else %}
-                                Нет данных
-                            {% endif %}
-
-                        </div>
-
-                    </div>
-
-                    <div class="info-item">
-
-                        <div class="info-label">
-                            Количество сотрудников
-                        </div>
-
-                        <div class="info-value">
-
-                            {% if company.employee_count is not none %}
-
-                                {{ company.employee_count | number }}
-
-                                {% if company.employee_count_year %}
-                                    <div>
-                                        за {{ company.employee_count_year }} год
-                                    </div>
-                                {% endif %}
-
-                            {% else %}
-                                Нет данных
-                            {% endif %}
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-            </section>
+            {% include "partials/financials.html" %}
 
 
             <!-- ======================================== -->
@@ -1564,6 +1488,12 @@
 
                                 <span class="source-badge">
                                     ФНС — численность
+                                </span>
+
+                            {% elif source == "fns_revenue_expenses" %}
+
+                                <span class="source-badge">
+                                    ФНС — доходы и расходы
                                 </span>
 
                             {% elif source == "fns_tax_debt" %}

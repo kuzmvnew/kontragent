@@ -18,6 +18,9 @@ from app.services.company_service import (
 from app.services.headcount_service import (
     get_latest_headcount_for_company,
 )
+from app.services.revenue_expense_service import (
+    get_revenue_expense_check_for_company,
+)
 from app.services.tax_debt_service import (
     get_latest_tax_debt_for_company,
     get_tax_debt_check_for_company,
@@ -586,6 +589,16 @@ def load_structured_domain_data(
     """
 
     # -----------------------------------------------------
+    # REVENUE AND EXPENSES
+    # -----------------------------------------------------
+
+    revenue_expense_check = (
+        get_revenue_expense_check_for_company(
+            company_id=company_id
+        )
+    )
+
+    # -----------------------------------------------------
     # TAX DEBT
     # -----------------------------------------------------
 
@@ -693,6 +706,10 @@ def load_structured_domain_data(
     )
 
     return {
+        "revenue_expense_check": (
+            revenue_expense_check
+        ),
+
         "tax_debt": (
             tax_debt
         ),
@@ -1293,6 +1310,23 @@ def aggregate_company(
         )
 
         # ---------------------------------------------
+        # REVENUE AND EXPENSE SOURCE
+        # ---------------------------------------------
+
+        if check_used_source(
+            structured[
+                "revenue_expense_check"
+            ]
+        ):
+
+            append_source_once(
+                result=result,
+                source_code=(
+                    "fns_revenue_expenses"
+                ),
+            )
+
+        # ---------------------------------------------
         # TAX DEBT SOURCE
         # ---------------------------------------------
 
@@ -1350,6 +1384,10 @@ def aggregate_company(
             )
 
     else:
+
+        result[
+            "revenue_expense_check"
+        ] = None
 
         result[
             "tax_debt"
