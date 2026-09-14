@@ -184,6 +184,44 @@ DEFAULT_DATASETS = [
     },
     {
         "source_code": "fns",
+        "code": "fns_snr",
+        "name": "ФНС: Специальные налоговые режимы ЮЛ",
+        "domain": "tax_regime",
+        "update_mode": "bulk",
+        "data_format": "xml",
+        "refresh_schedule": "monthly",
+        "priority": 10,
+        "enabled": False,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-snr/"
+        ),
+        "description": (
+            "Специальные налоговые режимы "
+            "юридических лиц"
+        ),
+    },
+    {
+        "source_code": "fns",
+        "code": "fns_snrip",
+        "name": "ФНС: Специальные налоговые режимы ИП",
+        "domain": "tax_regime",
+        "update_mode": "bulk",
+        "data_format": "xml",
+        "refresh_schedule": "monthly",
+        "priority": 10,
+        "enabled": False,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-snrip/"
+        ),
+        "description": (
+            "Специальные налоговые режимы "
+            "индивидуальных предпринимателей"
+        ),
+    },
+    {
+        "source_code": "fns",
         "code": "fns_headcount",
         "name": "ФНС: Среднесписочная численность",
         "domain": "headcount",

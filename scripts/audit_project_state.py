@@ -45,6 +45,8 @@ COMPILE_FILES = [
 
 DATASET_CODES = [
     "fns_msp",
+    "fns_snr",
+    "fns_snrip",
     "fns_headcount",
     "fns_tax_debt",
     "fns_tax_offence",
