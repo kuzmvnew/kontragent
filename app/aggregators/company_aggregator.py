@@ -20,6 +20,7 @@ from app.services.headcount_service import (
 )
 from app.services.tax_debt_service import (
     get_latest_tax_debt_for_company,
+    get_tax_debt_check_for_company,
     get_tax_debt_history,
 )
 from app.services.tax_offence_service import (
@@ -83,7 +84,9 @@ PROVIDERS = {
 # =========================================================
 
 
-def has_value(value):
+def has_value(
+    value,
+):
     """
     Проверяет наличие значения.
 
@@ -94,18 +97,91 @@ def has_value(value):
     if value is None:
         return False
 
-    if isinstance(value, str):
+    if isinstance(
+        value,
+        str,
+    ):
         return bool(
             value.strip()
         )
 
     if isinstance(
         value,
-        (list, dict),
+        (
+            list,
+            dict,
+        ),
     ):
-        return bool(value)
+        return bool(
+            value
+        )
 
     return True
+
+
+def check_used_source(
+    check_result,
+):
+    """
+    Определяет, использовался ли
+    опубликованный dataset для
+    фактической проверки.
+
+    found
+        запись найдена.
+
+    not_found
+        dataset проверен,
+        запись не найдена.
+
+    not_applicable
+        источник не применяется.
+
+    unavailable
+        источник нельзя корректно
+        использовать.
+
+    В sources_used добавляем источник
+    только для found / not_found.
+    """
+
+    if not isinstance(
+        check_result,
+        dict,
+    ):
+        return False
+
+    return (
+        check_result.get(
+            "result"
+        )
+        in {
+            "found",
+            "not_found",
+        }
+    )
+
+
+def append_source_once(
+    result,
+    source_code,
+):
+    """
+    Добавляет источник в sources_used
+    без дублей.
+    """
+
+    if (
+        source_code
+        not in result[
+            "sources_used"
+        ]
+    ):
+        result[
+            "sources_used"
+        ].append(
+            source_code
+        )
 
 
 # =========================================================
@@ -117,9 +193,12 @@ def get_source_registry():
     session = get_session()
 
     try:
+
         sources = (
             session.execute(
-                select(DataSource)
+                select(
+                    DataSource
+                )
                 .order_by(
                     DataSource.priority,
                     DataSource.name,
@@ -131,9 +210,15 @@ def get_source_registry():
 
         return {
             source.code: {
-                "id": source.id,
-                "code": source.code,
-                "name": source.name,
+                "id": (
+                    source.id
+                ),
+                "code": (
+                    source.code
+                ),
+                "name": (
+                    source.name
+                ),
                 "source_type": (
                     source.source_type
                 ),
@@ -148,6 +233,7 @@ def get_source_registry():
         }
 
     finally:
+
         session.close()
 
 
@@ -165,13 +251,21 @@ def normalize_base_company(
     result = {}
 
     for field in SCALAR_FIELDS:
-        result[field] = (
-            company.get(field)
+
+        result[
+            field
+        ] = company.get(
+            field
         )
 
     for field in LIST_FIELDS:
-        result[field] = (
-            company.get(field)
+
+        result[
+            field
+        ] = (
+            company.get(
+                field
+            )
             or []
         )
 
@@ -187,22 +281,33 @@ def normalize_provider_payload(
     result = {}
 
     for field in SCALAR_FIELDS:
-        result[field] = (
-            payload.get(field)
+
+        result[
+            field
+        ] = payload.get(
+            field
         )
 
     for field in LIST_FIELDS:
 
-        value = payload.get(field)
+        value = payload.get(
+            field
+        )
 
         if isinstance(
             value,
             list,
         ):
-            result[field] = value
+
+            result[
+                field
+            ] = value
 
         else:
-            result[field] = []
+
+            result[
+                field
+            ] = []
 
     return result
 
@@ -222,6 +327,7 @@ def save_source_payload(
     session = get_session()
 
     try:
+
         now = datetime.now(
             timezone.utc
         )
@@ -229,11 +335,21 @@ def save_source_payload(
         statement = insert(
             CompanySourceData
         ).values(
-            company_id=company_id,
-            source_id=source_id,
-            normalized_payload=payload,
-            fetched_at=now,
-            status=status,
+            company_id=(
+                company_id
+            ),
+            source_id=(
+                source_id
+            ),
+            normalized_payload=(
+                payload
+            ),
+            fetched_at=(
+                now
+            ),
+            status=(
+                status
+            ),
             error_message=(
                 error_message
             ),
@@ -248,8 +364,12 @@ def save_source_payload(
                     "normalized_payload": (
                         payload
                     ),
-                    "fetched_at": now,
-                    "status": status,
+                    "fetched_at": (
+                        now
+                    ),
+                    "status": (
+                        status
+                    ),
                     "error_message": (
                         error_message
                     ),
@@ -264,10 +384,13 @@ def save_source_payload(
         session.commit()
 
     except Exception:
+
         session.rollback()
+
         raise
 
     finally:
+
         session.close()
 
 
@@ -284,6 +407,7 @@ def load_cached_source_candidates(
     session = get_session()
 
     try:
+
         snapshots = (
             session.execute(
                 select(
@@ -301,7 +425,9 @@ def load_cached_source_candidates(
         )
 
         sources_by_id = {
-            source["id"]: source
+            source[
+                "id"
+            ]: source
             for source
             in source_registry.values()
         }
@@ -330,13 +456,19 @@ def load_cached_source_candidates(
             results.append(
                 {
                     "source": (
-                        source["code"]
+                        source[
+                            "code"
+                        ]
                     ),
                     "source_id": (
-                        source["id"]
+                        source[
+                            "id"
+                        ]
                     ),
                     "priority": (
-                        source["priority"]
+                        source[
+                            "priority"
+                        ]
                     ),
                     "payload": (
                         normalize_provider_payload(
@@ -350,11 +482,12 @@ def load_cached_source_candidates(
         return results
 
     finally:
+
         session.close()
 
 
 # =========================================================
-# DOMAIN DATASETS
+# SIMPLE DOMAIN DATASETS
 # =========================================================
 
 
@@ -369,10 +502,11 @@ def load_domain_candidates(
     Сейчас:
     - FNS headcount
 
-    Сложные объекты:
+    Сложные проверки:
+
     - налоговая задолженность
     - налоговые правонарушения
-    - уплаченные налоги и платежи
+    - уплаченные налоги
 
     загружаются отдельно.
     """
@@ -418,37 +552,71 @@ def load_domain_candidates(
     return candidates
 
 
+# =========================================================
+# STRUCTURED DOMAIN DATA
+# =========================================================
+
+
 def load_structured_domain_data(
     company_id,
 ):
     """
-    Сложные domain objects,
-    которые не смешиваются
-    с обычными scalar fields.
+    Сложные domain objects.
 
-    Сейчас:
-    - налоговая задолженность
-    - история задолженности
-    - налоговые правонарушения
-    - история налоговых правонарушений
-    - уплаченные налоги и платежи
-    - история уплаченных налогов
+    ВАЖНО:
+
+    tax_debt
+        пока сохраняется как legacy-поле
+        для существующего company.html.
+
+    tax_debt_check
+        новый стандартизированный
+        Data Contract.
+
+    После перевода HTML на новый контракт
+    legacy-поле можно будет удалить.
+
+    Для PAYTAX и TaxOffence также
+    формируем *_check aliases.
+
+    Это позволяет Risk Engine в будущем
+    работать с единообразными названиями,
+    не ломая текущий UI.
     """
 
     # -----------------------------------------------------
     # TAX DEBT
     # -----------------------------------------------------
 
+    tax_debt_check = (
+        get_tax_debt_check_for_company(
+            company_id=(
+                company_id
+            ),
+            include_items=True,
+        )
+    )
+
+    # Старое поведение для текущего HTML:
+    #
+    # found       -> объект
+    # not_found   -> None
+    # IP          -> None
+    # unavailable -> None
     tax_debt = (
         get_latest_tax_debt_for_company(
-            company_id=company_id,
+            company_id=(
+                company_id
+            ),
             include_items=True,
         )
     )
 
     tax_debt_history = (
         get_tax_debt_history(
-            company_id=company_id,
+            company_id=(
+                company_id
+            ),
             limit=24,
         )
     )
@@ -459,15 +627,26 @@ def load_structured_domain_data(
 
     tax_offence = (
         get_latest_tax_offence_for_company(
-            company_id=company_id,
+            company_id=(
+                company_id
+            ),
         )
     )
 
     tax_offence_history = (
         get_tax_offence_history(
-            company_id=company_id,
+            company_id=(
+                company_id
+            ),
             limit=20,
         )
+    )
+
+    # Пока TaxOffence cleanup
+    # ещё впереди, alias просто
+    # указывает на текущий результат.
+    tax_offence_check = (
+        tax_offence
     )
 
     # -----------------------------------------------------
@@ -476,33 +655,59 @@ def load_structured_domain_data(
 
     tax_payment = (
         get_latest_tax_payment_for_company(
-            company_id=company_id,
+            company_id=(
+                company_id
+            ),
         )
     )
 
     tax_payment_history = (
         get_tax_payment_history(
-            company_id=company_id,
+            company_id=(
+                company_id
+            ),
             limit=10,
         )
+    )
+
+    # PAYTAX уже стандартизирован.
+    tax_payment_check = (
+        tax_payment
     )
 
     return {
         "tax_debt": (
             tax_debt
         ),
+
+        "tax_debt_check": (
+            tax_debt_check
+        ),
+
         "tax_debt_history": (
             tax_debt_history
         ),
+
         "tax_offence": (
             tax_offence
         ),
+
+        "tax_offence_check": (
+            tax_offence_check
+        ),
+
         "tax_offence_history": (
             tax_offence_history
         ),
+
         "tax_payment": (
             tax_payment
         ),
+
+        "tax_payment_check": (
+            tax_payment_check
+        ),
+
         "tax_payment_history": (
             tax_payment_history
         ),
@@ -525,7 +730,9 @@ def fetch_external_sources(
         source,
     ) in source_registry.items():
 
-        if not source["enabled"]:
+        if not source[
+            "enabled"
+        ]:
             continue
 
         provider_class = (
@@ -538,6 +745,7 @@ def fetch_external_sources(
             continue
 
         try:
+
             provider = (
                 provider_class()
             )
@@ -563,10 +771,14 @@ def fetch_external_sources(
                         source_code
                     ),
                     "source_id": (
-                        source["id"]
+                        source[
+                            "id"
+                        ]
                     ),
                     "priority": (
-                        source["priority"]
+                        source[
+                            "priority"
+                        ]
                     ),
                     "payload": (
                         normalized
@@ -583,13 +795,19 @@ def fetch_external_sources(
                         source_code
                     ),
                     "source_id": (
-                        source["id"]
+                        source[
+                            "id"
+                        ]
                     ),
                     "priority": (
-                        source["priority"]
+                        source[
+                            "priority"
+                        ]
                     ),
                     "payload": None,
-                    "error": str(error),
+                    "error": str(
+                        error
+                    ),
                 }
             )
 
@@ -615,7 +833,9 @@ def merge_candidates(
     candidates = sorted(
         candidates,
         key=lambda item: (
-            item["priority"]
+            item[
+                "priority"
+            ]
         ),
     )
 
@@ -626,22 +846,30 @@ def merge_candidates(
     sources_used = []
 
     for field in LIST_FIELDS:
-        merged[field] = []
+
+        merged[
+            field
+        ] = []
 
     for candidate in candidates:
 
         source_code = (
-            candidate["source"]
+            candidate[
+                "source"
+            ]
         )
 
         payload = (
-            candidate["payload"]
+            candidate[
+                "payload"
+            ]
         )
 
         if (
             source_code
             not in sources_used
         ):
+
             sources_used.append(
                 source_code
             )
@@ -652,12 +880,16 @@ def merge_candidates(
 
         for field in SCALAR_FIELDS:
 
-            value = payload.get(
-                field
+            value = (
+                payload.get(
+                    field
+                )
             )
 
             current_value = (
-                merged.get(field)
+                merged.get(
+                    field
+                )
             )
 
             if (
@@ -669,9 +901,9 @@ def merge_candidates(
                 )
             ):
 
-                merged[field] = (
-                    value
-                )
+                merged[
+                    field
+                ] = value
 
                 field_sources[
                     field
@@ -684,7 +916,9 @@ def merge_candidates(
         for field in LIST_FIELDS:
 
             values = (
-                payload.get(field)
+                payload.get(
+                    field
+                )
                 or []
             )
 
@@ -692,7 +926,9 @@ def merge_candidates(
 
                 if (
                     value
-                    not in merged[field]
+                    not in merged[
+                        field
+                    ]
                 ):
 
                     merged[
@@ -714,7 +950,10 @@ def merge_candidates(
     for field in SCALAR_FIELDS:
 
         if field not in merged:
-            merged[field] = None
+
+            merged[
+                field
+            ] = None
 
     merged[
         "field_sources"
@@ -777,7 +1016,9 @@ def aggregate_company(
     if base_company is not None:
 
         company_id = (
-            base_company["id"]
+            base_company[
+                "id"
+            ]
         )
 
         base_source_code = (
@@ -794,7 +1035,9 @@ def aggregate_company(
         )
 
         priority = (
-            source_info["priority"]
+            source_info[
+                "priority"
+            ]
             if source_info
             else 100
         )
@@ -833,7 +1076,9 @@ def aggregate_company(
         ):
 
             candidates_by_source[
-                candidate["source"]
+                candidate[
+                    "source"
+                ]
             ] = candidate
 
     # =====================================================
@@ -853,7 +1098,9 @@ def aggregate_company(
         ):
 
             candidates_by_source[
-                candidate["source"]
+                candidate[
+                    "source"
+                ]
             ] = candidate
 
     # =====================================================
@@ -869,18 +1116,18 @@ def aggregate_company(
             )
         )
 
-        for result in (
+        for external_result in (
             external_results
         ):
 
             payload = (
-                result.get(
+                external_result.get(
                     "payload"
                 )
             )
 
             error = (
-                result.get(
+                external_result.get(
                     "error"
                 )
             )
@@ -916,11 +1163,17 @@ def aggregate_company(
                         company_id=(
                             company_id
                         ),
-                        source_id=result[
-                            "source_id"
-                        ],
-                        payload=payload,
-                        status="success",
+                        source_id=(
+                            external_result[
+                                "source_id"
+                            ]
+                        ),
+                        payload=(
+                            payload
+                        ),
+                        status=(
+                            "success"
+                        ),
                     )
 
                 elif error:
@@ -929,24 +1182,34 @@ def aggregate_company(
                         company_id=(
                             company_id
                         ),
-                        source_id=result[
-                            "source_id"
-                        ],
+                        source_id=(
+                            external_result[
+                                "source_id"
+                            ]
+                        ),
                         payload={},
-                        status="error",
-                        error_message=error,
+                        status=(
+                            "error"
+                        ),
+                        error_message=(
+                            error
+                        ),
                     )
 
             if payload is not None:
 
                 candidates_by_source[
-                    result["source"]
+                    external_result[
+                        "source"
+                    ]
                 ] = {
                     "source": (
-                        result["source"]
+                        external_result[
+                            "source"
+                        ]
                     ),
                     "priority": (
-                        result[
+                        external_result[
                             "priority"
                         ]
                     ),
@@ -968,7 +1231,9 @@ def aggregate_company(
             ):
 
                 candidates_by_source[
-                    candidate["source"]
+                    candidate[
+                        "source"
+                    ]
                 ] = candidate
 
     # =====================================================
@@ -982,9 +1247,11 @@ def aggregate_company(
     # 6. MERGE
     # =====================================================
 
-    result = merge_candidates(
-        list(
-            candidates_by_source.values()
+    result = (
+        merge_candidates(
+            list(
+                candidates_by_source.values()
+            )
         )
     )
 
@@ -994,9 +1261,9 @@ def aggregate_company(
 
     if company_id is not None:
 
-        result["id"] = (
-            company_id
-        )
+        result[
+            "id"
+        ] = company_id
 
         structured = (
             load_structured_domain_data(
@@ -1012,69 +1279,67 @@ def aggregate_company(
         # TAX DEBT SOURCE
         # ---------------------------------------------
 
-        if (
+        if check_used_source(
             structured[
-                "tax_debt"
-            ]
-            is not None
-            and "fns_tax_debt"
-            not in result[
-                "sources_used"
+                "tax_debt_check"
             ]
         ):
 
-            result[
-                "sources_used"
-            ].append(
-                "fns_tax_debt"
+            append_source_once(
+                result=(
+                    result
+                ),
+                source_code=(
+                    "fns_tax_debt"
+                ),
             )
 
         # ---------------------------------------------
         # TAX OFFENCE SOURCE
         # ---------------------------------------------
 
-        if (
+        if check_used_source(
             structured[
-                "tax_offence"
-            ]
-            is not None
-            and "fns_tax_offence"
-            not in result[
-                "sources_used"
+                "tax_offence_check"
             ]
         ):
 
-            result[
-                "sources_used"
-            ].append(
-                "fns_tax_offence"
+            append_source_once(
+                result=(
+                    result
+                ),
+                source_code=(
+                    "fns_tax_offence"
+                ),
             )
 
         # ---------------------------------------------
         # TAX PAYMENT SOURCE
         # ---------------------------------------------
 
-        if (
+        if check_used_source(
             structured[
-                "tax_payment"
-            ]
-            is not None
-            and "fns_tax_paid"
-            not in result[
-                "sources_used"
+                "tax_payment_check"
             ]
         ):
 
-            result[
-                "sources_used"
-            ].append(
-                "fns_tax_paid"
+            append_source_once(
+                result=(
+                    result
+                ),
+                source_code=(
+                    "fns_tax_paid"
+                ),
             )
 
     else:
 
         result[
             "tax_debt"
+        ] = None
+
+        result[
+            "tax_debt_check"
         ] = None
 
         result[
@@ -1086,11 +1351,19 @@ def aggregate_company(
         ] = None
 
         result[
+            "tax_offence_check"
+        ] = None
+
+        result[
             "tax_offence_history"
         ] = []
 
         result[
             "tax_payment"
+        ] = None
+
+        result[
+            "tax_payment_check"
         ] = None
 
         result[
@@ -1118,15 +1391,21 @@ def get_company_for_web(
     в нашей локальной базе.
     """
 
-    company = aggregate_company(
-        inn=inn,
-        refresh_external=False,
+    company = (
+        aggregate_company(
+            inn=(
+                inn
+            ),
+            refresh_external=False,
+        )
     )
 
     if company is not None:
         return company
 
     return aggregate_company(
-        inn=inn,
+        inn=(
+            inn
+        ),
         refresh_external=True,
     )
