@@ -9,9 +9,13 @@ from app.models.source import DataSet
 from app.models.tax_payment import (
     CompanyTaxPaymentSnapshot,
 )
+from app.services.check_result import (
+    build_check_result,
+)
 
 
 DATASET_CODE = "fns_tax_paid"
+SOURCE_CODE = "fns_tax_paid"
 
 ZERO = Decimal("0.00")
 
@@ -58,6 +62,25 @@ def _get_dataset_data_date(
     )
 
 
+def _empty_payment_payload():
+    return {
+        "has_data": False,
+        "data_year": None,
+        "document_date": None,
+        "source_document_id": None,
+        "source_company_name": None,
+        "total_amount": ZERO,
+        "tax_amount": ZERO,
+        "insurance_amount": ZERO,
+        "penalty_amount": ZERO,
+        "non_tax_amount": ZERO,
+        "other_amount": ZERO,
+        "source_item_count": 0,
+        "stored_item_count": 0,
+        "items": [],
+    }
+
+
 def _item_to_dict(
     item,
 ):
@@ -67,15 +90,9 @@ def _item_to_dict(
     """
 
     return {
-        "tax_name": (
-            item.tax_name
-        ),
-        "payment_type": (
-            item.payment_type
-        ),
-        "amount": (
-            item.amount
-        ),
+        "tax_name": item.tax_name,
+        "payment_type": item.payment_type,
+        "amount": item.amount,
     }
 
 
@@ -84,129 +101,66 @@ def _snapshot_to_dict(
 ):
     """
     Преобразует PAYTAX snapshot
-    в структуру для Aggregator/UI.
+    в единый check-result для Aggregator/UI.
     """
 
     items = sorted(
         (
-            _item_to_dict(
-                item
-            )
+            _item_to_dict(item)
             for item in snapshot.items
         ),
-        key=lambda item: (
-            item["amount"]
-        ),
+        key=lambda item: item["amount"],
         reverse=True,
     )
 
-    return {
-        "checked": True,
-        "applicable": True,
-        "has_data": True,
-        "result": "found",
-
-        "data_date": (
-            snapshot.data_date
-        ),
-
-        "data_year": (
-            snapshot.data_year
-        ),
-
-        "document_date": (
-            snapshot.document_date
-        ),
-
-        "source_document_id": (
-            snapshot.source_document_id
-        ),
-
-        "source_company_name": (
-            snapshot.source_company_name
-        ),
-
-        "total_amount": (
-            snapshot.total_amount
-        ),
-
-        "tax_amount": (
-            snapshot.tax_amount
-        ),
-
-        "insurance_amount": (
-            snapshot.insurance_amount
-        ),
-
-        "penalty_amount": (
-            snapshot.penalty_amount
-        ),
-
-        "non_tax_amount": (
-            snapshot.non_tax_amount
-        ),
-
-        "other_amount": (
-            snapshot.other_amount
-        ),
-
-        "source_item_count": (
-            snapshot.source_item_count
-        ),
-
-        "stored_item_count": (
-            snapshot.stored_item_count
-        ),
-
-        "items": (
-            items
-        ),
-
-        "dataset_code": (
-            DATASET_CODE
-        ),
-
-        "source": (
-            "fns_tax_paid"
-        ),
-    }
+    return build_check_result(
+        checked=True,
+        applicable=True,
+        result="found",
+        data_date=snapshot.data_date,
+        dataset_code=DATASET_CODE,
+        source=SOURCE_CODE,
+        reason=None,
+        has_data=True,
+        data_year=snapshot.data_year,
+        document_date=snapshot.document_date,
+        source_document_id=snapshot.source_document_id,
+        source_company_name=snapshot.source_company_name,
+        total_amount=snapshot.total_amount,
+        tax_amount=snapshot.tax_amount,
+        insurance_amount=snapshot.insurance_amount,
+        penalty_amount=snapshot.penalty_amount,
+        non_tax_amount=snapshot.non_tax_amount,
+        other_amount=snapshot.other_amount,
+        source_item_count=snapshot.source_item_count,
+        stored_item_count=snapshot.stored_item_count,
+        items=items,
+    )
 
 
 def get_latest_tax_payment_for_company(
     company_id: int,
 ):
     """
-    Возвращает результат проверки PAYTAX
-    по последнему загруженному набору ФНС.
+    Возвращает PAYTAX в едином контракте.
 
-    Возможные ситуации:
-
-    1. Юридическое лицо есть в PAYTAX:
-       result = "found"
-
-    2. Юридическое лицо проверено,
-       но записи в текущем опубликованном
-       наборе PAYTAX нет:
-       result = "not_found"
-
-    3. ИП:
-       PAYTAX в текущей структуре содержит
-       ИННЮЛ, поэтому возвращаем None.
+    result:
+        found
+        not_found
+        not_applicable
+        unavailable
 
     ВАЖНО:
 
-    not_found не означает:
-        "организация не платила налоги".
-
-    Это означает только:
-        "в текущем загруженном опубликованном
-        наборе ФНС запись не найдена".
+    not_found не означает, что организация
+    не платила налоги. Это означает только,
+    что в актуальном опубликованном наборе
+    PAYTAX запись не найдена.
     """
 
     session = get_session()
 
     try:
-
         company = (
             session.execute(
                 select(
@@ -215,8 +169,7 @@ def get_latest_tax_payment_for_company(
                     Company.entity_type,
                 )
                 .where(
-                    Company.id
-                    == company_id
+                    Company.id == company_id
                 )
             )
             .mappings()
@@ -224,35 +177,58 @@ def get_latest_tax_payment_for_company(
         )
 
         if company is None:
-            return None
+            return build_check_result(
+                checked=False,
+                applicable=None,
+                result="unavailable",
+                data_date=None,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason="company_not_found",
+                **_empty_payment_payload(),
+            )
 
         inn = str(
-            company["inn"]
-            or ""
+            company["inn"] or ""
         ).strip()
 
-        # PAYTAX содержит ИННЮЛ.
+        # Текущий PAYTAX содержит ИННЮЛ.
         if (
             len(inn) != 10
             or not inn.isdigit()
         ):
-            return None
+            return build_check_result(
+                checked=True,
+                applicable=False,
+                result="not_applicable",
+                data_date=None,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason="legal_entities_only",
+                **_empty_payment_payload(),
+            )
 
         dataset = (
             session.execute(
-                select(
-                    DataSet
-                )
+                select(DataSet)
                 .where(
-                    DataSet.code
-                    == DATASET_CODE
+                    DataSet.code == DATASET_CODE
                 )
             )
             .scalar_one_or_none()
         )
 
         if dataset is None:
-            return None
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=None,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason="dataset_not_registered",
+                **_empty_payment_payload(),
+            )
 
         dataset_data_date = (
             _get_dataset_data_date(
@@ -262,7 +238,16 @@ def get_latest_tax_payment_for_company(
         )
 
         if dataset_data_date is None:
-            return None
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=None,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason="dataset_not_loaded",
+                **_empty_payment_payload(),
+            )
 
         snapshot = (
             session.execute(
@@ -287,52 +272,23 @@ def get_latest_tax_payment_for_company(
         )
 
         if snapshot is None:
+            empty = _empty_payment_payload()
+            empty["data_year"] = dataset_data_date.year
 
-            return {
-                "checked": True,
-                "applicable": True,
-                "has_data": False,
-                "result": "not_found",
+            return build_check_result(
+                checked=True,
+                applicable=True,
+                result="not_found",
+                data_date=dataset_data_date,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason=None,
+                **empty,
+            )
 
-                "data_date": (
-                    dataset_data_date
-                ),
-
-                "data_year": (
-                    dataset_data_date.year
-                ),
-
-                "document_date": None,
-                "source_document_id": None,
-                "source_company_name": None,
-
-                "total_amount": ZERO,
-                "tax_amount": ZERO,
-                "insurance_amount": ZERO,
-                "penalty_amount": ZERO,
-                "non_tax_amount": ZERO,
-                "other_amount": ZERO,
-
-                "source_item_count": 0,
-                "stored_item_count": 0,
-
-                "items": [],
-
-                "dataset_code": (
-                    DATASET_CODE
-                ),
-
-                "source": (
-                    "fns_tax_paid"
-                ),
-            }
-
-        return _snapshot_to_dict(
-            snapshot
-        )
+        return _snapshot_to_dict(snapshot)
 
     finally:
-
         session.close()
 
 
@@ -343,20 +299,11 @@ def get_tax_payment_history(
     """
     Возвращает историю PAYTAX компании
     по годам.
-
-    Сейчас загружен только 2025 год,
-    но модель уже готова к:
-
-    2024
-    2025
-    2026
-    ...
     """
 
     session = get_session()
 
     try:
-
         snapshots = (
             session.execute(
                 select(
@@ -375,21 +322,16 @@ def get_tax_payment_history(
                     CompanyTaxPaymentSnapshot.data_date.desc(),
                     CompanyTaxPaymentSnapshot.id.desc(),
                 )
-                .limit(
-                    limit
-                )
+                .limit(limit)
             )
             .scalars()
             .all()
         )
 
         return [
-            _snapshot_to_dict(
-                snapshot
-            )
+            _snapshot_to_dict(snapshot)
             for snapshot in snapshots
         ]
 
     finally:
-
         session.close()
