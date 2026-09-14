@@ -26,6 +26,10 @@ from app.services.tax_offence_service import (
     get_latest_tax_offence_for_company,
     get_tax_offence_history,
 )
+from app.services.tax_payment_service import (
+    get_latest_tax_payment_for_company,
+    get_tax_payment_history,
+)
 
 
 # =========================================================
@@ -365,10 +369,12 @@ def load_domain_candidates(
     Сейчас:
     - FNS headcount
 
-    Налоговая задолженность и
-    налоговые правонарушения
-    являются самостоятельными
-    сложными объектами.
+    Сложные объекты:
+    - налоговая задолженность
+    - налоговые правонарушения
+    - уплаченные налоги и платежи
+
+    загружаются отдельно.
     """
 
     candidates = []
@@ -425,6 +431,8 @@ def load_structured_domain_data(
     - история задолженности
     - налоговые правонарушения
     - история налоговых правонарушений
+    - уплаченные налоги и платежи
+    - история уплаченных налогов
     """
 
     # -----------------------------------------------------
@@ -462,6 +470,23 @@ def load_structured_domain_data(
         )
     )
 
+    # -----------------------------------------------------
+    # TAX PAYMENTS
+    # -----------------------------------------------------
+
+    tax_payment = (
+        get_latest_tax_payment_for_company(
+            company_id=company_id,
+        )
+    )
+
+    tax_payment_history = (
+        get_tax_payment_history(
+            company_id=company_id,
+            limit=10,
+        )
+    )
+
     return {
         "tax_debt": (
             tax_debt
@@ -474,6 +499,12 @@ def load_structured_domain_data(
         ),
         "tax_offence_history": (
             tax_offence_history
+        ),
+        "tax_payment": (
+            tax_payment
+        ),
+        "tax_payment_history": (
+            tax_payment_history
         ),
     }
 
@@ -717,6 +748,7 @@ def aggregate_company(
     - FNS headcount
     - FNS tax debt
     - FNS tax offence
+    - FNS tax payments
     - optional external API refresh
     """
 
@@ -1018,6 +1050,27 @@ def aggregate_company(
                 "fns_tax_offence"
             )
 
+        # ---------------------------------------------
+        # TAX PAYMENT SOURCE
+        # ---------------------------------------------
+
+        if (
+            structured[
+                "tax_payment"
+            ]
+            is not None
+            and "fns_tax_paid"
+            not in result[
+                "sources_used"
+            ]
+        ):
+
+            result[
+                "sources_used"
+            ].append(
+                "fns_tax_paid"
+            )
+
     else:
 
         result[
@@ -1034,6 +1087,14 @@ def aggregate_company(
 
         result[
             "tax_offence_history"
+        ] = []
+
+        result[
+            "tax_payment"
+        ] = None
+
+        result[
+            "tax_payment_history"
         ] = []
 
     return result

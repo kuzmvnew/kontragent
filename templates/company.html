@@ -15,7 +15,7 @@
 
     <meta
         name="description"
-        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели, налоговая задолженность, налоговые правонарушения и сведения о компании."
+        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели, налоговая задолженность, уплаченные налоги и сведения о компании."
     >
 
     <link
@@ -1020,6 +1020,362 @@
             {% endif %}
 
 
+
+            <!-- ======================================== -->
+            <!-- УПЛАЧЕННЫЕ НАЛОГИ И ПЛАТЕЖИ -->
+            <!-- ======================================== -->
+
+            {% if company.tax_payment %}
+
+                <section class="card">
+
+                    <h2>
+                        Уплаченные налоги и платежи
+                    </h2>
+
+
+                    {% if company.tax_payment["has_data"] %}
+
+                        {% if company.tax_payment["total_amount"] > 0 %}
+
+                            <div class="risk-placeholder">
+
+                                <div class="risk-placeholder-title">
+                                    Сведения ФНС за {{ company.tax_payment["data_year"] }} год найдены
+                                </div>
+
+                                <p>
+                                    В опубликованном наборе ФНС
+                                    содержатся сведения об уплаченных
+                                    налогах и иных учтённых платежах организации.
+                                </p>
+
+                            </div>
+
+                        {% else %}
+
+                            <div class="risk-placeholder">
+
+                                <div class="risk-placeholder-title">
+                                    Сведения ФНС за {{ company.tax_payment["data_year"] }} год найдены
+                                </div>
+
+                                <p>
+                                    По опубликованным сведениям ФНС
+                                    сумма учтённых платежей за указанный
+                                    период составляет 0 ₽.
+                                </p>
+
+                            </div>
+
+                        {% endif %}
+
+
+                        <div class="info-grid">
+
+                            <div class="info-item">
+
+                                <div class="info-label">
+                                    Всего учтённых платежей
+                                </div>
+
+                                <div class="info-value">
+                                    {{ money(company.tax_payment["total_amount"]) }} ₽
+                                </div>
+
+                            </div>
+
+
+                            <div class="info-item">
+
+                                <div class="info-label">
+                                    Налоги
+                                </div>
+
+                                <div class="info-value">
+                                    {{ money(company.tax_payment["tax_amount"]) }} ₽
+                                </div>
+
+                            </div>
+
+
+                            <div class="info-item">
+
+                                <div class="info-label">
+                                    Страховые взносы
+                                </div>
+
+                                <div class="info-value">
+                                    {{ money(company.tax_payment["insurance_amount"]) }} ₽
+                                </div>
+
+                            </div>
+
+
+                            <div class="info-item">
+
+                                <div class="info-label">
+                                    Пени
+                                </div>
+
+                                <div class="info-value">
+                                    {{ money(company.tax_payment["penalty_amount"]) }} ₽
+                                </div>
+
+                            </div>
+
+
+                            <div class="info-item">
+
+                                <div class="info-label">
+                                    Неналоговые платежи
+                                </div>
+
+                                <div class="info-value">
+                                    {{ money(company.tax_payment["non_tax_amount"]) }} ₽
+                                </div>
+
+                            </div>
+
+
+                            {% if company.tax_payment["other_amount"] > 0 %}
+
+                                <div class="info-item">
+
+                                    <div class="info-label">
+                                        Прочие учтённые платежи
+                                    </div>
+
+                                    <div class="info-value">
+                                        {{ money(company.tax_payment["other_amount"]) }} ₽
+                                    </div>
+
+                                </div>
+
+                            {% endif %}
+
+                        </div>
+
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Период сведений
+                            </div>
+
+                            <div class="detail-value">
+                                {{ company.tax_payment["data_year"] }} год
+                            </div>
+
+                        </div>
+
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Дата состояния сведений
+                            </div>
+
+                            <div class="detail-value">
+
+                                {% if company.tax_payment["data_date"] %}
+
+                                    {{ company.tax_payment["data_date"].strftime("%d.%m.%Y") }}
+
+                                {% else %}
+
+                                    —
+
+                                {% endif %}
+
+                            </div>
+
+                        </div>
+
+
+                        {% if company.tax_payment["document_date"] %}
+
+                            <div class="detail-row">
+
+                                <div class="detail-label">
+                                    Дата публикации документа
+                                </div>
+
+                                <div class="detail-value">
+                                    {{ company.tax_payment["document_date"].strftime("%d.%m.%Y") }}
+                                </div>
+
+                            </div>
+
+                        {% endif %}
+
+
+                        {% if company.tax_payment["items"] %}
+
+                            <h2>
+                                Детализация платежей
+                            </h2>
+
+                            {% for payment_item in company.tax_payment["items"] %}
+
+                                <div class="detail-row">
+
+                                    <div class="detail-label">
+                                        {{ payment_item["tax_name"] }}
+                                    </div>
+
+                                    <div class="detail-value">
+
+                                        <strong>
+                                            {{ money(payment_item["amount"]) }} ₽
+                                        </strong>
+
+                                        <div>
+                                            {% if payment_item["payment_type"] == "tax" %}
+                                                Налог
+                                            {% elif payment_item["payment_type"] == "insurance" %}
+                                                Страховой взнос
+                                            {% elif payment_item["payment_type"] == "penalty" %}
+                                                Пени
+                                            {% elif payment_item["payment_type"] == "non_tax" %}
+                                                Неналоговый платёж
+                                            {% else %}
+                                                Прочий платёж
+                                            {% endif %}
+                                        </div>
+
+                                    </div>
+
+                                </div>
+
+                            {% endfor %}
+
+                        {% endif %}
+
+
+                        {% if company.tax_payment_history and company.tax_payment_history | length > 1 %}
+
+                            <h2>
+                                История платежей
+                            </h2>
+
+                            {% for payment_snapshot in company.tax_payment_history %}
+
+                                <div class="detail-row">
+
+                                    <div class="detail-label">
+
+                                        {% if payment_snapshot["data_year"] %}
+
+                                            {{ payment_snapshot["data_year"] }} год
+
+                                        {% elif payment_snapshot["data_date"] %}
+
+                                            {{ payment_snapshot["data_date"].strftime("%d.%m.%Y") }}
+
+                                        {% else %}
+
+                                            Период не указан
+
+                                        {% endif %}
+
+                                    </div>
+
+                                    <div class="detail-value">
+
+                                        <strong>
+                                            {{ money(payment_snapshot["total_amount"]) }} ₽
+                                        </strong>
+
+                                    </div>
+
+                                </div>
+
+                            {% endfor %}
+
+                        {% endif %}
+
+                    {% else %}
+
+                        <div class="risk-placeholder">
+
+                            <div class="risk-placeholder-title">
+                                Сведения об уплаченных налогах и платежах не найдены
+                            </div>
+
+                            <p>
+                                В текущем опубликованном наборе ФНС
+                                на указанную дату сведения об организации
+                                не обнаружены.
+                            </p>
+
+                        </div>
+
+
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Дата состояния набора
+                            </div>
+
+                            <div class="detail-value">
+
+                                {% if company.tax_payment["data_date"] %}
+
+                                    {{ company.tax_payment["data_date"].strftime("%d.%m.%Y") }}
+
+                                {% else %}
+
+                                    —
+
+                                {% endif %}
+
+                            </div>
+
+                        </div>
+
+                    {% endif %}
+
+
+                    <div class="detail-row">
+
+                        <div class="detail-label">
+                            Результат проверки
+                        </div>
+
+                        <div class="detail-value">
+
+                            {% if company.tax_payment["has_data"] %}
+
+                                Сведения найдены
+
+                            {% else %}
+
+                                Сведения не найдены
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+
+                    <p>
+                        Источник: Федеральная налоговая служба.
+                    </p>
+
+                    <p>
+                        Блок сформирован по открытому набору ФНС
+                        об уплаченных налогах и иных платежах.
+                        Отсутствие записи относится только к указанному
+                        опубликованному набору и периоду сведений.
+                    </p>
+
+                </section>
+
+            {% endif %}
+
+
             <!-- ======================================== -->
             <!-- КОНТАКТЫ -->
             <!-- ======================================== -->
@@ -1222,6 +1578,12 @@
 
                                 <span class="source-badge">
                                     ФНС — налоговые правонарушения
+                                </span>
+
+                            {% elif source == "fns_tax_paid" %}
+
+                                <span class="source-badge">
+                                    ФНС — уплаченные налоги
                                 </span>
 
                             {% elif source == "girbo" %}
