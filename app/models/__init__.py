@@ -12,6 +12,9 @@ from app.models.headcount import (
 from app.models.msp import (
     CompanyMspProfile,
 )
+from app.models.revenue_expense import (
+    CompanyRevenueExpenseSnapshot,
+)
 from app.models.source import (
     CompanySourceData,
     DataSet,
@@ -40,6 +43,7 @@ __all__ = [
     "CompanyIdentifier",
     "CompanyManager",
     "CompanyMspProfile",
+    "CompanyRevenueExpenseSnapshot",
     "CompanySourceData",
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
