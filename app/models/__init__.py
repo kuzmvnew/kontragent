@@ -25,6 +25,10 @@ from app.models.tax_debt import (
 from app.models.tax_offence import (
     CompanyTaxOffence,
 )
+from app.models.tax_payment import (
+    CompanyTaxPaymentItem,
+    CompanyTaxPaymentSnapshot,
+)
 
 
 __all__ = [
@@ -40,6 +44,8 @@ __all__ = [
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
     "CompanyTaxOffence",
+    "CompanyTaxPaymentItem",
+    "CompanyTaxPaymentSnapshot",
     "DataSet",
     "DataSource",
     "IngestionRun",
