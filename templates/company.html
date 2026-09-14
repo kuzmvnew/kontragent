@@ -14,7 +14,7 @@
 
     <meta
         name="description"
-        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели, налоговая задолженность, уплаченные налоги и сведения о компании."
+        content="Проверка контрагента {{ company.name }}{% if company.inn %}, ИНН {{ company.inn }}{% endif %}. Реквизиты, руководитель, финансовые показатели, налоговая задолженность, налоговые правонарушения, уплаченные налоги и сведения о компании."
     >
 
     <link
@@ -191,69 +191,49 @@
                 <div class="info-grid">
 
                     <div class="info-item">
-
                         <div class="info-label">
                             ИНН
                         </div>
-
                         <div class="info-value">
                             {{ company.inn or "—" }}
                         </div>
-
                     </div>
 
-
                     <div class="info-item">
-
                         <div class="info-label">
                             КПП
                         </div>
-
                         <div class="info-value">
                             {{ company.kpp or "—" }}
                         </div>
-
                     </div>
 
-
                     <div class="info-item">
-
                         <div class="info-label">
                             ОГРН / ОГРНИП
                         </div>
-
                         <div class="info-value">
                             {{ company.ogrn or "—" }}
                         </div>
-
                     </div>
 
-
                     <div class="info-item">
-
                         <div class="info-label">
                             ОКПО
                         </div>
-
                         <div class="info-value">
                             {{ company.okpo or "—" }}
                         </div>
-
                     </div>
 
-
                     <div class="info-item">
-
                         <div class="info-label">
                             ОКВЭД
                         </div>
-
                         <div class="info-value">
                             {{ company.okved or "—" }}
                         </div>
-
                     </div>
-
 
                     <div class="info-item">
 
@@ -264,17 +244,11 @@
                         <div class="info-value">
 
                             {% if company.status == "ACTIVE" %}
-
                                 Действующая
-
                             {% elif company.status %}
-
                                 {{ company.status }}
-
                             {% else %}
-
                                 —
-
                             {% endif %}
 
                         </div>
@@ -296,96 +270,72 @@
                     О компании
                 </h2>
 
-
                 {% if company.full_name %}
 
                     <div class="detail-row">
-
                         <div class="detail-label">
                             Полное наименование
                         </div>
-
                         <div class="detail-value">
                             {{ company.full_name }}
                         </div>
-
                     </div>
 
                 {% endif %}
 
-
                 <div class="detail-row">
-
                     <div class="detail-label">
                         Адрес
                     </div>
-
                     <div class="detail-value">
                         {{ company.address or "Нет данных" }}
                     </div>
-
                 </div>
 
-
                 <div class="detail-row">
-
                     <div class="detail-label">
                         Основной вид деятельности
                     </div>
-
                     <div class="detail-value">
                         {{ company.activity or "Нет данных" }}
                     </div>
-
                 </div>
-
 
                 {% if company.okved %}
 
                     <div class="detail-row">
-
                         <div class="detail-label">
                             Код ОКВЭД
                         </div>
-
                         <div class="detail-value">
                             {{ company.okved }}
                         </div>
-
                     </div>
 
                 {% endif %}
-
 
                 {% if company.registration_date %}
 
                     <div class="detail-row">
-
                         <div class="detail-label">
                             Дата регистрации
                         </div>
-
                         <div class="detail-value">
                             {{ company.registration_date }}
                         </div>
-
                     </div>
 
                 {% endif %}
 
-
                 {% if company.website %}
 
                     <div class="detail-row">
-
                         <div class="detail-label">
                             Сайт
                         </div>
-
                         <div class="detail-value">
                             {{ company.website }}
                         </div>
-
                     </div>
 
                 {% endif %}
@@ -403,34 +353,26 @@
                     Руководитель
                 </h2>
 
-
                 {% if company.director_name %}
 
                     <div class="detail-row">
-
                         <div class="detail-label">
                             ФИО
                         </div>
-
                         <div class="detail-value">
                             {{ company.director_name }}
                         </div>
-
                     </div>
-
 
                     {% if company.director_position %}
 
                         <div class="detail-row">
-
                             <div class="detail-label">
                                 Должность
                             </div>
-
                             <div class="detail-value">
                                 {{ company.director_position }}
                             </div>
-
                         </div>
 
                     {% endif %}
@@ -467,19 +409,14 @@
                         <div class="info-value">
 
                             {% if company.revenue is not none %}
-
                                 {{ company.revenue | number }} ₽
-
                             {% else %}
-
                                 Нет данных
-
                             {% endif %}
 
                         </div>
 
                     </div>
-
 
                     <div class="info-item">
 
@@ -490,19 +427,14 @@
                         <div class="info-value">
 
                             {% if company.company_value is not none %}
-
                                 {{ company.company_value | number }} ₽
-
                             {% else %}
-
                                 Нет данных
-
                             {% endif %}
 
                         </div>
 
                     </div>
-
 
                     <div class="info-item">
 
@@ -517,17 +449,13 @@
                                 {{ company.employee_count | number }}
 
                                 {% if company.employee_count_year %}
-
                                     <div>
                                         за {{ company.employee_count_year }} год
                                     </div>
-
                                 {% endif %}
 
                             {% else %}
-
                                 Нет данных
-
                             {% endif %}
 
                         </div>
@@ -550,7 +478,6 @@
                     <h2>
                         Налоговая задолженность
                     </h2>
-
 
                     {% if company.tax_debt_check["result"] == "found" %}
 
@@ -592,54 +519,39 @@
                         <div class="info-grid">
 
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Общая задолженность
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_debt_check["total_debt"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Недоимка
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_debt_check["total_arrears"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Пени
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_debt_check["total_penalties"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Штрафы
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_debt_check["total_fines"]) }} ₽
                                 </div>
-
                             </div>
 
                         </div>
@@ -654,13 +566,9 @@
                             <div class="detail-value">
 
                                 {% if company.tax_debt_check["data_date"] %}
-
                                     {{ company.tax_debt_check["data_date"].strftime("%d.%m.%Y") }}
-
                                 {% else %}
-
                                     —
-
                                 {% endif %}
 
                             </div>
@@ -671,15 +579,12 @@
                         {% if company.tax_debt_check["document_date"] %}
 
                             <div class="detail-row">
-
                                 <div class="detail-label">
                                     Дата публикации документа
                                 </div>
-
                                 <div class="detail-value">
                                     {{ company.tax_debt_check["document_date"].strftime("%d.%m.%Y") }}
                                 </div>
-
                             </div>
 
                         {% endif %}
@@ -705,34 +610,25 @@
                                             {{ money(debt_item["total"]) }} ₽
                                         </strong>
 
-
                                         {% if debt_item["arrears"] > 0 %}
-
                                             <div>
                                                 Недоимка:
                                                 {{ money(debt_item["arrears"]) }} ₽
                                             </div>
-
                                         {% endif %}
 
-
                                         {% if debt_item["penalties"] > 0 %}
-
                                             <div>
                                                 Пени:
                                                 {{ money(debt_item["penalties"]) }} ₽
                                             </div>
-
                                         {% endif %}
 
-
                                         {% if debt_item["fines"] > 0 %}
-
                                             <div>
                                                 Штраф:
                                                 {{ money(debt_item["fines"]) }} ₽
                                             </div>
-
                                         {% endif %}
 
                                     </div>
@@ -760,7 +656,6 @@
 
                         </div>
 
-
                         <div class="detail-row">
 
                             <div class="detail-label">
@@ -770,13 +665,9 @@
                             <div class="detail-value">
 
                                 {% if company.tax_debt_check["data_date"] %}
-
                                     {{ company.tax_debt_check["data_date"].strftime("%d.%m.%Y") }}
-
                                 {% else %}
-
                                     —
-
                                 {% endif %}
 
                             </div>
@@ -836,23 +727,17 @@
                                     <div class="detail-label">
 
                                         {% if snapshot["data_date"] %}
-
                                             {{ snapshot["data_date"].strftime("%d.%m.%Y") }}
-
                                         {% else %}
-
                                             Дата не указана
-
                                         {% endif %}
 
                                     </div>
 
                                     <div class="detail-value">
-
                                         <strong>
                                             {{ money(snapshot["total_debt"]) }} ₽
                                         </strong>
-
                                     </div>
 
                                 </div>
@@ -873,21 +758,13 @@
                         <div class="detail-value">
 
                             {% if company.tax_debt_check["result"] == "found" %}
-
                                 Сведения найдены
-
                             {% elif company.tax_debt_check["result"] == "not_found" %}
-
                                 Сведения не найдены
-
                             {% elif company.tax_debt_check["result"] == "not_applicable" %}
-
                                 Источник не применяется
-
                             {% else %}
-
                                 Проверка недоступна
-
                             {% endif %}
 
                         </div>
@@ -915,7 +792,7 @@
             <!-- НАЛОГОВЫЕ ПРАВОНАРУШЕНИЯ -->
             <!-- ======================================== -->
 
-            {% if company.tax_offence %}
+            {% if company.tax_offence_check %}
 
                 <section class="card">
 
@@ -924,7 +801,7 @@
                     </h2>
 
 
-                    {% if company.tax_offence["has_offence"] %}
+                    {% if company.tax_offence_check["result"] == "found" %}
 
                         <div class="risk-placeholder">
 
@@ -933,7 +810,7 @@
                             </div>
 
                             <p>
-                                В опубликованном наборе ФНС
+                                В текущем опубликованном наборе ФНС
                                 содержатся сведения о налоговом
                                 правонарушении организации.
                             </p>
@@ -944,80 +821,64 @@
                         <div class="info-grid">
 
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Сумма штрафа
                                 </div>
-
                                 <div class="info-value">
-                                    {{ money(company.tax_offence["fine_amount"]) }} ₽
+                                    {{ money(company.tax_offence_check["fine_amount"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Количество документов
                                 </div>
-
                                 <div class="info-value">
-                                    {{ company.tax_offence["document_count"] }}
+                                    {{ company.tax_offence_check["document_count"] }}
                                 </div>
-
                             </div>
 
                         </div>
 
 
-                        {% if company.tax_offence["document_date"] %}
+                        {% if company.tax_offence_check["document_date"] %}
 
                             <div class="detail-row">
-
                                 <div class="detail-label">
                                     Дата документа ФНС
                                 </div>
-
                                 <div class="detail-value">
-                                    {{ company.tax_offence["document_date"].strftime("%d.%m.%Y") }}
+                                    {{ company.tax_offence_check["document_date"].strftime("%d.%m.%Y") }}
                                 </div>
-
                             </div>
 
                         {% endif %}
 
 
-                        {% if company.tax_offence["documents"] and company.tax_offence["documents"] | length > 1 %}
+                        {% if company.tax_offence_check["documents"] and company.tax_offence_check["documents"] | length > 1 %}
 
                             <h2>
                                 Документы ФНС
                             </h2>
 
-                            {% for offence_document in company.tax_offence["documents"] %}
+                            {% for offence_document in company.tax_offence_check["documents"] %}
 
                                 <div class="detail-row">
 
                                     <div class="detail-label">
 
                                         {% if offence_document["document_date"] %}
-
                                             {{ offence_document["document_date"].strftime("%d.%m.%Y") }}
-
                                         {% else %}
-
                                             Документ ФНС
-
                                         {% endif %}
 
                                     </div>
 
                                     <div class="detail-value">
-
                                         <strong>
                                             {{ money(offence_document["fine_amount"]) }} ₽
                                         </strong>
-
                                     </div>
 
                                 </div>
@@ -1027,7 +888,7 @@
                         {% endif %}
 
 
-                    {% else %}
+                    {% elif company.tax_offence_check["result"] == "not_found" %}
 
                         <div class="risk-placeholder">
 
@@ -1036,7 +897,7 @@
                             </div>
 
                             <p>
-                                В опубликованном наборе ФНС
+                                В текущем опубликованном наборе ФНС
                                 на указанную дату сведения
                                 о налоговых правонарушениях
                                 организации не обнаружены.
@@ -1044,30 +905,65 @@
 
                         </div>
 
+
+                    {% elif company.tax_offence_check["result"] == "not_applicable" %}
+
+                        <div class="risk-placeholder">
+
+                            <div class="risk-placeholder-title">
+                                Источник не применяется к ИП
+                            </div>
+
+                            <p>
+                                Текущий открытый набор ФНС
+                                по налоговым правонарушениям
+                                содержит сведения по юридическим лицам.
+                            </p>
+
+                        </div>
+
+
+                    {% else %}
+
+                        <div class="risk-placeholder">
+
+                            <div class="risk-placeholder-title">
+                                Проверка налоговых правонарушений временно недоступна
+                            </div>
+
+                            <p>
+                                Актуальный опубликованный набор данных
+                                для этой проверки не загружен,
+                                не зарегистрирован или не может быть
+                                корректно использован системой.
+                            </p>
+
+                        </div>
+
                     {% endif %}
 
 
-                    <div class="detail-row">
+                    {% if company.tax_offence_check["result"] in ["found", "not_found"] %}
 
-                        <div class="detail-label">
-                            Дата состояния сведений
+                        <div class="detail-row">
+
+                            <div class="detail-label">
+                                Дата состояния сведений
+                            </div>
+
+                            <div class="detail-value">
+
+                                {% if company.tax_offence_check["data_date"] %}
+                                    {{ company.tax_offence_check["data_date"].strftime("%d.%m.%Y") }}
+                                {% else %}
+                                    —
+                                {% endif %}
+
+                            </div>
+
                         </div>
 
-                        <div class="detail-value">
-
-                            {% if company.tax_offence["data_date"] %}
-
-                                {{ company.tax_offence["data_date"].strftime("%d.%m.%Y") }}
-
-                            {% else %}
-
-                                —
-
-                            {% endif %}
-
-                        </div>
-
-                    </div>
+                    {% endif %}
 
 
                     <div class="detail-row">
@@ -1078,14 +974,14 @@
 
                         <div class="detail-value">
 
-                            {% if company.tax_offence["has_offence"] %}
-
+                            {% if company.tax_offence_check["result"] == "found" %}
                                 Сведения найдены
-
-                            {% else %}
-
+                            {% elif company.tax_offence_check["result"] == "not_found" %}
                                 Сведения не найдены
-
+                            {% elif company.tax_offence_check["result"] == "not_applicable" %}
+                                Источник не применяется
+                            {% else %}
+                                Проверка недоступна
                             {% endif %}
 
                         </div>
@@ -1093,9 +989,9 @@
                     </div>
 
 
-                    {% if company.tax_offence_history %}
+                    {% if company.tax_offence_check["result"] in ["found", "not_found"] %}
 
-                        {% if company.tax_offence_history | length > 1 %}
+                        {% if company.tax_offence_history and company.tax_offence_history | length > 1 %}
 
                             <h2>
                                 История опубликованных сведений
@@ -1108,23 +1004,17 @@
                                     <div class="detail-label">
 
                                         {% if offence_snapshot["data_date"] %}
-
                                             {{ offence_snapshot["data_date"].strftime("%d.%m.%Y") }}
-
                                         {% else %}
-
                                             Дата не указана
-
                                         {% endif %}
 
                                     </div>
 
                                     <div class="detail-value">
-
                                         <strong>
                                             {{ money(offence_snapshot["fine_amount"]) }} ₽
                                         </strong>
-
                                     </div>
 
                                 </div>
@@ -1145,7 +1035,7 @@
                         описание конкретного вида
                         налогового правонарушения.
                         Отсутствие записи относится
-                        к указанному опубликованному
+                        к текущему опубликованному
                         набору и периоду сведений.
                     </p>
 
@@ -1207,82 +1097,59 @@
                         <div class="info-grid">
 
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Всего учтённых платежей
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_payment["total_amount"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Налоги
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_payment["tax_amount"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Страховые взносы
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_payment["insurance_amount"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Пени
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_payment["penalty_amount"]) }} ₽
                                 </div>
-
                             </div>
 
-
                             <div class="info-item">
-
                                 <div class="info-label">
                                     Неналоговые платежи
                                 </div>
-
                                 <div class="info-value">
                                     {{ money(company.tax_payment["non_tax_amount"]) }} ₽
                                 </div>
-
                             </div>
-
 
                             {% if company.tax_payment["other_amount"] > 0 %}
 
                                 <div class="info-item">
-
                                     <div class="info-label">
                                         Прочие учтённые платежи
                                     </div>
-
                                     <div class="info-value">
                                         {{ money(company.tax_payment["other_amount"]) }} ₽
                                     </div>
-
                                 </div>
 
                             {% endif %}
@@ -1291,15 +1158,12 @@
 
 
                         <div class="detail-row">
-
                             <div class="detail-label">
                                 Период сведений
                             </div>
-
                             <div class="detail-value">
                                 {{ company.tax_payment["data_year"] }} год
                             </div>
-
                         </div>
 
 
@@ -1312,13 +1176,9 @@
                             <div class="detail-value">
 
                                 {% if company.tax_payment["data_date"] %}
-
                                     {{ company.tax_payment["data_date"].strftime("%d.%m.%Y") }}
-
                                 {% else %}
-
                                     —
-
                                 {% endif %}
 
                             </div>
@@ -1329,15 +1189,12 @@
                         {% if company.tax_payment["document_date"] %}
 
                             <div class="detail-row">
-
                                 <div class="detail-label">
                                     Дата публикации документа
                                 </div>
-
                                 <div class="detail-value">
                                     {{ company.tax_payment["document_date"].strftime("%d.%m.%Y") }}
                                 </div>
-
                             </div>
 
                         {% endif %}
@@ -1366,25 +1223,15 @@
                                         <div>
 
                                             {% if payment_item["payment_type"] == "tax" %}
-
                                                 Налог
-
                                             {% elif payment_item["payment_type"] == "insurance" %}
-
                                                 Страховой взнос
-
                                             {% elif payment_item["payment_type"] == "penalty" %}
-
                                                 Пени
-
                                             {% elif payment_item["payment_type"] == "non_tax" %}
-
                                                 Неналоговый платёж
-
                                             {% else %}
-
                                                 Прочий платёж
-
                                             {% endif %}
 
                                         </div>
@@ -1411,27 +1258,19 @@
                                     <div class="detail-label">
 
                                         {% if payment_snapshot["data_year"] %}
-
                                             {{ payment_snapshot["data_year"] }} год
-
                                         {% elif payment_snapshot["data_date"] %}
-
                                             {{ payment_snapshot["data_date"].strftime("%d.%m.%Y") }}
-
                                         {% else %}
-
                                             Период не указан
-
                                         {% endif %}
 
                                     </div>
 
                                     <div class="detail-value">
-
                                         <strong>
                                             {{ money(payment_snapshot["total_amount"]) }} ₽
                                         </strong>
-
                                     </div>
 
                                 </div>
@@ -1457,7 +1296,6 @@
 
                         </div>
 
-
                         <div class="detail-row">
 
                             <div class="detail-label">
@@ -1467,13 +1305,9 @@
                             <div class="detail-value">
 
                                 {% if company.tax_payment["data_date"] %}
-
                                     {{ company.tax_payment["data_date"].strftime("%d.%m.%Y") }}
-
                                 {% else %}
-
                                     —
-
                                 {% endif %}
 
                             </div>
@@ -1525,21 +1359,13 @@
                         <div class="detail-value">
 
                             {% if company.tax_payment["result"] == "found" %}
-
                                 Сведения найдены
-
                             {% elif company.tax_payment["result"] == "not_found" %}
-
                                 Сведения не найдены
-
                             {% elif company.tax_payment["result"] == "not_applicable" %}
-
                                 Источник не применяется
-
                             {% else %}
-
                                 Проверка недоступна
-
                             {% endif %}
 
                         </div>
@@ -1575,7 +1401,6 @@
                         Контакты
                     </h2>
 
-
                     {% if company.phones %}
 
                         <div class="detail-row">
@@ -1587,11 +1412,9 @@
                             <div class="detail-value">
 
                                 {% for phone in company.phones %}
-
                                     <div>
                                         {{ phone }}
                                     </div>
-
                                 {% endfor %}
 
                             </div>
@@ -1612,11 +1435,9 @@
                             <div class="detail-value">
 
                                 {% for email in company.emails %}
-
                                     <div>
                                         {{ email }}
                                     </div>
-
                                 {% endfor %}
 
                             </div>
@@ -1637,11 +1458,9 @@
                             <div class="detail-value">
 
                                 {% for website in company.websites %}
-
                                     <div>
                                         {{ website }}
                                     </div>
-
                                 {% endfor %}
 
                             </div>
@@ -1674,29 +1493,21 @@
                             <div class="detail-value">
 
                                 {% if branch.name %}
-
                                     <strong>
                                         {{ branch.name }}
                                     </strong>
-
                                 {% endif %}
 
-
                                 {% if branch.address %}
-
                                     <div>
                                         {{ branch.address }}
                                     </div>
-
                                 {% endif %}
 
-
                                 {% if branch.kpp %}
-
                                     <div>
                                         КПП: {{ branch.kpp }}
                                     </div>
-
                                 {% endif %}
 
                             </div>

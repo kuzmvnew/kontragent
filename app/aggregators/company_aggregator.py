@@ -24,7 +24,7 @@ from app.services.tax_debt_service import (
     get_tax_debt_history,
 )
 from app.services.tax_offence_service import (
-    get_latest_tax_offence_for_company,
+    get_tax_offence_check_for_company,
     get_tax_offence_history,
 )
 from app.services.tax_payment_service import (
@@ -561,27 +561,28 @@ def load_structured_domain_data(
     company_id,
 ):
     """
-    Сложные domain objects.
+    Загружает сложные domain objects.
 
-    ВАЖНО:
+    Все risk-check datasets постепенно
+    приводятся к единому контракту:
+
+    found
+    not_found
+    not_applicable
+    unavailable
+
+    Для совместимости с текущим UI
+    пока сохраняются legacy-поля:
 
     tax_debt
-        пока сохраняется как legacy-поле
-        для существующего company.html.
+    tax_offence
+    tax_payment
+
+    Одновременно доступны:
 
     tax_debt_check
-        новый стандартизированный
-        Data Contract.
-
-    После перевода HTML на новый контракт
-    legacy-поле можно будет удалить.
-
-    Для PAYTAX и TaxOffence также
-    формируем *_check aliases.
-
-    Это позволяет Risk Engine в будущем
-    работать с единообразными названиями,
-    не ломая текущий UI.
+    tax_offence_check
+    tax_payment_check
     """
 
     # -----------------------------------------------------
@@ -597,12 +598,6 @@ def load_structured_domain_data(
         )
     )
 
-    # Старое поведение для текущего HTML:
-    #
-    # found       -> объект
-    # not_found   -> None
-    # IP          -> None
-    # unavailable -> None
     tax_debt = (
         get_latest_tax_debt_for_company(
             company_id=(
@@ -625,13 +620,42 @@ def load_structured_domain_data(
     # TAX OFFENCE
     # -----------------------------------------------------
 
-    tax_offence = (
-        get_latest_tax_offence_for_company(
+    tax_offence_check = (
+        get_tax_offence_check_for_company(
             company_id=(
                 company_id
-            ),
+            )
         )
     )
+
+    # Legacy-поле для текущего HTML.
+    #
+    # Для found / not_found текущий UI
+    # уже умеет отображать объект.
+    #
+    # Для not_applicable / unavailable
+    # старый UI должен по-прежнему
+    # получить None.
+    if (
+        isinstance(
+            tax_offence_check,
+            dict,
+        )
+        and tax_offence_check.get(
+            "result"
+        )
+        in {
+            "found",
+            "not_found",
+        }
+    ):
+        tax_offence = (
+            tax_offence_check
+        )
+
+    else:
+
+        tax_offence = None
 
     tax_offence_history = (
         get_tax_offence_history(
@@ -642,13 +666,6 @@ def load_structured_domain_data(
         )
     )
 
-    # Пока TaxOffence cleanup
-    # ещё впереди, alias просто
-    # указывает на текущий результат.
-    tax_offence_check = (
-        tax_offence
-    )
-
     # -----------------------------------------------------
     # TAX PAYMENTS
     # -----------------------------------------------------
@@ -657,7 +674,7 @@ def load_structured_domain_data(
         get_latest_tax_payment_for_company(
             company_id=(
                 company_id
-            ),
+            )
         )
     )
 
