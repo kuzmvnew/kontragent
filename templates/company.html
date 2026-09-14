@@ -390,6 +390,8 @@
 
             {% include "partials/financials.html" %}
 
+            {% include "partials/msp.html" %}
+
 
             <!-- ======================================== -->
             <!-- НАЛОГОВАЯ ЗАДОЛЖЕННОСТЬ -->
@@ -1488,6 +1490,12 @@
 
                                 <span class="source-badge">
                                     ФНС — численность
+                                </span>
+
+                            {% elif source == "fns_msp" %}
+
+                                <span class="source-badge">
+                                    ФНС — реестр МСП
                                 </span>
 
                             {% elif source == "fns_revenue_expenses" %}

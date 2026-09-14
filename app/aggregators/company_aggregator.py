@@ -18,6 +18,9 @@ from app.services.company_service import (
 from app.services.headcount_service import (
     get_latest_headcount_for_company,
 )
+from app.services.msp_service import (
+    get_msp_profile_for_company,
+)
 from app.services.revenue_expense_service import (
     get_revenue_expense_check_for_company,
 )
@@ -589,6 +592,16 @@ def load_structured_domain_data(
     """
 
     # -----------------------------------------------------
+    # MSP
+    # -----------------------------------------------------
+
+    msp_profile = (
+        get_msp_profile_for_company(
+            company_id=company_id
+        )
+    )
+
+    # -----------------------------------------------------
     # REVENUE AND EXPENSES
     # -----------------------------------------------------
 
@@ -706,6 +719,10 @@ def load_structured_domain_data(
     )
 
     return {
+        "msp_profile": (
+            msp_profile
+        ),
+
         "revenue_expense_check": (
             revenue_expense_check
         ),
@@ -1310,6 +1327,22 @@ def aggregate_company(
         )
 
         # ---------------------------------------------
+        # MSP SOURCE
+        # ---------------------------------------------
+
+        if (
+            structured[
+                "msp_profile"
+            ]
+            is not None
+        ):
+
+            append_source_once(
+                result=result,
+                source_code="fns_msp",
+            )
+
+        # ---------------------------------------------
         # REVENUE AND EXPENSE SOURCE
         # ---------------------------------------------
 
@@ -1384,6 +1417,10 @@ def aggregate_company(
             )
 
     else:
+
+        result[
+            "msp_profile"
+        ] = None
 
         result[
             "revenue_expense_check"

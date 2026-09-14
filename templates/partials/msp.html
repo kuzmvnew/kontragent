@@ -1,0 +1,100 @@
+{% if company.msp_profile %}
+
+<section class="card">
+
+    <h2>
+        Реестр малого и среднего предпринимательства
+    </h2>
+
+    <p>
+        Контрагент найден в Едином реестре
+        субъектов малого и среднего предпринимательства ФНС.
+    </p>
+
+    <div class="info-grid">
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Статус
+            </div>
+
+            <div class="info-value">
+                Состоит в реестре МСП
+            </div>
+
+        </div>
+
+
+        {% if company.msp_profile["category_name"] %}
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Категория
+            </div>
+
+            <div class="info-value">
+                {{ company.msp_profile["category_name"] }}
+            </div>
+
+        </div>
+
+        {% endif %}
+
+
+        {% if company.msp_profile["inclusion_date"] %}
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Дата включения в реестр
+            </div>
+
+            <div class="info-value">
+                {{ company.msp_profile["inclusion_date"] }}
+            </div>
+
+        </div>
+
+        {% endif %}
+
+
+        {% if company.msp_profile["data_date"] %}
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Данные актуальны на
+            </div>
+
+            <div class="info-value">
+                {{ company.msp_profile["data_date"] }}
+            </div>
+
+        </div>
+
+        {% endif %}
+
+
+        {% if company.msp_profile["employee_count"] is not none %}
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Численность по реестру МСП
+            </div>
+
+            <div class="info-value">
+                {{ company.msp_profile["employee_count"] | number }}
+            </div>
+
+        </div>
+
+        {% endif %}
+
+    </div>
+
+</section>
+
+{% endif %}

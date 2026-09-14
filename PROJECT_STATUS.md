@@ -53,7 +53,7 @@ main
 🟢 Рабочее дерево Git синхронизировано с origin/main
 
 🟢 Текущий набор тестов:
-255 passed
+267 passed
 
 🟢 Jinja templates:
 OK
@@ -67,6 +67,9 @@ OK
 🟢 Импорт ФНС доходов и расходов
 
 🟢 ФНС среднесписочная численность:
+ingestion + model + service + aggregator + UI + tests
+
+🟢 ФНС Реестр МСП:
 ingestion + model + service + aggregator + UI + tests
 
 🟢 Базовые ingestion-механизмы
