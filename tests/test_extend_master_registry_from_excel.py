@@ -4,6 +4,7 @@ from scripts.extend_master_registry_from_excel import (
     build_company_payload,
     build_insert_statement,
     classify_entity_type,
+    clean_optional_identifier,
 )
 
 
@@ -15,6 +16,32 @@ def test_classify_entity_type():
     )
     assert classify_entity_type("123") is None
     assert classify_entity_type(None) is None
+
+
+def test_clean_optional_identifier():
+    assert (
+        clean_optional_identifier(
+            "77 0101 001",
+            max_length=9,
+        )
+        == "770101001"
+    )
+
+    assert (
+        clean_optional_identifier(
+            "41745829450001",
+            max_length=12,
+        )
+        is None
+    )
+
+    assert (
+        clean_optional_identifier(
+            None,
+            max_length=12,
+        )
+        is None
+    )
 
 
 def test_build_company_payload():
@@ -36,6 +63,22 @@ def test_build_company_payload():
     assert payload["name"] == "ООО ТЕСТ"
     assert payload["source"] == "excel_import"
     assert payload["ogrn"] == "1027700000000"
+    assert payload["okpo"] == "12345678"
+
+
+def test_build_company_payload_drops_overlong_optional_identifier():
+    row = {
+        "Название": "ООО ТЕСТ",
+        "ИНН": "7701234567",
+        "КПП": "770101001",
+        "ОГРН": "1027700000000",
+        "ОКПО": "41745829450001",
+    }
+
+    payload = build_company_payload(row)
+
+    assert payload["inn"] == "7701234567"
+    assert payload["okpo"] is None
 
 
 def test_insert_statement_is_do_nothing():
