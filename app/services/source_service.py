@@ -222,6 +222,27 @@ DEFAULT_DATASETS = [
     },
     {
         "source_code": "fns",
+        "code": "fns_disqualified",
+        "name": "ФНС: Реестр дисквалифицированных лиц",
+        "domain": "disqualification",
+        "update_mode": "bulk",
+        "data_format": "csv",
+        "refresh_schedule": "daily",
+        "priority": 10,
+        "enabled": False,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/"
+            "7707329152-registerdisqualified/"
+        ),
+        "description": (
+            "Реестр дисквалифицированных лиц ФНС. "
+            "Для автоматической связи с компанией "
+            "используется только ИНН организации."
+        ),
+    },
+    {
+        "source_code": "fns",
         "code": "fns_headcount",
         "name": "ФНС: Среднесписочная численность",
         "domain": "headcount",
