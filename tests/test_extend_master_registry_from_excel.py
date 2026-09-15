@@ -1,3 +1,5 @@
+from sqlalchemy.dialects import postgresql
+
 from scripts.extend_master_registry_from_excel import (
     build_company_payload,
     build_insert_statement,
@@ -50,7 +52,7 @@ def test_insert_statement_is_do_nothing():
 
     sql = str(
         statement.compile(
-            dialect=statement.dialect,
+            dialect=postgresql.dialect(),
             compile_kwargs={
                 "literal_binds": False,
             },
