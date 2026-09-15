@@ -371,3 +371,121 @@ def test_legal_zip_iterator_limit(tmp_path):
         records[0]["inn"]
         == "7714914147"
     )
+
+
+
+def test_ip_zip_iterator_multiple_regimes(
+    tmp_path,
+):
+    from zipfile import ZipFile
+
+    from app.ingestion.fns_tax_regime import (
+        iter_ip_records_from_zip,
+    )
+
+    zip_path = tmp_path / "snrip.zip"
+
+    xml = """
+    <Файл>
+        <Документ
+            ИдДок="IP-DOC-1"
+            ДатаДок="25.08.2026"
+            ДатаСост="01.08.2026"
+        >
+            <СведНП
+                ИННФЛ="345907922962"
+                ОГРНИП="324940100014240"
+            />
+
+            <СведСНР ПризнСНР="1" />
+            <СведСНР ПризнСНР="4" />
+            <СведСНР ПризнСНР="5" />
+        </Документ>
+    </Файл>
+    """
+
+    with ZipFile(
+        zip_path,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "data.xml",
+            xml,
+        )
+
+    records = list(
+        iter_ip_records_from_zip(
+            zip_path
+        )
+    )
+
+    assert len(records) == 1
+
+    assert records[0][
+        "inn"
+    ] == "345907922962"
+
+    assert records[0][
+        "regime_codes"
+    ] == [
+        "usn",
+        "psn",
+        "npd",
+    ]
+
+
+def test_ip_zip_iterator_limit(
+    tmp_path,
+):
+    from zipfile import ZipFile
+
+    from app.ingestion.fns_tax_regime import (
+        iter_ip_records_from_zip,
+    )
+
+    zip_path = tmp_path / "snrip.zip"
+
+    xml = """
+    <Файл>
+        <Документ
+            ДатаСост="01.08.2026"
+        >
+            <СведНП
+                ИННФЛ="345907922962"
+            />
+            <СведСНР ПризнСНР="1" />
+        </Документ>
+
+        <Документ
+            ДатаСост="01.08.2026"
+        >
+            <СведНП
+                ИННФЛ="784305462631"
+            />
+            <СведСНР ПризнСНР="4" />
+        </Документ>
+    </Файл>
+    """
+
+    with ZipFile(
+        zip_path,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "data.xml",
+            xml,
+        )
+
+    records = list(
+        iter_ip_records_from_zip(
+            zip_path,
+            limit=1,
+        )
+    )
+
+    assert len(records) == 1
+
+    assert (
+        records[0]["inn"]
+        == "345907922962"
+    )

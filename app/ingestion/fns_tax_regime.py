@@ -705,3 +705,91 @@ def iter_legal_records_from_zip(
                         and yielded >= limit
                     ):
                         return
+
+
+
+# =========================================================
+# ZIP STREAMING — INDIVIDUAL ENTREPRENEURS
+# =========================================================
+
+
+def iter_ip_records_from_zip(
+    zip_path,
+    limit=None,
+):
+    """
+    Потоково читает XML из ZIP ФНС SNRIP.
+    """
+
+    from zipfile import ZipFile
+    from xml.etree import ElementTree as ET
+
+    yielded = 0
+
+    with ZipFile(zip_path) as archive:
+
+        xml_files = [
+            info
+            for info in archive.infolist()
+            if (
+                not info.is_dir()
+                and info.filename
+                .lower()
+                .endswith(".xml")
+            )
+        ]
+
+        for info in xml_files:
+
+            with archive.open(info) as stream:
+
+                for (
+                    _event,
+                    element,
+                ) in ET.iterparse(
+                    stream,
+                    events=("end",),
+                ):
+
+                    if (
+                        local_name(
+                            element.tag
+                        )
+                        != "Документ"
+                    ):
+                        continue
+
+                    record = (
+                        parse_ip_document(
+                            element
+                        )
+                    )
+
+                    if record is not None:
+                        yield record
+                        yielded += 1
+
+                    element.clear()
+
+                    if (
+                        limit is not None
+                        and yielded >= limit
+                    ):
+                        return
+
+
+def process_ip_batch(
+    records,
+    dataset_id,
+):
+    """
+    Сохраняет SNRIP snapshots.
+
+    Использует общий batch-механизм:
+    matching по ИНН + PostgreSQL upsert.
+    """
+
+    return process_legal_batch(
+        records,
+        dataset_id,
+    )

@@ -2,9 +2,12 @@ import argparse
 from pathlib import Path
 
 from app.ingestion.fns_tax_regime import (
+    IP_DATASET_CODE,
     LEGAL_DATASET_CODE,
     get_dataset_id,
+    iter_ip_records_from_zip,
     iter_legal_records_from_zip,
+    process_ip_batch,
     process_legal_batch,
 )
 
@@ -19,14 +22,27 @@ def main():
 
     parser.add_argument(
         "zip_path",
-        help="Путь к ZIP ФНС SNR",
+        help="Путь к ZIP ФНС",
+    )
+
+    parser.add_argument(
+        "--entity-type",
+        choices=(
+            "legal",
+            "ip",
+        ),
+        default="legal",
+        help=(
+            "legal — SNR ЮЛ, "
+            "ip — SNRIP ИП"
+        ),
     )
 
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=10000,
-        help="Размер batch, по умолчанию 10000",
+        default=5000,
+        help="Размер batch, по умолчанию 5000",
     )
 
     parser.add_argument(
@@ -52,17 +68,33 @@ def main():
             "batch-size должен быть > 0"
         )
 
+    if args.entity_type == "legal":
+        dataset_code = LEGAL_DATASET_CODE
+        iterator = iter_legal_records_from_zip
+        process_batch = process_legal_batch
+        title = (
+            "ФНС — СПЕЦИАЛЬНЫЕ "
+            "НАЛОГОВЫЕ РЕЖИМЫ ЮЛ"
+        )
+
+    else:
+        dataset_code = IP_DATASET_CODE
+        iterator = iter_ip_records_from_zip
+        process_batch = process_ip_batch
+        title = (
+            "ФНС — СПЕЦИАЛЬНЫЕ "
+            "НАЛОГОВЫЕ РЕЖИМЫ ИП"
+        )
+
     dataset_id = get_dataset_id(
-        LEGAL_DATASET_CODE
+        dataset_code
     )
 
     print()
     print(
         "=========================================="
     )
-    print(
-        "ФНС — СПЕЦИАЛЬНЫЕ НАЛОГОВЫЕ РЕЖИМЫ ЮЛ"
-    )
+    print(title)
     print(
         "=========================================="
     )
@@ -74,8 +106,13 @@ def main():
     )
 
     print(
+        "Entity type:",
+        args.entity_type,
+    )
+
+    print(
         "Dataset:",
-        LEGAL_DATASET_CODE,
+        dataset_code,
     )
 
     print(
@@ -113,7 +150,7 @@ def main():
         if not batch:
             return
 
-        result = process_legal_batch(
+        result = process_batch(
             batch,
             dataset_id,
         )
@@ -151,7 +188,7 @@ def main():
 
         batch = []
 
-    for record in iter_legal_records_from_zip(
+    for record in iterator(
         zip_path,
         limit=args.limit,
     ):
