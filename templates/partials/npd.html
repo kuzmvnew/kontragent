@@ -1,0 +1,107 @@
+{% if company.inn and company.inn | length == 12 %}
+
+<section class="card">
+
+    <h2>
+        Статус НПД (самозанятый)
+    </h2>
+
+    {% if company.npd_check %}
+
+        {% if company.npd_check["result"] == "found" %}
+
+            <div class="risk-placeholder">
+                <div class="risk-placeholder-title">
+                    Статус НПД подтверждён
+                </div>
+                <p>
+                    По данным публичного сервиса ФНС
+                    ИНН имел статус плательщика налога
+                    на профессиональный доход на дату проверки.
+                </p>
+            </div>
+
+        {% elif company.npd_check["result"] == "not_found" %}
+
+            <div class="risk-placeholder">
+                <div class="risk-placeholder-title">
+                    Статус НПД не подтверждён
+                </div>
+                <p>
+                    Публичный сервис ФНС не подтвердил
+                    статус плательщика НПД на указанную дату.
+                </p>
+            </div>
+
+        {% elif company.npd_check["reason"] == "not_checked" %}
+
+            <div class="risk-placeholder">
+                <div class="risk-placeholder-title">
+                    Статус НПД ещё не проверялся
+                </div>
+                <p>
+                    Проверка выполняется точечно через
+                    официальный публичный API ФНС.
+                </p>
+            </div>
+
+        {% else %}
+
+            <div class="risk-placeholder">
+                <div class="risk-placeholder-title">
+                    Проверка НПД временно недоступна
+                </div>
+                <p>
+                    Ошибка или ограничение источника не трактуется
+                    как отсутствие статуса НПД.
+                </p>
+            </div>
+
+        {% endif %}
+
+        {% if company.npd_check["request_date"] %}
+
+            <div class="detail-row">
+                <div class="detail-label">
+                    Дата, на которую проверен статус
+                </div>
+                <div class="detail-value">
+                    {{ company.npd_check["request_date"].strftime("%d.%m.%Y") }}
+                </div>
+            </div>
+
+        {% endif %}
+
+        {% if company.npd_check["checked_at"] %}
+
+            <div class="detail-row">
+                <div class="detail-label">
+                    Когда выполнена проверка
+                </div>
+                <div class="detail-value">
+                    {{ company.npd_check["checked_at"].strftime("%d.%m.%Y %H:%M") }}
+                </div>
+            </div>
+
+        {% endif %}
+
+    {% endif %}
+
+    <form
+        action="/company/{{ company.inn }}/npd-check"
+        method="post"
+    >
+        <button type="submit">
+            Проверить статус НПД в ФНС
+        </button>
+    </form>
+
+    <p>
+        Источник: Федеральная налоговая служба.
+        Проверка выполняется по запросу и не является
+        массовым зеркалом базы самозанятых.
+    </p>
+
+</section>
+
+{% endif %}
