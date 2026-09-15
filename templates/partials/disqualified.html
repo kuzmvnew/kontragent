@@ -1,0 +1,179 @@
+{% if company.disqualified_check %}
+
+<section class="card">
+
+    <h2>
+        Реестр дисквалифицированных лиц
+    </h2>
+
+    {% set check = company.disqualified_check %}
+
+    {% if check["result"] == "found" %}
+
+        <div class="risk-placeholder">
+
+            <div class="risk-placeholder-title">
+                Найдены связанные записи реестра ФНС
+            </div>
+
+            <p>
+                В актуальном snapshot Реестра дисквалифицированных лиц
+                найдены записи, где указан ИНН этой организации.
+            </p>
+
+        </div>
+
+        <div class="info-grid">
+
+            <div class="info-item">
+                <div class="info-label">
+                    Связанных записей
+                </div>
+                <div class="info-value">
+                    {{ check["record_count"] }}
+                </div>
+            </div>
+
+            <div class="info-item">
+                <div class="info-label">
+                    С действующим периодом дисквалификации
+                    на дату snapshot
+                </div>
+                <div class="info-value">
+                    {{ check["active_record_count"] }}
+                </div>
+            </div>
+
+        </div>
+
+        {% for record in check["records"] %}
+
+            <div class="detail-row">
+
+                <div class="detail-label">
+                    {{ record["full_name"] }}
+                </div>
+
+                <div class="detail-value">
+
+                    {% if record["position"] %}
+                        <div>
+                            Должность в записи: {{ record["position"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["organization_name"] %}
+                        <div>
+                            Организация в записи: {{ record["organization_name"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["offence_article"] %}
+                        <div>
+                            Основание: {{ record["offence_article"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["start_date"] or record["end_date"] %}
+                        <div>
+                            Период дисквалификации:
+                            {% if record["start_date"] %}
+                                {{ record["start_date"].strftime("%d.%m.%Y") }}
+                            {% else %}
+                                —
+                            {% endif %}
+                            —
+                            {% if record["end_date"] %}
+                                {{ record["end_date"].strftime("%d.%m.%Y") }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </div>
+                    {% endif %}
+
+                    <div>
+                        Статус на дату snapshot:
+                        {% if record["active_on_data_date"] %}
+                            период дисквалификации действует
+                        {% else %}
+                            период дисквалификации не действует
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        Номер записи: {{ record["register_number"] }}
+                    </div>
+
+                </div>
+
+            </div>
+
+        {% endfor %}
+
+        {% if check["records_limited"] %}
+            <p>
+                Показана только часть связанных записей.
+            </p>
+        {% endif %}
+
+    {% elif check["result"] == "not_found" %}
+
+        <div class="risk-placeholder">
+
+            <div class="risk-placeholder-title">
+                Связанные записи по ИНН не найдены
+            </div>
+
+            <p>
+                В актуальном snapshot ФНС нет записи,
+                где указан ИНН этой организации.
+            </p>
+
+        </div>
+
+    {% else %}
+
+        <div class="risk-placeholder">
+
+            <div class="risk-placeholder-title">
+                Проверка временно недоступна
+            </div>
+
+            <p>
+                Актуальный snapshot Реестра дисквалифицированных лиц
+                сейчас нельзя корректно использовать для этой проверки.
+            </p>
+
+        </div>
+
+    {% endif %}
+
+    {% if check["data_date"] %}
+
+        <div class="detail-row">
+            <div class="detail-label">
+                Дата состояния данных
+            </div>
+            <div class="detail-value">
+                {{ check["data_date"].strftime("%d.%m.%Y") }}
+            </div>
+        </div>
+
+    {% endif %}
+
+    <p>
+        {{ check["relationship_note"] or "Совпадение по ИНН организации не доказывает, что лицо является её текущим руководителем." }}
+    </p>
+
+    <p>
+        {{ check["coverage_note"] or "Отсутствие связанной записи нельзя трактовать как подтверждение отсутствия дисквалифицированных лиц среди текущего руководства." }}
+    </p>
+
+    <p>
+        Источник: Федеральная налоговая служба,
+        Реестр дисквалифицированных лиц.
+    </p>
+
+</section>
+
+{% endif %}

@@ -10,7 +10,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.aggregators.company_aggregator import (
+from app.aggregators.company_product_aggregator import (
     get_company_for_web,
 )
 from app.services.company_service import (
