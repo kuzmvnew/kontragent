@@ -15,6 +15,9 @@ from app.models.headcount import (
 from app.models.msp import (
     CompanyMspProfile,
 )
+from app.models.npd import (
+    NpdStatusCheck,
+)
 from app.models.revenue_expense import (
     CompanyRevenueExpenseSnapshot,
 )
@@ -57,8 +60,9 @@ __all__ = [
     "CompanyTaxRegimeSnapshot",
     "CompanyTaxPaymentItem",
     "CompanyTaxPaymentSnapshot",
-    "DisqualifiedPersonSnapshot",
     "DataSet",
     "DataSource",
+    "DisqualifiedPersonSnapshot",
     "IngestionRun",
+    "NpdStatusCheck",
 ]
