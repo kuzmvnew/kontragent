@@ -4,6 +4,9 @@ from app.aggregators.company_aggregator import (
 from app.services.disqualified_service import (
     get_disqualified_check_for_inn,
 )
+from app.services.erknm_service import (
+    get_erknm_check_for_company,
+)
 from app.services.npd_service import (
     get_cached_npd_check_for_inn,
 )
@@ -87,6 +90,34 @@ def enrich_company_with_npd(
     return result
 
 
+def enrich_company_with_erknm(
+    company,
+):
+    if company is None:
+        return None
+
+    result = _copy_company(company)
+
+    check = get_erknm_check_for_company(
+        inn=result.get("inn"),
+        ogrn=result.get("ogrn"),
+    )
+
+    result["erknm_check"] = check
+
+    if (
+        isinstance(check, dict)
+        and check.get("result")
+        in {"found", "not_found"}
+    ):
+        _append_source_once(
+            result,
+            "erknm_inspections",
+        )
+
+    return result
+
+
 def get_company_for_web(
     inn: str,
 ):
@@ -98,6 +129,10 @@ def get_company_for_web(
         company
     )
 
-    return enrich_company_with_npd(
+    company = enrich_company_with_npd(
+        company
+    )
+
+    return enrich_company_with_erknm(
         company
     )
