@@ -95,6 +95,14 @@ def test_product_aggregator_adds_disqualified_check(
         lambda inn: check,
     )
 
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_erknm_check_for_company",
+        lambda inn, ogrn: {
+            "result": "unavailable",
+        },
+    )
+
     result = (
         company_product_aggregator.get_company_for_web(
             "7700000000"
@@ -126,6 +134,14 @@ def test_unavailable_check_is_not_marked_as_used_source(
         company_product_aggregator,
         "get_disqualified_check_for_inn",
         lambda inn: {
+            "result": "unavailable",
+        },
+    )
+
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_erknm_check_for_company",
+        lambda inn, ogrn: {
             "result": "unavailable",
         },
     )
