@@ -242,3 +242,132 @@ def test_dataset_registry():
         '"domain": "tax_regime"'
         in text
     )
+
+
+
+def test_legal_zip_iterator_reads_records(tmp_path):
+    from zipfile import ZipFile
+
+    from app.ingestion.fns_tax_regime import (
+        iter_legal_records_from_zip,
+    )
+
+    zip_path = tmp_path / "snr.zip"
+
+    xml = """
+    <Файл>
+        <Документ
+            ИдДок="DOC-1"
+            ДатаДок="25.08.2026"
+            ДатаСост="01.08.2026"
+        >
+            <СведНП ИННЮЛ="7714914147" />
+            <СведСНР
+                ПризнУСН="1"
+                ПризнАУСН="0"
+                ПризнЕСХН="0"
+                ПризнСРП="0"
+            />
+        </Документ>
+
+        <Документ
+            ИдДок="DOC-2"
+            ДатаДок="25.08.2026"
+            ДатаСост="01.08.2026"
+        >
+            <СведНП ИННЮЛ="3906293351" />
+            <СведСНР
+                ПризнУСН="0"
+                ПризнАУСН="1"
+                ПризнЕСХН="0"
+                ПризнСРП="0"
+            />
+        </Документ>
+    </Файл>
+    """
+
+    with ZipFile(
+        zip_path,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "data.xml",
+            xml,
+        )
+
+    records = list(
+        iter_legal_records_from_zip(
+            zip_path
+        )
+    )
+
+    assert len(records) == 2
+
+    assert records[0][
+        "regime_codes"
+    ] == ["usn"]
+
+    assert records[1][
+        "regime_codes"
+    ] == ["ausn"]
+
+
+def test_legal_zip_iterator_limit(tmp_path):
+    from zipfile import ZipFile
+
+    from app.ingestion.fns_tax_regime import (
+        iter_legal_records_from_zip,
+    )
+
+    zip_path = tmp_path / "snr.zip"
+
+    xml = """
+    <Файл>
+        <Документ
+            ДатаСост="01.08.2026"
+        >
+            <СведНП ИННЮЛ="7714914147" />
+            <СведСНР
+                ПризнУСН="1"
+                ПризнАУСН="0"
+                ПризнЕСХН="0"
+                ПризнСРП="0"
+            />
+        </Документ>
+
+        <Документ
+            ДатаСост="01.08.2026"
+        >
+            <СведНП ИННЮЛ="3906293351" />
+            <СведСНР
+                ПризнУСН="1"
+                ПризнАУСН="0"
+                ПризнЕСХН="0"
+                ПризнСРП="0"
+            />
+        </Документ>
+    </Файл>
+    """
+
+    with ZipFile(
+        zip_path,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "data.xml",
+            xml,
+        )
+
+    records = list(
+        iter_legal_records_from_zip(
+            zip_path,
+            limit=1,
+        )
+    )
+
+    assert len(records) == 1
+
+    assert (
+        records[0]["inn"]
+        == "7714914147"
+    )
