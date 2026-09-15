@@ -39,8 +39,8 @@
 - PostgreSQL: ✅
 - Git / GitHub main: ✅
 - GitHub Actions CI: ✅
-- Последний подтверждённый полный CI: **310 passed**
-- Локальный Git по последнему выводу Михаила: `main...origin/main`, чисто.
+- Последний подтверждённый полный CI: **323 passed**
+- Локальный Git по последнему выводу Михаила перед последним GitHub merge: `main...origin/main`, чисто.
 - Локальная БД по последнему выводу: **6 781 485** сущностей.
 
 ## Master Registry — текущий размер локальной базы
@@ -114,31 +114,63 @@ Source passport: `NPD_SOURCE_PASSPORT.md`.
 - `is_npd: False`;
 - повторное чтение: `cached: True`.
 
-Полный CI после реализации: **310 passed**.
-
 ## Текущий блок — источник №11: ЕРКНМ
 
-🟡 **Начат.** Source passport: `ERKNM_SOURCE_PASSPORT.md`.
+🟡 **В работе.** Source passport: `ERKNM_SOURCE_PASSPORT.md`.
 
 Подтверждён официальный допустимый машинный канал:
 
 - оператор — Генеральная прокуратура РФ;
 - открытая часть — `proverki.gov.ru`;
 - режим — **OPEN_DATA / BULK XML**;
-- доступны месячные XML-наборы ФГИС ЕРКНМ (248-ФЗ), паспорт набора и XSD;
-- доступ к открытой части не ограничивается;
-- для bulk-ingestion не нужен scraping поисковой формы и не нужен закрытый СМЭВ-канал.
+- используем только ФГИС ЕРКНМ по 248-ФЗ;
+- scraping поисковой формы и закрытый СМЭВ не используются.
 
-### Следующий технический шаг
+### Что уже подтверждено на реальных данных
 
-1. Скачать один актуальный официальный архив ЕРКНМ (248-ФЗ) и XSD.
-2. Проинспектировать реальную XML-структуру до написания parser.
-3. Добавить source/dataset contracts `genproc` / `erknm_inspections`.
-4. Реализовать streaming ingestion/model/migration.
-5. Сопоставлять с Master Registry только по ИНН/ОГРН.
-6. Выполнить coverage-аудит и проверить дубли/отсутствующие идентификаторы.
-7. Подключить service/aggregator/UI: отдельно плановые/внеплановые, статус, орган, нарушения/результат.
-8. Tests → реальный импорт → реальная карточка → CI → статус.
+Автоматический downloader `scripts/sync_erknm_open_data.py` работает на официальном metadata XML и сам:
+
+- находит последнюю опубликованную `dataversion`;
+- скачивает ZIP и XSD с `proverki.gov.ru/blob/erknm-opendata`;
+- считает SHA-256 и размер;
+- сохраняет локальный manifest;
+- отвергает metadata старого контура ЕРП / 294-ФЗ.
+
+Реальный sync за январь 2026:
+
+- источник: **248-ФЗ**;
+- количество версий в metadata: **114**;
+- выбранная версия: **15.09.2026**;
+- ZIP: `data-20260915-structure-20220125.zip`;
+- размер ZIP: **226 811 863 bytes (~216 MB)**;
+- SHA-256: `a7b28d21d0e06c8a854d1b9d146db8db56e8d024889136aefb7e6943abe510d7`;
+- XSD: `structure-20220125.xsd` (~50 KB);
+- XML внутри ZIP: `data-20260915-structure-20220125.xml`, размер **1 614 934 260 bytes (~1.61 GB)**;
+- XML root: `INSPECTIONS`.
+
+Потоковый structure-inspector успешно прошёл первые 100 000 XML-элементов без распаковки всего документа в память. Подтверждены реальные блоки `INSPECTION`, `SUBJECT`, `OBJECT`, `KIND_CONTROL`, `KIND_KNM`, `KNO_ORGANIZATION`, `PROSECUTOR_OFFICE`, `REASON_RISK`, `EVENT`, `ACTIONS_INFO/RESULT`, `WARNING_INFO` и др.
+
+Source Registry contract уже добавлен и сохранён в GitHub:
+
+- source: `genproc` — Генеральная прокуратура РФ;
+- dataset: `erknm_inspections`;
+- domain: `inspections`;
+- update mode: `bulk`;
+- format: `xml`;
+- refresh schedule: `daily`;
+- dataset enabled.
+
+Также добавлен `scripts/sample_erknm_records.py`, который потоково извлекает несколько целых `INSPECTION` из локального 1.6-GB XML и печатает точные leaf/attribute paths. Это нужно, чтобы parser/model contract фиксировался по реальным тегам, а не по догадкам.
+
+Полный CI после downloader/inspector/registry/sampler: **323 passed**.
+
+### Ближайший технический шаг
+
+1. На уже скачанном январском ZIP снять 2–3 полных реальных `INSPECTION` через `sample_erknm_records.py` и подтвердить точные пути ИНН/ОГРН, статуса, дат, типа КНМ, органа контроля, нарушений и результата.
+2. На основе фактических тегов реализовать streaming parser/model/migration.
+3. Выполнить реальный импорт и coverage-аудит по Master Registry; сопоставлять только по устойчивым идентификаторам ИНН/ОГРН.
+4. Подключить service/aggregator/UI: отдельно плановые/внеплановые, статус, орган, нарушения/результат.
+5. Tests → реальная карточка → CI → закрытие источника №11.
 
 Ключевая семантика: сам факт проверки не является негативным фактором. Риск/вывод строится только по содержанию результата, нарушениям и контексту.
 
