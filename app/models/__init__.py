@@ -9,6 +9,9 @@ from app.models.company import (
 from app.models.disqualified_person import (
     DisqualifiedPersonSnapshot,
 )
+from app.models.erknm import (
+    ErknmInspection,
+)
 from app.models.headcount import (
     CompanyHeadcount,
 )
@@ -63,6 +66,7 @@ __all__ = [
     "DataSet",
     "DataSource",
     "DisqualifiedPersonSnapshot",
+    "ErknmInspection",
     "IngestionRun",
     "NpdStatusCheck",
 ]
