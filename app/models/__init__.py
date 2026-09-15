@@ -6,6 +6,9 @@ from app.models.company import (
     CompanyIdentifier,
     CompanyManager,
 )
+from app.models.disqualified_person import (
+    DisqualifiedPersonSnapshot,
+)
 from app.models.headcount import (
     CompanyHeadcount,
 )
@@ -28,6 +31,9 @@ from app.models.tax_debt import (
 from app.models.tax_offence import (
     CompanyTaxOffence,
 )
+from app.models.tax_regime import (
+    CompanyTaxRegimeSnapshot,
+)
 from app.models.tax_payment import (
     CompanyTaxPaymentItem,
     CompanyTaxPaymentSnapshot,
@@ -48,8 +54,10 @@ __all__ = [
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
     "CompanyTaxOffence",
+    "CompanyTaxRegimeSnapshot",
     "CompanyTaxPaymentItem",
     "CompanyTaxPaymentSnapshot",
+    "DisqualifiedPersonSnapshot",
     "DataSet",
     "DataSource",
     "IngestionRun",
