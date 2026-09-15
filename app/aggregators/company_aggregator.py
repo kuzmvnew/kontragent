@@ -21,6 +21,9 @@ from app.services.headcount_service import (
 from app.services.msp_service import (
     get_msp_profile_for_company,
 )
+from app.services.tax_regime_service import (
+    get_tax_regime_profile_for_company,
+)
 from app.services.revenue_expense_service import (
     get_revenue_expense_check_for_company,
 )
@@ -602,6 +605,16 @@ def load_structured_domain_data(
     )
 
     # -----------------------------------------------------
+    # TAX REGIME
+    # -----------------------------------------------------
+
+    tax_regime_profile = (
+        get_tax_regime_profile_for_company(
+            company_id=company_id
+        )
+    )
+
+    # -----------------------------------------------------
     # REVENUE AND EXPENSES
     # -----------------------------------------------------
 
@@ -721,6 +734,10 @@ def load_structured_domain_data(
     return {
         "msp_profile": (
             msp_profile
+        ),
+
+        "tax_regime_profile": (
+            tax_regime_profile
         ),
 
         "revenue_expense_check": (
@@ -1343,6 +1360,34 @@ def aggregate_company(
             )
 
         # ---------------------------------------------
+        # TAX REGIME SOURCE
+        # ---------------------------------------------
+
+        if (
+            structured[
+                "tax_regime_profile"
+            ]
+            is not None
+        ):
+
+            tax_regime_source = (
+                structured[
+                    "tax_regime_profile"
+                ].get(
+                    "dataset_code"
+                )
+            )
+
+            if tax_regime_source:
+
+                append_source_once(
+                    result=result,
+                    source_code=(
+                        tax_regime_source
+                    ),
+                )
+
+        # ---------------------------------------------
         # REVENUE AND EXPENSE SOURCE
         # ---------------------------------------------
 
@@ -1420,6 +1465,10 @@ def aggregate_company(
 
         result[
             "msp_profile"
+        ] = None
+
+        result[
+            "tax_regime_profile"
         ] = None
 
         result[

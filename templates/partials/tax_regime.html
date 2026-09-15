@@ -1,0 +1,58 @@
+{% if company.tax_regime_profile %}
+
+<section class="card">
+
+    <h2>
+        Налоговый режим
+    </h2>
+
+    <p>
+        Специальные налоговые режимы по данным ФНС.
+    </p>
+
+    <div class="info-grid">
+
+        {% if company.tax_regime_profile["regimes"] %}
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Применяемые режимы
+            </div>
+
+            <div class="info-value">
+
+                {% for regime in company.tax_regime_profile["regimes"] %}
+                    <div>
+                        {{ regime["name"] }}
+                    </div>
+                {% endfor %}
+
+            </div>
+
+        </div>
+
+        {% endif %}
+
+
+        {% if company.tax_regime_profile["data_date"] %}
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Данные актуальны на
+            </div>
+
+            <div class="info-value">
+                {{ company.tax_regime_profile["data_date"] }}
+            </div>
+
+        </div>
+
+        {% endif %}
+
+    </div>
+
+</section>
+
+{% endif %}

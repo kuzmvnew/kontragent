@@ -385,6 +385,12 @@ def test_structured_domain_data_contains_msp(
 
     monkeypatch.setattr(
         company_aggregator,
+        "get_tax_regime_profile_for_company",
+        lambda company_id: None,
+    )
+
+    monkeypatch.setattr(
+        company_aggregator,
         "get_revenue_expense_check_for_company",
         lambda company_id: None,
     )
@@ -501,6 +507,7 @@ def test_aggregate_company_adds_msp_source(
             "msp_profile": (
                 msp_profile
             ),
+            "tax_regime_profile": None,
             "revenue_expense_check": None,
             "tax_debt": None,
             "tax_debt_check": None,

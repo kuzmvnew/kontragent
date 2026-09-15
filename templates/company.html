@@ -392,6 +392,8 @@
 
             {% include "partials/msp.html" %}
 
+            {% include "partials/tax_regime.html" %}
+
 
             <!-- ======================================== -->
             <!-- НАЛОГОВАЯ ЗАДОЛЖЕННОСТЬ -->
@@ -1496,6 +1498,18 @@
 
                                 <span class="source-badge">
                                     ФНС — реестр МСП
+                                </span>
+
+                            {% elif source == "fns_snr" %}
+
+                                <span class="source-badge">
+                                    ФНС — налоговые режимы ЮЛ
+                                </span>
+
+                            {% elif source == "fns_snrip" %}
+
+                                <span class="source-badge">
+                                    ФНС — налоговые режимы ИП
                                 </span>
 
                             {% elif source == "fns_revenue_expenses" %}
