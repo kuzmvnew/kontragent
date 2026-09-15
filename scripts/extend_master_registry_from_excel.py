@@ -29,6 +29,31 @@ def classify_entity_type(inn: str | None):
     return None
 
 
+def clean_optional_identifier(
+    value,
+    *,
+    max_length,
+):
+    """
+    Нормализует необязательный цифровой идентификатор.
+
+    Если значение длиннее ограничения колонки PostgreSQL,
+    не обрезаем его и не ломаем импорт всей компании —
+    сохраняем поле как None. Для расширения покрытия Master
+    Registry ключевым идентификатором остаётся валидный ИНН.
+    """
+
+    digits = clean_digits(value)
+
+    if digits is None:
+        return None
+
+    if len(digits) > max_length:
+        return None
+
+    return digits
+
+
 def build_company_payload(row):
     """
     Строит только базовую запись Company.
@@ -58,14 +83,17 @@ def build_company_payload(row):
 
     return {
         "inn": inn,
-        "kpp": clean_digits(
-            row.get("КПП")
+        "kpp": clean_optional_identifier(
+            row.get("КПП"),
+            max_length=9,
         ),
-        "ogrn": clean_digits(
-            row.get("ОГРН")
+        "ogrn": clean_optional_identifier(
+            row.get("ОГРН"),
+            max_length=15,
         ),
-        "okpo": clean_digits(
-            row.get("ОКПО")
+        "okpo": clean_optional_identifier(
+            row.get("ОКПО"),
+            max_length=12,
         ),
         "name": name,
         "address": clean_text(
