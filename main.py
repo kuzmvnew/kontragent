@@ -16,6 +16,9 @@ from app.aggregators.company_product_aggregator import (
 from app.services.company_service import (
     search_companies,
 )
+from app.services.npd_service import (
+    refresh_npd_check_for_inn,
+)
 
 
 # =========================================================
@@ -200,6 +203,23 @@ def prepare_company_for_template(
     return result
 
 
+def validate_company_inn(
+    value: str,
+):
+    clean_inn = normalize_inn(value)
+
+    if len(clean_inn) not in (10, 12):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "ИНН должен содержать "
+                "10 или 12 цифр"
+            ),
+        )
+
+    return clean_inn
+
+
 # =========================================================
 # HOME
 # =========================================================
@@ -247,31 +267,13 @@ async def search(
             },
         )
 
-    # -----------------------------------------------------
-    # Если введён полный ИНН,
-    # отправляем пользователя
-    # на постоянную страницу компании.
-    # -----------------------------------------------------
-
-    if is_full_inn(
-        query
-    ):
-        inn = normalize_inn(
-            query
-        )
+    if is_full_inn(query):
+        inn = normalize_inn(query)
 
         return RedirectResponse(
             url=f"/company/{inn}",
             status_code=302,
         )
-
-    # -----------------------------------------------------
-    # Поиск по названию
-    # или части ИНН.
-    #
-    # Здесь внешний API
-    # вообще не используется.
-    # -----------------------------------------------------
 
     results = search_companies(
         query=query,
@@ -301,42 +303,7 @@ async def company_page(
     request: Request,
     inn: str,
 ):
-    clean_inn = normalize_inn(
-        inn
-    )
-
-    if len(
-        clean_inn
-    ) not in (
-        10,
-        12,
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "ИНН должен содержать "
-                "10 или 12 цифр"
-            ),
-        )
-
-    # -----------------------------------------------------
-    # ВАЖНО:
-    #
-    # Здесь теперь работает
-    # наш Aggregator.
-    #
-    # Для существующей компании:
-    #
-    # PostgreSQL
-    # + cached source snapshots
-    #
-    # без нового обращения
-    # к DaData.
-    #
-    # Если компании вообще нет,
-    # Aggregator может попробовать
-    # внешний источник.
-    # -----------------------------------------------------
+    clean_inn = validate_company_inn(inn)
 
     company = get_company_for_web(
         clean_inn
@@ -345,15 +312,11 @@ async def company_page(
     if company is None:
         raise HTTPException(
             status_code=404,
-            detail=(
-                "Компания не найдена"
-            ),
+            detail="Компания не найдена",
         )
 
-    company = (
-        prepare_company_for_template(
-            company
-        )
+    company = prepare_company_for_template(
+        company
     )
 
     return templates.TemplateResponse(
@@ -362,6 +325,24 @@ async def company_page(
         context={
             "company": company,
         },
+    )
+
+
+@app.post(
+    "/company/{inn}/npd-check",
+)
+async def company_npd_check(
+    inn: str,
+):
+    clean_inn = validate_company_inn(inn)
+
+    refresh_npd_check_for_inn(
+        clean_inn
+    )
+
+    return RedirectResponse(
+        url=f"/company/{clean_inn}",
+        status_code=303,
     )
 
 
@@ -376,23 +357,7 @@ async def company_page(
 async def api_company(
     inn: str,
 ):
-    clean_inn = normalize_inn(
-        inn
-    )
-
-    if len(
-        clean_inn
-    ) not in (
-        10,
-        12,
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "ИНН должен содержать "
-                "10 или 12 цифр"
-            ),
-        )
+    clean_inn = validate_company_inn(inn)
 
     company = get_company_for_web(
         clean_inn
@@ -401,12 +366,23 @@ async def api_company(
     if company is None:
         raise HTTPException(
             status_code=404,
-            detail=(
-                "Компания не найдена"
-            ),
+            detail="Компания не найдена",
         )
 
     return company
+
+
+@app.post(
+    "/api/company/{inn}/npd-check",
+)
+async def api_company_npd_check(
+    inn: str,
+):
+    clean_inn = validate_company_inn(inn)
+
+    return refresh_npd_check_for_inn(
+        clean_inn
+    )
 
 
 # =========================================================
@@ -436,9 +412,7 @@ async def api_search(
 
     return {
         "query": query,
-        "count": len(
-            results
-        ),
+        "count": len(results),
         "results": results,
     }
 
