@@ -1,3 +1,6 @@
+from app.services.npd_registry_service import (
+    ensure_npd_dataset,
+)
 from app.services.source_service import (
     list_datasets,
     list_sources,
@@ -13,6 +16,7 @@ def main():
     print()
 
     sync_default_registry()
+    ensure_npd_dataset()
 
     sources = list_sources()
     datasets = list_datasets()
