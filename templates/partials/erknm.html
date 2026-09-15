@@ -1,0 +1,228 @@
+{% if company.erknm_check %}
+
+<section class="card">
+
+    <h2>
+        Контрольные и профилактические мероприятия ЕРКНМ
+    </h2>
+
+    {% set check = company.erknm_check %}
+
+    {% if check["result"] == "found" %}
+
+        <div class="risk-placeholder">
+
+            <div class="risk-placeholder-title">
+                Найдены сведения ФГИС ЕРКНМ
+            </div>
+
+            <p>
+                В загруженных официальных данных найдены мероприятия,
+                связанные с этой организацией по ИНН или ОГРН.
+            </p>
+
+        </div>
+
+        <div class="info-grid">
+
+            <div class="info-item">
+                <div class="info-label">
+                    Всего мероприятий
+                </div>
+                <div class="info-value">
+                    {{ check["record_count"] }}
+                </div>
+            </div>
+
+            <div class="info-item">
+                <div class="info-label">
+                    С заполненным результатом
+                </div>
+                <div class="info-value">
+                    {{ check["result_count"] }}
+                </div>
+            </div>
+
+            <div class="info-item">
+                <div class="info-label">
+                    С предостережением / предупреждением
+                </div>
+                <div class="info-value">
+                    {{ check["warning_count"] }}
+                </div>
+            </div>
+
+        </div>
+
+        {% if check["kind_counts"] %}
+            <div class="detail-row">
+                <div class="detail-label">
+                    Виды мероприятий
+                </div>
+                <div class="detail-value">
+                    {% for label, count in check["kind_counts"].items() %}
+                        <div>{{ label }}: {{ count }}</div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
+        {% if check["status_counts"] %}
+            <div class="detail-row">
+                <div class="detail-label">
+                    Статусы
+                </div>
+                <div class="detail-value">
+                    {% for label, count in check["status_counts"].items() %}
+                        <div>{{ label }}: {{ count }}</div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
+        {% for record in check["records"] %}
+
+            <div class="detail-row">
+
+                <div class="detail-label">
+                    {% if record["start_date"] %}
+                        {{ record["start_date"].strftime("%d.%m.%Y") }}
+                    {% else %}
+                        Дата не указана
+                    {% endif %}
+                </div>
+
+                <div class="detail-value">
+
+                    <strong>
+                        {{ record["kind_knm"] or "Вид мероприятия не указан" }}
+                    </strong>
+
+                    {% if record["status"] %}
+                        <div>
+                            Статус: {{ record["status"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["supervision_name"] %}
+                        <div>
+                            Вид контроля: {{ record["supervision_name"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["kno_organization"] %}
+                        <div>
+                            Контрольный орган: {{ record["kno_organization"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["object_address"] or record["place"] %}
+                        <div>
+                            Место / объект:
+                            {{ record["object_address"] or record["place"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["risk_category"] %}
+                        <div>
+                            Категория риска объекта: {{ record["risk_category"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["result_text"] %}
+                        <div>
+                            Результат: {{ record["result_text"] }}
+                        </div>
+                    {% elif record["warning_caption"] %}
+                        <div>
+                            Содержание предостережения:
+                            {{ record["warning_caption"] }}
+                        </div>
+                    {% endif %}
+
+                    <div>
+                        ERPID: {{ record["erpid"] }}
+                    </div>
+
+                </div>
+
+            </div>
+
+        {% endfor %}
+
+        {% if check["records_limited"] %}
+            <p>
+                Показана только часть мероприятий. Полное количество указано выше.
+            </p>
+        {% endif %}
+
+    {% elif check["result"] == "not_found" %}
+
+        <div class="risk-placeholder">
+
+            <div class="risk-placeholder-title">
+                Мероприятия не найдены
+            </div>
+
+            <p>
+                В уже загруженных периодах ФГИС ЕРКНМ
+                совпадений по ИНН/ОГРН этой организации не найдено.
+            </p>
+
+        </div>
+
+    {% else %}
+
+        <div class="risk-placeholder">
+
+            <div class="risk-placeholder-title">
+                Проверка ЕРКНМ временно недоступна
+            </div>
+
+            <p>
+                Данные источника сейчас нельзя корректно использовать
+                для этой проверки.
+            </p>
+
+        </div>
+
+    {% endif %}
+
+    {% if check["coverage_periods"] %}
+        <div class="detail-row">
+            <div class="detail-label">
+                Загруженные периоды
+            </div>
+            <div class="detail-value">
+                {{ check["coverage_periods"] | join(", ") }}
+            </div>
+        </div>
+    {% endif %}
+
+    {% if check["data_date"] %}
+        <div class="detail-row">
+            <div class="detail-label">
+                Дата версии данных
+            </div>
+            <div class="detail-value">
+                {{ check["data_date"].strftime("%d.%m.%Y") }}
+            </div>
+        </div>
+    {% endif %}
+
+    <p>
+        {{ check.get("interpretation_note") or "Сам факт контрольного или профилактического мероприятия не является негативным сигналом." }}
+    </p>
+
+    <p>
+        {{ check.get("coverage_note") or "Отсутствие записи относится только к загруженным периодам ЕРКНМ." }}
+    </p>
+
+    <p>
+        Источник: ФГИС «Единый реестр контрольных (надзорных) мероприятий»,
+        Генеральная прокуратура Российской Федерации.
+    </p>
+
+</section>
+
+{% endif %}
