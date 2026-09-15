@@ -1,3 +1,6 @@
+from app.services.erknm_registry_service import (
+    ensure_erknm_dataset,
+)
 from app.services.npd_registry_service import (
     ensure_npd_dataset,
 )
@@ -17,6 +20,7 @@ def main():
 
     sync_default_registry()
     ensure_npd_dataset()
+    ensure_erknm_dataset()
 
     sources = list_sources()
     datasets = list_datasets()
