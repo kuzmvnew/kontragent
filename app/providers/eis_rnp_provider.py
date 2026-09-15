@@ -6,6 +6,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 EIS_IP_ENDPOINT = (
