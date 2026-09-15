@@ -26,6 +26,10 @@ def enrich_company_with_disqualified(
         return None
 
     result = dict(company)
+    result["sources_used"] = list(
+        company.get("sources_used")
+        or []
+    )
 
     check = get_disqualified_check_for_inn(
         result.get("inn")
