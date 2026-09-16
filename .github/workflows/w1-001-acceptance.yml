@@ -1,0 +1,24 @@
+name: W1-001 acceptance
+
+on:
+  push:
+    branches: ["acceptance/w1-001-20260916"]
+
+permissions:
+  contents: read
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked acceptance source (no local databases or secrets)
+        run: git archive --format=zip HEAD -o source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: w1-001-source
+          path: source.zip
+          retention-days: 1
