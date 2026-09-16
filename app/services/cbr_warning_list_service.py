@@ -76,12 +76,12 @@ def _empty_payload():
             "Включение в предупредительный список означает, что "
             "Банк России выявил признаки нелегальной деятельности "
             "на финансовом рынке. Это не является судебным приговором; "
-            "организация вправе обжаловать включение."
+            "организация или ИП вправе обжаловать включение."
         ),
         "coverage_note": (
             "Отсутствие записи в этом списке не подтверждает наличие "
             "лицензии Банка России и само по себе не доказывает законность "
-            "всей финансовой деятельности организации."
+            "всей финансовой деятельности компании или ИП."
         ),
     }
 
@@ -92,19 +92,7 @@ def get_cbr_warning_list_check_for_inn(
 ):
     clean_inn = normalize_inn(inn)
 
-    if len(clean_inn) == 12:
-        return build_check_result(
-            checked=True,
-            applicable=False,
-            result="not_applicable",
-            data_date=None,
-            dataset_code=DATASET_CODE,
-            source=SOURCE_CODE,
-            reason="individual_entrepreneurs_not_in_source",
-            **_empty_payload(),
-        )
-
-    if len(clean_inn) != 10:
+    if len(clean_inn) not in {10, 12}:
         return build_check_result(
             checked=False,
             applicable=True,

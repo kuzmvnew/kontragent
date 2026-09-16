@@ -12,9 +12,9 @@ from app.providers.cbr_warning_list_provider import (
     CbrWarningListProvider,
     FULL_LIST_JSON_URL,
 )
+from app.services import cbr_warning_list_service
 from app.services.cbr_warning_list_service import (
     _serialize_entry,
-    get_cbr_warning_list_check_for_inn,
 )
 from app.services.cbr_warning_registry_service import (
     build_cbr_warning_dataset_spec,
@@ -40,6 +40,35 @@ class FakeClient:
     def get(self, url):
         self.calls.append(url)
         return self.response
+
+
+class FakeDbResult:
+    def __init__(self, *, scalar=None, rows=None):
+        self.scalar = scalar
+        self.rows = rows or []
+
+    def scalar_one_or_none(self):
+        return self.scalar
+
+    def scalar_one(self):
+        return self.scalar
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class FakeSession:
+    def __init__(self, results):
+        self.results = list(results)
+
+    def execute(self, _statement):
+        return self.results.pop(0)
+
+    def close(self):
+        pass
 
 
 def sample_row():
@@ -111,6 +140,20 @@ def test_parser_normalizes_documented_cbr_fields():
     ]
 
 
+def test_parser_preserves_individual_entrepreneur_inn():
+    row = sample_row()
+    row["inn"] = "770123456789"
+    row["OrgType"] = "Индивидуальный предприниматель"
+
+    record = normalize_warning_record(
+        row,
+        data_date=date(2026, 9, 16),
+    )
+
+    assert record["inn"] == "770123456789"
+    assert record["org_type"] == "Индивидуальный предприниматель"
+
+
 def test_parser_accepts_data_wrapper_and_counts_duplicates():
     row = sample_row()
 
@@ -128,18 +171,39 @@ def test_parser_accepts_data_wrapper_and_counts_duplicates():
     assert result["without_inn"] == 0
 
 
-def test_ip_is_not_applicable_without_database_access():
-    result = get_cbr_warning_list_check_for_inn(
-        "770123456789"
+def test_ip_is_checked_against_current_snapshot(monkeypatch):
+    snapshot_date = date(2026, 9, 16)
+    dataset = SimpleNamespace(
+        id=10,
+        last_data_date=snapshot_date,
     )
 
-    assert result["result"] == "not_applicable"
-    assert result["checked"] is True
-    assert result["applicable"] is False
-    assert (
-        result["reason"]
-        == "individual_entrepreneurs_not_in_source"
+    session = FakeSession(
+        [
+            FakeDbResult(scalar=dataset),
+            FakeDbResult(scalar=1),
+            FakeDbResult(scalar=0),
+            FakeDbResult(rows=[]),
+        ]
     )
+
+    monkeypatch.setattr(
+        cbr_warning_list_service,
+        "get_session",
+        lambda: session,
+    )
+
+    result = (
+        cbr_warning_list_service
+        .get_cbr_warning_list_check_for_inn(
+            "770123456789"
+        )
+    )
+
+    assert result["result"] == "not_found"
+    assert result["checked"] is True
+    assert result["applicable"] is True
+    assert result["data_date"] == snapshot_date
 
 
 def test_entry_serialization_preserves_official_detail_link():
