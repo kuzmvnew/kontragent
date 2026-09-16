@@ -78,5 +78,5 @@ def test_namespace_aware_nested_shape():
     root = ET.fromstring(xml())
     for element in root.iter():
         element.tag = '{urn:fns:test}' + element.tag
-    rows, stats = parse(ET.tostring(root))
+    rows, stats = parse(ET.tostring(root, encoding='utf-8', xml_declaration=True))
     assert len(rows) == 2 and stats['expected_documents'] == 1
