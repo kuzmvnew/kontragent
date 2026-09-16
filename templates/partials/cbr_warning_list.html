@@ -1,6 +1,6 @@
 {% if company.cbr_warning_list_check %}
 
-<section class="card">
+<section class="card" data-testid="cbr-warning-list" data-result="{{ company.cbr_warning_list_check['result'] }}">
 
     <h2>
         Предупредительный список Банка России
@@ -106,7 +106,7 @@
             </div>
 
             <p>
-                В актуальном загруженном предупредительном списке
+                В загруженном предупредительном списке на указанную дату
                 Банка России нет записи с точным совпадением ИНН
                 этой компании или ИП.
             </p>
@@ -143,7 +143,7 @@
     {% if check["data_date"] %}
         <div class="detail-row">
             <div class="detail-label">
-                Дата загруженного snapshot
+                Дата получения загруженного снимка
             </div>
             <div class="detail-value">
                 {{ check["data_date"].strftime("%d.%m.%Y") }}

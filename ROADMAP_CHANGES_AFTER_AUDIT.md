@@ -157,3 +157,9 @@ Release before feature completeness.
 ## Status
 
 Approved.
+
+## Approved execution clarification — 2026-09-16
+
+Phase 3 is completed in its agreed scope; Phase 4 is ACTIVE. Complete the agreed Wave 1 before SEO MVP. Current task: W1-001 acceptance; W1-003 remains NOT STARTED until a separate command. No product-order or architecture rewrite.
+
+The six permanent acceptance criteria are tests, a real official-source match, PostgreSQL write/readback, absence/non-applicability/failure semantics, a real browser card, and record/date/coverage checks. These are result-verification criteria, not new architecture. See PROJECT_STATUS.md and docs/W1_001_ACCEPTANCE.md.
