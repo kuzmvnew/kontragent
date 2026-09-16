@@ -695,3 +695,7 @@ ChatGPT должен сам сообщать Михаилу, когда реко
 6. Обновить PROJECT_STATUS.md.
 7. При необходимости обновить ROADMAP.md.
 8. Только после этого переходить к следующей крупной задаче.
+
+
+### W1-002 final Mac acceptance — 16.09.2026
+W1-002 is ACCEPTED / SIX GATES PASS on the user Mac. Real found exact-INN: 9706063520 (БАНК ЭЛЕМЕНТ (ООО), 2 licences/rights); real not_found: 9102309919. PostgreSQL kontragent reread PASS; Chromium found/not_found HTTP 200, page_errors=[]; 435 tests PASS. On-demand coverage is dated cache coverage, not a bulk CBR registry. auto_update=NOT_CONFIGURED. Source protocol: docs/W1_002_ACCEPTANCE.md.

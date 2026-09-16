@@ -1,10 +1,10 @@
 # W1-002 — CBR FinOrg: протокол приёмки
 
-Статус: REAL CI SIX GATES PASS; пользовательская LOCAL ACCEPTANCE PENDING.
+Статус: **ACCEPTED / SIX GATES PASS на пользовательском Mac**.
 Кодовый baseline перед задачей: de325730757884a924bb11db3e30fa4d2342191d (PR #29). Доработка приёмки: PR #30.
 
 ## Что реализовано
-scripts/accept_cbr_finorg.py использует существующие provider/service, не создаёт альтернативный источник. Реальный FastAPI запускается на свободном localhost-порту, реальные страницы /company/7707083893 и /company/9102309919 открываются Chromium. Проверяются HTTP 200, видимый result, лицензии и их количество, число active по текущей логике, ограничения интерпретации и отсутствие page_errors. Сохраняются PNG и report.json.
+scripts/accept_cbr_finorg.py использует существующие provider/service, не создаёт альтернативный источник. Реальный FastAPI запускается на свободном localhost-порту, реальные страницы /company/9706063520 и /company/9102309919 открываются Chromium. Проверяются HTTP 200, видимый result, лицензии и их количество, число active по текущей логике, ограничения интерпретации и отсутствие page_errors. Сохраняются PNG и report.json.
 --live выполняет только две точечные проверки (максимум три SOAP-запроса с интервалом 2 секунды), сохраняет ответы в существующую PostgreSQL и SOAP-файлы с SHA-256 в локальный каталог приёмки. Без --live источник не запрашивается, используются успешные записи текущего дня.
 Скрипт не вставляет фиктивные компании в пользовательский Master Registry, не применяет миграции, не перезапускает импорты W1-001/W1-003 и не меняет Git. В пользовательском режиме требуется БД kontragent и существование обеих реальных компаний. В CI используется отдельная БД test, контекст явно обозначен.
 
@@ -42,3 +42,15 @@ uv run --with playwright==1.63.0 python -u -m scripts.accept_cbr_finorg --tests 
 6. PASS на CI для on-demand кэша; Mac NOT CONFIRMED до измерения текущего кэша и точного пересечения с Master.
 Полный размер реестра ЦБ и bulk import — N/A, а не искусственно пройденный массовый импорт. Дата проверки не является датой всего реестра.
 auto_update=NOT_CONFIGURED. Отдельное расписание не добавляется этой задачей.
+
+## Финальная локальная приёмка на Mac — 16.09.2026
+
+Итог: `W1-002 SIX GATES: PASS`; gates 1—6 PASS; `accepted=true`; `user_mac_accepted=true`; `platform=Darwin`; `database=kontragent`; Alembic `f7b2d8a4c1e3`; Git baseline `27a15affbba7671a866b84fcff5ec3b933831d6b`; 435 tests PASS.
+
+Контрольный found изменён с Сбербанка, отсутствующего в пользовательском Master Registry, на реально существующий exact-INN: `9706063520` — БАНК ЭЛЕМЕНТ (ООО), Master ID 1227. Официальный CBR FinOrg: `found`, CBR ID `2000000352020`, 2 лицензии/права, 2 active. PostgreSQL reread `cached=true`; Chromium HTTP 200, visible found, `page_errors=[]`.
+
+Контрольный not_found: `9102309919` — АО «КРЫМАВТОДОР», присутствует в Master Registry; официальный ответ HTTP 200 `not_found`, 0 лицензий; PostgreSQL reread `cached=true`; Chromium HTTP 200, visible not_found, `page_errors=[]`.
+
+On-demand coverage: 3 успешных cache-INN на 16.09.2026; 2 текущих checked Master companies из 6 781 485; 6 781 483 unchecked; full CBR registry size/bulk import — N/A. Это измерение датированного on-demand cache, не утверждение полноты реестра ЦБ. Три официальных SOAP-вызова HTTP 200. `auto_update=NOT_CONFIGURED`.
+
+Локальные screenshot/report остаются в `data/acceptance/w1-002/20260916T175944809035Z/` на пользовательском Mac и не коммитятся как dataset.

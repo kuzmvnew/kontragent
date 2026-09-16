@@ -171,3 +171,7 @@ W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SI
 Wave 1 содержит шесть источников. W1-001 и W1-003 приняты на Mac. W1-002: LIVE + CACHE PASS на Mac, полный реальный CI PASS; локальная browser/six-gate приёмка ожидается. W1-004 Росздравнадзор, W1-005 Роскомнадзор, W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
 
 The six permanent acceptance criteria are tests, a real official-source match, PostgreSQL write/readback, absence/non-applicability/failure semantics, a real browser card, and record/date/coverage checks. These are result-verification criteria, not new architecture.
+
+
+### W1-002 final Mac acceptance — 16.09.2026
+W1-002 is ACCEPTED / SIX GATES PASS on the user Mac. Real found exact-INN: 9706063520 (БАНК ЭЛЕМЕНТ (ООО), 2 licences/rights); real not_found: 9102309919. PostgreSQL kontragent reread PASS; Chromium found/not_found HTTP 200, page_errors=[]; 435 tests PASS. On-demand coverage is dated cache coverage, not a bulk CBR registry. auto_update=NOT_CONFIGURED. Source protocol: docs/W1_002_ACCEPTANCE.md.

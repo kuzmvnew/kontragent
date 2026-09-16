@@ -32,7 +32,7 @@ from app.services.cbr_finorg_service import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-FOUND_INN = '7707083893'
+FOUND_INN = '9706063520'
 ABSENT_INN = '9102309919'
 
 
