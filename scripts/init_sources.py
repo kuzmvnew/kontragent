@@ -13,6 +13,7 @@ from app.services.fns_sme_support_registry_service import (
 from app.services.npd_registry_service import (
     ensure_npd_dataset,
 )
+from app.services.roszdrav_registry_service import ensure_roszdrav_datasets
 from app.services.source_service import (
     list_datasets,
     list_sources,
@@ -33,6 +34,7 @@ def main():
     ensure_cbr_warning_list_dataset()
     ensure_cbr_finorg_dataset()
     ensure_fns_sme_support_dataset()
+    ensure_roszdrav_datasets()
 
     sources = list_sources()
     datasets = list_datasets()

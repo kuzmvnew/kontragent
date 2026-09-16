@@ -4,6 +4,12 @@ from app.models.cbr_finorg import (
 from app.models.cbr_warning_list import (
     CbrWarningListEntry,
 )
+from app.models.roszdrav import (
+    RoszdravClinicalOrganizationEntry,
+    RoszdravLicenseEntry,
+    RoszdravMedicalDeviceCheck,
+    RoszdravUnifiedLicenseCheck,
+)
 from app.models.company import (
     Company,
     CompanyBranch,

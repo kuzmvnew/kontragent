@@ -33,7 +33,7 @@ ACTIVE
 | 1. Фундамент | ✅ | FastAPI, PostgreSQL, Git, тестовая база |
 | 2. Master Registry | ✅ | Единый реестр ЮЛ/ИП по ИНН |
 | 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
-| 4. Качество данных | ▶️ ACTIVE | Wave 1: W1-001/W1-002/W1-003 ACCEPTED / SIX GATES PASS на Mac; W1-004—W1-006 впереди |
+| 4. Качество данных | ▶️ ACTIVE | Wave 1: W1-001—W1-004 ACCEPTED / SIX GATES PASS на Mac; W1-005—W1-006 впереди |
 | 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены |
 | 6. Карточка компании | 🟡 частично | Несколько официальных источников уже отображаются |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
@@ -273,9 +273,10 @@ DaMIA зарегистрирована/изучена как возможный 
 Текущий приоритет: завершить согласованную Wave 1 источников до SEO MVP.
 
 - **W1-001 CBR Warning List — ACCEPTED на Mac по шести критериям.** Локальный официальный sync 16.09.2026: HTTP 200, source/imported/snapshot **27 163 / 27 163 / 27 163**, rejected **0**, duplicates **0**, conflicting duplicates **0**. С usable INN **2 995**, без usable INN **24 168**. Exact-INN пересечение с Master Registry: **857** source records / **857** unique master companies; Master Registry **6 781 485**; source records with INN unmatched **2 138**. Реальный `found`: ИНН `0105064330`, CBR ID `9806`, ООО «ИНВЕСТКАПИТАЛ24». Реальный snapshot `not_found`: ИНН `9102309919`. Chromium открыл обе карточки с HTTP 200 и `page_errors=[]`. Даты внесения: **01.02.2021–16.09.2026**; даты обновления: **29.04.2021–16.09.2026**. `data_date=16.09.2026` — дата получения snapshot, не официальная дата состояния всего списка. `auto_update=NOT_CONFIGURED`.
-- W1-002 CBR FinOrg: LIVE + CACHE PASS на Mac; отдельная реальная PostgreSQL/Chromium приёмка на CI PASS (run 35129041426, 435 tests). Полные SIX GATES на пользовательском Mac пока NOT CONFIRMED. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
+- W1-002 CBR FinOrg: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026; PostgreSQL/Chromium/coverage PASS, 435 tests. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
 - W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
-- W1-004 Росздравнадзор / W1-005 Роскомнадзор / W1-006 НОСТРОЙ, СРО: NOT STARTED; не запускать без отдельной команды. Полная таблица: [WAVE1_STATUS.md](WAVE1_STATUS.md).
+- **W1-004 Росздравнадзор — ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026.** Scope A–D: три bulk-категории лицензий, точечный Единый реестр лицензий, exact-number lookup медизделий без автопривязки к Company и перечень клинических организаций. PostgreSQL `kontragent`, Alembic `a9c4e6f8b201`, 450 tests, Chromium HTTP 200 и `page_errors=[]`. Подробности: `docs/W1_004_ACCEPTANCE.md`. `auto_update=NOT_CONFIGURED`.
+- W1-005 Роскомнадзор: NEXT / NOT STARTED. W1-006 НОСТРОЙ / СРО: NOT STARTED. Не запускать без отдельной команды. Полная таблица: [WAVE1_STATUS.md](WAVE1_STATUS.md).
 - Person, Leads, CRM, Enterprise не начинаем. РНП/ЕИС отложен до официального доступа; DaMIA не подключаем.
 
 Проверенный code baseline W1-001: `8937cd7bafbc67b2accd2ebf185ced8418c45d2d` (PR #26). Последующие docs-only commits не меняют код W1-001.

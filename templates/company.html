@@ -394,6 +394,8 @@
 
             {% include "partials/tax_regime.html" %}
 
+            {% include "partials/roszdrav.html" %}
+
 
             <!-- ======================================== -->
             <!-- НАЛОГОВАЯ ЗАДОЛЖЕННОСТЬ -->
@@ -1540,6 +1542,12 @@
 
                                 <span class="source-badge">
                                     ГИР БО
+                                </span>
+
+                            {% elif source == "roszdravnadzor" %}
+
+                                <span class="source-badge">
+                                    Росздравнадзор
                                 </span>
 
                             {% else %}

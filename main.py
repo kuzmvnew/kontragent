@@ -1,6 +1,7 @@
 from fastapi import (
     FastAPI,
     HTTPException,
+    Query,
     Request,
 )
 from fastapi.responses import (
@@ -15,6 +16,10 @@ from app.aggregators.company_product_aggregator import (
 )
 from app.services.cbr_finorg_service import (
     refresh_cbr_finorg_check_for_inn,
+)
+from app.services.roszdrav_service import (
+    refresh_roszdrav_medical_device_check,
+    refresh_roszdrav_unified_license_check,
 )
 from app.services.company_service import (
     search_companies,
@@ -367,6 +372,13 @@ async def company_cbr_finorg_check(
     )
 
 
+@app.post("/company/{inn}/roszdrav-license-check")
+async def company_roszdrav_license_check(inn: str):
+    clean_inn = validate_company_inn(inn)
+    refresh_roszdrav_unified_license_check(clean_inn)
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
 # =========================================================
 # API: COMPANY
 # =========================================================
@@ -417,6 +429,18 @@ async def api_company_cbr_finorg_check(
     return refresh_cbr_finorg_check_for_inn(
         clean_inn
     )
+
+
+@app.post("/api/company/{inn}/roszdrav-license-check")
+async def api_company_roszdrav_license_check(inn: str):
+    return refresh_roszdrav_unified_license_check(validate_company_inn(inn))
+
+
+@app.post("/api/roszdrav/medical-device-check")
+async def api_roszdrav_medical_device_check(
+    registration_number: str = Query(min_length=1, max_length=160),
+):
+    return refresh_roszdrav_medical_device_check(registration_number)
 
 
 # =========================================================

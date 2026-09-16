@@ -1,6 +1,6 @@
 # Wave 1 handoff — 2026-09-16
 
-Purpose: authoritative working handoff for the next Kontragent chat. Updated after W1-003 local PASS and W1-002 CI browser acceptance. Status only; no change to architecture or roadmap order.
+Purpose: authoritative working handoff for the next Kontragent chat. Updated after W1-004 local SIX GATES PASS. Status only; no change to architecture or roadmap order.
 
 ## Repository
 
@@ -81,23 +81,25 @@ Detailed evidence: `docs/W1_001_ACCEPTANCE.md`.
 
 ## W1-002 — CBR FinOrg
 
-W1-002 CBR FinOrg: LIVE + CACHE PASS на Mac; отдельная реальная PostgreSQL/Chromium приёмка на CI PASS (run 35129041426, 435 tests). Полные SIX GATES на пользовательском Mac пока NOT CONFIRMED. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
+W1-002 CBR FinOrg: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026; PostgreSQL/Chromium/coverage PASS, 435 tests. Подробности: docs/W1_002_ACCEPTANCE.md.
 
 ## W1-003 — FNS SME support recipients
 
 W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
 
-## W1-004—W1-006
+## W1-004 — Roszdravnadzor
 
-Wave 1 содержит шесть источников. W1-001 и W1-003 приняты на Mac. W1-002: LIVE + CACHE PASS на Mac, полный реальный CI PASS; локальная browser/six-gate приёмка ожидается. W1-004 Росздравнадзор, W1-005 Роскомнадзор, W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
+W1-004 Росздравнадзор: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026. Scope A–D, PostgreSQL `kontragent`, Alembic `a9c4e6f8b201`, 450 tests, Chromium и coverage PASS. Подробности: docs/W1_004_ACCEPTANCE.md.
 
-Актуальная миграция после W1-003: `f7b2d8a4c1e3`. Старое значение выше относится только к исторической приёмке W1-001. Промпт передачи: `docs/CODEX_WAVE1_HANDOFF_PROMPT.md`. Не считать CI-проверку приёмкой на пользовательском Mac.
+## W1-005—W1-006
+
+W1-005 Роскомнадзор — NEXT / NOT STARTED. W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Актуальная локальная миграция после W1-004: `a9c4e6f8b201`. Каждый следующий источник требует отдельной команды и собственного source passport.
 
 ## Boundaries
 
 - Phase 3: completed in agreed scope.
 - Phase 4: ACTIVE.
-- Current priority: agreed Wave 1 before SEO MVP.
+- Current priority: finish Wave 1; then public company card/site UX; then the first 10,000 SEO pages; only then Wave 2.
 - RNP/EIS: deferred until official access.
 - DaMIA: do not connect now.
 - Person / Leads / CRM / Enterprise: do not start.

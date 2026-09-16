@@ -81,6 +81,11 @@ def _patch_later_product_sources(monkeypatch):
             "result": "unavailable",
         },
     )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "enrich_company_with_roszdrav",
+        lambda company: company,
+    )
 
 
 def test_product_aggregator_adds_disqualified_check(
