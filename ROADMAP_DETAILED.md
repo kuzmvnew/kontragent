@@ -16,6 +16,40 @@
 
 Обозначения: ✅ подтверждённый завершённый пункт; 🟡 частичная реализация; 🔵 дальнейший этап из прежнего плана; ⚪ готовность не подтверждена. Незакрытый `[ ]` означает «нужно сделать или подтвердить», а не обязательно «кода нет».
 
+## Architecture Transition (2026-09-16)
+
+После завершения Фазы 3 проведены:
+
+- Architecture Audit
+- Business & Scale Audit
+- Founder Audit
+
+По результатам аудитов принято решение:
+
+Архитектура проекта НЕ переписывается.
+
+Все существующие этапы ROADMAP_DETAILED сохраняются.
+
+Новый ROADMAP (версии 2.x) использует другую продуктовую группировку этапов.
+
+ROADMAP_DETAILED остаётся инженерным документом.
+
+ROADMAP.md становится продуктовым документом.
+
+Оба документа являются актуальными одновременно.
+
+Новая продуктовая Фаза 4 соответствует нескольким инженерным фазам текущего ROADMAP_DETAILED.
+
+| Новый ROADMAP | ROADMAP_DETAILED |
+|---------------|------------------|
+| Фаза 4 Data Normalization | Фазы 1 + 2 + 4 |
+| Фаза 5 Checks | Фаза 6 |
+| Фаза 6 Company Card | Фаза 8 |
+| Фаза 7 API | Фаза 14 |
+| Фаза 8 SEO | Фаза 9 |
+| Фаза 9 Monitoring | Фаза 10 + часть 14 |
+| Фаза 10 Commercial Platform | Фазы 14 + 15 |
+
 ## Весь путь одним взглядом
 
 | № | Подробная фаза | Состояние на дату сверки | Что будет результатом |
@@ -377,6 +411,23 @@
 
 Админ-панель, автоматическое обновление и поздние расширения в текущем кратком roadmap не выделены отдельными фазами. Их точную очередность надо согласовать, если будем менять действующий план; не считать это молча решённым при восстановлении документа.
 
+## Approved Architecture Decisions
+
+После завершения аудитов официально утверждены следующие архитектурные решения.
+
+- Official Sources remain the only Source of Truth.
+- No rewrite of the existing foundation.
+- Facts become the unified business data layer.
+- Checks become reusable business objects.
+- AI becomes an explanation layer.
+- Executive Summary becomes the standard entry point of company cards.
+- Monitoring becomes the first subscription product.
+- Product Led Growth becomes the primary commercial strategy.
+- Company remains the highest implementation priority before Person.
+
+Эти решения используются при разработке новых фаз,
+но не изменяют историческое описание уже существующих этапов.
+
 ## Правило обновления
 
 После рабочего блока: сначала проверить код/импорт/интерфейс и обновить PROJECT_STATUS.md, затем синхронизировать затронутые пункты здесь. Для закрытого пункта указывать файл, commit или проверяемый результат. Не ставить «готово» только потому, что соответствующий процесс описан в архиве.
@@ -384,3 +435,17 @@
 Person-источник не считается готовым только потому, что найден официальный сайт или написан парсер. Полный путь: `access/rights → identity match → ingestion/on-demand → freshness → expiry/purge → product display → public/paid/API mode → tests → privacy controls`.
 
 При этой сверке менялась только документация. Полный набор тестов, импорты и браузерная приёмка не запускались; ранее записанный результат тестов остаётся историческим, а не новым тестовым запуском.
+
+## Release Rules
+
+Rule 1
+
+No approved release may be delayed by a new feature.
+
+Rule 2
+
+Every new idea goes to Backlog.
+
+Rule 3
+
+SEO MVP has the highest development priority.

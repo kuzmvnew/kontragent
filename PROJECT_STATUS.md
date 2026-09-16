@@ -19,16 +19,16 @@
 
 **Текущая фаза: 3 — официальные источники.**
 
-Фаза 3 **не закрыта**. Текущий пункт — **№12 РНП / ЕИС**, сейчас в статусе **WAITING FOR EIS ACCESS / внешний blocker**.
+Status:
 
-**Фаза 4 не начата и не должна начинаться без отдельной команды Михаила.**
+✅ COMPLETED
 
 | Фаза | Статус | Текущее состояние |
 |---|---|---|
 | 1. Фундамент | ✅ | FastAPI, PostgreSQL, Git, тестовая база |
 | 2. Master Registry | ✅ | Единый реестр ЮЛ/ИП по ИНН |
-| 3. Официальные источники | ⏸ сейчас | №11 ЕРКНМ завершён; №12 РНП/ЕИС ожидает официальный доступ |
-| 4. Качество данных | ⏸ НЕ НАЧАТА | Не начинать без отдельного подтверждения Михаила |
+| 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
+| 4. Качество данных | ▶️ NEXT | Data Normalization & Quality Foundation |
 | 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены |
 | 6. Карточка компании | 🟡 частично | Несколько официальных источников уже отображаются |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
@@ -36,6 +36,71 @@
 | 8. SEO | 🔵 далее | После security gate |
 | 9. Лендинг и привлечение | ⏸ | Пауза до готовности ядра/карточки |
 | 10. Монетизация | 🔵 позже | После работающего продукта |
+
+## Phase 3 Result
+
+Phase 3 completed successfully.
+
+Official datasets integrated:
+
+- Master Registry
+- Tax Debt
+- Tax Offences
+- Paid Taxes
+- Revenue & Expenses
+- Average Employees
+- SME Registry
+- SNR
+- SNRIP
+- Disqualified Persons
+- NPD
+- ERKNM
+
+Deferred:
+
+RNP / EIS
+
+Status:
+
+WAITING FOR OFFICIAL EIS ACCESS
+
+Decision:
+
+Official EIS remains the only Source of Truth.
+
+Deferred source does not block Phase 4.
+
+## Next Active Phase
+
+Phase 4
+
+Data Normalization & Quality Foundation
+
+Primary objectives:
+
+- Entity Registry
+- Relationship Registry
+- Facts Layer
+- Dataset Quality
+- Evidence Layer
+
+## Current Release Goal
+
+Release 1
+
+SEO MVP
+
+Priority:
+
+Highest
+
+## Current Development Rule
+
+Current project priority:
+
+Release First.
+
+No approved release may be delayed by new features.
 
 ## Текущее техническое состояние
 

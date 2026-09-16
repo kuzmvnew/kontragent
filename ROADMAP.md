@@ -2,6 +2,23 @@
 
 Последнее обновление: 15.09.2026
 
+## Development Principles
+
+1.
+Official Sources remain the only Source of Truth.
+
+2.
+No approved release may be delayed.
+
+3.
+Company before Person.
+
+4.
+Monitoring before Leads.
+
+5.
+Architecture evolves without rewrite.
+
 ## Цель проекта
 
 Создать сервис проверки юридических лиц и ИП в России, а после готовности основного ядра — полноценный модуль проверки физических лиц Person.
@@ -96,11 +113,34 @@ Person Registry строится как отдельный слой над по�
 
 # ФАЗА 3 — ОФИЦИАЛЬНЫЕ ИСТОЧНИКИ ДАННЫХ
 
-Статус: 🟡 АКТИВНАЯ ФАЗА
+Статус: ✅ COMPLETED
 
 ## Цель
 
 Подключить основной набор бесплатных и официальных источников, необходимых для полезной проверки контрагента, и заложить корректный фундамент источников для будущего Person.
+
+## Completed
+
+- Master Registry
+- Tax Debt
+- Tax Offences
+- Paid Taxes
+- Revenue & Expenses
+- Average Employees
+- SME Registry
+- SNR
+- SNRIP
+- Disqualified Persons
+- NPD
+- ERKNM
+
+## Deferred
+
+RNP / EIS
+
+Waiting for official access.
+
+Does not block further development.
 
 ## Уже сделано
 
@@ -170,13 +210,21 @@ Person Registry строится как отдельный слой над по�
 
 ---
 
-# ФАЗА 4 — НОРМАЛИЗАЦИЯ И КАЧЕСТВО ДАННЫХ
+# ФАЗА 4 — DATA NORMALIZATION & QUALITY FOUNDATION
 
 Статус: 🟡 ФУНДАМЕНТ УЖЕ ЧАСТИЧНО СОЗДАН
 
 ## Цель
 
 Сделать данные из разных источников единообразными, проверяемыми и объяснимыми.
+
+## Objectives
+
+- Entity Registry
+- Relationship Registry
+- Facts Layer
+- Dataset Quality
+- Evidence Layer
 
 ## Уже создан фундамент
 
