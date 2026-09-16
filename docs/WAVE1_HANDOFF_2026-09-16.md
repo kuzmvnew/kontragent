@@ -1,6 +1,6 @@
 # Wave 1 handoff — 2026-09-16
 
-Purpose: authoritative working handoff for the next Kontragent chat. This document records status only; it does not start W1-003 and does not change architecture or roadmap order.
+Purpose: authoritative working handoff for the next Kontragent chat. Updated after W1-003 local PASS and W1-002 CI browser acceptance. Status only; no change to architecture or roadmap order.
 
 ## Repository
 
@@ -81,33 +81,17 @@ Detailed evidence: `docs/W1_001_ACCEPTANCE.md`.
 
 ## W1-002 — CBR FinOrg
 
-Status: **LIVE + CACHE PASS**, not a bulk registry import.
-
-Confirmed local result:
-
-- INN `7707083893`;
-- ПАО Сбербанк;
-- `result=found`;
-- 10 licence/right records;
-- 9 active by service logic;
-- repeated PostgreSQL read: `cached=True`;
-- final output: `W1-002 LIVE + CACHE: PASS`.
-
-Separate browser acceptance for W1-002 is not confirmed by the W1-001 browser run and must not be inferred.
+W1-002 CBR FinOrg: LIVE + CACHE PASS на Mac; отдельная реальная PostgreSQL/Chromium приёмка на CI PASS (run 35129041426, 435 tests). Полные SIX GATES на пользовательском Mac пока NOT CONFIRMED. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
 
 ## W1-003 — FNS SME support recipients
 
-Status: **NEXT PLANNED / NOT STARTED**.
+W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
 
-Do not start from this document alone. Start only after the user explicitly commands it in the new working chat.
+## W1-004—W1-006
 
-At start:
+Wave 1 содержит шесть источников. W1-001 и W1-003 приняты на Mac. W1-002: LIVE + CACHE PASS на Mac, полный реальный CI PASS; локальная browser/six-gate приёмка ожидается. W1-004 Росздравнадзор, W1-005 Роскомнадзор, W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
 
-1. check current GitHub `main` and all source-of-truth docs;
-2. confirm official source / machine access / update mode before mass ingestion;
-3. do not issue millions of on-demand requests without a reviewed access/load plan;
-4. implement and accept W1-003 using the same six gates;
-5. use a real browser for card acceptance.
+Актуальная миграция после W1-003: `f7b2d8a4c1e3`. Старое значение выше относится только к исторической приёмке W1-001. Промпт передачи: `docs/CODEX_WAVE1_HANDOFF_PROMPT.md`. Не считать CI-проверку приёмкой на пользовательском Mac.
 
 ## Boundaries
 
