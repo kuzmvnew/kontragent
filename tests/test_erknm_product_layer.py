@@ -110,6 +110,11 @@ def test_product_aggregator_adds_erknm_check(monkeypatch):
         "enrich_company_with_roszdrav",
         lambda company: company,
     )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "enrich_company_with_roskomnadzor",
+        lambda company: company,
+    )
 
     result = company_product_aggregator.get_company_for_web(
         "7701364231"
