@@ -13,6 +13,9 @@ from app.services.disqualified_service import (
 from app.services.erknm_service import (
     get_erknm_check_for_company,
 )
+from app.services.fns_sme_support_service import (
+    get_fns_sme_support_check_for_inn,
+)
 from app.services.npd_service import (
     get_cached_npd_check_for_inn,
 )
@@ -124,6 +127,33 @@ def enrich_company_with_erknm(
     return result
 
 
+def enrich_company_with_fns_sme_support(
+    company,
+):
+    if company is None:
+        return None
+
+    result = _copy_company(company)
+
+    check = get_fns_sme_support_check_for_inn(
+        result.get("inn")
+    )
+
+    result["fns_sme_support_check"] = check
+
+    if (
+        isinstance(check, dict)
+        and check.get("result")
+        in {"found", "not_found"}
+    ):
+        _append_source_once(
+            result,
+            "fns_sme_support",
+        )
+
+    return result
+
+
 def enrich_company_with_cbr_warning_list(
     company,
 ):
@@ -194,6 +224,10 @@ def get_company_for_web(
     )
 
     company = enrich_company_with_erknm(
+        company
+    )
+
+    company = enrich_company_with_fns_sme_support(
         company
     )
 
