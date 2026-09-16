@@ -28,6 +28,7 @@ from app.services.fns_sme_support_registry_service import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIR = ROOT / "data" / "fns" / "sme-support"
+DEFAULT_BATCH_SIZE = 2000
 
 
 def _sha256(path: Path) -> str:
@@ -58,7 +59,7 @@ def sync_fns_sme_support(
     provider: FnsSmeSupportProvider | None = None,
     archive_path: Path | None = None,
     release: FnsSmeSupportRelease | None = None,
-    batch_size: int = 5000,
+    batch_size: int = DEFAULT_BATCH_SIZE,
     cleanup_old: bool = True,
     force: bool = False,
 ) -> dict:
@@ -164,7 +165,7 @@ def sync_fns_sme_support(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sync official FNS SME-support bulk snapshot")
-    parser.add_argument("--batch-size", type=int, default=5000)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--keep-old", action="store_true")
     args = parser.parse_args()
