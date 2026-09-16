@@ -59,6 +59,23 @@ def test_serialize_record_marks_activity():
     assert result["active_on_data_date"] is True
 
 
+def _patch_later_product_sources(monkeypatch):
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_erknm_check_for_company",
+        lambda inn, ogrn: {
+            "result": "unavailable",
+        },
+    )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cbr_warning_list_check_for_inn",
+        lambda inn: {
+            "result": "unavailable",
+        },
+    )
+
+
 def test_product_aggregator_adds_disqualified_check(
     monkeypatch,
 ):
@@ -95,13 +112,7 @@ def test_product_aggregator_adds_disqualified_check(
         lambda inn: check,
     )
 
-    monkeypatch.setattr(
-        company_product_aggregator,
-        "get_erknm_check_for_company",
-        lambda inn, ogrn: {
-            "result": "unavailable",
-        },
-    )
+    _patch_later_product_sources(monkeypatch)
 
     result = (
         company_product_aggregator.get_company_for_web(
@@ -138,13 +149,7 @@ def test_unavailable_check_is_not_marked_as_used_source(
         },
     )
 
-    monkeypatch.setattr(
-        company_product_aggregator,
-        "get_erknm_check_for_company",
-        lambda inn, ogrn: {
-            "result": "unavailable",
-        },
-    )
+    _patch_later_product_sources(monkeypatch)
 
     result = (
         company_product_aggregator.get_company_for_web(

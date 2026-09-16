@@ -95,6 +95,11 @@ def test_product_aggregator_adds_erknm_check(monkeypatch):
         "get_erknm_check_for_company",
         lambda inn, ogrn: erknm_check,
     )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cbr_warning_list_check_for_inn",
+        lambda inn: {"result": "unavailable"},
+    )
 
     result = company_product_aggregator.get_company_for_web(
         "7701364231"
