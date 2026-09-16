@@ -130,8 +130,9 @@ def parse_support_document(document, *, provider_inn, data_date) -> dict:
         "remedy_deadline": _attribute_or_child(item, "СрокНаруш"),
         "remedied_date": _attribute_or_child(item, "ДатаУстрНаруш"),
     } for item in _complex_values(document, "Нарушения")]
-    if violation_code == "1" and not violations:
-        raise ValueError("ИнфНаруш=1, но детали нарушения отсутствуют")
+    # Open-data XSD 4.04 declares Нарушения with minOccurs=0. Preserve the
+    # independent ИнфНаруш flag even when no detail element was published.
+    # Empty details are NOT evidence of no violation and must not drop the fact.
     regulatory_ids = []
     for item in _complex_values(document, "РегДок"):
         identifier = _attribute_or_child(item, "ИдРД")
@@ -282,10 +283,16 @@ def import_fns_sme_support_archive(archive_path, *, dataset_id, run_id, data_dat
     snapshot_date = date.fromisoformat(integrity['data_date']) if integrity['data_date'] else data_date
     batch = []
     inserted = 0
+    quality = {'scope': 'persisted_company_ip_facts', 'violation_flagged_records': 0,
+               'violation_missing_details_records': 0}
     totals = dict.fromkeys(['source_records', 'source_documents', 'eligible_records',
                            'excluded_npd_records', 'expected_documents'], 0)
     def consume(record):
         nonlocal inserted
+        if record['violation_code'] == '1':
+            quality['violation_flagged_records'] += 1
+            if not record['violations']:
+                quality['violation_missing_details_records'] += 1
         batch.append(record)
         if len(batch) >= batch_size:
             inserted += _insert_batch(run_id=run_id, dataset_id=dataset_id, records=batch)
@@ -329,6 +336,7 @@ def import_fns_sme_support_archive(archive_path, *, dataset_id, run_id, data_dat
     integrity = {**integrity, 'parser_counts_match': True, 'archive_sha256_after_matches': True}
     return {"xml_files": len(members), **totals, "inserted_records": inserted,
             "snapshot_data_date": snapshot_date.isoformat(), "integrity": integrity,
+            "source_quality": quality,
             "duplicates": 0, "conflicting_duplicates": 0, "rejected_records": 0}
 
 
