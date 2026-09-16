@@ -1,0 +1,56 @@
+name: W1-003 official XML shape probe
+on:
+  push:
+    branches: [fix/w1-003-live-xml]
+    paths: [.github/workflows/w1-003-schema-probe.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read official schema and bounded archive prefix
+        shell: python
+        run: |
+          import urllib.request, struct, zlib, re, xml.etree.ElementTree as ET
+          from urllib.parse import urljoin
+          base = 'https://file.nalog.ru/opendata/7707329152-rsmppp/'
+          url = base + 'structure-20230615.xsd'
+          with urllib.request.urlopen(url, timeout=30) as r:
+              raw = r.read(1000000)
+          print('OFFICIAL XSD:', url, flush=True)
+          print(raw.decode('utf-8-sig', errors='replace'), flush=True)
+          url = base + 'data-20260815-structure-20230615.zip'
+          req = urllib.request.Request(url, headers={'Range':'bytes=0-2097151'})
+          with urllib.request.urlopen(req, timeout=45) as r:
+              print('ZIP RESPONSE', r.status, r.headers.get('Content-Range'), flush=True)
+              data = r.read(2097152)
+          offset = 0
+          while data[offset:offset+4] == b'PK\x03\x04':
+              fields = struct.unpack_from('<4s5H3I2H', data, offset)
+              method, compressed, nlen, xlen = fields[3], fields[7], fields[9], fields[10]
+              name = data[offset+30:offset+30+nlen].decode('utf8', errors='replace')
+              start = offset+30+nlen+xlen
+              if name.lower().endswith('.xml'):
+                  print('MEMBER', name, flush=True)
+                  payload = data[start:start+compressed] if compressed else data[start:]
+                  xml = zlib.decompressobj(-15).decompress(payload, 8000000) if method == 8 else payload
+                  parser = ET.XMLPullParser(events=['end'])
+                  try:
+                      parser.feed(xml)
+                  except ET.ParseError:
+                      pass
+                  for event, el in parser.read_events():
+                      if el.tag.rsplit('}',1)[-1] == 'Документ':
+                          def shape(node, depth=0):
+                              attrs = {k: ('[redacted]' if any(x in k for x in ['ИННФЛ','Фамилия','Отчество','Имя','Тел','Почт']) else v) for k,v in node.attrib.items()}
+                              text = (node.text or '').strip()
+                              if node.tag.rsplit('}',1)[-1] in ['ИННФЛ','ФИО','Фамилия','Имя','Отчество']: text='[redacted]'
+                              print('  '*depth + str(node.tag), attrs, text[:120], flush=True)
+                              for child in node: shape(child, depth+1)
+                          shape(el)
+                          raise SystemExit(0)
+                  raise RuntimeError('No complete document in bounded sample')
+              offset = start + compressed
+          raise RuntimeError('No XML member in bounded ZIP prefix')
