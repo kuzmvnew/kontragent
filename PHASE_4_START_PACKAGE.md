@@ -20,7 +20,7 @@ Data Normalization & Quality Foundation
 
 Build a unified business data foundation.
 
-Approved clarification (2026-09-16): the previously agreed Wave 1 sources are completed and accepted before SEO MVP. Current work is W1-001 acceptance. W1-003 must not start without a separate command. This exception does not authorize arbitrary new sources or an architecture rewrite.
+Approved clarification (2026-09-16): the previously agreed Wave 1 sources are completed and accepted before SEO MVP. W1-001 CBR Warning List has now passed the permanent six-gate acceptance protocol on the user's Mac/PostgreSQL/Chromium environment. W1-003 is the next planned source but remains NOT STARTED until a separate explicit command in the new working chat. This clarification does not authorize arbitrary new sources or an architecture rewrite.
 
 Current official sources become one coherent business model.
 
@@ -139,6 +139,8 @@ Phase 4 is complete when:
 - Tests pass.
 - Each source has separate evidence for all six acceptance criteria in PROJECT_STATUS.md, including a real browser, PostgreSQL readback and dated coverage. CI and the user's database are reported separately.
 
+W1-001 local acceptance evidence on 16.09.2026: 27,163 official source/imported/saved records; 2,995 with usable INN; 24,168 without usable INN; 857 exact-INN links to 857 Master Registry companies out of 6,781,485; 2,138 source records with an INN unmatched. Chromium verified both `found` and `not_found` cards. Auto-update is NOT_CONFIGURED.
+
 ---
 
 # Development Order
@@ -170,6 +172,17 @@ Evidence Layer.
 7.
 
 Tests.
+
+---
+
+# Wave 1 Handoff
+
+- W1-001 CBR Warning List: ACCEPTED on user's Mac by six gates.
+- W1-002 CBR FinOrg: LIVE + CACHE confirmed for INN `7707083893`; browser acceptance is a separate status and is not inferred from W1-001.
+- W1-003 FNS SME support recipients: NEXT PLANNED, NOT STARTED. Begin only on explicit user command.
+- RNP/EIS: deferred until official access.
+- DaMIA: not connected.
+- Person / Leads / CRM / Enterprise: do not start.
 
 ---
 
