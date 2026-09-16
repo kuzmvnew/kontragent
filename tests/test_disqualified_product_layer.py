@@ -74,6 +74,13 @@ def _patch_later_product_sources(monkeypatch):
             "result": "unavailable",
         },
     )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cached_cbr_finorg_check_for_inn",
+        lambda inn: {
+            "result": "unavailable",
+        },
+    )
 
 
 def test_product_aggregator_adds_disqualified_check(
@@ -165,8 +172,6 @@ def test_company_template_with_disqualified_partial_compiles():
         loader=FileSystemLoader("templates"),
     )
 
-    template = env.get_template(
-        "company.html"
-    )
+    template = env.get_template("company.html")
 
     assert template is not None

@@ -1,3 +1,6 @@
+from app.models.cbr_finorg import (
+    CbrFinorgCheck,
+)
 from app.models.cbr_warning_list import (
     CbrWarningListEntry,
 )
@@ -50,6 +53,7 @@ from app.models.tax_payment import (
 
 
 __all__ = [
+    "CbrFinorgCheck",
     "CbrWarningListEntry",
     "Company",
     "CompanyBranch",

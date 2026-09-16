@@ -13,6 +13,9 @@ from fastapi.templating import Jinja2Templates
 from app.aggregators.company_product_aggregator import (
     get_company_for_web,
 )
+from app.services.cbr_finorg_service import (
+    refresh_cbr_finorg_check_for_inn,
+)
 from app.services.company_service import (
     search_companies,
 )
@@ -346,6 +349,24 @@ async def company_npd_check(
     )
 
 
+@app.post(
+    "/company/{inn}/cbr-finorg-check",
+)
+async def company_cbr_finorg_check(
+    inn: str,
+):
+    clean_inn = validate_company_inn(inn)
+
+    refresh_cbr_finorg_check_for_inn(
+        clean_inn
+    )
+
+    return RedirectResponse(
+        url=f"/company/{clean_inn}",
+        status_code=303,
+    )
+
+
 # =========================================================
 # API: COMPANY
 # =========================================================
@@ -381,6 +402,19 @@ async def api_company_npd_check(
     clean_inn = validate_company_inn(inn)
 
     return refresh_npd_check_for_inn(
+        clean_inn
+    )
+
+
+@app.post(
+    "/api/company/{inn}/cbr-finorg-check",
+)
+async def api_company_cbr_finorg_check(
+    inn: str,
+):
+    clean_inn = validate_company_inn(inn)
+
+    return refresh_cbr_finorg_check_for_inn(
         clean_inn
     )
 
