@@ -18,6 +18,9 @@ from app.models.disqualified_person import (
 from app.models.erknm import (
     ErknmInspection,
 )
+from app.models.fns_sme_support import (
+    FnsSmeSupportEntry,
+)
 from app.models.headcount import (
     CompanyHeadcount,
 )
@@ -75,6 +78,7 @@ __all__ = [
     "DataSource",
     "DisqualifiedPersonSnapshot",
     "ErknmInspection",
+    "FnsSmeSupportEntry",
     "IngestionRun",
     "NpdStatusCheck",
 ]
