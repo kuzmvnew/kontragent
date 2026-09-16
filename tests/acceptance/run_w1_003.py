@@ -11,6 +11,8 @@ import json
 import os
 from datetime import date
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
+from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 import httpx
@@ -35,6 +37,7 @@ from scripts.sync_fns_sme_support import sync_fns_sme_support
 OUT = Path("data/acceptance/w1-003-ci")
 FOUND_INN = "7701234567"
 ABSENT_INN = "7812345678"
+XSD_NS = "http://www.w3.org/2001/XMLSchema"
 
 
 def require_disposable_ci():
@@ -202,6 +205,78 @@ def fixture_acceptance():
     }
 
 
+def _official_xsd_graph(start_url: str) -> tuple[set[str], list[dict]]:
+    """Read the official XSD plus same-host include/import dependencies.
+
+    FNS schemas may keep declarations in included XSDs, so checking only the
+    wrapper file as raw text produces false failures. We still restrict the
+    probe to official file.nalog.ru HTTPS resources and cap traversal.
+    """
+    pending = [start_url]
+    seen: set[str] = set()
+    declarations: set[str] = set()
+    documents: list[dict] = []
+
+    with httpx.Client(timeout=60, follow_redirects=True) as client:
+        while pending:
+            url = pending.pop(0)
+            if url in seen:
+                continue
+            if len(seen) >= 25:
+                raise AssertionError("Official XSD dependency graph is unexpectedly large")
+
+            parsed_url = urlparse(url)
+            if parsed_url.scheme != "https" or parsed_url.hostname != "file.nalog.ru":
+                raise AssertionError(f"Unexpected XSD dependency host: {url}")
+
+            response = client.get(url)
+            if response.status_code != 200:
+                raise AssertionError(f"Official FNS XSD HTTP {response.status_code}: {url}")
+
+            try:
+                root = ET.fromstring(response.content)
+            except ET.ParseError as error:
+                raise AssertionError(f"Official FNS XSD is not valid XML: {url}: {error}") from error
+
+            if root.tag != f"{{{XSD_NS}}}schema":
+                raise AssertionError(f"Official FNS structure is not an XML Schema: {url}")
+
+            seen.add(url)
+            for element in root.iter():
+                name = element.attrib.get("name")
+                if name:
+                    declarations.add(name)
+
+            dependencies = []
+            for tag in ("include", "import", "redefine"):
+                for element in root.findall(f".//{{{XSD_NS}}}{tag}"):
+                    location = element.attrib.get("schemaLocation")
+                    if not location:
+                        continue
+                    dependency = urljoin(url, location)
+                    dependency_url = urlparse(dependency)
+                    if (
+                        dependency_url.scheme == "https"
+                        and dependency_url.hostname == "file.nalog.ru"
+                    ):
+                        dependencies.append(dependency)
+                        if dependency not in seen and dependency not in pending:
+                            pending.append(dependency)
+
+            documents.append(
+                {
+                    "url": url,
+                    "http_status": response.status_code,
+                    "declaration_count": sum(
+                        1 for element in root.iter() if element.attrib.get("name")
+                    ),
+                    "dependencies": dependencies,
+                }
+            )
+
+    return declarations, documents
+
+
 def official_metadata_probe():
     release = FnsSmeSupportProvider().discover_release()
     if not release.data_url.startswith(
@@ -211,30 +286,27 @@ def official_metadata_probe():
     if not release.structure_url:
         raise AssertionError("Official FNS metadata did not expose an XSD URL")
 
-    response = httpx.get(release.structure_url, timeout=60, follow_redirects=True)
-    if response.status_code != 200:
-        raise AssertionError(f"Official FNS XSD HTTP {response.status_code}")
-    xsd = response.text
-    expected_tokens = [
+    declarations, xsd_documents = _official_xsd_graph(release.structure_url)
+    expected_declarations = {
         "КолДок", "Документ", "ИННЮЛ", "ИННФЛ", "ОГРН", "ОГРНИП",
         "ДатаОказ", "СрокПод", "ФормПод", "ВидПод", "РазмПод",
-    ]
-    missing_tokens = [token for token in expected_tokens if token not in xsd]
-    if missing_tokens:
+    }
+    missing = sorted(expected_declarations - declarations)
+    if missing:
         raise AssertionError(
-            "Current official XSD is missing expected W1-003 fields: "
-            + ", ".join(missing_tokens)
+            "Current official XSD graph is missing expected W1-003 declarations: "
+            + ", ".join(missing)
         )
 
     return {
-        "status": "PASS_OFFICIAL_METADATA_AND_XSD_ONLY",
+        "status": "PASS_OFFICIAL_METADATA_AND_XSD_GRAPH_ONLY",
         "metadata_url": "https://www.nalog.gov.ru/opendata/7707329152-rsmppp/",
         "data_url": release.data_url,
         "structure_url": release.structure_url,
         "modified_date": str(release.modified_date),
         "data_date": str(release.data_date),
-        "xsd_http_status": response.status_code,
-        "xsd_expected_tokens": expected_tokens,
+        "xsd_documents": xsd_documents,
+        "xsd_expected_declarations": sorted(expected_declarations),
         "bulk_dataset_downloaded": False,
         "real_company": "NOT_CONFIRMED_IN_CI",
     }
