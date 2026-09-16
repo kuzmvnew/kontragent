@@ -8,11 +8,11 @@
 | W1-001 | CBR Warning List | ACCEPTED / SIX GATES PASS на Mac |
 | W1-002 | CBR FinOrg | ACCEPTED / SIX GATES PASS на Mac |
 | W1-003 | ФНС — МСП, получатели поддержки | ACCEPTED / SIX GATES PASS на Mac |
-| W1-004 | Росздравнадзор | NEXT / NOT STARTED |
-| W1-005 | Роскомнадзор | NOT STARTED |
+| W1-004 | Росздравнадзор | ACCEPTED / SIX GATES PASS на Mac |
+| W1-005 | Роскомнадзор | NEXT / NOT STARTED |
 | W1-006 | НОСТРОЙ / СРО | NOT STARTED |
 
-Полностью приняты на пользовательском Mac 3 источника из 6. Следующая задача — только W1-004 Росздравнадзор.
+Полностью приняты на пользовательском Mac 4 источника из 6. Следующий источник — W1-005 Роскомнадзор, статус NEXT / NOT STARTED; W1-006 не запускался.
 
 ## W1-001
 Протокол: [docs/W1_001_ACCEPTANCE.md](docs/W1_001_ACCEPTANCE.md). Импорт не повторять.
@@ -27,8 +27,11 @@
 ## W1-003
 Финальная приёмка: [docs/W1_003_ACCEPTANCE.md](docs/W1_003_ACCEPTANCE.md). На Mac `SIX GATES PASS`; импорт не повторять.
 
-## W1-004—W1-006
-W1-004 Росздравнадзор — следующий и пока NOT STARTED. Перед реализацией установить точный официальный подреестр, машинный канал, формат, даты/обновление, exact identifiers, режим нагрузки/хранения и source passport. W1-005 и W1-006 не начинать вместе с ним.
+## W1-004
+Финальная приёмка: [docs/W1_004_ACCEPTANCE.md](docs/W1_004_ACCEPTANCE.md). Scope A–D принят на пользовательском Mac: bulk-лицензии, точечный Единый реестр лицензий, exact-number lookup медизделий без автопривязки к Company и перечень клинических организаций. Все gates 1–6 PASS; 450 tests; PostgreSQL `kontragent`; Alembic `a9c4e6f8b201`; Chromium HTTP 200, `page_errors=[]`. `auto_update=NOT_CONFIGURED`.
+
+## W1-005—W1-006
+W1-005 Роскомнадзор — NEXT / NOT STARTED. W1-006 НОСТРОЙ / СРО — NOT STARTED. Каждый требует отдельной команды и собственного source passport.
 
 ## Общие ограничения
 Каждый источник проходит отдельно: tests; реальный официальный ответ; PostgreSQL write/read; found/not_found/not_applicable/unavailable; настоящий Chromium; количества/даты/покрытие. Только exact identifiers. Код готов, данные загружены, PostgreSQL подтверждён, браузер проверен, покрытие измерено и auto-update настроен — разные статусы.

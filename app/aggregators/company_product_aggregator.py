@@ -19,6 +19,12 @@ from app.services.fns_sme_support_service import (
 from app.services.npd_service import (
     get_cached_npd_check_for_inn,
 )
+from app.services.roszdrav_service import (
+    get_cached_roszdrav_unified_license_check,
+    get_roszdrav_bulk_license_check_for_inn,
+    get_roszdrav_clinical_org_check_for_inn,
+    get_roszdrav_medical_device_company_check,
+)
 
 
 def _append_source_once(
@@ -208,6 +214,27 @@ def enrich_company_with_cbr_finorg(
     return result
 
 
+def enrich_company_with_roszdrav(company):
+    if company is None:
+        return None
+    result = _copy_company(company)
+    inn = result.get("inn")
+    result["roszdrav_bulk_license_check"] = get_roszdrav_bulk_license_check_for_inn(inn)
+    result["roszdrav_unified_license_check"] = get_cached_roszdrav_unified_license_check(inn)
+    result["roszdrav_clinical_org_check"] = get_roszdrav_clinical_org_check_for_inn(inn)
+    result["roszdrav_medical_device_check"] = get_roszdrav_medical_device_company_check()
+    if any(
+        check.get("result") in {"found", "not_found"}
+        for check in (
+            result["roszdrav_bulk_license_check"],
+            result["roszdrav_unified_license_check"],
+            result["roszdrav_clinical_org_check"],
+        )
+    ):
+        _append_source_once(result, "roszdravnadzor")
+    return result
+
+
 def get_company_for_web(
     inn: str,
 ):
@@ -235,6 +262,5 @@ def get_company_for_web(
         company
     )
 
-    return enrich_company_with_cbr_finorg(
-        company
-    )
+    company = enrich_company_with_cbr_finorg(company)
+    return enrich_company_with_roszdrav(company)

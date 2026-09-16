@@ -1,0 +1,70 @@
+{% if company.roszdrav_bulk_license_check %}
+<section class="card" data-testid="roszdrav" data-result="{{ company.roszdrav_bulk_license_check['result'] }}">
+    <h2>Росздравнадзор</h2>
+
+    {% set bulk = company.roszdrav_bulk_license_check %}
+    <h3>Открытые реестры лицензий</h3>
+    {% if bulk["result"] == "found" %}
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">Лицензии найдены по точному ИНН</div>
+            <p>В трёх официальных snapshot найдено записей: <span data-testid="roszdrav-bulk-count">{{ bulk["record_count"] }}</span>.</p>
+        </div>
+        {% for license in bulk["records"] %}
+        <div class="detail-row" data-testid="roszdrav-license">
+            <div class="detail-label">{{ license["activity_type"] or license["category"] }}</div>
+            <div class="detail-value">
+                <div>Номер: {{ license["license_number"] }}</div>
+                {% if license["authority_name"] %}<div>Орган: {{ license["authority_name"] }}</div>{% endif %}
+                {% if license["start_date"] %}<div>Начало: {{ license["start_date"].strftime("%d.%m.%Y") }}</div>{% endif %}
+                {% if license["termination_info"] %}<div>Прекращение: {{ license["termination_info"] }}</div>{% endif %}
+                {% if license["cancellation_info"] %}<div>Аннулирование: {{ license["cancellation_info"] }}</div>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% elif bulk["result"] == "not_found" %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Лицензии трёх открытых категорий не найдены</div><p>Exact-INN отсутствует в трёх успешно загруженных snapshot на указанные даты.</p></div>
+    {% else %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Bulk-проверка пока недоступна</div><p>Все три официальных snapshot должны быть полностью и успешно загружены.</p></div>
+    {% endif %}
+    {% if bulk.get("data_date") %}<p>Консервативная дата проверки: {{ bulk["data_date"].strftime("%d.%m.%Y") }}</p>{% endif %}
+    {% if bulk.get("interpretation_note") %}<p>{{ bulk["interpretation_note"] }}</p>{% endif %}
+    {% if bulk.get("coverage_note") %}<p>{{ bulk["coverage_note"] }}</p>{% endif %}
+
+    {% set unified = company.roszdrav_unified_license_check %}
+    <h3>Единый реестр лицензий</h3>
+    {% if unified["result"] == "found" %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Полный официальный поиск нашёл лицензии</div><p>Записей по exact-INN: <span data-testid="roszdrav-unified-count">{{ unified["record_count"] }}</span>.</p></div>
+        {% for license in unified["records"] %}
+        <div class="detail-row"><div class="detail-label">{{ license["license_number"] or license["registration_number"] }}</div><div class="detail-value">{{ license["authority_name"] or "Росздравнадзор" }}{% if license["termination_info"] %}<div>Прекращение: {{ license["termination_info"] }}</div>{% endif %}</div></div>
+        {% endfor %}
+    {% elif unified["result"] == "not_found" %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">По ИНН лицензии не найдены</div><p>Официальный точечный поиск успешно выполнен на указанную дату.</p></div>
+    {% elif unified["reason"] == "not_checked" %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Полный поиск ещё не выполнялся</div><p>Он выполняется точечно и сохраняется в датированный cache.</p></div>
+    {% else %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Полный поиск временно недоступен</div></div>
+    {% endif %}
+    <form action="/company/{{ company.inn }}/roszdrav-license-check" method="post"><button type="submit">Проверить лицензии в Росздравнадзоре</button></form>
+    {% if unified.get("data_date") %}<p>Дата точечной проверки: {{ unified["data_date"].strftime("%d.%m.%Y") }}</p>{% endif %}
+
+    {% set clinical = company.roszdrav_clinical_org_check %}
+    <h3>Право проводить клинические исследования медизделий</h3>
+    {% if clinical["result"] == "found" %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Организация включена в официальный перечень</div><p data-testid="roszdrav-clinical-found">Совпадение подтверждено по точному ИНН.</p></div>
+    {% elif clinical["result"] == "not_found" %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Организация не найдена в перечне</div><p>Это отсутствие только в датированном официальном snapshot.</p></div>
+    {% else %}
+        <div class="risk-placeholder"><div class="risk-placeholder-title">Перечень пока недоступен</div></div>
+    {% endif %}
+
+    {% set devices = company.roszdrav_medical_device_check %}
+    <h3>Государственный реестр медицинских изделий</h3>
+    <div class="risk-placeholder" data-testid="roszdrav-devices-not-applicable">
+        <div class="risk-placeholder-title">Автопривязка к компании не применяется</div>
+        <p>{{ devices["interpretation_note"] }} {{ devices["coverage_note"] }}</p>
+        <p>Отдельный lookup доступен по точному номеру регистрационного удостоверения через API сервиса.</p>
+    </div>
+
+    <p>Источник истины: Росздравнадзор. Название и адрес не используются как доказательство связи с компанией.</p>
+</section>
+{% endif %}

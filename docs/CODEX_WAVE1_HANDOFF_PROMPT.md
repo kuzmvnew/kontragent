@@ -8,19 +8,18 @@
 W1-001 — ACCEPTED / SIX GATES PASS на Mac, code 8937cd7 (PR #26), 27 163 записи ЦБ и 857 exact-INN links. Импорт не повторять.
 W1-003 — ACCEPTED / SIX GATES PASS на Mac, code de32573 (PR #29), snapshot 15.09.2026, 11 925 998 фактов ЮЛ/ИП, Master 6 781 485, linked 1 897 870. Импорт не повторять.
 W1-002 — ACCEPTED / SIX GATES PASS на Mac 16.09.2026; found 9706063520, not_found 9102309919; PostgreSQL/Chromium/coverage PASS; 435 tests. Повторную приёмку без причины не запускать.
+W1-004 — ACCEPTED / SIX GATES PASS на Mac 16.09.2026; scope A–D, PostgreSQL kontragent, Alembic a9c4e6f8b201, Chromium/coverage PASS; 450 tests. Повторную приёмку и импорт без причины не запускать.
 
 Полная Wave 1: 001 CBR Warning List; 002 CBR FinOrg; 003 ФНС МСП-поддержка; 004 Росздравнадзор; 005 Роскомнадзор; 006 НОСТРОЙ / СРО. Она не заканчивается на третьем источнике.
 
 ## Перед изменениями
 Выполни git status --short, git branch --show-current, git remote -v, git log -10 --oneline и git fetch origin. Сопоставь HEAD и origin/main. Не делай reset --hard, stash, clean, rebase или force-push автоматически. При грязном дереве, расхождении веток или падающих baseline-тестах остановись, покажи факты и не исправляй посторонние проблемы.
-Прочитай WAVE1_STATUS.md, PROJECT_STATUS.md, ROADMAP.md, ROADMAP_DETAILED.md, ROADMAP_CHANGES_AFTER_AUDIT.md, PHASE_4_START_PACKAGE.md, README (если есть), docs/WAVE1_HANDOFF_2026-09-16.md и acceptance-документы W1-001—W1-003.
+Прочитай WAVE1_STATUS.md, PROJECT_STATUS.md, ROADMAP.md, ROADMAP_DETAILED.md, ROADMAP_CHANGES_AFTER_AUDIT.md, PHASE_4_START_PACKAGE.md, README (если есть), docs/WAVE1_HANDOFF_2026-09-16.md и acceptance-документы W1-001—W1-004.
 Изучи релевантные provider/ingestion/models/services/aggregator/templates/tests/acceptance scripts предыдущих источников, не переписывая их. Выполни uv run python -m pytest tests -q ДО изменений, запиши число passed/failed и SHA baseline. Проверь uv run alembic current (ожидаемый ранее подтверждённый head f7b2d8a4c1e3); не применяй миграции без обоснования.
-W1-001—W1-003 приняты на Mac. Не повторяй их массовые импорты/acceptance без доказанной необходимости. Следующая разработка — только W1-004 Росздравнадзор.
+W1-001—W1-004 приняты на Mac. Не повторяй их массовые импорты/acceptance без доказанной необходимости. Следующая разработка — W1-005 Роскомнадзор, но только по отдельной команде Михаила.
 
-## Следующая разработка после принятия W1-001—W1-003
-По отдельной команде реализуй ТОЛЬКО W1-004 Росздравнадзор. W1-005 и W1-006 остаются следующими задачами и не запускаются одновременно.
-Установи точное содержание W1-004 из документов. Если конкретный подреестр не зафиксирован, сначала представь паспорт: официальный источник, доступ/права, машинный канал, формат, даты и режим обновления, применимость, exact identifiers, лимиты запросов, хранение, критерии приёмки. Не выбирай произвольный реестр и не расширяй scope молча.
-Дальнейшая очередь: W1-005 Роскомнадзор, затем W1-006 НОСТРОЙ / СРО — каждый только отдельной командой и после собственного source passport.
+## Следующая разработка после принятия W1-001—W1-004
+W1-005 Роскомнадзор — NEXT / NOT STARTED. Не начинать без отдельной команды Михаила. После него W1-006 НОСТРОЙ / СРО — NOT STARTED. Каждый источник начинается с собственного source passport; не выбирать произвольный подреестр и не расширять scope молча.
 
 ## Неизменные границы
 Фаза 3 закрыта в согласованном объёме, Фаза 4 ACTIVE, приоритет Wave 1 до SEO MVP. Не менять roadmap/архитектуру. Person, Leads, CRM, Enterprise не начинать. РНП/ЕИС отложен до официального доступа; DaMIA не подключать.
