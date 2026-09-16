@@ -1,0 +1,153 @@
+{% if company.fns_sme_support_check %}
+
+{% set check = company.fns_sme_support_check %}
+<section class="card" data-testid="fns-sme-support" data-result="{{ check['result'] }}">
+
+    <h2>
+        Поддержка МСП по данным ФНС
+    </h2>
+
+    {% if check["result"] == "found" %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                В реестре ФНС найдены сведения о предоставленной поддержке
+            </div>
+            <p>
+                Найдено {{ check["record_count"] }} фактов поддержки с точным
+                совпадением ИНН компании или ИП в загруженном снимке реестра.
+            </p>
+        </div>
+
+        {% for record in check["records"] %}
+            <div class="detail-row">
+                <div class="detail-label">
+                    {{ record["support_form_name"] or "Поддержка" }}
+                </div>
+                <div class="detail-value">
+                    {% if record["support_type_name"] %}
+                        <div><strong>{{ record["support_type_name"] }}</strong></div>
+                    {% endif %}
+
+                    {% if record["amounts"] %}
+                        {% for amount in record["amounts"] %}
+                            <div>
+                                Размер: {{ amount["value"] }}
+                                {{ amount["unit_name"] }}
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+
+                    {% if record["decision_date"] %}
+                        <div>
+                            Решение о поддержке:
+                            {{ record["decision_date"].strftime("%d.%m.%Y") }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["support_until"] %}
+                        <div>
+                            Срок оказания поддержки:
+                            {{ record["support_until"].strftime("%d.%m.%Y") }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["termination_date"] %}
+                        <div>
+                            Решение о прекращении:
+                            {{ record["termination_date"].strftime("%d.%m.%Y") }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["provider_inn"] %}
+                        <div>
+                            ИНН организации, предоставившей поддержку:
+                            {{ record["provider_inn"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["has_violation"] is sameas true %}
+                        <div>
+                            <strong>В реестре есть сведения о нарушении порядка или условий оказания поддержки.</strong>
+                        </div>
+                    {% elif record["has_violation"] is sameas false %}
+                        <div>
+                            В записи ФНС признак нарушения: нет.
+                        </div>
+                    {% endif %}
+
+                    <div>
+                        Идентификатор записи источника:
+                        {{ record["source_document_id"] }}
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+
+        {% if check.get("records_limited") %}
+            <p>
+                Показана только часть найденных фактов поддержки.
+            </p>
+        {% endif %}
+
+    {% elif check["result"] == "not_found" %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                Сведения о поддержке по точному ИНН не найдены
+            </div>
+            <p>
+                В полном успешно загруженном снимке реестра ФНС на указанную
+                дату факты поддержки с точным ИНН этой компании или ИП не найдены.
+            </p>
+        </div>
+
+    {% elif check["result"] == "not_applicable" %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                Источник не применяется к этой сущности
+            </div>
+        </div>
+
+    {% else %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                Проверка сведений о поддержке временно недоступна
+            </div>
+            <p>
+                Полный официальный снимок ФНС не загружен, не опубликован
+                системой или не прошёл контроль целостности.
+            </p>
+        </div>
+
+    {% endif %}
+
+    {% if check["data_date"] %}
+        <div class="detail-row">
+            <div class="detail-label">Дата актуальности набора ФНС</div>
+            <div class="detail-value">
+                {{ check["data_date"].strftime("%d.%m.%Y") }}
+            </div>
+        </div>
+    {% endif %}
+
+    <p>{{ check["interpretation_note"] }}</p>
+    <p>{{ check["coverage_note"] }}</p>
+
+    <p>
+        Источник истины: Федеральная налоговая служба.
+        <a
+            href="{{ check['official_url'] }}"
+            rel="nofollow noopener"
+            target="_blank"
+        >
+            Официальный набор открытых данных ФНС
+        </a>.
+        Сопоставление карточки выполняется только по точному ИНН.
+    </p>
+
+</section>
+
+{% endif %}
