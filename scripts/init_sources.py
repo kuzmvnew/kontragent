@@ -7,6 +7,9 @@ from app.services.cbr_warning_registry_service import (
 from app.services.erknm_registry_service import (
     ensure_erknm_dataset,
 )
+from app.services.fns_sme_support_registry_service import (
+    ensure_fns_sme_support_dataset,
+)
 from app.services.npd_registry_service import (
     ensure_npd_dataset,
 )
@@ -29,6 +32,7 @@ def main():
     ensure_erknm_dataset()
     ensure_cbr_warning_list_dataset()
     ensure_cbr_finorg_dataset()
+    ensure_fns_sme_support_dataset()
 
     sources = list_sources()
     datasets = list_datasets()
