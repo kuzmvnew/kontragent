@@ -365,14 +365,12 @@ def _insert_batch(*, run_id: int, dataset_id: int, records: list[dict]) -> int:
             {"ingestion_run_id": run_id, "dataset_id": dataset_id, **record}
             for record in records
         ]
-        statement = insert(FnsSmeSupportEntry).values(values)
-        statement = statement.on_conflict_do_nothing(
-            constraint="uq_fns_sme_support_run_record_key"
-        )
-        result = session.execute(statement)
-        inserted = int(result.rowcount or 0)
+        # Do not use ON CONFLICT DO NOTHING here. A duplicate inside one official
+        # snapshot is a data-integrity failure, not a row to silently skip. The
+        # database unique constraint makes this deterministic across batches.
+        session.execute(insert(FnsSmeSupportEntry).values(values))
         session.commit()
-        return inserted
+        return len(records)
     except Exception:
         session.rollback()
         raise
