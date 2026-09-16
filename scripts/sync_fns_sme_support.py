@@ -13,6 +13,7 @@ from app.ingestion.fns_sme_support import (
     cleanup_old_snapshots, create_ingestion_run, get_dataset_id,
     import_fns_sme_support_archive, mark_run_failed, publish_ingestion_run,
 )
+from app.ingestion.fns_sme_support_integrity import POLICY
 from app.models.source import IngestionRun
 from app.providers.fns_sme_support_provider import FnsSmeSupportProvider, FnsSmeSupportRelease
 from app.services.fns_sme_support_registry_service import ensure_fns_sme_support_dataset
@@ -31,11 +32,19 @@ def _sha256(path: Path) -> str:
 
 
 def _existing_success(dataset_id, *, data_date, source_url):
+    # The dated official artifact URL identifies the release. The XML ДатаСост
+    # and metadata relevance date are deliberately not conflated.
     with get_session() as session:
-        return session.execute(select(IngestionRun).where(
+        rows = session.execute(select(IngestionRun).where(
             IngestionRun.dataset_id == dataset_id, IngestionRun.status == 'success',
-            IngestionRun.data_date == data_date, IngestionRun.source_url == source_url,
-        ).order_by(IngestionRun.id.desc()).limit(1)).scalar_one_or_none()
+            IngestionRun.source_url == source_url,
+        ).order_by(IngestionRun.id.desc()).limit(20)).scalars().all()
+        for row in rows:
+            details = row.details or {}
+            integrity = details.get('integrity') or {}
+            if details.get('complete_snapshot') and integrity.get('policy') == POLICY and integrity.get('parser_counts_match'):
+                return row
+    return None
 
 
 def _verified_cached_download(path, dataset_id, release):
@@ -45,7 +54,6 @@ def _verified_cached_download(path, dataset_id, release):
         previous = session.execute(select(IngestionRun).where(
             IngestionRun.dataset_id == dataset_id,
             IngestionRun.source_url == release.data_url,
-            IngestionRun.data_date == release.data_date,
             IngestionRun.file_checksum.is_not(None),
         ).order_by(IngestionRun.id.desc()).limit(20)).scalars().all()
         candidates = [(row.id, row.file_checksum, dict(row.details or {})) for row in previous]
@@ -109,7 +117,7 @@ def sync_fns_sme_support(*, provider=None, archive_path=None, release=None,
         run_id = create_ingestion_run(dataset_id=dataset_id, data_date=release.data_date,
             source_url=release.data_url, source_file_name=archive_path.name, checksum=checksum)
     try:
-        print('W1-003: разбор XML и загрузка фактов в неопубликованный snapshot', flush=True)
+        print('W1-003: проверка архива, затем загрузка в неопубликованный snapshot', flush=True)
         stats = import_fns_sme_support_archive(archive_path, dataset_id=dataset_id,
             run_id=run_id, data_date=release.data_date, batch_size=batch_size)
         result = publish_ingestion_run(run_id, stats)
