@@ -1,0 +1,119 @@
+name: W1-003 real XML regression
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - app/ingestion/fns_sme_support*.py
+      - scripts/sync_fns_sme_support.py
+      - tests/test_fns_sme_support_nested.py
+      - .github/workflows/w1-003-live-xml.yml
+permissions:
+  contents: read
+jobs:
+  real-xml:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ['5432:5432']
+        options: --health-cmd="pg_isready -U test -d test" --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
+      DADATA_API_KEY: test-api-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install uv
+      - run: uv sync --group dev
+      - run: uv run python -m pytest tests -q
+      - run: uv run alembic upgrade head
+      - run: uv run --with playwright==1.63.0 python -m playwright install --with-deps chromium
+      - name: Real official XML subset proof, never full snapshot acceptance
+        run: |
+          uv run --with playwright==1.63.0 python - <<'PY'
+          import io, json, struct, urllib.request, zlib
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          from zipfile import ZipFile
+          from sqlalchemy import select, func
+          from app.database.base import Base
+          from app.database.postgres import engine, get_session
+          import app.models
+          from app.models.company import Company
+          from app.models.fns_sme_support import FnsSmeSupportEntry as Entry
+          from app.providers.fns_sme_support_provider import FnsSmeSupportProvider, FnsSmeSupportRelease
+          from app.ingestion.fns_sme_support import stream_xml_file
+          from scripts.sync_fns_sme_support import sync_fns_sme_support
+          from scripts.accept_fns_sme_support import browser_check
+          assert engine.url.database == 'test' and engine.url.host == 'localhost'
+          release = FnsSmeSupportProvider().discover_release()
+          req = urllib.request.Request(release.data_url, headers={'Range':'bytes=0-8388607'})
+          with urllib.request.urlopen(req, timeout=45) as response:
+              status = response.status
+              prefix = response.read(8388608)
+          offset = 0
+          xml = None
+          while prefix[offset:offset+4] == b'PK\x03\x04':
+              fields = struct.unpack_from('<4s5H3I2H', prefix, offset)
+              method, crc, compressed, nlen, xlen = fields[3], fields[6], fields[7], fields[9], fields[10]
+              filename = prefix[offset+30:offset+30+nlen].decode('utf8', errors='replace')
+              start = offset+30+nlen+xlen
+              if filename.lower().endswith('.xml'):
+                  assert compressed and start+compressed <= len(prefix), 'Member exceeds bounded probe'
+                  payload = prefix[start:start+compressed]
+                  dec = zlib.decompressobj(-15)
+                  xml = dec.decompress(payload, 64000000) if method == 8 else payload
+                  assert method in (0, 8) and (method == 0 or dec.eof)
+                  assert zlib.crc32(xml) & 0xffffffff == crc
+                  break
+              offset = start+compressed
+          assert xml is not None
+          rows = []
+          stats = stream_xml_file(io.BytesIO(xml), data_date=release.data_date, consume=rows.append)
+          assert rows and stats['source_records'] >= stats['expected_documents']
+          root = ET.fromstring(xml)
+          sample = next((e for e in root.iter() if e.tag.rsplit('}',1)[-1] == 'СвЮЛ'), None)
+          assert sample is not None, 'No legal entity in sampled member'
+          inn, name = sample.get('ИННЮЛ'), sample.get('НаимОрг')
+          out = Path('data/acceptance/w1-003-real-subset'); out.mkdir(parents=True, exist_ok=True)
+          subset = out/'subset.zip'
+          with ZipFile(subset, 'w') as archive: archive.writestr(filename, xml)
+          Base.metadata.create_all(engine)
+          # This is a complete test subset, NOT the full FNS registry. Fixture URL
+          # prevents scripts.accept_fns_sme_support from passing official gate 2.
+          imported = sync_fns_sme_support(archive_path=subset,
+              release=FnsSmeSupportRelease('https://fixtures.invalid/official-xml-subset.zip', release.structure_url, release.modified_date, release.data_date),
+              cleanup_old=False)
+          with get_session() as session:
+              session.add(Company(inn=inn, name=name, entity_type='legal'))
+              session.commit()
+          with get_session() as session:
+              reread = session.scalar(select(func.count()).select_from(Entry).where(Entry.recipient_inn == inn))
+          assert reread > 0
+          pages = browser_check([{'label':'real-company-subset', 'inn':inn, 'result':'found'}], out)
+          report = {'status':'PASS_REAL_XML_SUBSET_ONLY', 'official_url':release.data_url,
+                    'http_status':status, 'member':filename, 'parser':stats,
+                    'postgres_rows':imported['persisted_records'], 'sample_inn':inn,
+                    'sample_company':name, 'reread_count':reread, 'browser':pages,
+                    'full_registry_import':'NOT_RUN', 'user_mac':'NOT_ACCESSED',
+                    'user_master_coverage':'NOT_CONFIRMED', 'six_gates_accepted':False}
+          (out/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+          print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: w1-003-real-xml-subset
+          path: |
+            data/acceptance/w1-003-real-subset/*.json
+            data/acceptance/w1-003-real-subset/*.png
+          retention-days: 7
