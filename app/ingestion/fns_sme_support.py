@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.ingestion.fns_sme_support_xml import parse_support_records
+from app.ingestion.fns_sme_support_integrity import audit_archive, verify_counts, sha256_file, POLICY
 from app.models.fns_sme_support import FnsSmeSupportEntry
 from app.models.source import DataSet, IngestionRun
 
@@ -159,7 +160,7 @@ def _provider_inn_from_sender(sender):
     return value if value and len(value) == 10 else None
 
 
-def stream_xml_file(stream, *, data_date: date, consume) -> dict:
+def stream_xml_file(stream, *, data_date: date, consume, verified_counts=None) -> dict:
     provider_inn = None
     expected_documents = None
     source_documents = source_records = eligible_records = excluded_npd_records = 0
@@ -204,13 +205,18 @@ def stream_xml_file(stream, *, data_date: date, consume) -> dict:
         raise ValueError(f"Некорректный XML ФНС: {error}") from error
     if expected_documents is None:
         raise ValueError("Не найден корневой элемент Файл с КолДок")
-    if source_documents != expected_documents:
-        raise ValueError(f"КолДок={expected_documents}, но распознано Документ={source_documents}")
     result = {"expected_documents": expected_documents, "source_records": source_records,
               "eligible_records": eligible_records, "excluded_npd_records": excluded_npd_records}
-    # Preserve the old 1:1 fixture contract. Production aggregates always record both.
     if source_documents != source_records:
         result["source_documents"] = source_documents
+    if verified_counts is not None:
+        if expected_documents != verified_counts["declared_documents"]:
+            raise ValueError("Header changed after independent audit")
+        verify_counts(result, verified_counts)
+    elif source_documents != expected_documents:
+        # Standalone streaming stays strict; only a complete archive audit can
+        # supply the independently counted evidence for the known header defect.
+        raise ValueError(f"КолДок={expected_documents}, но распознано Документ={source_documents}")
     return result
 
 
@@ -251,6 +257,8 @@ def _insert_batch(*, run_id, dataset_id, records):
         return 0
     with get_session() as session:
         values = [{"ingestion_run_id": run_id, "dataset_id": dataset_id, **record} for record in records]
+        # Unique constraint rejects identical and conflicting duplicates alike;
+        # no silently skipped records and no incomplete publication.
         session.execute(insert(FnsSmeSupportEntry).values(values))
         session.commit()
         return len(records)
@@ -260,6 +268,18 @@ def import_fns_sme_support_archive(archive_path, *, dataset_id, run_id, data_dat
                                    batch_size=DEFAULT_BATCH_SIZE):
     if not 1 <= batch_size <= MAX_BATCH_SIZE:
         raise ValueError(f"batch_size должен быть от 1 до {MAX_BATCH_SIZE}")
+    audit = audit_archive(archive_path)
+    integrity = audit['summary']
+    with get_session() as session:
+        run = session.get(IngestionRun, run_id)
+        if run is None or run.file_checksum != integrity['archive_sha256']:
+            raise ValueError("ZIP does not match recorded download SHA-256")
+        run.details = {**(run.details or {}), 'integrity': integrity,
+                       'metadata_data_date': str(data_date)}
+        session.commit()
+    # Date of the records is ДатаСост, NOT retrieval date or next relevance date
+    # from the metadata page. Keep metadata date separately for provenance.
+    snapshot_date = date.fromisoformat(integrity['data_date']) if integrity['data_date'] else data_date
     batch = []
     inserted = 0
     totals = dict.fromkeys(['source_records', 'source_documents', 'eligible_records',
@@ -275,12 +295,16 @@ def import_fns_sme_support_archive(archive_path, *, dataset_id, run_id, data_dat
     try:
         with ZipFile(Path(archive_path)) as archive:
             members = [item for item in archive.infolist() if not item.is_dir() and item.filename.lower().endswith('.xml')]
-            if not members:
-                raise ValueError("В ZIP ФНС нет XML-файлов")
+            if len(members) != integrity['xml_files']:
+                raise ValueError("ZIP member list changed after audit")
             for number, member in enumerate(members, 1):
+                proof = audit['members'][member.filename]
+                if member.CRC != proof['crc32'] or member.file_size != proof['file_size']:
+                    raise ValueError("ZIP member changed after audit")
                 try:
                     with archive.open(member) as stream:
-                        stats = stream_xml_file(stream, data_date=data_date, consume=consume)
+                        stats = stream_xml_file(stream, data_date=snapshot_date, consume=consume,
+                                                verified_counts=proof)
                 except ValueError as error:
                     raise ValueError(f"{member.filename}: {error}") from error
                 for key in totals:
@@ -291,18 +315,31 @@ def import_fns_sme_support_archive(archive_path, *, dataset_id, run_id, data_dat
             inserted += _insert_batch(run_id=run_id, dataset_id=dataset_id, records=batch)
     except BadZipFile as error:
         raise ValueError("Файл ФНС не является корректным ZIP") from error
+    if sha256_file(archive_path) != integrity['archive_sha256']:
+        raise ValueError("Archive changed during import")
     if not totals['source_records']:
         raise ValueError("Пустой snapshot ФНС не публикуется")
-    if totals['source_documents'] != totals['expected_documents']:
-        raise ValueError("Контроль общего КолДок по ZIP ФНС не пройден")
+    for key in ('source_documents', 'source_records'):
+        if totals[key] != integrity['independent_counts'][key]:
+            raise ValueError(f"Full archive independent {key} mismatch")
     if totals['source_records'] != totals['eligible_records'] + totals['excluded_npd_records']:
         raise ValueError("Контроль company/IP + excluded NPD records не пройден")
     if inserted != totals['eligible_records']:
         raise ValueError("Число сохранённых фактов не соответствует eligible_records")
-    return {"xml_files": len(members), **totals, "inserted_records": inserted}
+    integrity = {**integrity, 'parser_counts_match': True, 'archive_sha256_after_matches': True}
+    return {"xml_files": len(members), **totals, "inserted_records": inserted,
+            "snapshot_data_date": snapshot_date.isoformat(), "integrity": integrity,
+            "duplicates": 0, "conflicting_duplicates": 0, "rejected_records": 0}
 
 
 def publish_ingestion_run(run_id, stats):
+    integrity = stats.get('integrity') or {}
+    if not (integrity.get('policy') == POLICY and integrity.get('crc_eof_all_members')
+            and integrity.get('parser_counts_match') and integrity.get('archive_sha256_after_matches')):
+        raise ValueError("Cannot publish without full archive integrity evidence")
+    for key in ('source_documents', 'source_records'):
+        if stats[key] != integrity['independent_counts'][key]:
+            raise ValueError("Cannot publish divergent independent/parser counts")
     with get_session() as session:
         run = session.execute(select(IngestionRun).where(IngestionRun.id == run_id).with_for_update()).scalar_one()
         if run.status != 'running':
@@ -311,15 +348,15 @@ def publish_ingestion_run(run_id, stats):
         persisted = session.scalar(select(func.count()).select_from(FnsSmeSupportEntry).where(FnsSmeSupportEntry.ingestion_run_id == run_id))
         if persisted != stats['inserted_records'] or persisted != stats['eligible_records']:
             raise ValueError("Повторное чтение PostgreSQL не совпало со счётчиком импорта")
-        if stats.get('source_documents', stats['source_records']) != stats['expected_documents']:
-            raise ValueError("Нельзя публиковать snapshot без полного контроля КолДок")
         if stats['source_records'] != stats['eligible_records'] + stats['excluded_npd_records']:
             raise ValueError("Нельзя публиковать snapshot с нарушенным балансом записей")
-        if not run.file_checksum or not run.source_url:
+        if not run.source_url or run.file_checksum != integrity['archive_sha256']:
             raise ValueError("Нельзя публиковать snapshot без provenance source_url/checksum")
-        if dataset.last_data_date and run.data_date < dataset.last_data_date:
+        snapshot_date = date.fromisoformat(stats['snapshot_data_date'])
+        if dataset.last_data_date and snapshot_date < dataset.last_data_date:
             raise ValueError("Нельзя заменить опубликованный snapshot более старой датой")
         now = datetime.now(timezone.utc)
+        run.data_date = snapshot_date
         run.status = 'success'
         run.finished_at = now
         run.rows_read = stats['source_records']
@@ -330,7 +367,7 @@ def publish_ingestion_run(run_id, stats):
         run.error_message = None
         run.details = {**(run.details or {}), **stats, 'complete_snapshot': True,
                        'person_rows_persisted': False, 'matching_method': 'inn_exact'}
-        dataset.last_data_date = run.data_date
+        dataset.last_data_date = snapshot_date
         dataset.last_success_at = now
         session.commit()
         return {'run_id': run.id, 'dataset_id': dataset.id, 'data_date': run.data_date,
@@ -339,7 +376,6 @@ def publish_ingestion_run(run_id, stats):
 
 def cleanup_old_snapshots(*, dataset_id, keep_run_id):
     with get_session() as session:
-        # Never delete another running import or a newer concurrently published run.
         old_runs = select(IngestionRun.id).where(IngestionRun.dataset_id == dataset_id,
             IngestionRun.id < keep_run_id, IngestionRun.status.in_(['success', 'failed']))
         result = session.execute(delete(FnsSmeSupportEntry).where(
