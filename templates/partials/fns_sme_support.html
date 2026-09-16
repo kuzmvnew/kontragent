@@ -67,13 +67,21 @@
                     {% endif %}
 
                     {% if record["has_violation"] is sameas true %}
-                        <div>
+                        <div data-testid="support-violation-flag">
                             <strong>В реестре есть сведения о нарушении порядка или условий оказания поддержки.</strong>
                         </div>
+                        {% if not record["violations"] %}
+                            <div data-testid="support-violation-details-missing">
+                                В выгрузке ФНС установлен признак нарушения, но подробности нарушения не предоставлены.
+                                Отсутствие подробностей не означает отсутствие нарушения.
+                            </div>
+                        {% endif %}
                     {% elif record["has_violation"] is sameas false %}
                         <div>
                             В записи ФНС признак нарушения: нет.
                         </div>
+                    {% else %}
+                        <div>В записи ФНС признак нарушения не указан; отсутствие нарушения не подтверждено.</div>
                     {% endif %}
 
                     <div>
