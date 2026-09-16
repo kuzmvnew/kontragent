@@ -33,7 +33,7 @@ ACTIVE
 | 1. Фундамент | ✅ | FastAPI, PostgreSQL, Git, тестовая база |
 | 2. Master Registry | ✅ | Единый реестр ЮЛ/ИП по ИНН |
 | 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
-| 4. Качество данных | ▶️ ACTIVE | Wave 1: W1-001/W1-003 ACCEPTED на Mac; W1-002 локальная приёмка ожидается; W1-004—W1-006 впереди |
+| 4. Качество данных | ▶️ ACTIVE | Wave 1: W1-001/W1-002/W1-003 ACCEPTED / SIX GATES PASS на Mac; W1-004—W1-006 впереди |
 | 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены |
 | 6. Карточка компании | 🟡 частично | Несколько официальных источников уже отображаются |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
@@ -316,3 +316,7 @@ Person остаётся отдельным последующим продукт
 - `unavailable`/ошибка источника нельзя превращать в «ничего не найдено».
 - Отсутствие записи относится только к конкретному набору/дате/проверке.
 - Новый источник не добавляется в обязательный scope автоматически.
+
+
+### W1-002 final Mac acceptance — 16.09.2026
+W1-002 is ACCEPTED / SIX GATES PASS on the user Mac. Real found exact-INN: 9706063520 (БАНК ЭЛЕМЕНТ (ООО), 2 licences/rights); real not_found: 9102309919. PostgreSQL kontragent reread PASS; Chromium found/not_found HTTP 200, page_errors=[]; 435 tests PASS. On-demand coverage is dated cache coverage, not a bulk CBR registry. auto_update=NOT_CONFIGURED. Source protocol: docs/W1_002_ACCEPTANCE.md.
