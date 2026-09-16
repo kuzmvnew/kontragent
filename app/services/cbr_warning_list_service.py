@@ -1,4 +1,7 @@
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.ingestion.cbr_warning_list import normalize_inn as strict_normalize_inn
 
 from app.database.postgres import get_session
 from app.models.cbr_warning_list import CbrWarningListEntry
@@ -14,11 +17,7 @@ DETAIL_URL_TEMPLATE = (
 
 
 def normalize_inn(value) -> str:
-    return "".join(
-        symbol
-        for symbol in str(value or "")
-        if symbol.isdigit()
-    )
+    return strict_normalize_inn(value) or ""
 
 
 def _serialize_named_list(values) -> list[str]:
@@ -68,8 +67,8 @@ def _serialize_entry(row) -> dict:
 
 def _empty_payload():
     return {
-        "is_listed": False,
-        "record_count": 0,
+        "is_listed": None,
+        "record_count": None,
         "records": [],
         "matching_method": "inn_exact",
         "interpretation_note": (
@@ -81,7 +80,8 @@ def _empty_payload():
         "coverage_note": (
             "Отсутствие записи в этом списке не подтверждает наличие "
             "лицензии Банка России и само по себе не доказывает законность "
-            "всей финансовой деятельности компании или ИП."
+            "всей финансовой деятельности компании или ИП. Записи без ИНН "
+            "не могут быть сопоставлены с этой карточкой по точному ИНН."
         ),
     }
 
@@ -107,9 +107,10 @@ def get_cbr_warning_list_check_for_inn(
     if limit < 1:
         raise ValueError("limit должен быть больше нуля")
 
-    session = get_session()
+    session = None
 
     try:
+        session = get_session()
         dataset = (
             session.execute(
                 select(DataSet)
@@ -131,20 +132,14 @@ def get_cbr_warning_list_check_for_inn(
                 **_empty_payload(),
             )
 
-        data_date = dataset.last_data_date
-
-        if data_date is None:
-            data_date = (
-                session.execute(
-                    select(
-                        func.max(CbrWarningListEntry.data_date)
-                    )
-                    .where(
-                        CbrWarningListEntry.dataset_id == dataset.id
-                    )
-                )
-                .scalar_one_or_none()
+        if not getattr(dataset, "enabled", True):
+            return build_check_result(
+                checked=False, applicable=True, result="unavailable",
+                data_date=dataset.last_data_date, dataset_code=DATASET_CODE,
+                source=SOURCE_CODE, reason="dataset_disabled", **_empty_payload(),
             )
+
+        data_date = dataset.last_data_date
 
         if data_date is None:
             return build_check_result(
@@ -237,5 +232,12 @@ def get_cbr_warning_list_check_for_inn(
             **common,
         )
 
+    except SQLAlchemyError:
+        return build_check_result(
+            checked=False, applicable=True, result="unavailable",
+            data_date=None, dataset_code=DATASET_CODE, source=SOURCE_CODE,
+            reason="storage_error", **_empty_payload(),
+        )
     finally:
-        session.close()
+        if session is not None:
+            session.close()

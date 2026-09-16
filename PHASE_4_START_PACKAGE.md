@@ -20,7 +20,7 @@ Data Normalization & Quality Foundation
 
 Build a unified business data foundation.
 
-No new public data sources are introduced in this phase.
+Approved clarification (2026-09-16): the previously agreed Wave 1 sources are completed and accepted before SEO MVP. Current work is W1-001 acceptance. W1-003 must not start without a separate command. This exception does not authorize arbitrary new sources or an architecture rewrite.
 
 Current official sources become one coherent business model.
 
@@ -137,6 +137,7 @@ Phase 4 is complete when:
 - Relationships are normalized.
 - Dataset quality information is available.
 - Tests pass.
+- Each source has separate evidence for all six acceptance criteria in PROJECT_STATUS.md, including a real browser, PostgreSQL readback and dated coverage. CI and the user's database are reported separately.
 
 ---
 

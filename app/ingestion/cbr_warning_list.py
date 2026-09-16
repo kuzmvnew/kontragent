@@ -3,14 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, insert, select
 
 from app.database.postgres import get_session
 from app.models.cbr_warning_list import CbrWarningListEntry
-from app.models.source import DataSet
+from app.models.source import DataSet, IngestionRun
 
 
 DATASET_CODE = "cbr_warning_list"
@@ -71,16 +71,9 @@ def parse_cbr_date(value) -> date | None:
 
 
 def normalize_inn(value) -> str | None:
-    digits = "".join(
-        symbol
-        for symbol in str(value or "")
-        if symbol.isdigit()
-    )
-
-    if len(digits) not in {10, 12}:
-        return None
-
-    return digits
+    # Do not turn arbitrary text or several identifiers into an exact match.
+    text = str(value or "").strip()
+    return text if re.fullmatch(r"[0-9]{10}|[0-9]{12}", text) else None
 
 
 def _to_text(value) -> str | None:
@@ -170,7 +163,7 @@ def _normalize_named_list(value) -> list[dict]:
 
 def _extract_rows(payload) -> list[dict]:
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+        return payload
 
     if not isinstance(payload, dict):
         raise ValueError("CBR warning list JSON должен быть object или array")
@@ -189,7 +182,7 @@ def _extract_rows(payload) -> list[dict]:
     ):
         value = payload.get(key)
         if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
+            return value
 
     # Защита от небольших изменений оболочки JSON:
     # выбираем самый большой массив объектов первого уровня.
@@ -322,6 +315,7 @@ def parse_cbr_warning_payload(
 
     unique = {}
     rejected = 0
+    conflicting_duplicates = 0
 
     for row in source_rows:
         try:
@@ -333,6 +327,9 @@ def parse_cbr_warning_payload(
             rejected += 1
             continue
 
+        previous = unique.get(record["cbr_id"])
+        if previous is not None and previous != record:
+            conflicting_duplicates += 1
         unique[record["cbr_id"]] = record
 
     duplicate_records = (
@@ -349,6 +346,7 @@ def parse_cbr_warning_payload(
         "imported_records": len(records),
         "rejected_records": rejected,
         "duplicate_records": duplicate_records,
+        "conflicting_duplicates": conflicting_duplicates,
         "with_inn": sum(
             1 for record in records if record["inn"] is not None
         ),
@@ -356,6 +354,20 @@ def parse_cbr_warning_payload(
             1 for record in records if record["inn"] is None
         ),
     }
+
+
+def validate_cbr_warning_snapshot(parsed: dict) -> None:
+    """Never publish an empty or partly parsed snapshot as a complete list."""
+    if not parsed["records"]:
+        raise ValueError("Пустой snapshot Банка России не публикуется")
+    if parsed["rejected_records"]:
+        raise ValueError("Snapshot содержит отклонённые записи; публикация остановлена")
+    if parsed.get("conflicting_duplicates", 0):
+        raise ValueError("Один CBR ID содержит разные записи; публикация остановлена")
+    if parsed["source_records"] != (
+        len(parsed["records"]) + parsed["duplicate_records"]
+    ):
+        raise ValueError("Контроль количества записей snapshot не пройден")
 
 
 def get_dataset_id(
@@ -388,6 +400,7 @@ def replace_cbr_warning_list(
     *,
     dataset_id: int,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    publication: dict | None = None,
 ) -> dict:
     """
     Атомарно заменяет текущий snapshot предупредительного списка.
@@ -402,9 +415,33 @@ def replace_cbr_warning_list(
     if not records:
         raise ValueError("Нельзя публиковать пустой CBR warning list snapshot")
 
+    dates = {row["data_date"] for row in records}
+    if len(dates) != 1:
+        raise ValueError("Snapshot должен иметь одну дату получения")
+
     session = get_session()
 
     try:
+        # Serialize publishers; rows, dataset marker and successful run become
+        # visible together. No window with new rows and the old publication date.
+        dataset = session.execute(
+            select(DataSet).where(DataSet.id == dataset_id).with_for_update()
+        ).scalar_one()
+        run = None
+        if publication is not None:
+            run = session.get(IngestionRun, publication["run_id"])
+            if run is None or run.dataset_id != dataset_id or run.status != "running":
+                raise ValueError("Некорректная загрузка для публикации snapshot")
+            latest = session.execute(
+                select(IngestionRun.id).where(
+                    IngestionRun.dataset_id == dataset_id,
+                    IngestionRun.status == "success",
+                    IngestionRun.started_at > run.started_at,
+                ).limit(1)
+            ).scalar_one_or_none()
+            if latest is not None:
+                raise ValueError("Более новая загрузка уже опубликована")
+
         session.execute(
             delete(CbrWarningListEntry)
             .where(CbrWarningListEntry.dataset_id == dataset_id)
@@ -429,6 +466,22 @@ def replace_cbr_warning_list(
                     values,
                 )
                 inserted += len(values)
+
+        if run is not None:
+            now = datetime.now(timezone.utc)
+            run.status = "success"
+            run.finished_at = now
+            run.data_date = next(iter(dates))
+            run.file_checksum = publication["checksum"]
+            run.rows_read = publication["source_records"]
+            run.rows_inserted = inserted
+            run.rows_updated = 0
+            run.rows_skipped = publication["duplicate_records"]
+            run.errors_count = 0
+            run.error_message = None
+            run.details = {**(run.details or {}), **publication["details"]}
+            dataset.last_data_date = run.data_date
+            dataset.last_success_at = now
 
         session.commit()
 
