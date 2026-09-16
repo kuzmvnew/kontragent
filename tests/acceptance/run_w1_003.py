@@ -209,9 +209,9 @@ def _official_xsd_graph(start_url: str) -> tuple[set[str], list[dict]]:
     """Read the official XSD plus same-host include/import dependencies.
 
     FNS schemas may keep declarations in included XSDs or refer to shared
-    declarations via ``ref``. Checking only local ``name`` attributes therefore
-    produces false failures. We still restrict the probe to official
-    file.nalog.ru HTTPS resources and cap traversal.
+    declarations via ``ref``. This probe checks the health and structural shape
+    of the published open-data XSD graph; parser compatibility with the actual
+    live bulk XML remains a separate six-gate acceptance requirement.
     """
     pending = [start_url]
     seen: set[str] = set()
@@ -289,14 +289,20 @@ def official_metadata_probe():
         raise AssertionError("Official FNS metadata did not expose an XSD URL")
 
     declarations, xsd_documents = _official_xsd_graph(release.structure_url)
-    expected_declarations = {
+    # These names are directly represented in the currently published open-data
+    # XSD graph and are suitable for a live schema-health probe. ``ДатаОказ`` is
+    # required by the FNS exchange-format specification and by our parser, but it
+    # is not separately declared/referenced in this open-data XSD graph. It is
+    # therefore deliberately proven only by the real bulk XML acceptance, never
+    # inferred from this lightweight CI probe.
+    xsd_health_declarations = {
         "КолДок", "Документ", "ИННЮЛ", "ИННФЛ", "ОГРН", "ОГРНИП",
-        "ДатаОказ", "СрокПод", "ФормПод", "ВидПод", "РазмПод",
+        "СрокПод", "ФормПод", "ВидПод", "РазмПод",
     }
-    missing = sorted(expected_declarations - declarations)
+    missing = sorted(xsd_health_declarations - declarations)
     if missing:
         raise AssertionError(
-            "Current official XSD graph is missing expected W1-003 declarations: "
+            "Current official XSD graph is missing expected W1-003 structural declarations: "
             + ", ".join(missing)
         )
 
@@ -308,7 +314,8 @@ def official_metadata_probe():
         "modified_date": str(release.modified_date),
         "data_date": str(release.data_date),
         "xsd_documents": xsd_documents,
-        "xsd_expected_declarations": sorted(expected_declarations),
+        "xsd_health_declarations": sorted(xsd_health_declarations),
+        "parser_fields_requiring_live_bulk_confirmation": ["ДатаОказ"],
         "bulk_dataset_downloaded": False,
         "real_company": "NOT_CONFIRMED_IN_CI",
     }
