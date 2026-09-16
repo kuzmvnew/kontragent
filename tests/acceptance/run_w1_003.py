@@ -208,9 +208,10 @@ def fixture_acceptance():
 def _official_xsd_graph(start_url: str) -> tuple[set[str], list[dict]]:
     """Read the official XSD plus same-host include/import dependencies.
 
-    FNS schemas may keep declarations in included XSDs, so checking only the
-    wrapper file as raw text produces false failures. We still restrict the
-    probe to official file.nalog.ru HTTPS resources and cap traversal.
+    FNS schemas may keep declarations in included XSDs or refer to shared
+    declarations via ``ref``. Checking only local ``name`` attributes therefore
+    produces false failures. We still restrict the probe to official
+    file.nalog.ru HTTPS resources and cap traversal.
     """
     pending = [start_url]
     seen: set[str] = set()
@@ -242,10 +243,13 @@ def _official_xsd_graph(start_url: str) -> tuple[set[str], list[dict]]:
                 raise AssertionError(f"Official FNS structure is not an XML Schema: {url}")
 
             seen.add(url)
+            declaration_count = 0
             for element in root.iter():
-                name = element.attrib.get("name")
-                if name:
-                    declarations.add(name)
+                for attribute in ("name", "ref"):
+                    value = element.attrib.get(attribute)
+                    if value:
+                        declarations.add(value.rsplit(":", 1)[-1])
+                        declaration_count += 1
 
             dependencies = []
             for tag in ("include", "import", "redefine"):
@@ -267,9 +271,7 @@ def _official_xsd_graph(start_url: str) -> tuple[set[str], list[dict]]:
                 {
                     "url": url,
                     "http_status": response.status_code,
-                    "declaration_count": sum(
-                        1 for element in root.iter() if element.attrib.get("name")
-                    ),
+                    "declaration_or_ref_count": declaration_count,
                     "dependencies": dependencies,
                 }
             )
