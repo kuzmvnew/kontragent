@@ -1,0 +1,332 @@
+version: 1
+language: ru
+entity: company
+
+principles:
+  - "Агрегировать спрос на уровень ИНН, а не строкового названия"
+  - "Не считать общий брендовый спрос сильным сигналом для consumer/enterprise компаний"
+  - "Повышать вес запросов, явно связанных с проверкой, надежностью, рисками и реквизитами"
+  - "Учитывать перестановку слов, словоформы, полные/краткие названия, бренды, старые названия, латиницу и частые опечатки"
+
+clusters:
+  identity:
+    weight_class: very_high
+    templates:
+      - "{legal_name}"
+      - "{short_name}"
+      - "{alias}"
+      - "{legal_name} инн"
+      - "инн {legal_name}"
+      - "{alias} инн"
+      - "инн {alias}"
+      - "инн {inn}"
+      - "{inn}"
+      - "{legal_name} огрн"
+      - "огрн {legal_name}"
+      - "{legal_name} кпп"
+      - "кпп {legal_name}"
+
+  verification:
+    weight_class: very_high
+    templates:
+      - "проверить {legal_name}"
+      - "проверить компанию {legal_name}"
+      - "проверка {legal_name}"
+      - "проверка компании {legal_name}"
+      - "проверка организации {legal_name}"
+      - "проверить контрагента {legal_name}"
+      - "проверка контрагента {legal_name}"
+      - "проверить юридическое лицо {legal_name}"
+      - "проверить фирму {legal_name}"
+      - "проверить {inn}"
+      - "проверка инн {inn}"
+
+  reliability:
+    weight_class: very_high
+    templates:
+      - "{legal_name} надежность"
+      - "надежность {legal_name}"
+      - "надежная ли компания {legal_name}"
+      - "надежная ли {legal_name}"
+      - "рейтинг надежности {legal_name}"
+      - "оценка надежности {legal_name}"
+      - "можно ли доверять {legal_name}"
+      - "стоит ли доверять {legal_name}"
+      - "благонадежность {legal_name}"
+
+  risks:
+    weight_class: very_high
+    templates:
+      - "{legal_name} риски"
+      - "риски {legal_name}"
+      - "риски компании {legal_name}"
+      - "проверка рисков {legal_name}"
+      - "признаки риска {legal_name}"
+      - "{legal_name} проблемная компания"
+      - "проблемы у компании {legal_name}"
+      - "красные флаги {legal_name}"
+
+  reputation:
+    weight_class: high
+    templates:
+      - "{legal_name} отзывы"
+      - "отзывы {legal_name}"
+      - "ооо {alias} отзывы"
+      - "{legal_name} отзывы клиентов"
+      - "{legal_name} отзывы сотрудников"
+      - "{legal_name} репутация"
+      - "репутация {legal_name}"
+      - "{legal_name} мошенники"
+      - "{legal_name} мошенничество"
+      - "{legal_name} обман"
+      - "{legal_name} жалобы"
+      - "жалобы на {legal_name}"
+
+  requisites:
+    weight_class: very_high
+    templates:
+      - "{legal_name} реквизиты"
+      - "реквизиты {legal_name}"
+      - "реквизиты ооо {alias}"
+      - "банковские реквизиты {legal_name}"
+      - "карточка предприятия {legal_name}"
+      - "карточка компании {legal_name}"
+      - "юридический адрес {legal_name}"
+      - "{legal_name} юридический адрес"
+
+  contacts:
+    weight_class: high
+    templates:
+      - "{legal_name} контакты"
+      - "контакты {legal_name}"
+      - "{legal_name} телефон"
+      - "телефон {legal_name}"
+      - "{legal_name} email"
+      - "{legal_name} электронная почта"
+      - "{legal_name} сайт"
+      - "официальный сайт {legal_name}"
+      - "{legal_name} адрес"
+      - "адрес {legal_name}"
+
+  management:
+    weight_class: very_high
+    templates:
+      - "{legal_name} директор"
+      - "директор {legal_name}"
+      - "генеральный директор {legal_name}"
+      - "руководитель {legal_name}"
+      - "кто директор {legal_name}"
+      - "кто руководитель {legal_name}"
+
+  ownership:
+    weight_class: very_high
+    templates:
+      - "{legal_name} учредители"
+      - "учредители {legal_name}"
+      - "{legal_name} владельцы"
+      - "владелец {legal_name}"
+      - "кому принадлежит {legal_name}"
+      - "{legal_name} бенефициар"
+      - "бенефициары {legal_name}"
+
+  relationships:
+    weight_class: high
+    templates:
+      - "{legal_name} связанные компании"
+      - "связанные компании {legal_name}"
+      - "{legal_name} аффилированные компании"
+      - "аффилированные лица {legal_name}"
+      - "связи директора {legal_name}"
+      - "связи учредителя {legal_name}"
+      - "дочерние компании {legal_name}"
+
+  financials:
+    weight_class: high
+    templates:
+      - "{legal_name} выручка"
+      - "выручка {legal_name}"
+      - "{legal_name} прибыль"
+      - "прибыль {legal_name}"
+      - "{legal_name} убыток"
+      - "{legal_name} баланс"
+      - "бухгалтерский баланс {legal_name}"
+      - "финансовое состояние {legal_name}"
+      - "финансовые показатели {legal_name}"
+      - "{legal_name} оборот"
+      - "оборот компании {legal_name}"
+      - "{legal_name} отчетность"
+
+  debts:
+    weight_class: very_high
+    templates:
+      - "{legal_name} долги"
+      - "долги {legal_name}"
+      - "{legal_name} задолженность"
+      - "задолженность {legal_name}"
+      - "налоговая задолженность {legal_name}"
+      - "долги по налогам {legal_name}"
+      - "{legal_name} должник"
+
+  courts:
+    weight_class: very_high
+    templates:
+      - "{legal_name} суды"
+      - "суды {legal_name}"
+      - "{legal_name} арбитраж"
+      - "арбитраж {legal_name}"
+      - "судебные дела {legal_name}"
+      - "{legal_name} судебные дела"
+      - "иски к {legal_name}"
+      - "иски {legal_name}"
+      - "{legal_name} истец"
+      - "{legal_name} ответчик"
+
+  enforcement:
+    weight_class: very_high
+    templates:
+      - "{legal_name} исполнительные производства"
+      - "исполнительные производства {legal_name}"
+      - "{legal_name} приставы"
+      - "приставы {legal_name}"
+      - "фссп {legal_name}"
+      - "{legal_name} фссп"
+
+  bankruptcy:
+    weight_class: very_high
+    templates:
+      - "{legal_name} банкротство"
+      - "банкротство {legal_name}"
+      - "банкрот ли {legal_name}"
+      - "{legal_name} банкрот"
+      - "процедура банкротства {legal_name}"
+      - "намерение банкротства {legal_name}"
+
+  taxes:
+    weight_class: high
+    templates:
+      - "{legal_name} налоги"
+      - "налоги {legal_name}"
+      - "налоговая задолженность {legal_name}"
+      - "{legal_name} налоговый режим"
+      - "система налогообложения {legal_name}"
+      - "{legal_name} фнс"
+
+  licenses:
+    weight_class: high
+    templates:
+      - "{legal_name} лицензии"
+      - "лицензии {legal_name}"
+      - "лицензия {legal_name}"
+      - "есть ли лицензия у {legal_name}"
+      - "разрешения {legal_name}"
+
+  procurement:
+    weight_class: high
+    templates:
+      - "{legal_name} госзакупки"
+      - "госзакупки {legal_name}"
+      - "{legal_name} госконтракты"
+      - "госконтракты {legal_name}"
+      - "{legal_name} 44 фз"
+      - "{legal_name} 223 фз"
+      - "закупки {legal_name}"
+
+  rnp:
+    weight_class: very_high
+    templates:
+      - "{legal_name} рнп"
+      - "рнп {legal_name}"
+      - "{legal_name} реестр недобросовестных поставщиков"
+      - "недобросовестный поставщик {legal_name}"
+      - "{legal_name} недобросовестный поставщик"
+
+  status:
+    weight_class: high
+    templates:
+      - "{legal_name} статус"
+      - "статус {legal_name}"
+      - "{legal_name} действующая компания"
+      - "действует ли {legal_name}"
+      - "{legal_name} ликвидация"
+      - "ликвидация {legal_name}"
+      - "{legal_name} ликвидирована"
+      - "{legal_name} закрылась"
+      - "закрыта ли {legal_name}"
+
+  history:
+    weight_class: medium
+    templates:
+      - "{legal_name} дата регистрации"
+      - "дата регистрации {legal_name}"
+      - "когда зарегистрирована {legal_name}"
+      - "сколько лет компании {legal_name}"
+      - "история {legal_name}"
+      - "история компании {legal_name}"
+
+  employees:
+    weight_class: medium
+    templates:
+      - "{legal_name} сотрудники"
+      - "сотрудники {legal_name}"
+      - "{legal_name} численность"
+      - "численность сотрудников {legal_name}"
+      - "сколько сотрудников {legal_name}"
+
+  employment:
+    weight_class: medium
+    templates:
+      - "{legal_name} вакансии"
+      - "вакансии {legal_name}"
+      - "работа {legal_name}"
+      - "{legal_name} работодатель"
+      - "{legal_name} отзывы сотрудников"
+
+  compliance:
+    weight_class: very_high
+    templates:
+      - "{legal_name} санкции"
+      - "санкции {legal_name}"
+      - "{legal_name} санкционный список"
+      - "проверка санкций {legal_name}"
+      - "{legal_name} комплаенс"
+      - "комплаенс проверка {legal_name}"
+      - "проверка благонадежности {legal_name}"
+
+  cooperation:
+    weight_class: very_high
+    templates:
+      - "можно ли работать с {legal_name}"
+      - "стоит ли работать с {legal_name}"
+      - "можно ли сотрудничать с {legal_name}"
+      - "стоит ли сотрудничать с {legal_name}"
+      - "можно ли заключать договор с {legal_name}"
+      - "проверить перед договором {legal_name}"
+      - "проверка перед заключением договора {legal_name}"
+      - "оценить контрагента {legal_name}"
+
+navigation_noise:
+  generic_brand_query_weight: 0.10
+  consumer_brand_query_weight: 0.02
+  top1000_revenue_brand_query_weight: 0.02
+  high_intent_override: true
+
+expansion_rules:
+  include_legal_forms:
+    - "ООО"
+    - "АО"
+    - "ПАО"
+    - "НАО"
+  include_word_order_variants: true
+  include_morphology: true
+  include_brand_aliases: true
+  include_former_names: true
+  include_latin_variants: true
+  include_common_misspellings: true
+  include_inn: true
+  include_ogrn: true
+  include_region_disambiguation: true
+
+notes:
+  - "Не отправлять все сгенерированные шаблоны в Wordstat без предварительной дедупликации и батчинга."
+  - "Хранить исходный запрос, нормализованный запрос, источник, регион, дату измерения и тип частотности."
+  - "Весовые классы — стартовая гипотеза. Коэффициенты калибруются на пилоте 500–1000 компаний."
