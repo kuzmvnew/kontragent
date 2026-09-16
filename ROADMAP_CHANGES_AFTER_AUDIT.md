@@ -164,8 +164,10 @@ Phase 3 is completed in its agreed scope; Phase 4 is ACTIVE. Complete the agreed
 
 W1-001 CBR Warning List is accepted on the user's Mac by the permanent six-gate protocol. The local PostgreSQL import on 16.09.2026 stored 27,163 official records; 2,995 have usable INNs, 24,168 do not. Exact-INN coverage against the 6,781,485-row Master Registry linked 857 records to 857 master companies; 2,138 source records with an INN were unmatched. Real `found` and dated-snapshot `not_found` cards were opened in Chromium with HTTP 200 and no page errors. `auto_update` remains NOT_CONFIGURED. See `docs/W1_001_ACCEPTANCE.md`.
 
-W1-002 CBR FinOrg remains confirmed as LIVE + CACHE for INN `7707083893`; its separate browser acceptance is not silently inferred from W1-001.
+W1-002 CBR FinOrg: LIVE + CACHE PASS на Mac; отдельная реальная PostgreSQL/Chromium приёмка на CI PASS (run 35129041426, 435 tests). Полные SIX GATES на пользовательском Mac пока NOT CONFIRMED. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
 
-W1-003 — FNS SME support recipients — is the next planned Wave 1 source but is NOT STARTED by this documentation update. Start it only after a separate explicit command in the new working chat.
+W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
+
+Wave 1 содержит шесть источников. W1-001 и W1-003 приняты на Mac. W1-002: LIVE + CACHE PASS на Mac, полный реальный CI PASS; локальная browser/six-gate приёмка ожидается. W1-004 Росздравнадзор, W1-005 Роскомнадзор, W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
 
 The six permanent acceptance criteria are tests, a real official-source match, PostgreSQL write/readback, absence/non-applicability/failure semantics, a real browser card, and record/date/coverage checks. These are result-verification criteria, not new architecture.

@@ -20,7 +20,7 @@ Data Normalization & Quality Foundation
 
 Build a unified business data foundation.
 
-Approved clarification (2026-09-16): the previously agreed Wave 1 sources are completed and accepted before SEO MVP. W1-001 CBR Warning List has now passed the permanent six-gate acceptance protocol on the user's Mac/PostgreSQL/Chromium environment. W1-003 is the next planned source but remains NOT STARTED until a separate explicit command in the new working chat. This clarification does not authorize arbitrary new sources or an architecture rewrite.
+Approved clarification (2026-09-16): all six agreed Wave 1 sources must be accepted before SEO MVP; they are not all complete yet. Wave 1 содержит шесть источников. W1-001 и W1-003 приняты на Mac. W1-002: LIVE + CACHE PASS на Mac, полный реальный CI PASS; локальная browser/six-gate приёмка ожидается. W1-004 Росздравнадзор, W1-005 Роскомнадзор, W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
 
 Current official sources become one coherent business model.
 
@@ -178,8 +178,9 @@ Tests.
 # Wave 1 Handoff
 
 - W1-001 CBR Warning List: ACCEPTED on user's Mac by six gates.
-- W1-002 CBR FinOrg: LIVE + CACHE confirmed for INN `7707083893`; browser acceptance is a separate status and is not inferred from W1-001.
-- W1-003 FNS SME support recipients: NEXT PLANNED, NOT STARTED. Begin only on explicit user command.
+- W1-002 CBR FinOrg: LIVE + CACHE PASS на Mac; отдельная реальная PostgreSQL/Chromium приёмка на CI PASS (run 35129041426, 435 tests). Полные SIX GATES на пользовательском Mac пока NOT CONFIRMED. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
+- W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
+- W1-004 Росздравнадзор / W1-005 Роскомнадзор / W1-006 НОСТРОЙ, СРО: NOT STARTED.
 - RNP/EIS: deferred until official access.
 - DaMIA: not connected.
 - Person / Leads / CRM / Enterprise: do not start.
