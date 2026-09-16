@@ -5,10 +5,13 @@ on:
     paths:
       - app/ingestion/fns_sme_support*.py
       - scripts/sync_fns_sme_support.py
-      - tests/test_fns_sme_support_nested.py
+      - tests/test_fns_sme_support*.py
       - .github/workflows/w1-003-live-xml.yml
 permissions:
   contents: read
+concurrency:
+  group: w1-003-live-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   real-xml:
     runs-on: ubuntu-latest
@@ -52,6 +55,7 @@ jobs:
           from app.models.fns_sme_support import FnsSmeSupportEntry as Entry
           from app.providers.fns_sme_support_provider import FnsSmeSupportProvider, FnsSmeSupportRelease
           from app.ingestion.fns_sme_support import stream_xml_file
+          from app.ingestion.fns_sme_support_integrity import count_xml
           from scripts.sync_fns_sme_support import sync_fns_sme_support
           from scripts.accept_fns_sme_support import browser_check
           assert engine.url.database == 'test' and engine.url.host == 'localhost'
@@ -59,6 +63,8 @@ jobs:
           req = urllib.request.Request(release.data_url, headers={'Range':'bytes=0-8388607'})
           with urllib.request.urlopen(req, timeout=45) as response:
               status = response.status
+              assert status == 206, 'Require bounded partial-content response'
+              content_range = response.headers.get('Content-Range')
               prefix = response.read(8388608)
           offset = 0
           xml = None
@@ -77,9 +83,11 @@ jobs:
                   break
               offset = start+compressed
           assert xml is not None
+          independent = count_xml(io.BytesIO(xml))
           rows = []
-          stats = stream_xml_file(io.BytesIO(xml), data_date=release.data_date, consume=rows.append)
-          assert rows and stats['source_records'] >= stats['expected_documents']
+          stats = stream_xml_file(io.BytesIO(xml), data_date=release.data_date,
+                                  consume=rows.append, verified_counts=independent)
+          assert rows and stats['source_records'] == independent['source_records']
           root = ET.fromstring(xml)
           sample = next((e for e in root.iter() if e.tag.rsplit('}',1)[-1] == 'СвЮЛ'), None)
           assert sample is not None, 'No legal entity in sampled member'
@@ -88,11 +96,13 @@ jobs:
           subset = out/'subset.zip'
           with ZipFile(subset, 'w') as archive: archive.writestr(filename, xml)
           Base.metadata.create_all(engine)
-          # This is a complete test subset, NOT the full FNS registry. Fixture URL
-          # prevents scripts.accept_fns_sme_support from passing official gate 2.
+          # Test subset provenance deliberately cannot satisfy official full gate 2.
           imported = sync_fns_sme_support(archive_path=subset,
               release=FnsSmeSupportRelease('https://fixtures.invalid/official-xml-subset.zip', release.structure_url, release.modified_date, release.data_date),
               cleanup_old=False)
+          assert imported['integrity']['parser_counts_match']
+          assert imported['source_records'] == independent['source_records']
+          assert imported['persisted_records'] == independent['eligible_records']
           with get_session() as session:
               session.add(Company(inn=inn, name=name, entity_type='legal'))
               session.commit()
@@ -101,7 +111,8 @@ jobs:
           assert reread > 0
           pages = browser_check([{'label':'real-company-subset', 'inn':inn, 'result':'found'}], out)
           report = {'status':'PASS_REAL_XML_SUBSET_ONLY', 'official_url':release.data_url,
-                    'http_status':status, 'member':filename, 'parser':stats,
+                    'http_status':status, 'content_range':content_range, 'member':filename,
+                    'parser':stats, 'independent_counts':independent, 'integrity':imported['integrity'],
                     'postgres_rows':imported['persisted_records'], 'sample_inn':inn,
                     'sample_company':name, 'reread_count':reread, 'browser':pages,
                     'full_registry_import':'NOT_RUN', 'user_mac':'NOT_ACCESSED',
