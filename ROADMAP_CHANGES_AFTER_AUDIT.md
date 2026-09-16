@@ -1,22 +1,16 @@
 # Roadmap Changes After Audit
 
-Version: 1.0
+Version: 2.0
 
 Status: APPROVED
 
-Date: 2026-09-16
+Date: 2026-09-17
 
 ---
 
 ## Purpose
 
-This document records all approved architectural and product changes introduced after completion of:
-
-- Architecture Audit
-- Business & Scale Audit
-- Founder Audit
-
-This document supplements ROADMAP.md.
+This document records approved architectural and product clarifications introduced after the Architecture, Business & Scale, Founder and procurement-TZ audits. It supplements `ROADMAP.md` without rewriting the project foundation.
 
 ---
 
@@ -24,154 +18,206 @@ This document supplements ROADMAP.md.
 
 The project architecture is NOT rewritten.
 
-The project evolves on top of the existing foundation.
+The existing foundation remains:
 
-Existing foundation remains:
+- FastAPI;
+- PostgreSQL;
+- Master Registry;
+- Contracts;
+- Evidence;
+- Aggregators;
+- Ingestion;
+- Dataset Registry.
 
-- FastAPI
-- PostgreSQL
-- Master Registry
-- Contracts
-- Evidence
-- Aggregators
-- Ingestion
-- Dataset Registry
+The architecture evolves by adding stable product engines and source adapters on top of that foundation.
 
 ---
 
 ## Approved Product Evolution
 
-Previous model
-
-Official Sources
+`Official Sources`
 
 ↓
 
-Company Card
+`Normalization`
 
 ↓
 
-User
-
-New model
-
-Official Sources
+`Evidence / Facts`
 
 ↓
 
-Normalization
+`Applicability / Derived Metrics`
 
 ↓
 
-Facts
+`Risk Rules / Section Assessments`
 
 ↓
 
-Evidence
+`Summary / Recommendations`
 
 ↓
 
-Checks
+`Company Card / Report / Bulk / Monitoring`
 
 ↓
 
-Conclusions
+`User`
 
-↓
-
-AI Explain
-
-↓
-
-User
+AI wording may assist presentation later, but facts and material conclusions remain traceable to structured Evidence, calculations and rules.
 
 ---
 
 ## Approved Components
 
-Official architecture now includes:
+The approved architecture includes:
 
-- Entity Registry
-- Relationship Registry
-- Facts Layer
-- Check Registry
-- Executive Summary
-- AI Explain Layer
+- Entity Registry;
+- Relationship Registry;
+- Facts Layer;
+- Dataset Quality / Coverage;
+- Check / Risk Engine;
+- Summary Engine;
+- Financial Distress Forecast as a separate future analytical layer;
+- Court Intelligence as a staged capability;
+- Event Engine;
+- Notification Engine;
+- Lists / Bulk Check;
+- Workspace v1;
+- later Person Core;
+- later Compliance;
+- later API / Enterprise.
+
+Detailed specifications:
+
+- `POST_WAVE1_PRODUCT_PLAN.md`
+- `PRODUCT_FUNCTION_CATALOG.md`
+- `RISK_ENGINE_SPEC.md`
+- `SUMMARY_ENGINE_SPEC.md`
+- `FINANCIAL_DISTRESS_SPEC.md`
+- `COURT_INTELLIGENCE_SPEC.md`
+- `EVENT_NOTIFICATION_MODEL.md`
+- `TRANSPORT_SOURCE_AUDIT.md`
+- `SOURCE_ACCESS_COST_GATE.md`
 
 ---
 
-## Approved Product Order
+## Approved execution order
 
-1. Company
-2. SEO MVP
-3. Monitoring
-4. Person
-5. Leads
-6. CRM
-7. Enterprise
+1. Complete Wave 1.
+2. Auto-update / Data Readiness.
+3. Company Card v2 + Risk Engine + Summary Engine + Report v1.
+4. Security & Resilience Gate.
+5. Legal Launch Gate.
+6. Product / Company Card Acceptance Gate.
+7. First 10,000 high-quality SEO company cards.
+8. Lists + Bulk Check.
+9. Monitoring / Event Engine + expandable notification types.
+10. Workspace v1.
+11. Wave 2 source integrations through Source Access & Cost Gate.
+12. Person Core.
+13. Compliance.
+14. API / Enterprise / SSO / SLA / internal integrations when commercially justified.
+
+This order supersedes the older simplified sequence “Company -> SEO -> Monitoring -> Person ...” where it conflicts with the approved pre-SEO gates and Company B2B Core work above.
 
 ---
 
-## Product Strategy
+## Three mandatory gates before 10k SEO
 
-Product Led Growth becomes the primary commercial strategy.
+Mass SEO publication requires all three:
 
-Main funnel
+1. `SECURITY_RESILIENCE_GATE.md`
+2. `LEGAL_LAUNCH_GATE.md`
+3. `PRODUCT_CARD_ACCEPTANCE_GATE.md`
 
-Search
+The third gate is not only a UI smoke test. It verifies the complete chain:
 
-↓
+`official source -> DB -> Evidence -> Fact -> Derived Metric -> Risk Rule -> Signal -> Summary -> card/report`
 
-Company Card
+and the real user journey from entry/search/clicks to registration/authentication and access states.
 
-↓
+---
 
-Registration
+## Risk / Coverage clarification
 
-↓
+Risk and Coverage are independent.
 
-Monitoring
+- a confirmed risk is not reduced because another source is unavailable;
+- `not_found`, `not_applicable` and `unavailable` are different states;
+- a rule is not evaluated if its required input is missing;
+- context-specific checks are only applied where relevant;
+- quantitative conclusions show actual values, period and calculation;
+- court claims are not confirmed debt;
+- forecasts are not facts.
 
-↓
+---
 
-Subscription
+## Bankruptcy / financial distress clarification
+
+Official bankruptcy procedure is a factual legal event and does not require a score formula.
+
+Financial-distress/bankruptcy forecast is a separate analytical model based on verified financial and risk features, with GIR BO as a future important input where access/cost is justified. The model is versioned and later calibrated on historical Russian-company outcomes.
+
+Operational OFD/online-cash-register data may be used only under a lawful own-company/client access scenario; absence of such private data is not a negative signal.
+
+---
+
+## Court Intelligence clarification
+
+Court work is staged:
+
+1. case facts, roles, counts, amounts, dynamics and materiality relative to business scale;
+2. analysis inside cases: instances, documents, claims, arguments, evidence, legal rules, outcomes;
+3. future probabilistic outcome modelling after enough lawful historical data exists.
+
+Predicted court outcome remains separate from actual court facts.
+
+---
+
+## Source strategy clarification
+
+Do not plan Wave 2 as a raw list of registries. Every new source must:
+
+- close a concrete workflow;
+- pass access/legal/cost review;
+- define matching and coverage;
+- publish Facts/Events into existing engines instead of forcing a redesign.
+
+Transport backlog is expanded in `TRANSPORT_SOURCE_AUDIT.md`.
+
+Before reimplementing FSSP or Fedresurs, inventory current `main`, historical branches and the earlier/local project state because the user has indicated those sources may already exist outside the currently confirmed main implementation.
 
 ---
 
 ## Founder Rules
 
-Rule 1
+1. No approved release may be delayed by unrelated feature creep.
+2. New ideas go to a controlled backlog/specification.
+3. Release before unnecessary completeness, but never bypass mandatory security, legal or product-correctness gates.
+4. Do not duplicate completed work.
+5. Major conclusions remain explainable and source-backed.
 
-No approved release may be delayed.
+---
 
-Rule 2
+## Current Wave 1 execution clarification — 2026-09-17
 
-Every new idea goes to Backlog.
+Actual `main` head checked before this documentation update: `911bc8d211beb68deccf19b8df54d197ccd6aeda`.
 
-Rule 3
+- W1-001 — ACCEPTED / SIX GATES PASS.
+- W1-002 — ACCEPTED / SIX GATES PASS.
+- W1-003 — ACCEPTED / SIX GATES PASS.
+- W1-004 — ACCEPTED / SIX GATES PASS.
+- W1-005 Roskomnadzor — IN PROGRESS / SOURCE-BLOCKED (B, C). A/D/E/F implemented and verified; B/C remain unavailable because official source responses terminate before complete XML EOF. W1-005 is not accepted.
+- W1-006 NOSTROY / SRO — NEXT EXECUTABLE / NOT STARTED.
 
-Release before feature completeness.
+W1-006 may start while W1-005 waits on the external source blocker. This does not close W1-005 or Wave 1.
+
+The six permanent source acceptance criteria remain: tests -> real official response -> PostgreSQL write/readback -> correct found/not_found/not_applicable/unavailable semantics -> real browser card -> record/date/coverage verification.
 
 ---
 
 ## Status
 
-Approved.
-
-## Approved execution clarification — 2026-09-16
-
-Phase 3 is completed in its agreed scope; Phase 4 is ACTIVE. Complete the agreed Wave 1 before SEO MVP. No product-order or architecture rewrite.
-
-W1-001 CBR Warning List is accepted on the user's Mac by the permanent six-gate protocol. The local PostgreSQL import on 16.09.2026 stored 27,163 official records; 2,995 have usable INNs, 24,168 do not. Exact-INN coverage against the 6,781,485-row Master Registry linked 857 records to 857 master companies; 2,138 source records with an INN were unmatched. Real `found` and dated-snapshot `not_found` cards were opened in Chromium with HTTP 200 and no page errors. `auto_update` remains NOT_CONFIGURED. See `docs/W1_001_ACCEPTANCE.md`.
-
-W1-002 CBR FinOrg: LIVE + CACHE PASS на Mac; отдельная реальная PostgreSQL/Chromium приёмка на CI PASS (run 35129041426, 435 tests). Полные SIX GATES на пользовательском Mac пока NOT CONFIRMED. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
-
-W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
-
-Wave 1 содержит шесть источников. W1-001 и W1-003 приняты на Mac. W1-002: LIVE + CACHE PASS на Mac, полный реальный CI PASS; локальная browser/six-gate приёмка ожидается. W1-004 Росздравнадзор, W1-005 Роскомнадзор, W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
-
-The six permanent acceptance criteria are tests, a real official-source match, PostgreSQL write/readback, absence/non-applicability/failure semantics, a real browser card, and record/date/coverage checks. These are result-verification criteria, not new architecture.
-
-
-### W1-002 final Mac acceptance — 16.09.2026
-W1-002 is ACCEPTED / SIX GATES PASS on the user Mac. Real found exact-INN: 9706063520 (БАНК ЭЛЕМЕНТ (ООО), 2 licences/rights); real not_found: 9102309919. PostgreSQL kontragent reread PASS; Chromium found/not_found HTTP 200, page_errors=[]; 435 tests PASS. On-demand coverage is dated cache coverage, not a bulk CBR registry. auto_update=NOT_CONFIGURED. Source protocol: docs/W1_002_ACCEPTANCE.md.
+APPROVED.
