@@ -17,7 +17,7 @@ from app.services.cbr_finorg_registry_service import (
 )
 
 
-SEARCH_FOUND_XML = b'''<?xml version="1.0" encoding="utf-8"?>
+SEARCH_FOUND_XML = '''<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
     <SearchByINNsResponse xmlns="http://web.cbr.ru/">
@@ -37,9 +37,9 @@ SEARCH_FOUND_XML = b'''<?xml version="1.0" encoding="utf-8"?>
       </SearchByINNsResult>
     </SearchByINNsResponse>
   </soap:Body>
-</soap:Envelope>'''
+</soap:Envelope>'''.encode("utf-8")
 
-SEARCH_NOT_FOUND_XML = b'''<?xml version="1.0" encoding="utf-8"?>
+SEARCH_NOT_FOUND_XML = '''<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
     <SearchByINNsResponse xmlns="http://web.cbr.ru/">
@@ -50,9 +50,9 @@ SEARCH_NOT_FOUND_XML = b'''<?xml version="1.0" encoding="utf-8"?>
       </SearchByINNsResult>
     </SearchByINNsResponse>
   </soap:Body>
-</soap:Envelope>'''
+</soap:Envelope>'''.encode("utf-8")
 
-FULL_INFO_XML = b'''<?xml version="1.0" encoding="utf-8"?>
+FULL_INFO_XML = '''<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
     <GetFullInfoByINNResponse xmlns="http://web.cbr.ru/">
@@ -96,7 +96,7 @@ FULL_INFO_XML = b'''<?xml version="1.0" encoding="utf-8"?>
       </GetFullInfoByINNResult>
     </GetFullInfoByINNResponse>
   </soap:Body>
-</soap:Envelope>'''
+</soap:Envelope>'''.encode("utf-8")
 
 
 class FakeResponse:
