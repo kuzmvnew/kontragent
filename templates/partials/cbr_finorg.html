@@ -1,52 +1,94 @@
 {% if company.cbr_finorg_check %}
-{% set check = company.cbr_finorg_check %}
-<section class="card" data-testid="cbr-finorg" data-result="{{ check['result'] }}">
-    <h2>Участник финансового рынка / лицензии Банка России</h2>
+
+<section class="card" data-testid="cbr-finorg" data-result="{{ company.cbr_finorg_check['result'] }}">
+
+    <h2>
+        Участник финансового рынка / лицензии Банка России
+    </h2>
+
+    {% set check = company.cbr_finorg_check %}
+
     {% if check["result"] == "found" %}
+
         <div class="risk-placeholder">
-            <div class="risk-placeholder-title">Сведения участника финансового рынка найдены</div>
-            <p>Банк России вернул официальную запись с точным совпадением ИНН этой компании или ИП.</p>
+            <div class="risk-placeholder-title">
+                Сведения участника финансового рынка найдены
+            </div>
+            <p>
+                Банк России вернул официальную запись с точным совпадением
+                ИНН этой компании или ИП.
+            </p>
         </div>
+
         <div class="info-grid">
             {% if check["participant_status"] %}
             <div class="info-item">
                 <div class="info-label">Статус в Банке России</div>
-                <div class="info-value">{{ check["participant_status"] }}</div>
+                <div class="info-value">
+                    {{ check["participant_status"] }}
+                </div>
             </div>
             {% endif %}
+
             <div class="info-item">
                 <div class="info-label">Лицензий / прав в ответе</div>
-                <div class="info-value" data-testid="cbr-finorg-license-count">{{ check["licenses"] | length }}</div>
+                <div class="info-value" data-testid="cbr-finorg-license-count">
+                    {{ check["licenses"] | length }}
+                </div>
             </div>
+
             <div class="info-item">
                 <div class="info-label">Действуют по датам</div>
-                <div class="info-value" data-testid="cbr-finorg-active-count">{{ check["active_license_count"] }}</div>
+                <div class="info-value" data-testid="cbr-finorg-active-count">
+                    {{ check["active_license_count"] }}
+                </div>
             </div>
         </div>
+
         {% if check["participant_types"] %}
         <div class="detail-row">
-            <div class="detail-label">Типы участника</div>
-            <div class="detail-value">{{ check["participant_types"] | join(", ") }}</div>
-        </div>
-        {% endif %}
-        {% if check["regnum"] or check["bic"] %}
-        <div class="detail-row">
-            <div class="detail-label">Регистрационные данные Банка России</div>
+            <div class="detail-label">
+                Типы участника
+            </div>
             <div class="detail-value">
-                {% if check["regnum"] %}<div>Регистрационный номер: {{ check["regnum"] }}</div>{% endif %}
-                {% if check["bic"] %}<div>БИК: {{ check["bic"] }}</div>{% endif %}
+                {{ check["participant_types"] | join(", ") }}
             </div>
         </div>
         {% endif %}
+
+        {% if check["regnum"] or check["bic"] %}
+        <div class="detail-row">
+            <div class="detail-label">
+                Регистрационные данные Банка России
+            </div>
+            <div class="detail-value">
+                {% if check["regnum"] %}
+                    <div>Регистрационный номер: {{ check["regnum"] }}</div>
+                {% endif %}
+                {% if check["bic"] %}
+                    <div>БИК: {{ check["bic"] }}</div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
         {% if check["licenses"] %}
         <div class="details-list">
             {% for license in check["licenses"] %}
             <div class="detail-row" data-testid="cbr-finorg-license">
-                <div class="detail-label">{{ license["activity"] or "Лицензия / право" }}</div>
+                <div class="detail-label">
+                    {{ license["activity"] or "Лицензия / право" }}
+                </div>
                 <div class="detail-value">
-                    {% if license["name"] %}<div>{{ license["name"] }}</div>{% endif %}
-                    {% if license["number"] %}<div>Номер: {{ license["number"] }}</div>{% endif %}
-                    {% if license["start_date"] %}<div>Начало: {{ license["start_date"] }}</div>{% endif %}
+                    {% if license["name"] %}
+                        <div>{{ license["name"] }}</div>
+                    {% endif %}
+                    {% if license["number"] %}
+                        <div>Номер: {{ license["number"] }}</div>
+                    {% endif %}
+                    {% if license["start_date"] %}
+                        <div>Начало: {{ license["start_date"] }}</div>
+                    {% endif %}
                     {% if license["end_date"] %}
                         <div>Окончание: {{ license["end_date"] }}</div>
                     {% else %}
@@ -57,34 +99,74 @@
             {% endfor %}
         </div>
         {% endif %}
+
     {% elif check["result"] == "not_found" %}
+
         <div class="risk-placeholder">
-            <div class="risk-placeholder-title">Сведения участника финансового рынка по ИНН не найдены</div>
-            <p>В официальном веб-сервисе Банка России на дату проверки нет участника с точным совпадением этого ИНН.</p>
+            <div class="risk-placeholder-title">
+                Сведения участника финансового рынка по ИНН не найдены
+            </div>
+            <p>
+                В официальном веб-сервисе Банка России на дату проверки
+                нет участника с точным совпадением этого ИНН.
+            </p>
         </div>
+
     {% elif check["reason"] == "not_checked" %}
+
         <div class="risk-placeholder">
-            <div class="risk-placeholder-title">Проверка ещё не выполнялась</div>
-            <p>Проверка выполняется точечно через официальный веб-сервис Банка России и сохраняется в локальный кэш.</p>
+            <div class="risk-placeholder-title">
+                Проверка ещё не выполнялась
+            </div>
+            <p>
+                Проверка выполняется точечно через официальный веб-сервис
+                Банка России и сохраняется в локальный кэш.
+            </p>
         </div>
+
     {% else %}
+
         <div class="risk-placeholder">
-            <div class="risk-placeholder-title">Проверка временно недоступна</div>
-            <p>Официальный веб-сервис Банка России сейчас не удалось корректно использовать для этой проверки.</p>
+            <div class="risk-placeholder-title">
+                Проверка временно недоступна
+            </div>
+            <p>
+                Официальный веб-сервис Банка России сейчас не удалось
+                корректно использовать для этой проверки.
+            </p>
         </div>
+
     {% endif %}
-    <form action="/company/{{ company.inn }}/cbr-finorg-check" method="post">
-        <button type="submit">Проверить в Банке России</button>
+
+    <form
+        action="/company/{{ company.inn }}/cbr-finorg-check"
+        method="post"
+    >
+        <button type="submit">
+            Проверить в Банке России
+        </button>
     </form>
+
     {% if check["data_date"] %}
     <div class="detail-row">
-        <div class="detail-label">Дата проверки</div>
-        <div class="detail-value">{{ check["data_date"].strftime("%d.%m.%Y") }}</div>
+        <div class="detail-label">
+            Дата проверки
+        </div>
+        <div class="detail-value">
+            {{ check["data_date"].strftime("%d.%m.%Y") }}
+        </div>
     </div>
     {% endif %}
+
     <p>{{ check["interpretation_note"] }}</p>
     <p>{{ check["coverage_note"] }}</p>
-    <p>Источник истины: Банк России, официальный веб-сервис «Участники финансового рынка».
-       Сопоставление выполняется только по точному ИНН.</p>
+
+    <p>
+        Источник истины: Банк России, официальный веб-сервис
+        «Участники финансового рынка». Сопоставление выполняется
+        только по точному ИНН.
+    </p>
+
 </section>
+
 {% endif %}

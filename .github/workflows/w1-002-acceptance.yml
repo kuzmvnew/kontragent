@@ -1,8 +1,6 @@
 name: W1-002 real PostgreSQL and Chromium acceptance
 on:
-  push:
-    branches: [acceptance/w1-002-browser]
-    paths: [.github/workflows/w1-002-acceptance.yml]
+  workflow_dispatch:
   pull_request:
     branches: [main]
 permissions:
@@ -32,18 +30,12 @@ jobs:
           python-version: '3.14'
       - run: python -m pip install uv
       - run: uv sync --group dev
-      - name: Full offline baseline before source/browser acceptance
-        run: uv run python -m pytest tests -q
-      - name: Export tracked baseline for review
-        run: git archive --format=zip HEAD -o /tmp/w1-002-source.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: w1-002-source-review
-          path: /tmp/w1-002-source.zip
-          retention-days: 1
+      - name: Full offline regression and whitespace check
+        run: |
+          git diff --check
+          uv run python -m pytest tests -q
       - run: uv run alembic upgrade head
       - name: Real source, disposable PostgreSQL and actual company pages
-        if: ${{ hashFiles('scripts/accept_cbr_finorg.py') != '' }}
         run: |
           uv run --with playwright==1.63.0 python -m playwright install chromium
           uv run python - <<'PY'
@@ -63,4 +55,20 @@ jobs:
         with:
           name: w1-002-acceptance-evidence
           path: data/acceptance/w1-002-ci/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wave1-handoff-documents
+          path: |
+            WAVE1_STATUS.md
+            PROJECT_STATUS.md
+            ROADMAP.md
+            ROADMAP_DETAILED.md
+            ROADMAP_CHANGES_AFTER_AUDIT.md
+            PHASE_4_START_PACKAGE.md
+            docs/W1_001_ACCEPTANCE.md
+            docs/W1_002_ACCEPTANCE.md
+            docs/W1_003_ACCEPTANCE.md
+            docs/CODEX_WAVE1_HANDOFF_PROMPT.md
+            docs/WAVE1_HANDOFF_2026-09-16.md
           retention-days: 7
