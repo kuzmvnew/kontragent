@@ -9,10 +9,10 @@
 | W1-002 | CBR FinOrg | ACCEPTED / SIX GATES PASS на Mac |
 | W1-003 | ФНС — МСП, получатели поддержки | ACCEPTED / SIX GATES PASS на Mac |
 | W1-004 | Росздравнадзор | ACCEPTED / SIX GATES PASS на Mac |
-| W1-005 | Роскомнадзор | NEXT / NOT STARTED |
+| W1-005 | Роскомнадзор | IN PROGRESS / SOURCE-BLOCKED (B, C) |
 | W1-006 | НОСТРОЙ / СРО | NOT STARTED |
 
-Полностью приняты на пользовательском Mac 4 источника из 6. Следующий источник — W1-005 Роскомнадзор, статус NEXT / NOT STARTED; W1-006 не запускался.
+Полностью приняты на пользовательском Mac 4 источника из 6. W1-005 Роскомнадзор реализован для scope A–F, но не принят: официальные bulk-файлы B/C обрываются до XML EOF и корректно остаются `unavailable`. W1-006 не запускался.
 
 ## W1-001
 Протокол: [docs/W1_001_ACCEPTANCE.md](docs/W1_001_ACCEPTANCE.md). Импорт не повторять.
@@ -30,8 +30,11 @@
 ## W1-004
 Финальная приёмка: [docs/W1_004_ACCEPTANCE.md](docs/W1_004_ACCEPTANCE.md). Scope A–D принят на пользовательском Mac: bulk-лицензии, точечный Единый реестр лицензий, exact-number lookup медизделий без автопривязки к Company и перечень клинических организаций. Все gates 1–6 PASS; 450 tests; PostgreSQL `kontragent`; Alembic `a9c4e6f8b201`; Chromium HTTP 200, `page_errors=[]`. `auto_update=NOT_CONFIGURED`.
 
-## W1-005—W1-006
-W1-005 Роскомнадзор — NEXT / NOT STARTED. W1-006 НОСТРОЙ / СРО — NOT STARTED. Каждый требует отдельной команды и собственного source passport.
+## W1-005
+Паспорт: [ROSKOMNADZOR_SOURCE_PASSPORT.md](ROSKOMNADZOR_SOURCE_PASSPORT.md). Scope A–F утверждён. A, D, E загружены из полных официальных файлов; F прошёл live found/not_found и PostgreSQL cache. B/C не публиковались из-за повторяемого premature EOF официального сервера. Person/IP-данные изолированы в отдельной непубличной таблице. 458 tests PASS; фактический Chromium показал A=`found`, B/C=`unavailable`, ошибок страницы нет. Итоговый Six Gates остаётся NOT CONFIRMED до полных B/C. `auto_update=NOT_CONFIGURED`.
+
+## W1-006
+W1-006 НОСТРОЙ / СРО — NOT STARTED; не запускался.
 
 ## Общие ограничения
 Каждый источник проходит отдельно: tests; реальный официальный ответ; PostgreSQL write/read; found/not_found/not_applicable/unavailable; настоящий Chromium; количества/даты/покрытие. Только exact identifiers. Код готов, данные загружены, PostgreSQL подтверждён, браузер проверен, покрытие измерено и auto-update настроен — разные статусы.

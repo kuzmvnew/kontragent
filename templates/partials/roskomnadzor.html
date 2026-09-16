@@ -1,0 +1,39 @@
+{% if company.roskomnadzor_checks %}
+<section class="card" data-testid="roskomnadzor">
+    <h2>Роскомнадзор</h2>
+    {% set labels = {
+        "communications": "Лицензии связи",
+        "broadcast": "Лицензии на телерадиовещание",
+        "media": "Учредитель зарегистрированных СМИ",
+        "information_distributors": "Организаторы распространения информации",
+        "hosting": "Провайдеры хостинга",
+        "pd_operators": "Операторы персональных данных"
+    } %}
+    {% for code, label in labels.items() %}
+        {% set check = company.roskomnadzor_checks[code] %}
+        <div class="detail-row" data-testid="rkn-{{ code }}" data-result="{{ check['result'] }}">
+            <div class="detail-label">{{ label }}</div>
+            <div class="detail-value">
+            {% if check["result"] == "found" %}
+                Найдено записей по точному ИНН: {{ check["record_count"] }}.
+            {% elif check["result"] == "not_found" %}
+                Записей по точному ИНН не найдено.
+            {% elif check["result"] == "not_applicable" %}
+                Проверка неприменима к этой сущности.
+            {% elif check["reason"] == "not_checked" %}
+                Точечная проверка ещё не выполнялась.
+            {% else %}
+                Источник сейчас недоступен или snapshot не загружен.
+            {% endif %}
+            {% if check["data_date"] %}<div>Дата данных: {{ check["data_date"] }}</div>{% endif %}
+            {% if check["interpretation_note"] %}<div>{{ check["interpretation_note"] }}</div>{% endif %}
+            {% if check["coverage_note"] %}<div>{{ check["coverage_note"] }}</div>{% endif %}
+            </div>
+        </div>
+    {% endfor %}
+    {% if company.roskomnadzor_checks["pd_operators"]["reason"] == "not_checked" %}
+    <form action="/company/{{ company.inn }}/roskomnadzor-pd-check" method="post"><button type="submit">Проверить реестр операторов ПДн</button></form>
+    {% endif %}
+    <p>Источник истины: Роскомнадзор. Сопоставление только по exact ИНН. Данные физлиц и ИП хранятся отдельно и здесь не публикуются.</p>
+</section>
+{% endif %}

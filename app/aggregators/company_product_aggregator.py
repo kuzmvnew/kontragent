@@ -25,6 +25,7 @@ from app.services.roszdrav_service import (
     get_roszdrav_clinical_org_check_for_inn,
     get_roszdrav_medical_device_company_check,
 )
+from app.services.roskomnadzor_service import get_roskomnadzor_checks
 
 
 def _append_source_once(
@@ -235,6 +236,17 @@ def enrich_company_with_roszdrav(company):
     return result
 
 
+def enrich_company_with_roskomnadzor(company):
+    if company is None:
+        return None
+    result = _copy_company(company)
+    checks = get_roskomnadzor_checks(result.get("inn"))
+    result["roskomnadzor_checks"] = checks
+    if any(check.get("result") in {"found", "not_found"} for check in checks.values()):
+        _append_source_once(result, "roskomnadzor")
+    return result
+
+
 def get_company_for_web(
     inn: str,
 ):
@@ -263,4 +275,5 @@ def get_company_for_web(
     )
 
     company = enrich_company_with_cbr_finorg(company)
-    return enrich_company_with_roszdrav(company)
+    company = enrich_company_with_roszdrav(company)
+    return enrich_company_with_roskomnadzor(company)

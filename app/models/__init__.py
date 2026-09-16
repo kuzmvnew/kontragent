@@ -10,6 +10,11 @@ from app.models.roszdrav import (
     RoszdravMedicalDeviceCheck,
     RoszdravUnifiedLicenseCheck,
 )
+from app.models.roskomnadzor import (
+    RoskomnadzorCompanyFact,
+    RoskomnadzorPdOperatorCheck,
+    RoskomnadzorPrivatePersonRecord,
+)
 from app.models.company import (
     Company,
     CompanyBranch,
@@ -87,4 +92,7 @@ __all__ = [
     "FnsSmeSupportEntry",
     "IngestionRun",
     "NpdStatusCheck",
+    "RoskomnadzorCompanyFact",
+    "RoskomnadzorPdOperatorCheck",
+    "RoskomnadzorPrivatePersonRecord",
 ]

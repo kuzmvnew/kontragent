@@ -396,6 +396,8 @@
 
             {% include "partials/roszdrav.html" %}
 
+            {% include "partials/roskomnadzor.html" %}
+
 
             <!-- ======================================== -->
             <!-- НАЛОГОВАЯ ЗАДОЛЖЕННОСТЬ -->
@@ -1548,6 +1550,12 @@
 
                                 <span class="source-badge">
                                     Росздравнадзор
+                                </span>
+
+                            {% elif source == "roskomnadzor" %}
+
+                                <span class="source-badge">
+                                    Роскомнадзор
                                 </span>
 
                             {% else %}
