@@ -1,3 +1,6 @@
+from app.services.cbr_finorg_registry_service import (
+    ensure_cbr_finorg_dataset,
+)
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
 )
@@ -25,6 +28,7 @@ def main():
     ensure_npd_dataset()
     ensure_erknm_dataset()
     ensure_cbr_warning_list_dataset()
+    ensure_cbr_finorg_dataset()
 
     sources = list_sources()
     datasets = list_datasets()

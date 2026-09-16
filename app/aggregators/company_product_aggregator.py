@@ -1,6 +1,9 @@
 from app.aggregators.company_aggregator import (
     get_company_for_web as get_base_company_for_web,
 )
+from app.services.cbr_finorg_service import (
+    get_cached_cbr_finorg_check_for_inn,
+)
 from app.services.cbr_warning_list_service import (
     get_cbr_warning_list_check_for_inn,
 )
@@ -148,6 +151,33 @@ def enrich_company_with_cbr_warning_list(
     return result
 
 
+def enrich_company_with_cbr_finorg(
+    company,
+):
+    if company is None:
+        return None
+
+    result = _copy_company(company)
+
+    check = get_cached_cbr_finorg_check_for_inn(
+        result.get("inn")
+    )
+
+    result["cbr_finorg_check"] = check
+
+    if (
+        isinstance(check, dict)
+        and check.get("result")
+        in {"found", "not_found"}
+    ):
+        _append_source_once(
+            result,
+            "cbr_finorg",
+        )
+
+    return result
+
+
 def get_company_for_web(
     inn: str,
 ):
@@ -167,6 +197,10 @@ def get_company_for_web(
         company
     )
 
-    return enrich_company_with_cbr_warning_list(
+    company = enrich_company_with_cbr_warning_list(
+        company
+    )
+
+    return enrich_company_with_cbr_finorg(
         company
     )
