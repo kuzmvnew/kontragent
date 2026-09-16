@@ -61,9 +61,11 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_company_tax_debt_items_snapshot_id'), 'company_tax_debt_items', ['snapshot_id'], unique=False)
     op.create_index(op.f('ix_company_tax_debt_items_tax_name'), 'company_tax_debt_items', ['tax_name'], unique=False)
-    op.drop_index(op.f('ix_companies_inn_pattern'), table_name='companies', postgresql_ops={'inn': 'varchar_pattern_ops'})
-    op.drop_index(op.f('ix_companies_name_trgm'), table_name='companies', postgresql_ops={'name': 'gin_trgm_ops'}, postgresql_using='gin')
-    op.drop_index(op.f('ix_companies_ogrn_pattern'), table_name='companies', postgresql_ops={'ogrn': 'varchar_pattern_ops'})
+    # These optional indexes were created manually in the original database.
+    # They do not exist when replaying the migration chain on an empty database.
+    op.drop_index(op.f('ix_companies_inn_pattern'), if_exists=True, table_name='companies', postgresql_ops={'inn': 'varchar_pattern_ops'})
+    op.drop_index(op.f('ix_companies_name_trgm'), if_exists=True, table_name='companies', postgresql_ops={'name': 'gin_trgm_ops'}, postgresql_using='gin')
+    op.drop_index(op.f('ix_companies_ogrn_pattern'), if_exists=True, table_name='companies', postgresql_ops={'ogrn': 'varchar_pattern_ops'})
     # ### end Alembic commands ###
 
 
