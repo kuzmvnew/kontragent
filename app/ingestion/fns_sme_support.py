@@ -14,7 +14,8 @@ from app.models.source import DataSet, IngestionRun
 
 
 DATASET_CODE = "fns_sme_support"
-DEFAULT_BATCH_SIZE = 5000
+DEFAULT_BATCH_SIZE = 2000
+MAX_BATCH_SIZE = 2500
 UNIT_NAMES = {
     "1": "рубль",
     "2": "квадратный метр",
@@ -388,6 +389,11 @@ def import_fns_sme_support_archive(
 ) -> dict:
     if batch_size < 1:
         raise ValueError("batch_size должен быть > 0")
+    if batch_size > MAX_BATCH_SIZE:
+        raise ValueError(
+            f"batch_size должен быть <= {MAX_BATCH_SIZE}, чтобы не превышать "
+            "лимит bind-параметров PostgreSQL"
+        )
 
     archive_path = Path(archive_path)
     batch: list[dict] = []
