@@ -1,10 +1,10 @@
 # PHASE 4 START PACKAGE
 
-Version: 1.0
+Version: 1.1
 
 Status: APPROVED
 
-Date: 2026-09-16
+Date: 2026-09-17
 
 ---
 
@@ -20,7 +20,9 @@ Data Normalization & Quality Foundation
 
 Build a unified business data foundation.
 
-Approved clarification (2026-09-16): all six agreed Wave 1 sources must be accepted before SEO MVP; they are not all complete yet. Предыдущие четыре источника приняты на Mac. W1-005 Роскомнадзор — IN PROGRESS / SOURCE-BLOCKED (B, C): A/D/E/F подтверждены, Six Gates не объявлен. W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
+Approved clarification: all six agreed Wave 1 source steps remain part of Wave 1. Four are fully accepted. W1-005 Roskomnadzor is implemented for A–F but remains `IN PROGRESS / SOURCE-BLOCKED (B, C)` because the official B/C bulk responses terminate before complete XML EOF. W1-006 NOSTROY / SRO is `NEXT EXECUTABLE / NOT STARTED`.
+
+W1-006 may proceed while the external W1-005 blocker remains open. This does not mark W1-005 or Wave 1 complete.
 
 Current official sources become one coherent business model.
 
@@ -28,9 +30,7 @@ Current official sources become one coherent business model.
 
 # Main Objectives
 
-1.
-
-Entity Registry
+1. Entity Registry
 
 Create unified business entities.
 
@@ -45,11 +45,7 @@ Initial entities:
 - Trademark
 - Patent
 
----
-
-2.
-
-Relationship Registry
+2. Relationship Registry
 
 Supported relationships:
 
@@ -60,11 +56,7 @@ Supported relationships:
 - Company → License
 - Person → Trademark
 
----
-
-3.
-
-Facts Layer
+3. Facts Layer
 
 Every fact must contain:
 
@@ -75,11 +67,7 @@ Every fact must contain:
 - date
 - quality
 
----
-
-4.
-
-Dataset Quality
+4. Dataset Quality
 
 Every dataset must expose:
 
@@ -89,27 +77,25 @@ Every dataset must expose:
 - quality
 - status
 
----
-
-5.
-
-Evidence Layer
+5. Evidence Layer
 
 Every business conclusion must reference evidence.
 
 ---
 
-# Out of Scope
+# Out of Scope during Wave 1 / current Phase 4 source work
 
-The following items are NOT implemented during Phase 4.
+The following product tracks are not implemented as part of W1-006 itself:
 
 - Person Product
 - Leads
 - CRM
 - Enterprise
 - Monitoring
-- SEO improvements
+- SEO release
 - AI Chat
+
+Their approved later order is documented in `POST_WAVE1_PRODUCT_PLAN.md`.
 
 ---
 
@@ -129,63 +115,51 @@ Mandatory:
 
 # Acceptance Criteria
 
-Phase 4 is complete when:
+Phase 4 source work is accepted only when:
 
-- Every supported dataset maps to business entities.
+- Every supported dataset maps to business entities where matching is justified.
 - Every fact references an official source.
 - Every fact has evidence.
 - Relationships are normalized.
 - Dataset quality information is available.
 - Tests pass.
-- Each source has separate evidence for all six acceptance criteria in PROJECT_STATUS.md, including a real browser, PostgreSQL readback and dated coverage. CI and the user's database are reported separately.
+- Each source has separate evidence for all six permanent source criteria: real official response, PostgreSQL write/read, correct state semantics, real browser card, dates/counts/coverage in addition to tests.
 
-W1-001 local acceptance evidence on 16.09.2026: 27,163 official source/imported/saved records; 2,995 with usable INN; 24,168 without usable INN; 857 exact-INN links to 857 Master Registry companies out of 6,781,485; 2,138 source records with an INN unmatched. Chromium verified both `found` and `not_found` cards. Auto-update is NOT_CONFIGURED.
-
----
-
-# Development Order
-
-1.
-
-Audit current models.
-
-2.
-
-Entity Registry.
-
-3.
-
-Relationship Registry.
-
-4.
-
-Facts Layer.
-
-5.
-
-Dataset Quality.
-
-6.
-
-Evidence Layer.
-
-7.
-
-Tests.
+Code, downloaded data, database import, browser rendering, measured coverage and configured auto-update are different statuses.
 
 ---
 
 # Wave 1 Handoff
 
-- W1-001 CBR Warning List: ACCEPTED on user's Mac by six gates.
-- W1-002 CBR FinOrg: LIVE + CACHE PASS на Mac; отдельная реальная PostgreSQL/Chromium приёмка на CI PASS (run 35129041426, 435 tests). Полные SIX GATES на пользовательском Mac пока NOT CONFIRMED. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
-- W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
-- W1-004 Росздравнадзор завершён и принят.
-- W1-005 Роскомнадзор: IN PROGRESS / SOURCE-BLOCKED (B, C).
-- W1-006 НОСТРОЙ, СРО: NOT STARTED.
+- W1-001 CBR Warning List: ACCEPTED / SIX GATES PASS on user Mac.
+- W1-002 CBR FinOrg: ACCEPTED / SIX GATES PASS on user Mac; protocol `docs/W1_002_ACCEPTANCE.md`.
+- W1-003 FNS SME support recipients: ACCEPTED / SIX GATES PASS on user Mac; protocol `docs/W1_003_ACCEPTANCE.md`.
+- W1-004 Roszdravnadzor: ACCEPTED / SIX GATES PASS; protocol `docs/W1_004_ACCEPTANCE.md`.
+- W1-005 Roskomnadzor: `IN PROGRESS / SOURCE-BLOCKED (B, C)`; A/D/E/F implemented and verified; B/C remain `unavailable`; 458 tests PASS; Six Gates NOT CONFIRMED.
+- W1-006 NOSTROY / SRO: `NEXT EXECUTABLE / NOT STARTED`.
 - RNP/EIS: deferred until official access.
 - DaMIA: not connected.
-- Person / Leads / CRM / Enterprise: do not start.
+- Person / Leads / CRM / Enterprise: do not start during Wave 1.
+
+---
+
+# Immediate Next Step
+
+W1-006 — NOSTROY / SRO.
+
+Before implementation:
+
+1. fast-forward/sync local work to current `main`;
+2. confirm clean working tree;
+3. create source passport / exact source scope;
+4. confirm official machine-readable access and matching identifiers;
+5. implement ingestion/service/product path;
+6. run PostgreSQL and browser acceptance;
+7. measure counts/dates/coverage;
+8. pass the permanent six-gate protocol;
+9. update status only after evidence exists.
+
+Do not treat the open W1-005 B/C blocker as permission to mark Wave 1 complete.
 
 ---
 
@@ -198,22 +172,24 @@ The existing official datasets become one unified business model capable of supp
 - Executive Summary
 - AI Explain
 
-without additional redesign.
+without redesign of the data foundation.
+
+The post-Wave1 product engines are specified separately so new sources can plug into Evidence/Facts/Derived Metrics/Events without rewriting Risk/Summary/Monitoring.
 
 ---
 
-# Next Phase
+# Next Product Work After Wave 1
 
-Phase 5
+Follow `POST_WAVE1_PRODUCT_PLAN.md` and `WAVE_IMPLEMENTATION_PLAN.md`.
 
-Check Registry & Risk Engine
+Before 10k SEO, all three mandatory gates must pass:
+
+- `SECURITY_RESILIENCE_GATE.md`
+- `LEGAL_LAUNCH_GATE.md`
+- `PRODUCT_CARD_ACCEPTANCE_GATE.md`
 
 ---
 
 Status
 
 APPROVED
-
-
-### W1-002 final Mac acceptance — 16.09.2026
-W1-002 is ACCEPTED / SIX GATES PASS on the user Mac. Real found exact-INN: 9706063520 (БАНК ЭЛЕМЕНТ (ООО), 2 licences/rights); real not_found: 9102309919. PostgreSQL kontragent reread PASS; Chromium found/not_found HTTP 200, page_errors=[]; 435 tests PASS. On-demand coverage is dated cache coverage, not a bulk CBR registry. auto_update=NOT_CONFIGURED. Source protocol: docs/W1_002_ACCEPTANCE.md.
