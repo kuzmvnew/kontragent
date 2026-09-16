@@ -46,7 +46,7 @@ jobs:
           assert engine.url.database == 'test' and engine.url.host == 'localhost'
           Base.metadata.create_all(engine)
           with get_session() as session:
-              session.add_all([Company(inn='7707083893', name='ПАО Сбербанк', entity_type='legal'), Company(inn='9102309919', name='АО КРЫМАВТОДОР', entity_type='legal')])
+              session.add_all([Company(inn='9706063520', name='БАНК ЭЛЕМЕНТ (ООО)', entity_type='legal'), Company(inn='9102309919', name='АО КРЫМАВТОДОР', entity_type='legal')])
               session.commit()
           PY
           uv run --with playwright==1.63.0 python -u -m scripts.accept_cbr_finorg --tests --live --browser --environment ci-disposable --output-dir data/acceptance/w1-002-ci
