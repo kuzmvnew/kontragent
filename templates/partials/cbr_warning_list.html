@@ -1,0 +1,172 @@
+{% if company.cbr_warning_list_check %}
+
+<section class="card">
+
+    <h2>
+        Предупредительный список Банка России
+    </h2>
+
+    {% set check = company.cbr_warning_list_check %}
+
+    {% if check["result"] == "found" %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                Найдено точное совпадение по ИНН
+            </div>
+
+            <p>
+                Банк России включил запись с этим ИНН в список компаний
+                с выявленными признаками нелегальной деятельности
+                на финансовом рынке.
+            </p>
+        </div>
+
+        <div class="info-grid">
+            <div class="info-item">
+                <div class="info-label">
+                    Записей Банка России
+                </div>
+                <div class="info-value">
+                    {{ check["record_count"] }}
+                </div>
+            </div>
+        </div>
+
+        {% for record in check["records"] %}
+
+            <div class="detail-row">
+                <div class="detail-label">
+                    {{ record["name"] or "Запись Банка России" }}
+                </div>
+
+                <div class="detail-value">
+
+                    {% if record["signs"] %}
+                        <div>
+                            <strong>Выявленные признаки:</strong>
+                            {{ record["signs"] | join(", ") }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["entry_date"] %}
+                        <div>
+                            Дата внесения:
+                            {{ record["entry_date"].strftime("%d.%m.%Y") }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["update_date"] %}
+                        <div>
+                            Дата обновления записи:
+                            {{ record["update_date"].strftime("%d.%m.%Y") }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["address"] %}
+                        <div>
+                            Адрес: {{ record["address"] }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["sites"] %}
+                        <div>
+                            Сайты: {{ record["sites"] | join(", ") }}
+                        </div>
+                    {% endif %}
+
+                    {% if record["detail_url"] %}
+                        <div>
+                            <a
+                                href="{{ record["detail_url"] }}"
+                                rel="nofollow noopener"
+                                target="_blank"
+                            >
+                                Открыть запись на сайте Банка России
+                            </a>
+                        </div>
+                    {% endif %}
+
+                </div>
+            </div>
+
+        {% endfor %}
+
+        {% if check.get("records_limited") %}
+            <p>
+                Показана только часть совпавших записей.
+            </p>
+        {% endif %}
+
+    {% elif check["result"] == "not_found" %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                Совпадение по ИНН не найдено
+            </div>
+
+            <p>
+                В актуальном загруженном предупредительном списке
+                Банка России нет записи с точным совпадением ИНН
+                этой организации.
+            </p>
+        </div>
+
+    {% elif check["result"] == "not_applicable" %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                Источник не применяется к ИП
+            </div>
+
+            <p>
+                Банк России прямо указывает, что предупредительный список
+                не содержит сведений о физических лицах и индивидуальных
+                предпринимателях.
+            </p>
+        </div>
+
+    {% else %}
+
+        <div class="risk-placeholder">
+            <div class="risk-placeholder-title">
+                Проверка временно недоступна
+            </div>
+
+            <p>
+                Актуальный официальный список Банка России ещё не загружен
+                или сейчас не может быть корректно использован системой.
+            </p>
+        </div>
+
+    {% endif %}
+
+    {% if check["data_date"] %}
+        <div class="detail-row">
+            <div class="detail-label">
+                Дата загруженного snapshot
+            </div>
+            <div class="detail-value">
+                {{ check["data_date"].strftime("%d.%m.%Y") }}
+            </div>
+        </div>
+    {% endif %}
+
+    <p>
+        {{ check["interpretation_note"] }}
+    </p>
+
+    <p>
+        {{ check["coverage_note"] }}
+    </p>
+
+    <p>
+        Источник истины: Банк России. Используется официальный JSON,
+        предназначенный для автоматизированных систем. Сопоставление
+        выполняется только по точному ИНН; названия и сайты не используются
+        как окончательное доказательство связи с компанией.
+    </p>
+
+</section>
+
+{% endif %}

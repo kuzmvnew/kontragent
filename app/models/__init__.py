@@ -1,3 +1,6 @@
+from app.models.cbr_warning_list import (
+    CbrWarningListEntry,
+)
 from app.models.company import (
     Company,
     CompanyBranch,
@@ -47,6 +50,7 @@ from app.models.tax_payment import (
 
 
 __all__ = [
+    "CbrWarningListEntry",
     "Company",
     "CompanyBranch",
     "CompanyContact",

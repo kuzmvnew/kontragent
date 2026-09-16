@@ -1,3 +1,6 @@
+from app.services.cbr_warning_registry_service import (
+    ensure_cbr_warning_list_dataset,
+)
 from app.services.erknm_registry_service import (
     ensure_erknm_dataset,
 )
@@ -21,6 +24,7 @@ def main():
     sync_default_registry()
     ensure_npd_dataset()
     ensure_erknm_dataset()
+    ensure_cbr_warning_list_dataset()
 
     sources = list_sources()
     datasets = list_datasets()
