@@ -105,7 +105,7 @@ Detailed scope: `INTERMEDIATE_STAGE_1_5.md`.
 
 Current work items:
 
-1. FNS Tax Debt — close final six-gate acceptance.
+1. FNS Tax Debt — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
 2. FNS Tax Offences — close final six-gate acceptance.
 3. FSSP — inventory/recover prior implementation before any rewrite.
 4. Fedresurs/EFРSB — inventory/recover prior implementation before any rewrite.
@@ -282,9 +282,13 @@ DaMIA изучена как возможный резервный bridge чер�
 
 ### ФНС налоговая задолженность
 
-Статус: 🟡 implementation/product foundation есть; финальная six-gate приёмка не закрыта.
+Статус: ✅ **ACCEPTED / SIX GATES PASS** 17.09.2026.
 
-Stage 1.5 обязан завершить:
+Протокол: `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
+
+Подтверждены официальный snapshot ФНС `7707329152-debtam`, SHA-256, parser fail-closed, 625 395 PostgreSQL snapshots / 2 031 361 items, отдельные недоимка/пени/штрафы, real found, dated not_found, IP not_applicable, unavailable contracts, Chromium и coverage. Auto-update остаётся `NOT_CONFIGURED`. Обычная опубликованная задолженность не смешивается с отдельным фактом передачи пороговой задолженности приставу.
+
+Принятые критерии:
 
 - tests;
 - реальный found;

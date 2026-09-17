@@ -37,7 +37,7 @@ These sources already exist at least at code/data/product-foundation level and m
 | Source/block | Current documented state | Stage 1.5 action |
 |---|---|---|
 | Master Registry | ready | reuse |
-| FNS Tax Debt | ingestion/product foundation exists; final acceptance open | close six-gate acceptance |
+| FNS Tax Debt | ACCEPTED / SIX GATES PASS on 2026-09-17 | reuse; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md` |
 | FNS Tax Offences | code/product foundation exists; final acceptance open | close six-gate acceptance |
 | FNS Paid Taxes | connected | reuse |
 | FNS Revenue & Expenses | connected | reuse |

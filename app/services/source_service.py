@@ -281,7 +281,10 @@ DEFAULT_DATASETS = [
         "refresh_schedule": "periodic",
         "priority": 10,
         "enabled": False,
-        "source_url": None,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-debtam/"
+        ),
         "description": (
             "Сведения о задолженности "
             "по налогам и сборам"

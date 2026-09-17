@@ -15,6 +15,16 @@ from app.models.source import DataSet
 
 DATASET_CODE = "fns_tax_debt"
 
+SOURCE_PAGE_URL = (
+    "https://www.nalog.gov.ru/"
+    "opendata/7707329152-debtam/"
+)
+
+SOURCE_FILE_BASE_URL = (
+    "https://file.nalog.ru/"
+    "opendata/7707329152-debtam/"
+)
+
 DEFAULT_BATCH_SIZE = 10000
 
 ZERO = Decimal("0.00")
@@ -76,8 +86,11 @@ def parse_decimal(value):
             Decimal("0.01")
         )
 
-    except InvalidOperation:
-        return ZERO
+    except InvalidOperation as error:
+        raise ValueError(
+            "Некорректное денежное значение "
+            f"в FNS Tax Debt: {value!r}"
+        ) from error
 
 
 # =========================================================
@@ -178,6 +191,21 @@ def parse_tax_debt_document(
                     "ОбщСумНедоим"
                 )
             )
+
+            component_total = (
+                arrears
+                + penalties
+                + fines
+            )
+
+            if total != component_total:
+                raise ValueError(
+                    "ОбщСумНедоим не равна сумме "
+                    "недоимки, пеней и штрафов: "
+                    f"tax_name={tax_name!r}, "
+                    f"total={total}, "
+                    f"components={component_total}"
+                )
 
             # Если один и тот же НаимНалог
             # встретится несколько раз,
