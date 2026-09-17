@@ -215,7 +215,7 @@ Does not block further development.
 
 Статус: ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED; дальнейшая source-specific нормализация остаётся частью соответствующих будущих источников
 
-Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт как deferred external-source exception: A/D/E/F подтверждены, B/C остаются `SOURCE_BLOCKED` и не переименовываются в Six Gates PASS. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 — CLOSED / ACCEPTED. Auto-update / Data Readiness и Risk Engine — COMPLETE / ACCEPTED; scheduler deployment остаётся `NOT_CONFIGURED` до фактического развёртывания handler/supervisor. Текущий следующий отдельный этап — SUMMARY ENGINE.
+Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт как deferred external-source exception: A/D/E/F подтверждены, B/C остаются `SOURCE_BLOCKED` и не переименовываются в Six Gates PASS. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 — CLOSED / ACCEPTED. Auto-update / Data Readiness, Risk Engine и Summary Engine — COMPLETE / ACCEPTED; scheduler deployment остаётся `NOT_CONFIGURED` до фактического развёртывания handler/supervisor. Текущий следующий отдельный этап — COMPANY CARD V2.
 
 ## Цель
 
@@ -265,7 +265,7 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 # ФАЗА 5 — ПРОВЕРКИ И ЛОГИКА РИСКОВ
 
-Статус: ✅ RISK ENGINE COMPLETE / ACCEPTED; следующий отдельный этап — SUMMARY ENGINE
+Статус: ✅ RISK + SUMMARY ENGINES COMPLETE / ACCEPTED; следующий отдельный этап — COMPANY CARD V2
 
 ## Цель
 
@@ -638,7 +638,7 @@ SEO строится после того, как карточка действи
 Фаза 2 ✅
 Фаза 3 ✅ ЗАВЕРШЕНА В СОГЛАСОВАННОМ ОБЪЁМЕ
 Фаза 4 ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED — Wave 1 и Stage 1.5 закрыты; Data Readiness принят и merged в PR #40; W1-005 B/C остаются deferred `SOURCE_BLOCKED`, W1-006 принят по Six Gates.
-Фаза 5 ✅ RISK ENGINE COMPLETE / ACCEPTED; Summary Engine остаётся следующим отдельным этапом
+Фаза 5 ✅ RISK + SUMMARY ENGINES COMPLETE / ACCEPTED
 Фаза 6 🟡 разработка уже начата
 Фаза 7 🔵
 Security & Resilience Gate 🔵 обязательный перед публичной фазой 8
@@ -650,10 +650,10 @@ Privacy & Person Gate 🔵 обязательный перед публичны�
 Текущий основной приоритет:
 
 RISK ENGINE ✅
-→ SUMMARY ENGINE (NEXT; NOT STARTED)
-→ КАРТОЧКА КОМПАНИИ
+→ SUMMARY ENGINE ✅
+→ КАРТОЧКА КОМПАНИИ V2 (NEXT; NOT STARTED)
 
-Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness и Risk Engine приняты. Текущий следующий этап — SUMMARY ENGINE; он не начат автоматически. Порядок фаз и архитектура не меняются.
+Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine и Summary Engine приняты. Текущий следующий этап — COMPANY CARD V2; он не начат автоматически. Порядок фаз и архитектура не меняются.
 
 Security & Resilience Gate не является текущей активной работой и не должен опережать утверждённую последовательность Risk Engine → Summary Engine → Company Card v2 → Report v1. Он становится обязательным перед массовым публичным открытием продукта.
 

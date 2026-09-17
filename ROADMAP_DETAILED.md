@@ -60,7 +60,7 @@ ROADMAP.md становится продуктовым документом.
 | 3 | Админ-панель и аналитика v1 | 🟡 Internal Data Readiness panel ACCEPTED; полный admin/feature-flags scope не завершён | Видно состояние источников, загрузок и приложения |
 | 4 | Автоматическое обновление данных | 🟡 Data Readiness foundation ACCEPTED; production scheduler deployment `NOT_CONFIGURED` | Обновления без ручной обработки каждого архива |
 | 5 | Бесплатная волна официальных источников | 🟡 Wave 1 CLOSED / ACCEPTED; поздние источники остаются будущим backlog | Полезное наполнение карточек официальными данными |
-| 6 | Движки выводов, требований и рисков | 🟡 Risk Engine COMPLETE / ACCEPTED; Summary Engine next; remaining engine scope stays explicit | Объяснимые выводы с учётом покрытия и сделки |
+| 6 | Движки выводов, требований и рисков | 🟡 Risk Engine + Summary Engine COMPLETE / ACCEPTED; remaining engine scope stays explicit | Объяснимые выводы с учётом покрытия и сделки |
 | 7 | Продуктовая оболочка | 🔵 Далее | Понятный вход в Check и будущие направления |
 | 8 | Карточка компании v2 | 🟡 Уже есть отдельные блоки | Цельная проверка: факты, выводы, источники, даты |
 | 9 | SEO-бета | 🔵 Далее | Первые качественные страницы доступны поиску |
@@ -71,7 +71,7 @@ ROADMAP.md становится продуктовым документом.
 | 14 | Полноценный B2B SaaS | 🔵 Далее | Регулярная работа команд, подписки и автоматизация |
 | 15 | Корпоративный уровень — Enterprise | 🔵 Позже | Интеграции, безопасность и договорные уровни сервиса |
 
-**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness и Risk Engine — COMPLETE / ACCEPTED. Risk Engine evidence: 586 tests, Alembic `e5f6a7b8c9d0`, five real-company assessments, PostgreSQL/Chromium and PR #43 green CI. Scheduler deployment остаётся `NOT_CONFIGURED`. Текущий следующий отдельный этап — Summary Engine; он не начат автоматически. Структура фаз 0–15 и архитектура не меняются.
+**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine и Summary Engine — COMPLETE / ACCEPTED. Summary Engine evidence: 609 tests, Alembic `f6a7b8c9d0e1`, five real-company summaries, PostgreSQL/Chromium and PR #44 green CI. Scheduler deployment остаётся `NOT_CONFIGURED`. Текущий следующий отдельный этап — Company Card v2; он не начат автоматически. Структура фаз 0–15 и архитектура не меняются.
 
 ## Фаза 0. Закрытие текущего блока TaxOffence
 
@@ -204,7 +204,7 @@ ROADMAP.md становится продуктовым документом.
 
 Критерий закрытия: согласованный минимум источников доведён до результата. Техническую доступность, права использования и условия подключения проверять при реализации; архивный список не является их актуальной проверкой.
 
-**Ближайший утверждённый этап:** SUMMARY ENGINE. Wave 1, Stage 1.5, Data Readiness и Risk Engine приняты; новые source integrations и Summary Engine автоматически не начинаются.
+**Ближайший утверждённый этап:** COMPANY CARD V2. Wave 1, Stage 1.5, Data Readiness, Risk Engine и Summary Engine приняты; новые source integrations и Company Card v2 автоматически не начинаются.
 
 ## Фаза 6. Движки выводов, требований и рисков
 
@@ -214,6 +214,7 @@ ROADMAP.md становится продуктовым документом.
 - [ ] Conclusion Engine v1 — выводы из подтверждённых фактов.
 - [ ] Regulatory Requirement Engine v1 — применимость требований и разрешений к деятельности/сделке.
 - [x] Risk Engine v1 — explainable signals, applicability, versioned rules, immutable persistence, cache/invalidation, coverage/completeness and current-run PostgreSQL/Chromium acceptance; evidence: [RISK_ENGINE_ACCEPTANCE.md](RISK_ENGINE_ACCEPTANCE.md), PR #43.
+- [x] Summary Engine v1 — deterministic statements, six mode contracts, immutable persistence, traceability, cache/invalidation and current-run PostgreSQL/Chromium acceptance; evidence: [SUMMARY_ENGINE_ACCEPTANCE.md](SUMMARY_ENGINE_ACCEPTANCE.md), PR #44.
 - [ ] Person Conclusion Engine — `что найдено → насколько уверенно сопоставлен человек → почему важно → срок актуальности → что проверить дальше`.
 - [ ] Для негативного Person-сигнала запрещён уверенный вывод только по совпадению ФИО; при слабом совпадении показывать возможное совпадение/необходимость ручной проверки.
 - [ ] Проверить противоречивые, устаревшие и неполные сведения; связывать вывод с источником и версией правил.
