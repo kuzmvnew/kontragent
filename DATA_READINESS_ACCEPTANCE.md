@@ -2,7 +2,7 @@
 
 Дата проверки: 17.09.2026  
 Ветка: `codex/data-readiness`  
-Статус: acceptance evidence complete; PR/CI pending at document creation
+Статус: **DATA READINESS COMPLETE / ACCEPTED**
 
 ## Baseline и migration
 
@@ -60,4 +60,9 @@ FastAPI поднят локально на `127.0.0.1:8766`. В реальном
 
 ## Final gate
 
-Перед merge обязательны `git diff --check`, повторный full pytest и зелёный GitHub Actions. Merge не выполняется этой веткой до завершения acceptance/CI.
+- `git diff --check`: PASS;
+- repeat full pytest: `556 passed`;
+- GitHub Actions PR #40: Python tests + three acceptance jobs GREEN;
+- PR: `https://github.com/kuzmvnew/kontragent/pull/40`.
+
+Merge намеренно не выполнен. Следующие этапы автоматически не начинаются.

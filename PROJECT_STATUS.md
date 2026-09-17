@@ -24,11 +24,11 @@
 
 Current Phase:
 
-Post-Stage 1.5 transition
+Auto-update / Data Readiness
 
 Status:
 
-CLOSED / ACCEPTED; NEXT: AUTO-UPDATE / DATA READINESS (NOT STARTED)
+COMPLETE / ACCEPTED; NEXT: RISK ENGINE (DO NOT START AUTOMATICALLY)
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -37,6 +37,7 @@ CLOSED / ACCEPTED; NEXT: AUTO-UPDATE / DATA READINESS (NOT STARTED)
 | 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
+| Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
 | 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены; полный Risk Engine после Stage 1.5 |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
@@ -152,13 +153,16 @@ No approved release may be delayed by unrelated backlog. Stage 1.5 is not unrela
 - GitHub Actions CI: ✅
 - Stage 1.5 final local regression: **534 passed**.
 - Stage 1.5 Alembic: `c3d4e5f6a7b8 (head)`.
+- Data Readiness final local regression: **556 passed**.
+- Data Readiness Alembic: `d4e5f6a7b8c9 (head)`.
+- Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
 - Master Registry observed at Wave 1 closure on user Mac: **6 781 487** entities.
 - W1-006 Chromium: three real company cards HTTP 200 / `page_errors=[]`.
 - Private SRO person evidence: `PRIVATE_INTERNAL`; public exposure confirmed `0`.
-- Auto-update remains a separate status and is not implied by Wave 1 closure.
+- Auto-update remains a separate status and is not implied by data availability. No dataset is labelled `CONFIGURED` until its production handler and supervisor are actually deployed.
 
 Historical acceptance checkpoints remain valid in their own dated reports. Older Master Registry counts in those reports are not overwritten by the later Wave 1 closure count.
 
