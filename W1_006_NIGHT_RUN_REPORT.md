@@ -139,6 +139,8 @@ would violate the “new files only” constraint.
 
 Final verification: `465 passed`; compileall PASS; `git diff --check` PASS;
 tracked modifications/deletions: none; exactly the eight new files listed
-above are untracked before commit. Commit SHA and PR URL are recorded by Git
-and in the final handoff. CI is pending at report freeze time. PR must remain
-open and must not be auto-merged.
+above were committed. Implementation commit:
+`6bb7dcca75c26199ebcc116e2631bb12d50aec36`. Open PR:
+`https://github.com/kuzmvnew/kontragent/pull/36`. CI for the implementation
+commit: `Python tests=success`, both `acceptance=success`. Merge status: not
+merged by design. PR must remain open and must not be auto-merged.
