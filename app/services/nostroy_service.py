@@ -10,6 +10,7 @@ from app.database.postgres import get_session
 from app.models.nostroy import NostroyMemberCheck
 from app.providers.nostroy_provider import NostroyMemberProvider, NostroyProviderError
 from app.services.check_result import build_check_result
+from app.services.sro_registry_service import ensure_sro_datasets
 
 
 SOURCE_CODE = "nostroy"
@@ -64,9 +65,12 @@ def refresh_nostroy_check(inn, request_date=None, provider=None, *, applicable, 
         raise ValueError("НОСТРОЙ в company-продукте проверяется только для 10-значного ИНН")
     if applicable is not True:
         return get_cached_nostroy_check(inn, request_date, applicable=applicable)
+    ensure_sro_datasets()
     if provider is None and not force_refresh:
         cached = get_cached_nostroy_check(inn, request_date, applicable=True)
-        if cached["result"] in {"found", "not_found"}:
+        # Reuse failures for the dated cache window as source backoff. A caller
+        # may explicitly force a retry after operational review.
+        if cached["reason"] != "not_checked":
             return cached
     provider = provider or NostroyMemberProvider()
     values = {"inn": inn, "request_date": request_date}

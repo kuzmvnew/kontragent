@@ -10,9 +10,9 @@
 | W1-003 | ФНС — МСП, получатели поддержки | ACCEPTED / SIX GATES PASS на Mac |
 | W1-004 | Росздравнадзор | ACCEPTED / SIX GATES PASS на Mac |
 | W1-005 | Роскомнадзор | IN PROGRESS / SOURCE-BLOCKED (B, C) |
-| W1-006 | НОСТРОЙ / СРО | NEXT EXECUTABLE / NOT STARTED |
+| W1-006 | НОСТРОЙ / НОПРИЗ / СРО | ACCEPTED / SIX GATES PASS на Mac |
 
-Полностью приняты на пользовательском Mac 4 источника из 6. W1-005 Роскомнадзор реализован для scope A–F, но не принят: официальные bulk-файлы B/C обрываются до XML EOF и корректно остаются `unavailable`. W1-006 ещё не запускался и является следующим исполнимым шагом.
+Полностью приняты на пользовательском Mac 5 шагов из 6. W1-005 Роскомнадзор реализован для scope A–F, но не принят: официальные bulk-файлы B/C обрываются до XML EOF и корректно остаются `unavailable`. W1-006 принят; Wave 1 остаётся открытой только из-за отдельного W1-005 blocker.
 
 Разрешено начинать W1-006, пока W1-005 ожидает исправления/полного ответа официальных B/C-источников. Это не считается закрытием W1-005. Wave 1 остаётся открытой до приёмки W1-006 и отдельного закрытия/решения по W1-005 blocker.
 
@@ -36,7 +36,7 @@
 Паспорт: [ROSKOMNADZOR_SOURCE_PASSPORT.md](ROSKOMNADZOR_SOURCE_PASSPORT.md). Scope A–F утверждён. A, D, E загружены из полных официальных файлов; F прошёл live found/not_found и PostgreSQL cache. B/C не публиковались из-за повторяемого premature EOF официального сервера. Person/IP-данные изолированы в отдельной непубличной таблице. 458 tests PASS; фактический Chromium показал A=`found`, B/C=`unavailable`, ошибок страницы нет. Итоговый Six Gates остаётся NOT CONFIRMED до полных B/C. `auto_update=NOT_CONFIGURED`.
 
 ## W1-006
-W1-006 НОСТРОЙ / СРО — NEXT EXECUTABLE / NOT STARTED. Это следующий шаг разработки. Перед началом сверить актуальный `main`, затем выполнять обычный source-passport / ingestion / PostgreSQL / product / browser / coverage / six-gate цикл без изменения принятой архитектуры.
+W1-006 НОСТРОЙ / НОПРИЗ / СРО — **ACCEPTED / SIX GATES PASS на пользовательском Mac**. Протокол: [docs/W1_006_ACCEPTANCE.md](docs/W1_006_ACCEPTANCE.md). Реализованы company-safe exact-INN checks НОСТРОЙ/НОПРИЗ, private НРС НОПРИЗ и безопасное состояние защиты НРС НОСТРОЙ. PostgreSQL `kontragent`, Alembic `e7a8b9c0d1e2`, 472 tests, три реальные Chromium-карточки HTTP 200 / `page_errors=[]`. Person storage `1`, public exposure `0`. On-demand cache — не bulk snapshot; auto-update `NOT_CONFIGURED`; права на automation/reuse/republication требуют отдельного review.
 
 ## После Wave 1
 
@@ -44,4 +44,4 @@ W1-006 НОСТРОЙ / СРО — NEXT EXECUTABLE / NOT STARTED. Это сле�
 
 ## Общие ограничения
 Каждый источник проходит отдельно: tests; реальный официальный ответ; PostgreSQL write/read; found/not_found/not_applicable/unavailable; настоящий Chromium; количества/даты/покрытие. Только exact identifiers. Код готов, данные загружены, PostgreSQL подтверждён, браузер проверен, покрытие измерено и auto-update настроен — разные статусы.
-Person / Leads / CRM / Enterprise не начинать во время Wave 1. РНП/ЕИС отложен до официального доступа; DaMIA не подключать.
+Person-продукт / Leads / CRM / Enterprise не начинать во время Wave 1. Private person evidence из официальных источников не выбрасывать: хранить минимизированно в закрытом контуре и не публиковать без отдельного допуска. РНП/ЕИС отложен до официального доступа; DaMIA не подключать.

@@ -1,136 +1,125 @@
-# W1-006 — НОСТРОЙ / СРО: паспорт источника
+# W1-006 — НОСТРОЙ / НОПРИЗ / СРО: паспорт источников
 
-Статус: **RESEARCH COMPLETE / USER SCOPE REVIEW REQUIRED**
+Статус: **ACCEPTED / SIX GATES PASS на пользовательском Mac**
+Дата исследования и приёмки: 17.09.2026
 
-Дата исследования: 17.09.2026
+## Scope и модель публикации
 
-## Консервативный scope
+W1-006 включает: (A) реестр членов строительных СРО НОСТРОЙ; (B) реестр
+членов СРО НОПРИЗ; (C) НРС НОПРИЗ в закрытом person-контуре; (D) безопасный
+адаптер состояния для НРС НОСТРОЙ без обхода защиты; (E) обзор других
+официальных СРО-реестров как отдельного backlog.
 
-Изолированный scope W1-006 — только открытая часть Единого реестра сведений о
-членах саморегулируемых организаций в области строительства, реконструкции,
-капитального ремонта и сноса объектов капитального строительства (ЕРЧ СРО),
-оператор — Ассоциация «Национальное объединение строителей» (НОСТРОЙ).
+Company projection содержит только точные идентификаторы организации,
+членство/статус, даты, номер записи и СРО. Person records по умолчанию
+`PRIVATE_INTERNAL`: они не попадают в публичную карточку, API, поиск, SEO или
+массовые выгрузки. Домашний адрес, личные телефон/email, паспорт, СНИЛС и
+другие ненужные чувствительные идентификаторы не сохраняются.
 
-Scope **не** включает НОПРИЗ, Национальный реестр специалистов (НРС), person
-search, все СРО России или иные отраслевые СРО. Такой выбор не считается
-утверждением продуктового scope и требует review Михаила.
+| Entity/field | Категория |
+|---|---|
+| Company exact INN, member/SRO IDs, status and dates | PUBLIC, с датой и оговоркой источника |
+| Person name, official specialist record/registration number, professional status | PRIVATE_INTERNAL |
+| Закрытый кабинет Person/Compliance | USER_AUTHENTICATED_ONLY, только после отдельного legal/product gate |
+| Контакты, адрес проживания, паспорт, СНИЛС и неиспользуемые raw-поля | EXCLUDE |
 
-Product use-case: контекстная проверка подтверждённой необходимости
-строительного СРО для конкретной деятельности/сделки. Для обычной компании
-без такого контекста проверка `not_applicable`; неизвестная применимость не
-превращается в негативный вывод.
+## A. НОСТРОЙ — члены строительных СРО
 
-## Source of Truth и официальные адреса
+- владелец: Ассоциация «Национальное объединение строителей»;
+- официальный реестр: `https://reestr.nostroy.ru/sro/all/member/list`;
+- machine channel: undocumented JSON `POST https://reestr.nostroy.ru/api/sro/all/member/list`;
+- формат/режим: JSON, low-load exact-INN on-demand с датированным кэшем;
+- идентификаторы: exact 10-digit INN; OGRN как подтверждение; member id,
+  регистрационный/inventory номер, SRO id и регистрационный номер СРО;
+- наблюдаемый общий count: `419695` строк (текущие и исторические записи), не
+  число активных компаний и не подтверждение внутренней полноты;
+- real found: INN `5907056036`, member `4047586`, OGRN `1135907001801`, статус
+  «Исключен», SRO `СРО-С-171-13012010`;
+- real not_found: INN `9102309919`, только после успешного HTTP/JSON `count=0`;
+- first-page SHA-256: `ad4c0bd7c3897f456ee2dbb27b70345cecdafade65228becaad9f71a7d1b41b5`;
+- found SHA-256: `ace74fc6bf4df0096187dce750c40e1669fd9d40e66371df0d5a7b3757c55b4f`;
+- not-found SHA-256: `59df9b9f68b1e6bcd3ca2cf769af42d1dc3b05ead8feb8f8fe50aefd919bae7f`.
 
-- владелец/оператор: НОСТРОЙ;
-- реестр: `https://reestr.nostroy.ru/sro/all/member/list`;
-- фактический JSON endpoint официального frontend:
-  `POST https://reestr.nostroy.ru/api/sro/all/member/list`;
-- карточка записи: `https://reestr.nostroy.ru/member/{id}`;
-- регламент: `https://nostroy.ru/dokumenty/reglament_er.pdf`;
-- страница регламентирующих документов:
-  `https://nostroy.ru/reglamentiryusie_documenty_NOSTROY/`;
-- контакты владельца: `https://nostroy.ru/contacts/`.
+Регламент: `https://nostroy.ru/dokumenty/reglament_er.pdf`. Частота обновления,
+версионированный API contract, SLA, rate limits и права на массовое
+коммерческое копирование не опубликованы. Статус: **ACCESS / LEGAL REVIEW
+REQUIRED** для bulk/republication; текущий безопасный режим — on-demand.
 
-Регламент определяет открытую часть как общедоступный интернет-ресурс и
-говорит, что сведения формируются на основании сведений СРО. Отдельная
-публичная документация API, API key, SLA, опубликованный rate limit и лицензия
-на коммерческое массовое копирование при исследовании не найдены.
+## B. НОПРИЗ — члены СРО
 
-## Сравнение официальных вариантов
+- владелец: Национальное объединение изыскателей и проектировщиков;
+- официальный реестр: `https://reestr.nopriz.ru/sro/all/member/list`;
+- machine channel: undocumented JSON `POST https://reestr.nopriz.ru/api/sro/all/member/list`;
+- формат/режим: JSON, low-load exact-INN on-demand с кэшем/backoff;
+- наблюдаемый общий count: `212903`, `10646` страниц;
+- first-page SHA-256: `08888250c7bf56c98dcd16faa6a605e50b2467d1df544dd060b30ed09574a68e`;
+- real found: INN `7810978295`, одна active запись, member id `19529862`, SRO
+  `СРО-П-031-28092009`;
+- found SHA-256: `193cae3023d51fdfd6cba82102b8bbea61f403aa3707225ccae2d1a6b7f0eafb`;
+- проверка `9102309919` завершилась timeout после 120 секунд и корректно
+  сохранена как `unavailable`, а не `not_found`.
 
-| Вариант | Ценность | Идентификаторы | Формат/режим | Свежесть и покрытие | Ограничения/сложность |
-|---|---|---|---|---|---|
-| ЕРЧ СРО НОСТРОЙ | Членство строительной компании и обязательства | ИНН, ОГРН/ОГРНИП, member id, рег. номер члена, номер СРО | Не документированный JSON, on-demand; XLSX export существует только по отдельной СРО | Общий поиск показал 419 695 текущих и исторических записей | API contract/rate limits/reuse не опубликованы; ответы медленные |
-| Реестры отдельных СРО | Возможная первичная детализация | Зависит от СРО | Разнородные сайты/выгрузки | Фрагментарно | Не выбран: сотни контрактов и неоднородная надёжность |
-| НОПРИЗ | Изыскания/проектирование | ИНН/ОГРН и реестровые номера | Отдельный владелец/реестр | Другой отраслевой scope | Не НОСТРОЙ; требуется отдельный паспорт и решение |
-| НРС НОСТРОЙ | Специалисты | Person identifiers | Отдельный реестр | Person scope | Исключён из Company W1-006 из-за privacy и иной сущности |
+Условия automation/storage/reuse, SLA и rate limits отдельно не опубликованы:
+**ACCESS / LEGAL REVIEW REQUIRED**. Bulk crawl не выполнялся.
 
-## Реальный машинный канал
+## C. НРС НОПРИЗ — private person source
 
-Официальный Vue frontend публикует base URL `https://reestr.nostroy.ru/api/`
-и вызывает JSON POST. Проверенный payload:
+- официальный реестр: `https://nrs.nopriz.ru/`;
+- machine channel: undocumented JSON `POST https://nrs.nopriz.ru/api/specialist/list`;
+- наблюдаемый count: `174395`; first-page SHA-256:
+  `3116bf8f5ec85a80fcc574c6e4368f17b35ce2fd2dc971079772ca8e2405ea97`;
+- проверен exact официальный регистрационный номер `П-000011`, `count=1`;
+  response SHA-256:
+  `54dd5a57fb8d6cf51713f2f695a68c1c7f8732bc86acd1ada761d67d5cafa3ea`;
+- в PostgreSQL сохранена одна минимизированная запись, `public_visibility=false`;
+  связь с Company источником не опубликована и помечена
+  `manual_review_required`.
 
-```json
-{"filters": {}, "searchString": "5907056036", "page": 1, "pageCount": 20, "sortBy": {}}
-```
+Подтверждение личности разрешено только по official record id/registration
+number или иному устойчивому официальному идентификатору. ФИО без такого
+идентификатора не даёт `confirmed`; используются `possible_match` или
+`manual_review_required`. Person bulk/republication не разрешены без отдельного
+review.
 
-Наблюдения 17.09.2026:
+## D. НРС НОСТРОЙ
 
-- пустой поиск: HTTP 200; `count=419695`, `countPages=20985`, 20 строк;
-- SHA-256 ответа первой страницы:
-  `ad4c0bd7c3897f456ee2dbb27b70345cecdafade65228becaad9f71a7d1b41b5`;
-- exact ИНН `5907056036`: HTTP 200, `count=1`, member id `4047586`,
-  ОГРН `1135907001801`, статус «Исключен», СРО `СРО-С-171-13012010`;
-- SHA-256 точечного ответа:
-  `ace74fc6bf4df0096187dce750c40e1669fd9d40e66371df0d5a7b3757c55b4f`;
-- exact ИНН `9102309919`: HTTP 200, `count=0`;
-- SHA-256 пустого ответа:
-  `59df9b9f68b1e6bcd3ca2cf769af42d1dc3b05ead8feb8f8fe50aefd919bae7f`.
+- официальный URL: `https://nrs.nostroy.ru/`;
+- наблюдаемый server-side count: `321809`;
+- идентификаторы, ФИО и даты выдаются как защищённые изображения.
 
-Это число опубликованных строк API, включая исключённых членов, а не число
-активных компаний и не внутренний объём базы НОСТРОЙ. Архивная полнота и
-внутренняя целостность реестра извне не подтверждены.
+OCR, декодирование или обход защиты не выполнялись. Адаптер возвращает
+`unavailable/source_protection`. Публичный просмотр заявлен бесплатным, но
+automation/storage/reuse для machine integration неясны: **ACCESS / LEGAL
+REVIEW REQUIRED**.
 
-## Идентификаторы и matching
+## E. Другие официальные СРО-реестры
 
-Company matching разрешён только по exact 10-значному ИНН юридического лица.
-ОГРН (13 цифр) сохраняется как дополнительное подтверждение ответа. Также
-сохраняются member id, регистрационный номер члена, inventory number, SRO id
-и регистрационный номер СРО. Название, адрес, руководитель, телефон и сайт не
-используются как доказательство связи.
+Реестры отдельных СРО и ведомственные профессиональные реестры рассмотрены.
+Fedresurs/реестр арбитражных управляющих и похожие источники относятся к
+другим продуктовым доменам и контрактам доступа. Они остаются отдельным
+backlog и не смешиваются с construction/design SRO без собственного паспорта,
+legal gate и six-gate acceptance.
 
-ИП (12-значный ИНН/ОГРНИП) и физлица не входят в текущий Company scope.
+## Семантика и coverage
 
-## Семантика
+- `found`: успешный exact-identifier ответ содержит согласованные записи;
+- `not_found`: только успешный полный ответ с согласованным `count=0`;
+- `not_applicable`: тип лица/контекст не относится к проверке;
+- `unavailable`: запрос не выполнялся, timeout/HTTP/protection, schema/count или
+  identity mismatch. Ошибка, captcha или неполный ответ никогда не означают
+  отсутствие.
 
-- `found`: успешный exact-INN ответ содержит одну или несколько записей;
-  активность определяется отдельным `member_status`, исторически исключённая
-  запись остаётся `found`, а не «действующее членство»;
-- `not_found`: только успешный HTTP/JSON ответ с согласованным `count=0`;
-- `not_applicable`: не ЮЛ с ИНН-10 или строительный СРО не применим к
-  проверяемой деятельности/сделке;
-- `unavailable`: применимость не определена, запрос ещё не выполнен, timeout,
-  HTTP/source protection, невалидный JSON, schema/count/identity mismatch.
+На 17.09.2026 Master Registry содержит `6781487` сущностей. Company cache:
+2 NOSTROY (`1 found`, `1 not_found`) и 2 NOPRIZ (`1 found`, `1 unavailable`),
+`3` уникальных checked INN, все 3 совпали с Master; `6781484` Master entities
+не проверены. Private person storage: `1`; linked/confirmed company
+relationships: `0`; manual review: `1`; public person records: `0`. Bulk
+completeness: **N/A** — cache не является снимком реестра.
 
-Ошибка, captcha/429, timeout и неполный/неожиданный ответ никогда не означают
-`not_found`.
+## Эксплуатационное решение
 
-## Поля и privacy
-
-В company-safe кэш входят только идентификаторы, статус членства, даты и
-данные СРО. Ответ API также содержит ФИО руководителя, адреса и телефоны;
-prototype намеренно не сохраняет и не выдаёт эти поля. НРС/person data не
-запрашиваются. Публичная SEO-републикация требует отдельного Legal Gate.
-
-## Доступ, права и эксплуатационные риски
-
-- авторизация/API key: не наблюдаются для точечного frontend endpoint;
-- стоимость: публичный просмотр без оплаты; цена/лицензия API не опубликована;
-- rate limits: не опубликованы;
-- captcha: в проверенных запросах не наблюдалась, обход защиты запрещён;
-- automation/storage/cache/commercial reuse/republication: явные условия для
-  API и массового коммерческого использования не найдены — **LEGAL REVIEW**;
-- допустимый prototype: low-load exact-INN on-demand с датированным кэшем,
-  backoff и без массового обхода;
-- bulk: общий bulk endpoint не обнаружен. Экспорт по отдельной СРО требует
-  generate/poll/download и не используется;
-- update frequency: не опубликована; API отдаёт per-record timestamps;
-- надёжность: первый page request занял около минуты, другие ответы менялись
-  по задержке; schema не версионирована и может измениться;
-- source quality: СРО формируют исходные сведения; возможны задержки и ошибки.
-
-## Master Registry coverage
-
-On-demand cache не является bulk snapshot. После двух реальных запросов:
-2 checked INN, 1 found, 1 not_found. Полное exact-INN покрытие Master Registry
-не измерено и массовый обход запрещён. Файл
-`Kontragent_MASTER_DATA_SOURCE_MATRIX_17_blocks.xlsx` в репозитории не найден;
-его содержание не реконструировалось.
-
-## Решение для prototype
-
-Реализован только on-demand provider + строгий parser + PostgreSQL dated
-cache. Auto-update: `NOT_CONFIGURED`. До Legal/Access review нельзя запускать
-bulk crawl, публичную перепубликацию или считать undocumented endpoint
-гарантированным публичным API.
+Разрешён только low-load exact lookup с cache reuse, request budget и backoff.
+Auto-update: `NOT_CONFIGURED`. Массовый crawl и публичная перепубликация не
+разрешены до подтверждения условий. Source counts и record dates сохраняются
+отдельно от `checked_at`; число строк не трактуется как число активных компаний
+или уникальных лиц.
