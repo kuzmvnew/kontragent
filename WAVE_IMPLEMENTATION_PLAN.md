@@ -1,6 +1,6 @@
 # WAVE IMPLEMENTATION PLAN — Kontragent
 
-Status: ACTIVE — DATA READINESS ACCEPTED; NEXT: RISK ENGINE
+Status: ACTIVE — RISK ENGINE ACCEPTED; NEXT: SUMMARY ENGINE
 Date: 2026-09-17
 
 ## Wave 1 final state
@@ -23,8 +23,8 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 1. **Wave 1 — COMPLETE / CLOSED.**
 2. **Intermediate Stage 1.5 — COMPLETE / CLOSED / ACCEPTED.** See `STAGE_1_5_ACCEPTANCE.md`.
 3. **Auto-update / Data Readiness — COMPLETE / ACCEPTED.** Operational registry, freshness, run history, atomic bulk contract, locks/backoff and internal status panel were accepted and merged in PR #40. Production scheduler deployment remains honestly `NOT_CONFIGURED` until handlers/supervisor are installed.
-4. **Current next stage: build the full Risk Engine** on top of the verified Stage 1.5 and Data Readiness foundations.
-5. Build Summary Engine on top of verified facts/risk results.
+4. **Risk Engine — COMPLETE / ACCEPTED.** Explainable signals, applicability, immutable assessments and separate completeness accepted in PR #43; merge remains a separate owner command.
+5. **Current next stage: build Summary Engine** on top of verified facts/risk results.
 6. Build Company Card v2 using `COMPANY_CARD_V2_SCOPE.md`.
 7. Build Report v1.
 8. Pass the mandatory Security & Resilience Gate.
@@ -41,7 +41,7 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 
 ## Current next stage
 
-Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness is **COMPLETE / ACCEPTED**. The current next approved stage is **RISK ENGINE**.
+Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness and Risk Engine are **COMPLETE / ACCEPTED**. The current next approved stage is **SUMMARY ENGINE**; it is not started automatically.
 
 Stage 1.5 and Data Readiness were not Wave 2. Their accepted foundations prevent the Risk Engine from being built on an incomplete, stale or semantically unsafe base.
 

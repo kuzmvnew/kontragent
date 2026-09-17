@@ -1,7 +1,7 @@
 # Risk Engine Acceptance
 
 Date/environment: 2026-09-17, user Mac, local branch `codex/risk-engine`, PostgreSQL database `kontragent`.  
-Status: **IN PROGRESS — local Six Gates evidence recorded; GitHub CI/PR not yet recorded.**
+Status: **RISK ENGINE COMPLETE / ACCEPTED**
 
 Evidence classes follow `EVIDENCE_REPORTING_POLICY.md`.
 
@@ -12,7 +12,7 @@ Evidence classes follow `EVIDENCE_REPORTING_POLICY.md`.
 | Starting Git baseline | VERIFIED_FROM_GIT | `git rev-parse HEAD`; `git rev-parse origin/main` after fetch/ff-only | both `c131186ce2255d786c03f4c0c52e19d5723b273e` | Proves repository refs, not runtime |
 | Starting migration | VERIFIED_RUNTIME | `uv run alembic current` | `d4e5f6a7b8c9 (head)` | Before Risk migration |
 | Starting tests | VERIFIED_RUNTIME | `uv run python -m pytest tests -q` | `556 passed in 1.03s` | Browser/DB acceptance separate |
-| Contracts/rules/engine/UI present | VERIFIED_FROM_GIT | `app/contracts/risk.py`, `app/risk_rules/v1.json`, `app/services/risk_engine_service.py`, `templates/partials/risk_engine.html` | v1 artifacts in working branch | GitHub PR/CI pending at this checkpoint |
+| Contracts/rules/engine/UI present | VERIFIED_FROM_GIT | commit `ef8f7214a860b4e07d14b1f399d752030e4d7e15`; `app/contracts/risk.py`, `app/risk_rules/v1.json`, `app/services/risk_engine_service.py`, `templates/partials/risk_engine.html` | v1 implementation pushed to `codex/risk-engine` | Not merged to `main` |
 
 ## Current-run gates
 
@@ -25,6 +25,7 @@ Evidence classes follow `EVIDENCE_REPORTING_POLICY.md`.
 | Cache/recalculation | VERIFIED_RUNTIME | repeated `calculate_company_risk('9727092307')` and DealContext calculation | identical input reused UUID `e1f36dd2-cec6-4e99-a5e5-355a376cb379`; procurement context created UUID `f0b0d7d0-7522-490c-8331-3d99795cc63e`, `DEAL_CONTEXT_CHANGE` | Ruleset/source invalidation are automated-test evidence, not separately mutated in live DB |
 | Browser/UI | VERIFIED_RUNTIME | local uvicorn `127.0.0.1:8766`; in-app Chromium; server access log; browser console log | four cards returned HTTP 200 (`1215214540`, `6320002223`, `9727092307`, `9309029650`); Risk UI rendered sections/completeness; expanded tax signal showed debt `2,228,577,247.95 RUB`, revenue `794,838,000 RUB`, ratio `280.38%`, source/coverage/freshness and rule v1.0.0; browser recalculation returned POST 303 then GET 200 and changed `calculated_at`; browser error/warn log `[]` | Desktop Chromium only; responsive/mobile not checked; Company Card v2 not claimed |
 | Coverage/freshness/counts/dates | VERIFIED_RUNTIME | PostgreSQL readback, real result payloads, expanded Chromium signal | assessment payloads retain source dates, checked/calculated time, per-signal coverage/freshness and completeness; AVTOVAZ assessment stored `partial=1`, `unavailable=2`; low-signal assessment remained `NO_MATERIAL_SIGNALS` while `not_checked=6`, `unavailable=1` stayed visible | Completeness is not risk; no claim that unavailable sources are clean |
+| GitHub PR and CI | VERIFIED_RUNTIME | GitHub API for PR `https://github.com/kuzmvnew/kontragent/pull/43` and check-runs for implementation commit `ef8f7214a860b4e07d14b1f399d752030e4d7e15` | PR #43 exists; `Python tests` plus three `acceptance` jobs completed with `success` | PR remains open and unmerged pending Михаил's separate command |
 
 ## Golden-company observations
 
@@ -44,9 +45,12 @@ Evidence classes follow `EVIDENCE_REPORTING_POLICY.md`.
 
 ## Unverified / not checked
 
-- GitHub PR and GitHub Actions: UNVERIFIED at this checkpoint.
 - Production deployment and scheduler: NOT CHECKED; scheduler remains `NOT_CONFIGURED` where recorded.
 - Production database/browser: NOT CHECKED.
 - Massive scoring of 6.7m companies: NOT PERFORMED by design.
 - New external sources, paid providers, CAPTCHA bypass and Summary Engine: NOT PERFORMED.
-- Final stage status remains `IN PROGRESS` until the final repeat regression, clean diff, PR and green CI are recorded.
+- Merge into `main`: NOT PERFORMED; requires a separate command from Михаил.
+
+## Final decision
+
+All current-run Risk Engine gates required by the stage are recorded above, and GitHub CI is green for the implementation commit. **RISK ENGINE COMPLETE / ACCEPTED.** The next approved stage is Summary Engine, which was not started automatically.

@@ -26,9 +26,9 @@
 
 ## Где проект сейчас
 
-Last completed stage: **Auto-update / Data Readiness — COMPLETE / ACCEPTED**.
+Last completed stage: **Risk Engine — COMPLETE / ACCEPTED**.
 
-Current active stage: **RISK ENGINE — IN PROGRESS**.
+Current approved next stage: **SUMMARY ENGINE — DO NOT START AUTOMATICALLY**.
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -38,7 +38,7 @@ Current active stage: **RISK ENGINE — IN PROGRESS**.
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
-| 5. Проверки и риски | 🟡 IN PROGRESS | Risk Engine v1 implementation and local acceptance are in progress on `codex/risk-engine`; final acceptance requires green GitHub CI |
+| 5. Проверки и риски | ✅ RISK ENGINE COMPLETE / ACCEPTED | Explainable signals, applicability, versioned rules, immutable assessments, separate coverage/completeness and minimal acceptance UI; PR #43 open with green CI, merge requires Михаил's command |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Security & Resilience Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
@@ -135,7 +135,7 @@ Highest
 
 Approved path before SEO:
 
-Completed: `Stage 1.5 -> Auto-update/Data Readiness`. Current next: `Risk Engine -> Summary Engine -> Company Card v2 -> Report v1 -> Security Gate -> Legal Gate -> Product/Card Acceptance -> 10k SEO`.
+Completed: `Stage 1.5 -> Auto-update/Data Readiness -> Risk Engine`. Current next: `Summary Engine -> Company Card v2 -> Report v1 -> Security Gate -> Legal Gate -> Product/Card Acceptance -> 10k SEO`.
 
 ## Current Development Rule
 
@@ -143,7 +143,7 @@ Current project priority:
 
 Release First, but not before the agreed quality/data gates.
 
-No approved release may be delayed by unrelated backlog. Stage 1.5 and Data Readiness are accepted prerequisites; the current approved engineering focus is Risk Engine.
+No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readiness and Risk Engine are accepted; the next approved engineering focus is Summary Engine, which must not start automatically.
 
 ## Текущее техническое состояние
 
@@ -156,6 +156,7 @@ No approved release may be delayed by unrelated backlog. Stage 1.5 and Data Read
 - Data Readiness final local regression: **556 passed**.
 - Data Readiness Alembic: `d4e5f6a7b8c9 (head)`.
 - Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green and merged as `d6ba029bc2095acaa194a1fde0e207bd651c18f3`.
+- Risk Engine v1: **COMPLETE / ACCEPTED** on branch `codex/risk-engine`; local regression **586 passed**, Alembic `e5f6a7b8c9d0 (head)`, five real-company assessments, PostgreSQL readback, Chromium acceptance and PR #43 CI green. PR is not merged.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
@@ -370,5 +371,5 @@ Person остаётся отдельным последующим продукт
 - Судебные требования не равны подтверждённому долгу.
 - Ликвидация не равна банкротству.
 - Платный источник не становится обязательным без отдельного решения; free/public/official first.
-- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`. Auto-update/Data Readiness subsequently completed and was accepted in merged PR #40; current next stage is `RISK ENGINE`.
+- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`. Auto-update/Data Readiness and Risk Engine subsequently completed and were accepted; current next stage is `SUMMARY ENGINE`.
 - Новый источник не добавляется в Wave 2 обязательный scope автоматически.
