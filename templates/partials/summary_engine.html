@@ -35,9 +35,10 @@
             </ul>
         {% endif %}
 
-        <p class="source-note">
-            Сформировано: {{ summary.generated_at }} · Summary {{ summary.summary_engine_version }} · Risk {{ summary.risk_engine_version }} · Rules {{ summary.ruleset_version }}
-        </p>
+        <details class="source-note">
+            <summary>Источник и методика</summary>
+            <p>Версия итогов: {{ summary.summary_engine_version }} · версия оценки: {{ summary.risk_engine_version }} · набор правил: {{ summary.ruleset_version }}</p>
+        </details>
     </div>
 {% else %}
     <div class="summary-placeholder">

@@ -17,6 +17,7 @@ from app.contracts.risk import (
     RiskSeverity,
     RiskSignal,
     RiskSignalStatus,
+    RiskOverallStatus,
 )
 from app.contracts.summary import (
     MonitoringComparison,
@@ -33,7 +34,7 @@ from app.models.summary import CompanySummary
 from app.services.risk_engine_service import load_ruleset
 
 
-ENGINE_VERSION = "summary-engine-1.0.1"
+ENGINE_VERSION = "summary-engine-2.0.1"
 PUBLIC_PROJECTION_POLICY_VERSION = "public-projection-unapproved-1.0.0"
 DEFAULT_PROJECTION_POLICY_VERSION = "internal-projection-1.0.0"
 PRIVATE_MARKERS = ("private_internal", "private-person", "private_person")
@@ -56,6 +57,16 @@ LIMITATION_STATUSES = {
     RiskSignalStatus.UNAVAILABLE,
     RiskSignalStatus.STALE,
     RiskSignalStatus.PARTIAL_COVERAGE,
+    RiskSignalStatus.DATA_QUALITY_REVIEW_REQUIRED,
+}
+
+OVERALL_LABELS = {
+    RiskOverallStatus.CRITICAL: "Критический риск",
+    RiskOverallStatus.HIGH: "Высокий риск",
+    RiskOverallStatus.ATTENTION: "Требует внимания",
+    RiskOverallStatus.NO_MATERIAL_RISKS: "Существенных рисков не выявлено",
+    RiskOverallStatus.NO_MATERIAL_SIGNALS: "Существенных рисков не выявлено",
+    RiskOverallStatus.INSUFFICIENT_DATA: "Недостаточно данных",
 }
 
 
@@ -75,7 +86,7 @@ def _format_number(value: Any) -> str:
 
 
 def _date_text(value: datetime | None) -> str:
-    return value.date().isoformat() if value else "дата не указана"
+    return value.strftime("%d.%m.%Y") if value else "актуальная дата отсутствует"
 
 
 def _rule_metadata() -> dict[str, dict[str, Any]]:
@@ -120,7 +131,7 @@ def _factor_sort_key(signal: RiskSignal, rules: dict[str, dict[str, Any]]) -> tu
 
 def _tax_text(signal: RiskSignal) -> str:
     debt = _format_number(signal.observed_value)
-    text = f"Налоговая задолженность — {debt} RUB на {_date_text(signal.source_as_of)}."
+    text = f"Налоговая задолженность — {debt} ₽ по данным на {_date_text(signal.source_as_of)}."
     if signal.calculation:
         parts = signal.calculation.split(" = ", 1)
         operands = parts[0].split(" / ", 1)
@@ -128,7 +139,7 @@ def _tax_text(signal: RiskSignal) -> str:
         if len(operands) == 2 and ratio is not None:
             revenue = _format_number(operands[1])
             year = (signal.period or {}).get("revenue_year")
-            text += f" Выручка{f' за {year}' if year else ''} — {revenue} RUB. Отношение — {_format_number(ratio * 100)}%."
+            text += f" Выручка{f' за {year}' if year else ''} — {revenue} ₽. Отношение — {_format_number(ratio * 100)}%."
     else:
         text += " Материальность относительно выручки не рассчитана, поскольку соответствующие финансовые данные недоступны."
     return text
@@ -155,7 +166,7 @@ def _court_text(signal: RiskSignal) -> str:
         text += f" из {reported}, заявленных источником"
     text += "."
     if amount is not None:
-        text += f" Сумма заявленных требований — {_format_number(amount)} RUB."
+        text += f" Сумма заявленных требований — {_format_number(amount)} ₽."
     text += " Сумма заявленных требований не является подтверждённым долгом."
     ratio_metric = metrics.get("claims_to_revenue") if isinstance(metrics, dict) else None
     if amount is not None and isinstance(ratio_metric, dict) and ratio_metric.get("denominator") is None:
@@ -169,9 +180,9 @@ def _finance_text(signal: RiskSignal) -> str:
     value = signal.observed_value if isinstance(signal.observed_value, dict) else {}
     year = (signal.period or {}).get("year")
     return (
-        f"Выручка — {_format_number(value.get('revenue'))} RUB; расходы — "
-        f"{_format_number(value.get('expenses'))} RUB; разница — "
-        f"{_format_number(value.get('profit_loss'))} RUB{f' за {year}' if year else ''}."
+        f"Выручка — {_format_number(value.get('revenue'))} ₽; расходы — "
+        f"{_format_number(value.get('expenses'))} ₽; разница — "
+        f"{_format_number(value.get('profit_loss'))} ₽{f' за {year}' if year else ''}."
     )
 
 
@@ -181,7 +192,7 @@ def _tax_offence_text(signal: RiskSignal) -> str:
     document_date = value.get("document_date")
     text = "Опубликованы сведения о налоговом правонарушении"
     if amount is not None:
-        text += f": сумма штрафа — {_format_number(amount)} RUB"
+        text += f": сумма штрафа — {_format_number(amount)} ₽"
     if document_date:
         text += f", дата документа — {document_date}"
     return text + ". Вид правонарушения источник не публикует, поэтому он не указан."
@@ -221,8 +232,10 @@ def _factor_text(signal: RiskSignal) -> str:
 
 
 def _limitation_text(signal: RiskSignal) -> str:
-    if signal.signal_code == "enforcement.source_not_connected":
-        return "ФССП не подключён, поэтому отсутствие исполнительных производств не подтверждено."
+    if signal.signal_code == "enforcement.fssp":
+        return "ФССП — проверка не завершена, поэтому отсутствие исполнительных производств не подтверждено."
+    if signal.signal_code.startswith("bankruptcy."):
+        return "ЕФРСБ — проверка не завершена, поэтому отсутствие действующей процедуры не подтверждено."
     if signal.signal_code == "litigation.general_courts":
         return "Проверка судов общей юрисдикции имеет частичное региональное покрытие; отсутствие дел за пределами проверенных регионов не подтверждено."
     if signal.signal_code == "litigation.arbitration" and signal.status == RiskSignalStatus.PARTIAL_COVERAGE:
@@ -230,7 +243,14 @@ def _limitation_text(signal: RiskSignal) -> str:
     if signal.signal_code == "compliance.roskomnadzor_blocked":
         return "Источник Роскомнадзора недоступен; чистый результат не сформирован."
     if signal.signal_code == "compliance.account_suspension":
-        return f"Актуальная проверка приостановлений операций по счетам не подтверждена; последняя дата — {_date_text(signal.checked_at)}."
+        return (
+            f"Актуальная проверка приостановлений операций по счетам не подтверждена; "
+            f"последняя дата — {_date_text(signal.checked_at)}."
+            if signal.checked_at else
+            "Актуальная дата проверки приостановлений операций по счетам отсутствует."
+        )
+    if signal.status == RiskSignalStatus.DATA_QUALITY_REVIEW_REQUIRED:
+        return "Качество данных — требуется сверить исходные суммы, единицы и периоды до сильного вывода."
     if signal.status == RiskSignalStatus.NOT_CHECKED:
         return f"{signal.title}: проверка не выполнена; отсутствие сведений не подтверждено."
     if signal.status == RiskSignalStatus.UNAVAILABLE:
@@ -247,6 +267,10 @@ def _recommendation_text(signal: RiskSignal) -> str:
         return "Проверить карточки дел, процессуальные стадии и судебные акты; не трактовать заявленные требования как подтверждённый долг."
     if signal.signal_code == "bankruptcy.active_procedure":
         return "Уточнить текущую стадию процедуры банкротства и её влияние на планируемую сделку."
+    if signal.signal_code.startswith("bankruptcy."):
+        return "Завершить официальную проверку ЕФРСБ и подтвердить текущую стадию процедуры, если сведения найдены."
+    if signal.signal_code == "enforcement.fssp":
+        return "Завершить официальную проверку ФССП и изучить найденные производства, суммы и даты."
     if signal.signal_code == "compliance.account_suspension":
         return "Запросить актуальное подтверждение статуса приостановления операций и повторить официальную проверку."
     if signal.status in LIMITATION_STATUSES:
@@ -285,6 +309,44 @@ def _statement(
     )
 
 
+def _grouped_limitation_statement(
+    *, summary_id: str, assessment: RiskAssessmentResult,
+    signals: tuple[RiskSignal, ...], rules: dict[str, dict[str, Any]],
+) -> SummaryStatement | None:
+    if not signals:
+        return None
+    lines = tuple(dict.fromkeys(_limitation_text(signal) for signal in signals))
+    text = f"Не удалось завершить проверок: {len(signals)}. " + " ".join(
+        f"• {line}" for line in lines
+    )
+    first = signals[0]
+    statement = _statement(
+        summary_id=summary_id, assessment=assessment,
+        kind=SummaryStatementKind.LIMITATION, index=1,
+        text=text, signal=first,
+        public_visible=all(
+            bool(rules.get(signal.rule_code, {}).get("public_visibility"))
+            for signal in signals
+        ),
+    )
+    return statement.model_copy(update={
+        "signal_ids": tuple(signal.signal_code for signal in signals),
+        "source_refs": tuple(dict.fromkeys(
+            f"{signal.source_code}/{signal.dataset_code}" for signal in signals
+        )),
+        "evidence_refs": tuple(dict.fromkeys(
+            ref for signal in signals for ref in signal.evidence_refs
+        )),
+        "data_dates": tuple(dict.fromkeys(
+            value for signal in signals
+            for value in (signal.source_as_of, signal.checked_at)
+            if value is not None
+        )),
+        "rule_id": None,
+        "rule_version": None,
+    })
+
+
 def _short_conclusion(assessment: RiskAssessmentResult, signals: Iterable[RiskSignal]) -> str:
     items = tuple(signals)
     critical = sum(item.severity == RiskSeverity.CRITICAL for item in items)
@@ -294,14 +356,16 @@ def _short_conclusion(assessment: RiskAssessmentResult, signals: Iterable[RiskSi
         for item in items
     )
     incomplete = assessment.completeness.not_checked + assessment.completeness.unavailable + assessment.completeness.stale + assessment.completeness.partial
+    label = OVERALL_LABELS[assessment.overall_status]
     if critical:
         text = f"Выявлено критических факторов: {critical}; всего факторов, требующих внимания: {attention}."
     elif attention:
         text = f"Выявлены факторы, требующие внимания: {attention}."
     else:
         text = "В выполненных проверках материальные риск-сигналы не выявлены."
+    text = f"{label}. {text}"
     if incomplete:
-        text += f" Проверка неполная: недоступно/не проверено/устарело/частично — {incomplete}."
+        text += f" Не завершено обязательных проверок: {incomplete}."
     return text
 
 
@@ -380,17 +444,17 @@ def build_summary(
         )
         for index, signal in enumerate(selected, 1)
     )
-    limitations = tuple(
-        _statement(
-            summary_id=summary_id, assessment=assessment, kind=SummaryStatementKind.LIMITATION,
-            index=index, text=_limitation_text(signal), signal=signal,
-            public_visible=bool(rules.get(signal.rule_code, {}).get("public_visibility")),
-        )
-        for index, signal in enumerate(
-            sorted((item for item in eligible if item.status in LIMITATION_STATUSES), key=lambda item: item.signal_code), 1
-        )
+    limitation_signals = tuple(sorted(
+        (item for item in eligible if item.status in LIMITATION_STATUSES),
+        key=lambda item: item.signal_code,
+    ))
+    grouped_limitation = _grouped_limitation_statement(
+        summary_id=summary_id, assessment=assessment,
+        signals=limitation_signals, rules=rules,
     )
-    recommendation_signals = selected or [item for item in eligible if item.status in LIMITATION_STATUSES][:1]
+    limitations = (grouped_limitation,) if grouped_limitation else ()
+    material_selected = [item for item in selected if item.status in FACTOR_STATUSES]
+    recommendation_signals = material_selected or list(limitation_signals[:3])
     recommendations = tuple(
         _statement(
             summary_id=summary_id, assessment=assessment, kind=SummaryStatementKind.RECOMMENDATION,
@@ -420,8 +484,9 @@ def build_summary(
         critical_count = sum(item.severity == RiskSeverity.CRITICAL for item in eligible)
         core = assessment.completeness.core
         compact = (
-            f"{warnings} warnings; {critical_count} critical; Core {core.get('completed', 0)}/"
-            f"{core.get('applicable', 0)}; {assessment.completeness.unavailable} source unavailable."
+            f"Факторов внимания: {warnings}; критических: {critical_count}; "
+            f"основных проверок: {core.get('completed', 0)}/{core.get('applicable', 0)}; "
+            f"недоступных источников: {assessment.completeness.unavailable}."
         )
 
     blocks = SummaryTextBlocks(
@@ -434,7 +499,8 @@ def build_summary(
         risk_assessment_id=assessment.assessment_id, mode=mode,
         summary_engine_version=ENGINE_VERSION, risk_engine_version=assessment.risk_engine_version,
         ruleset_version=assessment.ruleset_version, generated_at=now,
-        overall_status=assessment.overall_status, text_blocks=blocks,
+        overall_status=assessment.overall_status,
+        overall_label=OVERALL_LABELS[assessment.overall_status], text_blocks=blocks,
         explainability=explainability, completeness=assessment.completeness.model_dump(mode="json"),
         comparison=comparison, compact_text=compact, public_projection_approved=False,
     )

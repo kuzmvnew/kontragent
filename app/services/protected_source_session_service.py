@@ -78,7 +78,11 @@ def update_protected_source_session(session_id: int, *, status: str, result: str
             raise ValueError("Недопустимый session status")
         if result is not None and result not in definition.allowed_results:
             raise ValueError("Недопустимый result для источника")
-        if result in {"active_suspensions_not_found", "high_risk_information_not_found"} and status != "completed":
+        if result in {
+            "active_suspensions_not_found",
+            "high_risk_information_not_found",
+            "enforcement_not_found",
+        } and status != "completed":
             raise ValueError("Отрицательный результат допустим только после завершённой официальной проверки")
         row.status = status
         row.result = result

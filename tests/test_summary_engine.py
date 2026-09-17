@@ -69,7 +69,7 @@ def test_short_conclusion_keeps_risk_and_incompleteness_separate():
     result = build_summary(assessment(), now=NOW)
     text = result.text_blocks.short_conclusion.text
     assert "материальные риск-сигналы не выявлены" in text
-    assert "Проверка неполная" in text
+    assert "Не завершено обязательных проверок" in text
     assert "надёж" not in text
 
 
@@ -77,11 +77,11 @@ def test_tax_numeric_wording_includes_value_denominator_ratio_date_and_rule_trac
     risk = assessment(tax_debt_check=check("found", "fns_tax_debt", has_debt=True, total_debt="2000000"))
     result = build_summary(risk, now=NOW)
     statement = next(item for item in result.text_blocks.main_factors if item.signal_ids == ("tax.debt",))
-    assert "2 000 000 RUB" in statement.text
-    assert "10 000 000 RUB" in statement.text
+    assert "2 000 000 ₽" in statement.text
+    assert "10 000 000 ₽" in statement.text
     assert "20%" in statement.text
-    assert "2026-09-17" in statement.text
-    assert statement.rule_id == "TAX_DEBT_PRESENT"
+    assert "17.09.2026" in statement.text
+    assert statement.rule_id == "TAX_DEBT_TIERED"
     assert statement.evidence_refs
     assert statement.calculation == "2000000 / 10000000 = 0.2"
 
@@ -103,7 +103,7 @@ def test_court_claim_is_never_worded_as_debt_and_partial_coverage_is_visible():
     )
     result = build_summary(assessment(arbitration_court_check=court), now=NOW)
     combined = " ".join(texts(result, "main_factors") + texts(result, "limitations"))
-    assert "Сумма заявленных требований — 120 000 000 RUB" in combined
+    assert "Сумма заявленных требований — 120 000 000 ₽" in combined
     assert "не является подтверждённым долгом" in combined
     assert "загружены частично" in combined
     assert "компания должна" not in combined.lower()
@@ -128,8 +128,8 @@ def test_finance_and_tax_offence_quantities_are_rendered_with_periods():
     ))
     result = build_summary(risk, now=NOW)
     combined = " ".join(texts(result, "main_factors"))
-    assert "Выручка — 10 000 000 RUB" not in combined  # profitable finance is not a warning factor
-    assert "241 486 695.4 RUB" in combined
+    assert "Выручка — 10 000 000 ₽" not in combined  # profitable finance is not a warning factor
+    assert "241 486 695.4 ₽" in combined
     assert "2025-12-02" in combined
     assert "Вид правонарушения источник не публикует" in combined
 
@@ -140,8 +140,8 @@ def test_finance_warning_is_numeric_and_period_dated():
         calculated_difference="-2000000", data_year=2025,
     ))
     combined = " ".join(texts(build_summary(risk, now=NOW), "main_factors"))
-    assert "Выручка — 10 000 000 RUB" in combined
-    assert "расходы — 12 000 000 RUB" in combined
+    assert "Выручка — 10 000 000 ₽" in combined
+    assert "расходы — 12 000 000 ₽" in combined
     assert "за 2025" in combined
 
 
@@ -156,7 +156,7 @@ def test_cbr_warning_found_uses_regulatory_not_reliability_wording():
 def test_unavailable_and_not_checked_never_become_nothing_found():
     result = build_summary(assessment(), now=NOW)
     combined = " ".join(texts(result, "limitations"))
-    assert "ФССП не подключён" in combined
+    assert "ФССП — проверка не завершена" in combined
     assert "чистый результат не сформирован" in combined
     assert "ничего не найдено" not in combined.lower()
 
@@ -208,14 +208,14 @@ def test_statement_traceability_answers_why():
 
 def test_versioning_is_explicit():
     result = build_summary(assessment(), now=NOW)
-    assert result.summary_engine_version == "summary-engine-1.0.1"
-    assert result.risk_engine_version == "risk-engine-1.0.0"
-    assert result.ruleset_version == "risk-rules-1.0.0"
+    assert result.summary_engine_version == "summary-engine-2.0.1"
+    assert result.risk_engine_version == "risk-engine-2.0.1"
+    assert result.ruleset_version == "risk-rules-2.0.0"
 
 
 def test_cache_reuse_and_invalidation_contract():
     previous = SimpleNamespace(
-        risk_assessment_id="a", mode="USER", summary_engine_version="summary-engine-1.0.1",
+        risk_assessment_id="a", mode="USER", summary_engine_version="summary-engine-2.0.1",
         deal_context_hash="c", projection_policy_version="p",
     )
     assert can_reuse_summary(previous, risk_assessment_id="a", mode=SummaryMode.USER, deal_context_hash="c", projection_policy_version="p")
@@ -237,7 +237,8 @@ def test_due_diligence_payload_carries_sources_dates_versions_and_limitations():
     assert result.text_blocks.limitations
     statement = result.text_blocks.limitations[0]
     assert statement.source_refs
-    assert statement.rule_version
+    assert statement.signal_ids
+    assert statement.evidence_refs
     assert result.ruleset_version
 
 
@@ -261,10 +262,10 @@ def test_coverage_and_deal_context_changes_are_not_company_events():
 
 def test_bulk_mode_is_compact_and_keeps_completeness():
     result = build_summary(assessment(), mode=SummaryMode.BULK, now=NOW)
-    assert "warnings" in result.compact_text
-    assert "critical" in result.compact_text
-    assert "Core" in result.compact_text
-    assert "source unavailable" in result.compact_text
+    assert "Факторов внимания" in result.compact_text
+    assert "критических" in result.compact_text
+    assert "основных проверок" in result.compact_text
+    assert "недоступных источников" in result.compact_text
 
 
 def test_person_mode_filters_private_internal_evidence():

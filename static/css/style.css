@@ -534,6 +534,24 @@ body {
 }
 
 
+.card form button {
+    min-height: 40px;
+    padding: 9px 16px;
+    border: none;
+    border-radius: 7px;
+    background: #3874ff;
+    color: #ffffff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+
+.card form button:hover {
+    background: #2f63d9;
+}
+
+
 .info-grid {
     display: grid;
 

@@ -4,12 +4,8 @@
 {% if risk %}
     <div class="risk-engine-summary" data-assessment-id="{{ risk.assessment_id }}">
         <div class="risk-engine-overall risk-engine-{{ risk.overall_status|lower }}">
-            <strong>{{ risk.overall_status }}</strong>
-            <span>Профиль: {{ risk.profile }}</span>
+            <strong>{{ risk.overall_status | risk_label }}</strong>
         </div>
-        <p>
-            Рассчитано: {{ risk.calculated_at }} · Engine {{ risk.risk_engine_version }} · Rules {{ risk.ruleset_version }}
-        </p>
         <div class="info-grid">
             <div class="info-item"><div class="info-label">Применимые проверки</div><div class="info-value">{{ risk.completeness.total_applicable_checks }}</div></div>
             <div class="info-item"><div class="info-label">Выполнено</div><div class="info-value">{{ risk.completeness.completed }}</div></div>
@@ -23,30 +19,34 @@
         <div class="risk-section-list">
             {% for section in risk.section_assessments %}
                 <div class="risk-section-row">
-                    <strong>{{ section.section_code }}</strong>
-                    <span>{{ section.status }} · {{ section.severity }} · confidence {{ section.confidence }}</span>
+                    <strong>{{ section.section_code | risk_section_label }}</strong>
+                    <span>{{ section.status | risk_label }} · тяжесть: {{ section.severity | risk_label }}</span>
                 </div>
             {% endfor %}
         </div>
 
         <h3>Основные сигналы и ограничения</h3>
-        {% for signal in risk.signals if signal.status in ["CONFIRMED_RISK", "WARNING", "UNAVAILABLE", "NOT_CHECKED", "STALE", "PARTIAL_COVERAGE"] %}
+        {% for signal in risk.signals if signal.status in ["CONFIRMED_RISK", "WARNING", "UNAVAILABLE", "NOT_CHECKED", "STALE", "PARTIAL_COVERAGE", "DATA_QUALITY_REVIEW_REQUIRED"] %}
             <details class="risk-signal" data-signal-code="{{ signal.signal_code }}">
-                <summary>{{ signal.status }} · {{ signal.title }}</summary>
+                <summary>{{ signal.status | risk_label }} · {{ signal.title }}</summary>
                 <p>{{ signal.explanation }}</p>
-                <p class="source-note">
-                    {{ signal.source_code }} / {{ signal.dataset_code }} · source_as_of {{ signal.source_as_of or "—" }} · coverage {{ signal.coverage }} · freshness {{ signal.freshness }}
-                </p>
-                {% if signal.observed_value is not none %}<pre>{{ signal.observed_value | tojson(indent=2) }}</pre>{% endif %}
-                {% if signal.calculation %}<p>Расчёт: {{ signal.calculation }}</p>{% endif %}
-                <p>Правило: {{ signal.rule_code }} v{{ signal.rule_version }}</p>
+                <details>
+                    <summary>Источник и методика</summary>
+                    <p class="source-note">
+                        Источник: {{ signal.source_code }} / {{ signal.dataset_code }} · дата данных: {{ signal.source_as_of or "актуальная дата отсутствует" }}
+                    </p>
+                    {% if signal.observed_value is not none %}<pre>{{ signal.observed_value | tojson(indent=2) }}</pre>{% endif %}
+                    {% if signal.calculation %}<p>Расчёт: {{ signal.calculation }}</p>{% endif %}
+                    <p>Правило: {{ signal.rule_code }} v{{ signal.rule_version }}</p>
+                    <p>Покрытие: {{ signal.coverage }} · актуальность: {{ signal.freshness }}</p>
+                </details>
             </details>
         {% endfor %}
     </div>
 {% else %}
     <div class="risk-placeholder">
         <div class="risk-placeholder-title">Оценка ещё не рассчитана</div>
-        <p>Расчёт выполняется только по запросу и использует сохранённые факты, проверки, coverage и freshness. Недоступный источник не станет чистым результатом.</p>
+        <p>Расчёт выполняется только по запросу и использует сохранённые факты, полноту проверки и актуальность данных. Недоступный источник не считается чистым результатом.</p>
     </div>
 {% endif %}
 

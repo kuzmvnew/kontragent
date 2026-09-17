@@ -45,7 +45,7 @@ def get_roskomnadzor_bulk_check_for_inn(inn, channel):
             "information_distributors": "Запись подтверждает включение в реестр организаторов распространения информации.",
             "hosting": "Запись подтверждает включение в реестр провайдеров хостинга.",
         }
-        return build_check_result(checked=True, applicable=True, result="found" if rows else "not_found", data_date=dataset.last_data_date, dataset_code=code, source=SOURCE_CODE, reason=None, matching_method="inn_exact", records=records, record_count=len(records), interpretation_note=notes[channel], coverage_note="Физлица, ИП и записи без exact ИНН юрлица изолированы и не входят в публичный результат.")
+        return build_check_result(checked=True, applicable=True, result="found" if rows else "not_found", data_date=dataset.last_data_date, dataset_code=code, source=SOURCE_CODE, reason=None, matching_method="inn_exact", records=records, record_count=len(records), interpretation_note=notes[channel], coverage_note="Физлица, ИП и записи без точного ИНН юрлица изолированы и не входят в публичный результат.")
     finally:
         session.close()
 

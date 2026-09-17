@@ -77,16 +77,16 @@ def signal(result, code):
 
 def test_ruleset_is_versioned_and_hashed():
     version, digest, rules = load_ruleset()
-    assert version == "risk-rules-1.0.0"
+    assert version == "risk-rules-2.0.0"
     assert len(digest) == 64
-    assert rules["TAX_DEBT_PRESENT"].thresholds["ratio_warning"] == "0.10"
+    assert rules["TAX_DEBT_TIERED"].thresholds["high_ratio"] == "0.25"
 
 
 def test_tax_debt_found_uses_amount_ratio_and_threshold():
     payload = company(tax_debt_check=check("found", "fns_tax_debt", has_debt=True, total_debt="2000000", snapshot_id=9))
     result = build_risk_assessment(payload, datasets=datasets(), now=NOW)
     item = signal(result, "tax.debt")
-    assert item.status == RiskSignalStatus.CONFIRMED_RISK
+    assert item.status == RiskSignalStatus.WARNING
     assert item.calculation == "2000000 / 10000000 = 0.2"
     assert "20.00%" in item.explanation
 
@@ -97,9 +97,9 @@ def test_multiple_risks_do_not_get_reduced_by_unavailable_coverage():
         cbr_warning_list_check=check("found", "cbr_warning_list"),
     )
     result = build_risk_assessment(payload, datasets=datasets(), now=NOW)
-    assert sum(item.status == RiskSignalStatus.CONFIRMED_RISK for item in result.signals) >= 2
+    assert sum(item.status == RiskSignalStatus.CONFIRMED_RISK for item in result.signals) >= 1
     assert result.completeness.unavailable >= 1
-    assert result.overall_status == "ATTENTION"
+    assert result.overall_status == "HIGH"
 
 
 @pytest.mark.parametrize(
@@ -215,6 +215,85 @@ def test_registration_year_integer_is_supported():
     assert result.profile == "NEW_COMPANY"
 
 
+def test_missing_registration_status_is_not_a_completed_check():
+    result = build_risk_assessment(
+        company(status=None, master_data_date=None), datasets=datasets(), now=NOW,
+    )
+    item = signal(result, "registration.status")
+    assert item.status == "NOT_CHECKED"
+    assert item.severity == "NONE"
+    assert result.overall_status != "NO_MATERIAL_RISKS"
+
+
+def test_finance_uses_financial_rule_not_registration_rule():
+    result = build_risk_assessment(company(), datasets=datasets(), now=NOW)
+    assert signal(result, "finance.revenue_expense").rule_code == "FINANCIAL_RESULT"
+
+
+def test_partial_general_court_coverage_does_not_raise_business_risk():
+    general = check(
+        "not_found", "moscow_general_court_cases",
+        coverage={"regions_checked": ["Moscow"], "portals_checked": 1},
+    )
+    result = build_risk_assessment(
+        company(general_court_check=general), datasets=datasets(), now=NOW,
+    )
+    item = signal(result, "litigation.general_courts")
+    assert item.status == "PARTIAL_COVERAGE"
+    assert item.severity == "NONE"
+
+
+def test_avtovaz_like_partial_found_courts_do_not_create_attention_alone():
+    general = check(
+        "found", "moscow_general_court_cases",
+        cases=[{"role": "defendant"}] * 3,
+        coverage={"regions_checked": ["Moscow"], "portals_checked": 1},
+    )
+    result = build_risk_assessment(
+        company(
+            general_court_check=general,
+            arbitration_court_check=check("not_found", "checko_arbitration_cases"),
+        ),
+        datasets=datasets(), now=NOW,
+    )
+    item = signal(result, "litigation.general_courts")
+    assert item.status == "PARTIAL_COVERAGE"
+    assert item.severity == "NONE"
+    assert result.overall_status == "INSUFFICIENT_DATA"
+
+
+def test_extreme_tax_ratio_requires_data_quality_review_and_is_not_high_by_ratio_alone():
+    payload = company(
+        revenue_expense_check=check(
+            "found", "fns_revenue_expenses", revenue="1000", expenses="900",
+            calculated_difference="100", data_year=2025,
+        ),
+        tax_debt_check=check(
+            "found", "fns_tax_debt", has_debt=True, total_debt="6000000", snapshot_id=7,
+        ),
+    )
+    result = build_risk_assessment(payload, datasets=datasets(), now=NOW)
+    debt = signal(result, "tax.debt")
+    quality = signal(result, "data_quality.tax_debt_ratio")
+    assert debt.severity == "MEDIUM"
+    assert quality.status == "DATA_QUALITY_REVIEW_REQUIRED"
+    assert quality.observed_value["numerator"] == "6000000"
+    assert quality.observed_value["denominator"] == "1000"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ({"checked": True, "result": "found", "data_date": date(2026, 9, 15)}, "WARNING"),
+        ({"checked": True, "result": "not_found", "data_date": date(2026, 9, 15)}, "NO_RISK_FOUND"),
+        ({"checked": False, "result": "unavailable", "reason": "challenge_required"}, "UNAVAILABLE"),
+    ],
+)
+def test_fssp_found_not_found_and_unavailable_are_distinct(raw, expected):
+    result = build_risk_assessment(company(fssp_check=raw), datasets=datasets(), now=NOW)
+    assert signal(result, "enforcement.fssp").status == expected
+
+
 def test_no_risk_found_contract_rejects_unknown_coverage():
     source = signal(build_risk_assessment(company(), datasets=datasets(), now=NOW), "tax.debt")
     with pytest.raises(ValidationError):
@@ -223,13 +302,13 @@ def test_no_risk_found_contract_rejects_unknown_coverage():
 
 def test_ruleset_and_engine_versions_are_saved_in_output():
     result = build_risk_assessment(company(), datasets=datasets(), now=NOW)
-    assert result.risk_engine_version == "risk-engine-1.0.0"
-    assert result.ruleset_version == "risk-rules-1.0.0"
+    assert result.risk_engine_version == "risk-engine-2.0.1"
+    assert result.ruleset_version == "risk-rules-2.0.0"
     assert len(result.ruleset_hash) == 64
 
 
 def test_cache_reuse_requires_all_meaningful_hashes_and_engine_version():
-    previous = SimpleNamespace(input_hash="i", deal_context_hash="c", ruleset_hash="r", risk_engine_version="risk-engine-1.0.0")
+    previous = SimpleNamespace(input_hash="i", deal_context_hash="c", ruleset_hash="r", risk_engine_version="risk-engine-2.0.1")
     assert can_reuse_assessment(previous, input_hash="i", context_hash="c", ruleset_hash="r")
     assert not can_reuse_assessment(previous, input_hash="changed", context_hash="c", ruleset_hash="r")
     assert not can_reuse_assessment(previous, input_hash="i", context_hash="changed", ruleset_hash="r")

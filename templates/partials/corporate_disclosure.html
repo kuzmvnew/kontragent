@@ -4,7 +4,7 @@
     <h2>Корпоративное раскрытие</h2>
 
     {% if check.result == "found" %}
-        <p>Найдена публичная страница эмитента по exact ИНН.</p>
+        <p>Найдена публичная страница эмитента по точному ИНН.</p>
         {% if check.profile %}
             <div class="detail-row">
                 <div class="detail-label">Эмитент</div>
@@ -30,7 +30,7 @@
             </div>
         {% endfor %}
     {% elif check.result == "not_found" %}
-        <p>У ПРАЙМ нет страницы эмитента для этого exact ИНН на {{ check.data_date.strftime("%d.%m.%Y") }}.</p>
+        <p>У ПРАЙМ нет страницы эмитента для этого точного ИНН на {{ check.data_date.strftime("%d.%m.%Y") }}.</p>
         <p>Это не негативный признак: раскрытие применяется не ко всем компаниям.</p>
     {% elif check.reason == "not_checked" %}
         <p>Публичная страница раскрытия ещё не проверялась.</p>

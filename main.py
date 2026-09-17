@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -37,6 +39,8 @@ from app.services.npd_service import (
 from app.services.data_readiness_service import get_data_readiness
 from app.services.risk_engine_service import get_latest_company_risk, recalculate_company_risk
 from app.services.summary_engine_service import generate_company_summary, get_latest_company_summary
+from app.contracts.orchestrator import CompanyCheckMode
+from app.services.company_check_orchestrator import run_company_check
 
 
 # =========================================================
@@ -117,6 +121,102 @@ def format_number(value):
 templates.env.filters[
     "number"
 ] = format_number
+
+RISK_CLIENT_LABELS = {
+    "CRITICAL": "Критический риск",
+    "HIGH": "Высокий риск",
+    "ATTENTION": "Требует внимания",
+    "NO_MATERIAL_RISKS": "Существенных рисков не выявлено",
+    "NO_MATERIAL_SIGNALS": "Существенных рисков не выявлено",
+    "INSUFFICIENT_DATA": "Недостаточно данных",
+    "CONFIRMED_RISK": "Подтверждённый риск",
+    "WARNING": "Требует внимания",
+    "INFO": "Информация",
+    "NO_RISK_FOUND": "Проверено, сведений не найдено",
+    "NOT_CHECKED": "Не проверено",
+    "UNAVAILABLE": "Источник недоступен",
+    "NOT_APPLICABLE": "Не применяется",
+    "STALE": "Требуется обновление",
+    "PARTIAL_COVERAGE": "Частичное покрытие",
+    "DATA_QUALITY_REVIEW_REQUIRED": "Требуется проверка качества данных",
+    "NONE": "Нет",
+    "LOW": "Низкая",
+    "MEDIUM": "Средняя",
+}
+
+RISK_SECTION_LABELS = {
+    "registration": "Регистрационные сведения",
+    "ownership_management": "Руководство и связи",
+    "finance": "Финансы",
+    "taxes": "Налоги",
+    "enforcement": "Исполнительные производства",
+    "bankruptcy": "Банкротство",
+    "litigation": "Суды",
+    "procurement": "Закупки",
+    "licences_regulatory": "Лицензии и допуски",
+    "compliance": "Регуляторные проверки",
+}
+
+SOURCE_CLIENT_LABELS = {
+    "dadata": "DaData",
+    "excel_import": "База сервиса",
+    "fns": "ФНС — реестровые данные",
+    "fns_headcount": "ФНС — численность",
+    "fns_msp": "ФНС — реестр МСП",
+    "fns_snr": "ФНС — налоговые режимы организаций",
+    "fns_snrip": "ФНС — налоговые режимы предпринимателей",
+    "fns_revenue_expenses": "ФНС — доходы и расходы",
+    "fns_tax_debt": "ФНС — налоговая задолженность",
+    "fns_tax_offence": "ФНС — налоговые правонарушения",
+    "fns_tax_paid": "ФНС — уплаченные налоги",
+    "fns_disqualified": "ФНС — дисквалифицированные лица",
+    "fns_sme_support": "ФНС — поддержка малого и среднего бизнеса",
+    "fns_bankinform": "ФНС — приостановления операций по счетам",
+    "girbo": "ГИР БО",
+    "erknm_inspections": "Единый реестр контрольных мероприятий",
+    "cbr_warning_list": "Банк России — предупредительный список",
+    "cbr_zsk": "Банк России — платформа ЗСК",
+    "roszdravnadzor": "Росздравнадзор",
+    "roskomnadzor": "Роскомнадзор",
+    "prime_disclosure": "ПРАЙМ — раскрытие информации",
+    "moscow_general_court_cases": "Официальные суды Москвы",
+    "checko_arbitration_cases": "Арбитражные дела",
+    "fssp": "ФССП России",
+}
+
+
+def risk_label(value):
+    return RISK_CLIENT_LABELS.get(str(value), str(value))
+
+
+def risk_section_label(value):
+    return RISK_SECTION_LABELS.get(str(value), str(value))
+
+
+def source_label(value):
+    return SOURCE_CLIENT_LABELS.get(str(value), "Официальный или публичный источник")
+
+
+def format_date_ru(value):
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, int) and 1000 <= value <= 9999:
+        return str(value)
+    text = str(value).strip()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%d.%m.%Y")
+    except ValueError:
+        return text
+
+
+templates.env.filters["risk_label"] = risk_label
+templates.env.filters["risk_section_label"] = risk_section_label
+templates.env.filters["date_ru"] = format_date_ru
+templates.env.filters["source_label"] = source_label
 
 
 # =========================================================
@@ -375,6 +475,17 @@ async def company_summary(inn: str):
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
+@app.post("/company/{inn}/check")
+async def company_full_check(inn: str):
+    """Run the bounded FULL orchestration flow for one company."""
+    clean_inn = validate_company_inn(inn)
+    try:
+        run_company_check(clean_inn, mode=CompanyCheckMode.FULL)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
 @app.post(
     "/company/{inn}/npd-check",
 )
@@ -545,6 +656,14 @@ async def api_company_arbitration_courts_check(inn: str, deepen: bool = False):
 @app.post("/api/company/{inn}/general-courts-check")
 async def api_company_general_courts_check(inn: str):
     return refresh_general_court_check(validate_company_inn(inn))
+
+
+@app.post("/api/company/{inn}/check")
+async def api_company_check(
+    inn: str,
+    mode: CompanyCheckMode = Query(default=CompanyCheckMode.QUICK),
+):
+    return run_company_check(validate_company_inn(inn), mode=mode)
 
 
 @app.post("/api/company/{inn}/protected-source/{source_code}/start")

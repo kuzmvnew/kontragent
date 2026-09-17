@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 FNS_BANKINFORM_URL = "https://service.nalog.ru/bi.do"
 CBR_ZSK_URL = "https://cbr.ru/counteraction_m_ter/platform_zsk/proverka-po-inn/"
+FSSP_ENFORCEMENT_URL = "https://fssp.gov.ru/iss/ip/"
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,14 @@ PROTECTED_SOURCES = {
         code="cbr_zsk",
         source_url=CBR_ZSK_URL,
         allowed_results=frozenset({"high_risk_information_found", "high_risk_information_not_found", "unavailable", "challenge_required"}),
+    ),
+    "fssp": ProtectedSourceDefinition(
+        code="fssp",
+        source_url=FSSP_ENFORCEMENT_URL,
+        allowed_results=frozenset({
+            "enforcement_found", "enforcement_not_found",
+            "unavailable", "challenge_required",
+        }),
     ),
 }
 

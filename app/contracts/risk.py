@@ -1,4 +1,4 @@
-"""Strict public contracts for the explainable Risk Engine v1."""
+"""Strict public contracts for the explainable Risk Engine."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -40,6 +40,7 @@ class RiskSignalStatus(StrEnum):
     NOT_APPLICABLE = "NOT_APPLICABLE"
     STALE = "STALE"
     PARTIAL_COVERAGE = "PARTIAL_COVERAGE"
+    DATA_QUALITY_REVIEW_REQUIRED = "DATA_QUALITY_REVIEW_REQUIRED"
 
 
 class RiskSeverity(StrEnum):
@@ -64,6 +65,8 @@ class ApplicabilityStatus(StrEnum):
 
 
 class RiskOverallStatus(StrEnum):
+    NO_MATERIAL_RISKS = "NO_MATERIAL_RISKS"
+    HIGH = "HIGH"
     NO_MATERIAL_SIGNALS = "NO_MATERIAL_SIGNALS"
     ATTENTION = "ATTENTION"
     CRITICAL = "CRITICAL"
@@ -163,6 +166,7 @@ class RiskCompleteness(ContractModel):
     unavailable: int = Field(ge=0)
     stale: int = Field(ge=0)
     partial: int = Field(ge=0)
+    data_quality_review: int = Field(default=0, ge=0)
     core: dict[str, int]
     context: dict[str, int]
 
@@ -185,4 +189,3 @@ class RiskAssessmentResult(ContractModel):
     limitations: tuple[str, ...]
     change_origin: ChangeOrigin
     reused: bool = False
-

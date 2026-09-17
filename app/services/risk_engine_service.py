@@ -36,8 +36,8 @@ from app.models.risk import CompanyRiskAssessment
 from app.models.source import DataSet
 
 
-ENGINE_VERSION = "risk-engine-1.0.0"
-RULESET_PATH = Path(__file__).resolve().parent.parent / "risk_rules" / "v1.json"
+ENGINE_VERSION = "risk-engine-2.0.1"
+RULESET_PATH = Path(__file__).resolve().parent.parent / "risk_rules" / "v2.json"
 CORE_CATEGORIES = {
     RiskCategory.REGISTRATION,
     RiskCategory.OWNERSHIP_MANAGEMENT,
@@ -63,6 +63,7 @@ STATUS_ORDER = {
     RiskSignalStatus.UNAVAILABLE: 4,
     RiskSignalStatus.STALE: 5,
     RiskSignalStatus.PARTIAL_COVERAGE: 6,
+    RiskSignalStatus.DATA_QUALITY_REVIEW_REQUIRED: 6,
     RiskSignalStatus.WARNING: 7,
     RiskSignalStatus.CONFIRMED_RISK: 8,
 }
@@ -217,7 +218,14 @@ def _generic_check_signal(
         status, severity = availability, RiskSeverity.NONE
         confidence = RiskConfidence.NONE if status in {RiskSignalStatus.NOT_CHECKED, RiskSignalStatus.UNAVAILABLE} else RiskConfidence.LOW
         title = "Проверка не дала актуального полного результата"
-        explanation = str(check.get("reason") or dataset.get("last_error") or "Источник не был надёжно проверен.")
+        reason = str(check.get("reason") or dataset.get("last_error") or "")
+        explanation = {
+            "not_checked": "Проверка ещё не выполнена.",
+            "access_pending": "Для проверки требуется официальный доступ.",
+            "source_blocked": "Официальный источник не позволил завершить проверку.",
+            "challenge_required": "Требуется ручное подтверждение на официальном сайте.",
+            "waiting_for_user": "Требуется ручное подтверждение на официальном сайте.",
+        }.get(reason, "Источник не был надёжно проверен.")
     return _signal(
         now=now, code=check_code, category=category, status=status, severity=severity,
         confidence=confidence, title=title, explanation=explanation,
@@ -236,18 +244,19 @@ def _registration_signal(company: dict[str, Any], datasets: dict[str, dict[str, 
     signal_status = (
         RiskSignalStatus.NO_RISK_FOUND if active
         else RiskSignalStatus.WARNING if status
-        else RiskSignalStatus.INFO
+        else RiskSignalStatus.NOT_CHECKED
     )
     severity = RiskSeverity.NONE if active or not status else RiskSeverity.HIGH
     return _signal(
         now=now, code="registration.status", category=RiskCategory.REGISTRATION,
         status=signal_status, severity=severity,
-        confidence=RiskConfidence.HIGH if status else RiskConfidence.LOW,
+        confidence=RiskConfidence.HIGH if status else RiskConfidence.NONE,
         title="Компания действует" if active else ("Регистрационный статус требует внимания" if status else "Регистрационный статус не определён"),
         explanation=(f"Статус в master registry: {status}." if status else "Регистрационный статус отсутствует."),
         source_code="master_registry", dataset_code="master_registry",
         evidence_ref=f"company:{company.get('id')}:{company.get('master_data_date')}",
-        coverage="known_dataset", freshness="dataset_dated", rule=rule,
+        coverage="known_dataset" if status else "not_checked",
+        freshness="dataset_dated" if data_date else "unknown", rule=rule,
         observed_value=status or None, source_as_of=data_date, checked_at=now,
     )
 
@@ -262,8 +271,8 @@ def _finance_signal(company: dict[str, Any], datasets: dict[str, dict[str, Any]]
         status = RiskSignalStatus.WARNING if is_loss else RiskSignalStatus.INFO
         severity = RiskSeverity.MEDIUM if is_loss else RiskSeverity.NONE
         explanation = (
-            f"Выручка {check.get('revenue')} RUB, расходы {check.get('expenses')} RUB, "
-            f"разница {check.get('calculated_difference')} RUB за {check.get('data_year')}."
+            f"Выручка {check.get('revenue')} ₽, расходы {check.get('expenses')} ₽, "
+            f"разница {check.get('calculated_difference')} ₽ за {check.get('data_year')}."
         )
     else:
         status, severity = availability, RiskSeverity.NONE
@@ -282,7 +291,7 @@ def _finance_signal(company: dict[str, Any], datasets: dict[str, dict[str, Any]]
     )
 
 
-def _tax_debt_signal(company: dict[str, Any], datasets: dict[str, dict[str, Any]], now: datetime, rule: RiskRule) -> RiskSignal:
+def _tax_debt_signals(company: dict[str, Any], datasets: dict[str, dict[str, Any]], now: datetime, rule: RiskRule) -> list[RiskSignal]:
     check = company.get("tax_debt_check") or {"result": "unavailable", "reason": "not_checked"}
     dataset_code = str(check.get("dataset_code") or "fns_tax_debt")
     dataset = _dataset_state(datasets, dataset_code)
@@ -291,17 +300,29 @@ def _tax_debt_signal(company: dict[str, Any], datasets: dict[str, dict[str, Any]
     rev = _decimal((company.get("revenue_expense_check") or {}).get("revenue"))
     ratio = debt / rev if rev and rev > 0 else None
     threshold = {key: str(value) for key, value in rule.thresholds.items()}
+    quality_review = (
+        ratio is not None
+        and ratio >= Decimal(str(rule.thresholds["ratio_quality_review"]))
+    )
     if check.get("result") == "found" and check.get("has_debt") and availability != RiskSignalStatus.STALE:
-        material = debt >= Decimal(str(rule.thresholds["absolute_warning_rub"])) or (
-            ratio is not None and ratio >= Decimal(str(rule.thresholds["ratio_warning"]))
+        attention = debt >= Decimal(str(rule.thresholds["attention_absolute_rub"])) or (
+            ratio is not None and ratio >= Decimal(str(rule.thresholds["attention_ratio"]))
         )
-        severity = RiskSeverity.HIGH if material else RiskSeverity.MEDIUM
-        explanation = f"Налоговая задолженность: {debt} RUB на {check.get('data_date')}."
+        high = (
+            debt >= Decimal(str(rule.thresholds["high_absolute_rub"]))
+            and ratio is not None
+            and ratio >= Decimal(str(rule.thresholds["high_ratio"]))
+            and not quality_review
+        )
+        severity = RiskSeverity.HIGH if high else RiskSeverity.MEDIUM if attention else RiskSeverity.LOW
+        explanation = f"Налоговая задолженность: {debt} ₽ на {check.get('data_date')}."
         if ratio is not None:
-            explanation += f" Выручка: {rev} RUB; отношение задолженности к выручке: {(ratio * 100).quantize(Decimal('0.01'))}%."
+            explanation += f" Выручка: {rev} ₽; отношение задолженности к выручке: {(ratio * 100).quantize(Decimal('0.01'))}%."
+            if quality_review:
+                explanation += " Экстремальное отношение требует проверки исходных сумм и периодов; оно не используется как единственное основание высокой тяжести."
         else:
             explanation += " Относительная материальность не рассчитана: валидный знаменатель выручки отсутствует."
-        status = RiskSignalStatus.CONFIRMED_RISK if material else RiskSignalStatus.WARNING
+        status = RiskSignalStatus.CONFIRMED_RISK if high else RiskSignalStatus.WARNING
         confidence = RiskConfidence.HIGH
     elif check.get("result") in {"found", "not_found"} and availability != RiskSignalStatus.STALE:
         status, severity, confidence, coverage = RiskSignalStatus.NO_RISK_FOUND, RiskSeverity.NONE, RiskConfidence.HIGH, "known_dataset"
@@ -310,7 +331,7 @@ def _tax_debt_signal(company: dict[str, Any], datasets: dict[str, dict[str, Any]
         status, severity = availability, RiskSeverity.NONE
         confidence = RiskConfidence.NONE if status != RiskSignalStatus.STALE else RiskConfidence.LOW
         explanation = str(check.get("reason") or "Проверка задолженности недоступна.")
-    return _signal(
+    debt_signal = _signal(
         now=now, code="tax.debt", category=RiskCategory.TAXES, status=status,
         severity=severity, confidence=confidence, title="Налоговая задолженность",
         explanation=explanation, source_code=str(check.get("source") or "fns"),
@@ -320,6 +341,31 @@ def _tax_debt_signal(company: dict[str, Any], datasets: dict[str, dict[str, Any]
         calculation=(f"{debt} / {rev} = {ratio}" if ratio is not None else None),
         source_as_of=_source_as_of(check, dataset), checked_at=_checked_at(check, dataset),
     )
+    result = [debt_signal]
+    if quality_review:
+        result.append(_signal(
+            now=now, code="data_quality.tax_debt_ratio", category=RiskCategory.TAXES,
+            status=RiskSignalStatus.DATA_QUALITY_REVIEW_REQUIRED,
+            severity=RiskSeverity.NONE, confidence=RiskConfidence.LOW,
+            title="Требуется проверка исходных финансовых данных",
+            explanation=(
+                "Отношение налоговой задолженности к выручке превышает контрольный "
+                "порог. До сверки источника, единиц и периодов отношение не является "
+                "самостоятельным основанием высокой тяжести."
+            ),
+            source_code=str(check.get("source") or "fns"), dataset_code=dataset_code,
+            evidence_ref=f"data-quality:tax-debt:{check.get('snapshot_id') or check.get('data_date') or 'none'}",
+            coverage="quality_review", freshness=freshness, rule=rule,
+            observed_value={"numerator": str(debt), "denominator": str(rev), "ratio": str(ratio)},
+            period={
+                "tax_data_date": str(check.get("data_date")),
+                "revenue_year": (company.get("revenue_expense_check") or {}).get("data_year"),
+            },
+            threshold={"ratio_quality_review": str(rule.thresholds["ratio_quality_review"])},
+            calculation=f"{debt} / {rev} = {ratio}",
+            source_as_of=_source_as_of(check, dataset), checked_at=_checked_at(check, dataset),
+        ))
+    return result
 
 
 def _bankruptcy_signal(company: dict[str, Any], now: datetime, rule: RiskRule) -> RiskSignal:
@@ -349,13 +395,52 @@ def _bankruptcy_signal(company: dict[str, Any], now: datetime, rule: RiskRule) -
             evidence_ref=f"legal-event:{event.get('source_identifier')}", coverage="known_dataset", freshness="event_dated",
             rule=rule, observed_value=event, source_as_of=_dt(event.get("publication_date") or event.get("event_date")), checked_at=_dt(event.get("checked_at")),
         )
+    check = company.get("bankruptcy_check") or {}
+    if check.get("result") == "not_found" and check.get("checked"):
+        return _signal(
+            now=now, code="bankruptcy.official_check", category=RiskCategory.BANKRUPTCY,
+            status=RiskSignalStatus.NO_RISK_FOUND, severity=RiskSeverity.NONE,
+            confidence=RiskConfidence.HIGH,
+            title="Действующая процедура банкротства не найдена",
+            explanation="Официальный источник проверен по точному идентификатору; вывод ограничен датой проверки.",
+            source_code=str(check.get("source") or "fedresurs"),
+            dataset_code=str(check.get("dataset_code") or "fedresurs_bankruptcy"),
+            evidence_ref=f"bankruptcy-check:{check.get('evidence_id') or check.get('checked_at')}",
+            coverage="targeted_complete", freshness="checked", rule=rule,
+            observed_value={"result": "not_found"},
+            source_as_of=_dt(check.get("source_as_of")), checked_at=_dt(check.get("checked_at")),
+        )
+    reason = str(check.get("reason") or "source_not_connected")
+    status = (
+        RiskSignalStatus.UNAVAILABLE
+        if reason in {"source_blocked", "access_pending", "error", "unavailable"}
+        else RiskSignalStatus.NOT_CHECKED
+    )
     return _signal(
         now=now, code="bankruptcy.source_not_connected", category=RiskCategory.BANKRUPTCY,
-        status=RiskSignalStatus.NOT_CHECKED, severity=RiskSeverity.NONE, confidence=RiskConfidence.NONE,
-        title="Полная проверка банкротства не подключена",
-        explanation="Fedresurs/EFRSB implementation is not present in the accepted inventory; отсутствие локальных событий не является чистым результатом.",
+        status=status, severity=RiskSeverity.NONE, confidence=RiskConfidence.NONE,
+        title="Проверка банкротства не завершена",
+        explanation="Официальная проверка ЕФРСБ не завершена; отсутствие локальных событий не означает отсутствие процедуры.",
         source_code="fedresurs", dataset_code="fedresurs_bankruptcy",
-        evidence_ref="inventory:FEDRESURS_STAGE_1_5_INVENTORY.md", coverage="not_checked", freshness="source_not_connected", rule=rule,
+        evidence_ref="inventory:FEDRESURS_STAGE_1_5_INVENTORY.md", coverage=reason, freshness=reason, rule=rule,
+    )
+
+
+def _fssp_signal(company: dict[str, Any], datasets: dict[str, dict[str, Any]], now: datetime, rule: RiskRule) -> RiskSignal:
+    check = company.get("fssp_check") or {
+        "result": "unavailable", "reason": "not_checked", "checked": False,
+    }
+    return _generic_check_signal(
+        now=now, category=RiskCategory.ENFORCEMENT, check_code="enforcement.fssp",
+        check=check, dataset_code="fssp_enforcement", source_code="fssp",
+        datasets=datasets, rule=rule,
+        found_title="Найдены исполнительные производства",
+        found_explanation=(
+            "Официальный результат ФССП содержит исполнительные производства. "
+            "Тяжесть оценивается только по опубликованным сумме, количеству, статусу и дате."
+        ),
+        found_severity=RiskSeverity.MEDIUM,
+        found_status=RiskSignalStatus.WARNING,
     )
 
 
@@ -395,15 +480,19 @@ def _litigation_signals(company: dict[str, Any], datasets: dict[str, dict[str, A
         now=now, category=RiskCategory.LITIGATION, check_code="litigation.general_courts",
         check=general, dataset_code="moscow_general_court_cases", source_code="moscow_courts_official",
         datasets=datasets, rule=rule, found_title="Найдены дела судов общей юрисдикции",
-        found_explanation="Результат имеет только targeted partial coverage по сохранённым regions_checked/portals_checked.",
+        found_explanation="Результат имеет ограниченное покрытие по сохранённым регионам и официальным порталам.",
     )
     if general.get("result") in {"found", "not_found"}:
         signal = signal.model_copy(update={
             "status": RiskSignalStatus.PARTIAL_COVERAGE,
             "coverage": "partial_targeted",
             "confidence": RiskConfidence.MEDIUM,
-            "severity": RiskSeverity.MEDIUM if general.get("result") == "found" else RiskSeverity.NONE,
-            "explanation": signal.explanation + " Нельзя утверждать отсутствие дел за пределами проверенных порталов и регионов.",
+            "severity": RiskSeverity.NONE,
+            "explanation": signal.explanation + (
+                " Найденные дела показаны как факты, но без доказанной суммы и "
+                "материальности сами по себе не повышают итоговый бизнес-риск. "
+                "Нельзя утверждать отсутствие дел за пределами проверенных порталов и регионов."
+            ),
         })
     result.append(signal)
     return result
@@ -428,8 +517,8 @@ def _section(category: RiskCategory, signals: Iterable[RiskSignal]) -> RiskSecti
     }
     return RiskSectionAssessment(
         section_code=category, applicability=applicability, status=status, severity=severity,
-        confidence=confidence, headline=items[0].title if len(items) == 1 else f"{len(items)} checks in {category.value}",
-        explanation="Risk signals and coverage are evaluated separately; unavailable checks do not reduce known risk.",
+        confidence=confidence, headline=items[0].title if len(items) == 1 else f"Проверок в разделе: {len(items)}",
+        explanation="Рисковые факты и полнота источников оцениваются раздельно; недоступность источника не уменьшает известный риск.",
         signal_codes=tuple(item.signal_code for item in items), **counts,
     )
 
@@ -487,8 +576,8 @@ def build_risk_assessment(
             threshold={"classification": "context_only", "rule_version": rules["PROTECTED_REGULATORY_CHECK"].rule_version},
             source_as_of=_dt(fact.get("publication_date")), checked_at=_dt(fact.get("observed_at")),
         ))
-    signals.append(_finance_signal(company, datasets, now, rules["REGISTRATION_STATUS"]))
-    signals.append(_tax_debt_signal(company, datasets, now, rules["TAX_DEBT_PRESENT"]))
+    signals.append(_finance_signal(company, datasets, now, rules["FINANCIAL_RESULT"]))
+    signals.extend(_tax_debt_signals(company, datasets, now, rules["TAX_DEBT_TIERED"]))
     signals.append(_generic_check_signal(
         now=now, category=RiskCategory.TAXES, check_code="tax.offence",
         check=company.get("tax_offence_check"), dataset_code="fns_tax_offence", source_code="fns",
@@ -497,13 +586,7 @@ def build_risk_assessment(
         found_explanation="Показаны только опубликованные дата и сумма штрафа; вид нарушения источник не доказывает.",
         found_severity=RiskSeverity.MEDIUM,
     ))
-    signals.append(_signal(
-        now=now, code="enforcement.source_not_connected", category=RiskCategory.ENFORCEMENT,
-        status=RiskSignalStatus.NOT_CHECKED, severity=RiskSeverity.NONE, confidence=RiskConfidence.NONE,
-        title="ФССП не подключён", explanation="Accepted bounded inventory classified the implementation as NOT FOUND; no clean conclusion is emitted.",
-        source_code="fssp", dataset_code="fssp_enforcement", evidence_ref="inventory:FSSP_STAGE_1_5_INVENTORY.md",
-        coverage="not_checked", freshness="source_not_connected", rule=rules["PROTECTED_REGULATORY_CHECK"],
-    ))
+    signals.append(_fssp_signal(company, datasets, now, rules["PROTECTED_REGULATORY_CHECK"]))
     signals.append(_bankruptcy_signal(company, now, rules["ACTIVE_BANKRUPTCY_PROCEDURE"]))
     signals.extend(_litigation_signals(company, datasets, now, rules["COURT_ACTIVITY"]))
 
@@ -582,7 +665,7 @@ def build_risk_assessment(
         now=now, code="compliance.roskomnadzor_blocked", category=RiskCategory.COMPLIANCE,
         status=RiskSignalStatus.UNAVAILABLE, severity=RiskSeverity.NONE, confidence=RiskConfidence.NONE,
         title="Часть проверок Роскомнадзора заблокирована источником",
-        explanation="W1-005 B/C remain SOURCE_BLOCKED; no clean conclusion is emitted.",
+        explanation="Часть официальных реестров Роскомнадзора не позволила завершить проверку; чистый результат не сформирован.",
         source_code="roskomnadzor", dataset_code="rkn_broadcast_licenses+rkn_registered_media",
         evidence_ref="status:W1-005-B-C", coverage="source_blocked", freshness="source_blocked",
         rule=rules["PROTECTED_REGULATORY_CHECK"],
@@ -599,6 +682,9 @@ def build_risk_assessment(
             "unavailable": sum(s.status == RiskSignalStatus.UNAVAILABLE for s in values),
             "stale": sum(s.status == RiskSignalStatus.STALE for s in values),
             "partial": sum(s.status == RiskSignalStatus.PARTIAL_COVERAGE for s in values),
+            "data_quality_review": sum(
+                s.status == RiskSignalStatus.DATA_QUALITY_REVIEW_REQUIRED for s in values
+            ),
         }
     core_counts = counts(s for s in applicable if s.category in CORE_CATEGORIES)
     context_counts = counts(s for s in applicable if s.category not in CORE_CATEGORIES)
@@ -607,20 +693,48 @@ def build_risk_assessment(
         total_applicable_checks=len(applicable), completed=all_counts["completed"],
         not_applicable=sum(s.status == RiskSignalStatus.NOT_APPLICABLE for s in signals),
         not_checked=all_counts["not_checked"], unavailable=all_counts["unavailable"],
-        stale=all_counts["stale"], partial=all_counts["partial"], core=core_counts, context=context_counts,
+        stale=all_counts["stale"], partial=all_counts["partial"],
+        data_quality_review=all_counts["data_quality_review"],
+        core=core_counts, context=context_counts,
+    )
+    mandatory_codes = {
+        "registration.status",
+        "finance.revenue_expense",
+        "tax.debt",
+        "tax.offence",
+        "enforcement.fssp",
+        "bankruptcy.active_procedure",
+        "bankruptcy.official_check",
+        "bankruptcy.source_not_connected",
+        "compliance.cbr_warning",
+        "litigation.arbitration",
+        "litigation.general_courts",
+    }
+    completed_statuses = {
+        RiskSignalStatus.CONFIRMED_RISK,
+        RiskSignalStatus.WARNING,
+        RiskSignalStatus.INFO,
+        RiskSignalStatus.NO_RISK_FOUND,
+    }
+    mandatory = [signal for signal in signals if signal.signal_code in mandatory_codes]
+    mandatory_complete = bool(mandatory) and all(
+        signal.status in completed_statuses for signal in mandatory
     )
     if any(s.severity == RiskSeverity.CRITICAL for s in signals):
         overall = RiskOverallStatus.CRITICAL
-    elif any(s.severity in {RiskSeverity.MEDIUM, RiskSeverity.HIGH} for s in signals):
+    elif any(s.severity == RiskSeverity.HIGH for s in signals):
+        overall = RiskOverallStatus.HIGH
+    elif any(s.severity == RiskSeverity.MEDIUM for s in signals):
         overall = RiskOverallStatus.ATTENTION
-    elif all_counts["completed"] == 0:
+    elif not mandatory_complete:
         overall = RiskOverallStatus.INSUFFICIENT_DATA
     else:
-        overall = RiskOverallStatus.NO_MATERIAL_SIGNALS
+        overall = RiskOverallStatus.NO_MATERIAL_RISKS
     limitations = tuple(dict.fromkeys(
         s.explanation for s in signals if s.status in {
             RiskSignalStatus.NOT_CHECKED, RiskSignalStatus.UNAVAILABLE,
             RiskSignalStatus.STALE, RiskSignalStatus.PARTIAL_COVERAGE,
+            RiskSignalStatus.DATA_QUALITY_REVIEW_REQUIRED,
         }
     ))
     refs = tuple(sorted({ref for signal in signals for ref in signal.evidence_refs}))
@@ -629,7 +743,13 @@ def build_risk_assessment(
         company_inn=str(company["inn"]), profile=profile, risk_engine_version=ENGINE_VERSION,
         ruleset_version=ruleset_version, ruleset_hash=ruleset_hash, calculated_at=now,
         input_snapshot_refs=refs, signals=tuple(signals), section_assessments=sections,
-        coverage={"core": core_counts, "context": context_counts}, completeness=completeness,
+        coverage={
+            "core": core_counts,
+            "context": context_counts,
+            "mandatory_complete": mandatory_complete,
+            "mandatory_completed": sum(signal.status in completed_statuses for signal in mandatory),
+            "mandatory_total": len(mandatory),
+        }, completeness=completeness,
         overall_status=overall, limitations=limitations, change_origin=change_origin,
     )
 

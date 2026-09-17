@@ -110,10 +110,16 @@
                             Действующая организация
                         </span>
 
+                    {% elif company.status == "LIQUIDATED" %}
+
+                        <span class="status-badge">
+                            Организация ликвидирована
+                        </span>
+
                     {% elif company.status %}
 
                         <span class="status-badge">
-                            {{ company.status }}
+                            Регистрационный статус требует уточнения
                         </span>
 
                     {% else %}
@@ -132,6 +138,17 @@
             <!-- ======================================== -->
             <!-- SUMMARY ENGINE: minimal acceptance surface, not Company Card v2 -->
             <!-- ======================================== -->
+
+            <section class="card">
+
+                <form method="post" action="/company/{{ company.inn }}/check">
+                    <button type="submit">Проверить компанию</button>
+                    <p class="source-note">
+                        Полная проверка обновляет применимые источники. Для ФССП и защищённых сервисов может потребоваться ручное подтверждение.
+                    </p>
+                </form>
+
+            </section>
 
             <section class="card">
 
@@ -294,7 +311,7 @@
                             Дата регистрации
                         </div>
                         <div class="detail-value">
-                            {{ company.registration_date }}
+                            {{ company.registration_date | date_ru }}
                         </div>
                     </div>
 
@@ -1482,99 +1499,25 @@
 
                     <div class="source-list">
 
+                        {% set source_names = {
+                            "fns": "ФНС России",
+                            "fns_msp": "Единый реестр субъектов МСП ФНС",
+                            "fns_tax_debt": "Открытые данные ФНС о задолженности",
+                            "fns_tax_offence": "Открытые данные ФНС о налоговых правонарушениях",
+                            "fns_financials": "ГИР БО ФНС",
+                            "fns_tax_payment": "Открытые данные ФНС об уплаченных налогах",
+                            "kad_arbitr": "Картотека арбитражных дел",
+                            "sudrf": "ГАС «Правосудие»",
+                            "cbr": "Банк России",
+                            "roskomnadzor": "Роскомнадзор",
+                            "fedresurs": "Федресурс",
+                            "fssp": "ФССП России"
+                        } %}
+
                         {% for source in company.sources_used %}
-
-                            {% if source == "dadata" %}
-
-                                <span class="source-badge">
-                                    DaData
-                                </span>
-
-                            {% elif source == "excel_import" %}
-
-                                <span class="source-badge">
-                                    База сервиса
-                                </span>
-
-                            {% elif source == "fns" %}
-
-                                <span class="source-badge">
-                                    ФНС — реестровые данные
-                                </span>
-
-                            {% elif source == "fns_headcount" %}
-
-                                <span class="source-badge">
-                                    ФНС — численность
-                                </span>
-
-                            {% elif source == "fns_msp" %}
-
-                                <span class="source-badge">
-                                    ФНС — реестр МСП
-                                </span>
-
-                            {% elif source == "fns_snr" %}
-
-                                <span class="source-badge">
-                                    ФНС — налоговые режимы ЮЛ
-                                </span>
-
-                            {% elif source == "fns_snrip" %}
-
-                                <span class="source-badge">
-                                    ФНС — налоговые режимы ИП
-                                </span>
-
-                            {% elif source == "fns_revenue_expenses" %}
-
-                                <span class="source-badge">
-                                    ФНС — доходы и расходы
-                                </span>
-
-                            {% elif source == "fns_tax_debt" %}
-
-                                <span class="source-badge">
-                                    ФНС — задолженность
-                                </span>
-
-                            {% elif source == "fns_tax_offence" %}
-
-                                <span class="source-badge">
-                                    ФНС — налоговые правонарушения
-                                </span>
-
-                            {% elif source == "fns_tax_paid" %}
-
-                                <span class="source-badge">
-                                    ФНС — уплаченные налоги
-                                </span>
-
-                            {% elif source == "girbo" %}
-
-                                <span class="source-badge">
-                                    ГИР БО
-                                </span>
-
-                            {% elif source == "roszdravnadzor" %}
-
-                                <span class="source-badge">
-                                    Росздравнадзор
-                                </span>
-
-                            {% elif source == "roskomnadzor" %}
-
-                                <span class="source-badge">
-                                    Роскомнадзор
-                                </span>
-
-                            {% else %}
-
-                                <span class="source-badge">
-                                    {{ source }}
-                                </span>
-
-                            {% endif %}
+                            <span class="source-badge">
+                                {{ source_names.get(source, source) }}
+                            </span>
 
                         {% endfor %}
 

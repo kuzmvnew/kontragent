@@ -77,11 +77,33 @@ def enrich_company_with_stage15_on_demand_checks(company):
     result["general_court_check"] = get_cached_general_court_check(inn)
     result["fns_bankinform_check"] = get_latest_protected_source_check(inn, "fns_bankinform")
     result["cbr_zsk_check"] = get_latest_protected_source_check(inn, "cbr_zsk")
+    fssp = get_latest_protected_source_check(inn, "fssp")
+    fssp_result = fssp.get("result")
+    result["fssp_check"] = {
+        **fssp,
+        "result": (
+            "found" if fssp_result == "enforcement_found"
+            else "not_found" if fssp_result == "enforcement_not_found"
+            else "unavailable"
+        ),
+        "reason": None if fssp_result in {"enforcement_found", "enforcement_not_found"} else fssp.get("status") or "not_checked",
+        "dataset_code": "fssp_enforcement",
+        "source": "fssp",
+    }
+    result["bankruptcy_check"] = {
+        "checked": False,
+        "result": "unavailable",
+        "reason": "access_pending",
+        "dataset_code": "fedresurs_bankruptcy",
+        "source": "fedresurs",
+        "source_url": "https://bankrot.fedresurs.ru/bankrupts",
+    }
     for code, check in (
         ("checko_arbitration_cases", result["arbitration_court_check"]),
         ("moscow_general_court_cases", result["general_court_check"]),
         ("fns_bankinform", result["fns_bankinform_check"]),
         ("cbr_zsk", result["cbr_zsk_check"]),
+        ("fssp", result["fssp_check"]),
     ):
         if check.get("checked"):
             _append_source_once(result, code)

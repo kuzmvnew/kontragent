@@ -34,6 +34,6 @@
     {% if company.roskomnadzor_checks["pd_operators"]["reason"] == "not_checked" %}
     <form action="/company/{{ company.inn }}/roskomnadzor-pd-check" method="post"><button type="submit">Проверить реестр операторов ПДн</button></form>
     {% endif %}
-    <p>Источник истины: Роскомнадзор. Сопоставление только по exact ИНН. Данные физлиц и ИП хранятся отдельно и здесь не публикуются.</p>
+    <p>Источник истины: Роскомнадзор. Сопоставление только по точному ИНН. Данные физлиц и ИП хранятся отдельно и здесь не публикуются.</p>
 </section>
 {% endif %}

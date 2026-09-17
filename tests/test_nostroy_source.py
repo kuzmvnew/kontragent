@@ -147,7 +147,7 @@ def test_private_person_model_is_non_public_by_default_and_not_in_template():
     check = {"result": "found", "record_count": 1, "active_record_count": 1, "records": [{"member_status": "Является членом", "inventory_number": "X", "registration_number": "1", "sro_registration_number": "SRO"}], "data_date": date(2026, 9, 17), "interpretation_note": "note", "coverage_note": "coverage", "reason": None}
     html = Environment(loader=FileSystemLoader("templates")).get_template("partials/sro.html").render(company={"inn": "5907056036", "sro_checks": {"nostroy": check, "nopriz": check}, "sro_person_records": [{"person_name": "Private Specialist"}]})
     assert "Private Specialist" not in html
-    assert "private-контуре" in html and "exact ИНН" in html
+    assert "закрытом внутреннем контуре" in html and "точному ИНН" in html
 
 
 def test_registry_specs_separate_company_and_private_datasets():

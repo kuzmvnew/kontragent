@@ -92,6 +92,7 @@ class SummaryResult(ContractModel):
     ruleset_version: str
     generated_at: datetime
     overall_status: RiskOverallStatus
+    overall_label: str = ""
     text_blocks: SummaryTextBlocks
     explainability: tuple[SummaryStatement, ...]
     completeness: dict[str, Any]
