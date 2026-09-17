@@ -5,22 +5,28 @@ Date: 2026-09-17
 
 ## 1. Purpose
 
-Before implementing any new Wave 2+ source, confirm that the data can be obtained, stored and used in our commercial product in the intended way and at an acceptable cost.
+Before implementing any new Stage 1.5 or Wave 2+ source, confirm that the data can be obtained, stored and used in our commercial product in the intended way.
 
-A public website is not automatically an approved machine-readable commercial source.
+Default policy: **free/public/official first**.
+
+A paid source is not the normal starting point. It requires a separate explicit commercial decision after practical free-source options are checked.
+
+A public website is not automatically an approved unlimited bulk source, but public targeted access may be a valid source mode when it is lawful, technically stable, low-load and consistent with the source rules.
 
 ## 2. Required source passport fields
 
 For every source record:
 
 - source owner/operator;
-- official URL/documentation;
+- official/public URL/documentation;
 - dataset/registry name;
 - source class: OPEN_DATA / PUBLIC_LIVE / ON_DEMAND / LICENSED / CONSENT / EXCLUDE;
 - entity types;
 - identifiers and matching rules;
-- official machine-readable mode;
+- machine-readable mode, if any;
+- browser/public-page mode, if any;
 - registration/credential requirements;
+- CAPTCHA/challenge/protection behaviour;
 - rate limits / load restrictions;
 - automation restrictions;
 - storage/cache rights;
@@ -46,9 +52,10 @@ For every source record:
 Recommended states:
 
 - `APPROVED_FREE_OFFICIAL`;
-- `APPROVED_PAID`;
+- `APPROVED_FREE_PUBLIC`;
+- `APPROVED_ON_DEMAND`;
+- `APPROVED_PAID_BY_EXPLICIT_DECISION`;
 - `ACCESS_PENDING`;
-- `QUOTE_REQUIRED`;
 - `LEGAL_REVIEW_REQUIRED`;
 - `TECHNICAL_ACCESS_UNCONFIRMED`;
 - `BLOCKED`;
@@ -57,22 +64,50 @@ Recommended states:
 
 No production ingestion starts from an unresolved state unless a separately documented exception is approved.
 
-## 4. Cost model
+## 4. Free-first decision order
 
-Do not evaluate only API price. Record total cost:
+For each source, check in this order:
+
+1. official downloadable open data / bulk file;
+2. official/public machine endpoint;
+3. official/public company lookup page with targeted on-demand access;
+4. other reliable public disclosure source carrying the same primary/publicly disclosed information;
+5. browser-assisted low-load retrieval if the result is public and the mode is stable/acceptable;
+6. only then consider a paid feed/API by separate explicit product decision.
+
+Do not buy a paid API only because it is easier to integrate.
+
+## 5. Low-load public-source collection rule
+
+For targeted public pages where no bulk interface is available:
+
+- prefer exact INN/OGRN/company lookup over sequential crawling;
+- use one network worker / low concurrency per domain;
+- use local cache and document reuse;
+- update only when required by source freshness/product workflow;
+- use reasonable delays and exponential backoff;
+- stop/reduce load on 403/429/protection failures;
+- log retrieval source/date;
+- do not make proxy rotation, browser-fingerprint evasion or protection bypass the normal architecture.
+
+If a public source is unstable or disallows the intended automation, use another approved source/fallback or mark the check unavailable.
+
+## 6. Cost model
+
+Even for free data, record operational cost:
 
 `source fee + infrastructure + storage + traffic + development + maintenance + legal/licensing overhead`
 
 For each source, estimate:
 
 - one-time setup cost;
-- monthly/annual external fee;
+- monthly/annual external fee (normally 0 for Stage 1.5 target sources);
 - storage growth;
 - expected request volume;
 - update cadence;
 - operational support burden.
 
-## 5. Product value test
+## 7. Product value test
 
 A source should answer a concrete product need:
 
@@ -88,22 +123,36 @@ A source should answer a concrete product need:
 
 Do not add a registry merely because it exists.
 
-## 6. Current researched economic notes
+## 8. Stage 1.5 source rule
 
-These are planning notes as of 2026-09-17 and must be rechecked before purchase/signing:
+Stage 1.5 is a prerequisite before the full Risk Engine, not Wave 2.
 
-- GIR BO full REST subscription was researched as a material paid source; purchase should be justified by product/financial-analysis needs rather than bought automatically.
-- Fedresurs/EFРSB official service requires access/contract workflow; final production pricing/rights must be confirmed before relying on a paid channel.
-- FSSP machine access requires fresh confirmation of the current legal/technical channel before new work.
-- Judicial bulk/document data may become expensive if a licensed commercial feed is required; public browser availability is not enough.
-- Rospatent open-data blocks are economically attractive when the official open-data licence/terms cover the intended use.
-- EIS/RNP remains an official-access problem rather than a reason to replace Source of Truth with a temporary commercial mirror.
+Its priority sources/tasks are defined in `INTERMEDIATE_STAGE_1_5.md` and should be implemented using free/public/official modes wherever practical.
 
-## 7. FSSP / Fedresurs inventory rule
+This includes:
 
-The user has previously indicated that FSSP and Fedresurs may already exist in an earlier/local project state. Current `main` inspection on 2026-09-17 did not confirm dedicated FSSP/Fedresurs implementation paths in the active repository tree.
+- Tax Debt / Tax Offences final acceptance;
+- FSSP/Fedresurs inventory and reuse;
+- courts;
+- FNS account-suspension decisions;
+- Bank of Russia public high-risk check;
+- free corporate disclosure.
 
-Therefore, before any Wave 2 task named “connect FSSP” or “connect Fedresurs”:
+## 9. Corporate disclosure
+
+Corporate disclosure is free-first.
+
+Use public company/issuer disclosure pages/documents through interchangeable adapters before any paid API/FTP decision.
+
+See `CORPORATE_DISCLOSURE_SOURCE_PLAN.md`.
+
+Paid disclosure feeds are optional later accelerators, not required Stage 1.5 sources.
+
+## 10. FSSP / Fedresurs inventory rule
+
+The product owner has previously indicated that FSSP and Fedresurs may already exist in earlier/local project state.
+
+Before any task named “connect FSSP” or “connect Fedresurs”:
 
 1. search current `main` again;
 2. inspect historical branches/commits if necessary;
@@ -114,12 +163,13 @@ Therefore, before any Wave 2 task named “connect FSSP” or “connect Fedresu
 
 This is an inventory requirement, not a conclusion that the sources were never implemented anywhere.
 
-## 8. Decision record
+## 11. Decision record
 
-Every Wave 2 source should have a short decision:
+Every later Wave 2 source should have a short decision:
 
 - why we need it now;
 - which feature it unlocks;
+- free-source option checked;
 - access/legal status;
 - cost;
 - implementation scope;
@@ -127,4 +177,4 @@ Every Wave 2 source should have a short decision:
 - acceptance criteria;
 - decision: GO / WAIT / NO-GO.
 
-This decision is made before coding the source, not after months of integration work.
+A paid source cannot become a default dependency without a separate explicit decision by the product owner.
