@@ -1,0 +1,69 @@
+{
+  "generated_at": "2026-09-17T21:49:13.982012+00:00",
+  "target": 40,
+  "actual": 40,
+  "buckets": {
+    "Банкротство": 10,
+    "Налоговые факторы": 10,
+    "Действующие": 10,
+    "Высокая полнота": 10
+  },
+  "coverage": {
+    "min": 47,
+    "max": 72,
+    "average": 57.8
+  },
+  "workflow_completion": {
+    "min": 100,
+    "max": 100,
+    "target": 100
+  },
+  "positive_gate_passed": 0,
+  "persisted": 40,
+  "reused": 0,
+  "unresolved": {
+    "arbitration": 40,
+    "general_courts": 40,
+    "cbr_zsk": 40,
+    "bankinform": 40,
+    "licences_sro": 25,
+    "procurement_rnp": 40,
+    "regulatory_inspections": 40,
+    "fssp": 24,
+    "bankruptcy": 21
+  },
+  "terminal_states": {
+    "registration:FOUND": 40,
+    "tax_debt:FOUND": 29,
+    "tax_offence:NOT_FOUND": 29,
+    "finance:FOUND": 35,
+    "bankruptcy:FOUND": 19,
+    "fssp:FOUND": 16,
+    "arbitration:UNAVAILABLE": 40,
+    "general_courts:UNAVAILABLE": 40,
+    "cbr_warning:NOT_FOUND": 40,
+    "cbr_zsk:UNAVAILABLE": 40,
+    "bankinform:UNAVAILABLE": 40,
+    "management:NOT_FOUND": 40,
+    "licences_sro:UNAVAILABLE": 25,
+    "procurement_rnp:UNAVAILABLE": 40,
+    "fssp:UNAVAILABLE": 24,
+    "licences_sro:FOUND": 15,
+    "tax_offence:FOUND": 11,
+    "finance:NOT_FOUND": 5,
+    "tax_debt:NOT_FOUND": 11,
+    "bankruptcy:UNAVAILABLE": 21
+  },
+  "fssp_validation": {
+    "NOT_IN_VALIDATION_MATRIX": 36,
+    "UNVERIFIED": 3,
+    "MISMATCH": 1
+  },
+  "runtime": {
+    "fssp_direct": "UNAVAILABLE: no configured machine transport; runner returned terminal evidence for every company",
+    "efrsb_direct": "UNAVAILABLE: no configured public/machine transport; runner returned terminal evidence for every company",
+    "cbr_zsk": "UNAVAILABLE: interactive public flow not completed; runner returned terminal evidence for every company",
+    "bankinform": "UNAVAILABLE: no company-specific BIK supplied; arbitrary BIK is prohibited",
+    "checko": "ACCESS_PENDING when CHECKO_API_KEY is absent"
+  }
+}

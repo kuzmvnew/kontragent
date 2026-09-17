@@ -1,8 +1,8 @@
 # Подробный чек-лист развития Kontragent — фазы 0–15
 
-Дата сверки: 17.09.2026.
+Дата сверки: 18.09.2026.
 
-[Текущая работа и ближайший шаг](PROJECT_STATUS.md) · [Утверждённый порядок разработки](ROADMAP.md) · [Источники и режимы Person](PERSON_CHECK_SOURCES.md)
+[Текущая работа и ближайший шаг](PROJECT_STATUS.md) · [Утверждённый порядок разработки](ROADMAP.md) · [Stage 1.6 — audit closure](STAGE_1_6_AUDIT_CLOSURE.md) · [Источники и режимы Person](PERSON_CHECK_SOURCES.md)
 
 ## Как читать этот документ
 
@@ -60,7 +60,7 @@ ROADMAP.md становится продуктовым документом.
 | 3 | Админ-панель и аналитика v1 | 🟡 Internal Data Readiness panel ACCEPTED; полный admin/feature-flags scope не завершён | Видно состояние источников, загрузок и приложения |
 | 4 | Автоматическое обновление данных | 🟡 Data Readiness foundation ACCEPTED; production scheduler deployment `NOT_CONFIGURED` | Обновления без ручной обработки каждого архива |
 | 5 | Бесплатная волна официальных источников | 🟡 Wave 1 CLOSED / ACCEPTED; поздние источники остаются будущим backlog | Полезное наполнение карточек официальными данными |
-| 6 | Движки выводов, требований и рисков | 🟡 Product Recovery v3 IN PROGRESS; Risk/Summary v1 historical acceptance сохранён | Объяснимые выводы с учётом покрытия и сделки |
+| 6 | Движки выводов, требований и рисков | 🟡 Product Recovery v3 / Stage 1.6 IN PROGRESS; Risk/Summary v1 historical acceptance сохранён | Объяснимые выводы с учётом покрытия и сделки |
 | 7 | Продуктовая оболочка | 🔵 Далее | Понятный вход в Check и будущие направления |
 | 8 | Карточка компании v2 | ⛔ BLOCKED до Product Recovery acceptance | Цельная проверка: факты, выводы, источники, даты |
 | 9 | SEO-бета | 🔵 Далее | Первые качественные страницы доступны поиску |
@@ -71,7 +71,7 @@ ROADMAP.md становится продуктовым документом.
 | 14 | Полноценный B2B SaaS | 🔵 Далее | Регулярная работа команд, подписки и автоматизация |
 | 15 | Корпоративный уровень — Enterprise | 🔵 Позже | Интеграции, безопасность и договорные уровни сервиса |
 
-**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages. Summary Engine v1 evidence: 609 tests, Alembic `f6a7b8c9d0e1`, five real-company summaries, PostgreSQL/Chromium and PR #44 green CI. Scheduler deployment остаётся `NOT_CONFIGURED`. Текущий этап — Product Recovery v3 / IN PROGRESS: 40/40 companies processed, Coverage 47–80/100 (average 58), positive gate 0/40. Company Card v2 заблокирован до Product Recovery acceptance. Структура фаз 0–15 и архитектура не меняются.
+**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages. Stage 1.6 runtime hardening подтверждён: 648 tests, Alembic `b8c9d0e1f2a3`, PostgreSQL/Chromium и локальные CI-проверки. Текущий этап — Product Recovery v3 / Stage 1.6 / IN PROGRESS: 40/40 компаний обработаны, Workflow Completion 100%, Evidence Coverage 47–72/100 (average 57.8), positive gate 0/40 и 0/10 в low-risk bucket. Scheduler deployment остаётся `NOT_CONFIGURED`. Company Card v2 заблокирован до Product Recovery acceptance. Канонический протокол: [STAGE_1_6_AUDIT_CLOSURE.md](STAGE_1_6_AUDIT_CLOSURE.md). Структура инженерных фаз 0–15 и архитектура не меняются.
 
 ## Фаза 0. Закрытие текущего блока TaxOffence
 
@@ -206,6 +206,16 @@ ROADMAP.md становится продуктовым документом.
 
 **Текущий утверждённый этап:** PRODUCT RECOVERY V3 / IN PROGRESS. Wave 1, Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты; Company Card v2 заблокирован до Product Recovery acceptance.
 
+## Обязательный Stage 1.6 — Product Recovery Audit Closure & Runtime Hardening
+
+Статус: **ACTIVE / REQUIRED — IN PROGRESS**.
+
+Stage 1.6 относится к подробной фазе 6 и не создаёт новую инженерную фазу 16. Runtime hardening реализован и проверен, но Source Runtime Completion и Golden-40 positive gate не закрыты. 40/40 компаний получили терминальные состояния workflow, однако Evidence Coverage составляет 47–72/100 (average 57.8), а positive gate — 0/40 и 0/10 в low-risk bucket. Точные причины, счётчики, evidence classes и артефакты ведутся в [STAGE_1_6_AUDIT_CLOSURE.md](STAGE_1_6_AUDIT_CLOSURE.md).
+
+Обязательная последовательность: `Product Recovery v3 → Stage 1.6 → Golden-40 Acceptance → Product Recovery ACCEPTED → Recovery PR / main → Company Card v2 → Report v1 → Platform 2.0 → 10k enrichment → Data Quality Gate → Production Candidate → Security & Resilience Gate v2 → Legal Gate → Product Acceptance → SEO`.
+
+До прохождения Golden-40 запрещено считать Product Recovery принятым или начинать Company Card v2, Report v1, Platform 2.0, 10k enrichment, формальные launch gates, SEO и Wave 2.
+
 ## Фаза 6. Движки выводов, требований и рисков
 
 Зачем: объяснять смысл данных применительно к компании, человеку и сделке.
@@ -256,6 +266,21 @@ ROADMAP.md становится продуктовым документом.
 Критерий закрытия: пройден пользовательский сценарий «найти → открыть → понять факты и риски → определить следующий шаг».
 
 Доказательство частичной реализации: [company.html](templates/company.html).
+
+## Обязательный межэтап — Platform 2.0
+
+Статус: **⛔ BLOCKED** до Product Recovery acceptance, Recovery PR/main, Company Card v2 и Report v1.
+
+Platform 2.0 выполняется после Report v1 и до 10k enrichment. Scope: Source SDK; канонические Evidence/Facts/Derived Metrics; Company Projection и версионирование; dependency graph и incremental recalculation; Enrichment Orchestrator; durable idempotent jobs/workers; anomaly detection и quarantine; production scheduler; observability; backup/restore; load infrastructure.
+
+Текущие non-goals: Kubernetes, Kafka, OpenSearch и RabbitMQ без объективной необходимости Stage 1.6; microservices; полный async rewrite.
+
+Результат: воспроизводимое и наблюдаемое массовое обогащение компаний без подмены доказательств и без преждевременного инфраструктурного усложнения.
+
+## Разделение MVP
+
+- **Public MVP:** Search, Company Card, Risk, Summary, Report, Platform 2.0, 10k enrichment, Security, Legal, Product Acceptance и SEO.
+- **Commercial B2B MVP:** account/workspace, saved lists, bulk checks, monitoring, notifications, export и минимальные tariff/usage controls. Этот scope не строится в Stage 1.6.
 
 ## Фаза 9. SEO-бета
 
@@ -422,6 +447,8 @@ ROADMAP.md становится продуктовым документом.
 
 Админ-панель и автоматическое обновление в текущем кратком roadmap не выделены отдельными номерными фазами. Их Data Readiness foundation принят в PR #40, но полный admin/feature-flags scope и production scheduler deployment не объявляются завершёнными. Поздние расширения сохраняют утверждённую очередь и не становятся выполненными из-за принятого foundation.
 
+Platform 2.0 — обязательный межэтап между Report v1 и 10k enrichment, а не новая фаза старого инженерного плана. Он не меняет историческую нумерацию 0–15.
+
 ## Approved Architecture Decisions
 
 После завершения аудитов официально утверждены следующие архитектурные решения.
@@ -459,7 +486,7 @@ Every new idea goes to Backlog.
 
 Rule 3
 
-SEO MVP has the highest development priority.
+SEO MVP имеет высокий приоритет только после Product Recovery acceptance, Recovery PR/main, Company Card v2, Report v1, Platform 2.0, 10k enrichment и обязательных quality/security/legal/product gates.
 
 
 ### W1-002 final Mac acceptance — 16.09.2026

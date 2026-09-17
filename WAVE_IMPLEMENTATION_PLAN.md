@@ -1,7 +1,7 @@
 # WAVE IMPLEMENTATION PLAN — Kontragent
 
-Status: ACTIVE — PRODUCT RECOVERY V3 IN PROGRESS; COMPANY CARD V2 BLOCKED
-Date: 2026-09-17
+Status: ACTIVE — PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS; COMPANY CARD V2 BLOCKED
+Date: 2026-09-18
 
 ## Wave 1 final state
 
@@ -25,30 +25,41 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 3. **Auto-update / Data Readiness — COMPLETE / ACCEPTED.** Operational registry, freshness, run history, atomic bulk contract, locks/backoff and internal status panel were accepted and merged in PR #40. Production scheduler deployment remains honestly `NOT_CONFIGURED` until handlers/supervisor are installed.
 4. **Risk Engine — COMPLETE / ACCEPTED.** Explainable signals, applicability, immutable assessments and separate completeness accepted in merged PR #43.
 5. **Summary Engine — COMPLETE / ACCEPTED.** Deterministic traceable summaries, modes, persistence, cache, explainability and minimal acceptance UI accepted in PR #44; merge remains a separate owner command.
-6. **Current stage: Product Recovery v3 — IN PROGRESS.** Operationalize the mandatory runtime sources, rerun the same 40-company regression, raise Coverage and pass the positive gate.
-7. **Company Card v2 — BLOCKED** until Product Recovery acceptance; then use `COMPANY_CARD_V2_SCOPE.md`.
-8. Build Report v1.
-9. Pass the mandatory Security & Resilience Gate.
-10. Pass the mandatory Legal Launch Gate.
-11. Pass the mandatory Product / Company Card Acceptance Gate: end-to-end user journey + source/data/risk/summary correctness.
-12. Publish the first 10,000 high-quality company pages for SEO only after all three gates pass.
-13. Build Lists + Bulk Check.
-14. Build Monitoring / Event Engine + expandable notification types.
-15. Build Workspace v1.
-16. Only after the above Company B2B Core is ready, start Wave 2 source integrations through the Source Access & Cost Gate.
-17. After Company B2B Core: Person Core.
-18. Then separate Compliance module.
-19. Then API / Enterprise / SSO / SLA / client integrations and government-procurement readiness when commercially justified.
+6. **Product Recovery v3 — IN PROGRESS.**
+7. **Current required stage: Stage 1.6 — IN PROGRESS.** Runtime hardening is verified; Source Runtime Completion and Golden-40 positive acceptance remain open. See `STAGE_1_6_AUDIT_CLOSURE.md`.
+8. Pass Golden-40 Acceptance on the same cohort without weakening product rules.
+9. Record **Product Recovery ACCEPTED** only after that gate passes.
+10. Create and merge the separate Recovery PR to `main` only on explicit owner instruction.
+11. Build **Company Card v2** using `COMPANY_CARD_V2_SCOPE.md`.
+12. Build Report v1.
+13. Build **Platform 2.0**: Source SDK; canonical Evidence/Facts/Derived Metrics; versioned Company Projection; dependency graph and incremental recalculation; Enrichment Orchestrator; durable idempotent jobs/workers; anomaly detection/quarantine; production scheduler; observability; backup/restore; load infrastructure.
+14. Enrich the first 10,000 companies.
+15. Pass the Data Quality Gate.
+16. Produce the Production Candidate.
+17. Pass the mandatory Security & Resilience Gate v2.
+18. Pass the mandatory Legal Launch Gate.
+19. Pass the mandatory Product / Company Card Acceptance Gate: end-to-end user journey + source/data/risk/summary correctness.
+20. Publish the first 10,000 high-quality company pages for SEO only after all gates pass.
+21. Build Lists + Bulk Check.
+22. Build Monitoring / Event Engine + expandable notification types.
+23. Build Workspace v1.
+24. Only after the above Company B2B Core is ready, start Wave 2 source integrations through the Source Access & Cost Gate.
+25. After Company B2B Core: Person Core.
+26. Then separate Compliance module.
+27. Then API / Enterprise / SSO / SLA / client integrations and government-procurement readiness when commercially justified.
 
 ## Current next stage
 
-Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness, Risk Engine v1 and Summary Engine v1 are **COMPLETE / ACCEPTED** historical stages. The current stage is **PRODUCT RECOVERY V3 — IN PROGRESS**. Company Card v2 is **BLOCKED** until Product Recovery acceptance.
+Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness, Risk Engine v1 and Summary Engine v1 are **COMPLETE / ACCEPTED** historical stages. The current required stage is **PRODUCT RECOVERY V3 / STAGE 1.6 — IN PROGRESS**. Company Card v2 and all later stages remain **BLOCKED** until Product Recovery acceptance and their ordered prerequisites.
 
-Current Product Recovery evidence: 40/40 unique companies processed; Coverage
-47–80/100, average 58/100; positive gate 0/40. Remaining engineering work is to
-operationalize FSSP, EFRSB, CBR ZSK and Bankinform, fill Arbitration 40/40,
-improve General Courts coverage and rerun the same regression. Existing runner
-code is not treated as completed runtime coverage.
+Current Product Recovery evidence: 40/40 unique companies processed; Workflow
+Completion 100%; Evidence Coverage 47–72/100, average 57.8/100; positive gate
+0/40 overall and 0/10 in the low-risk candidate bucket. Remaining work includes
+Arbitration 40/40, General Courts 40/40, CBR ZSK 40/40, Bankinform 40/40,
+Procurement/RNP 40/40 and regulatory inspections 40/40, plus FSSP 24/40,
+EFRSB 21/40 and licences/SRO 25/40 unresolved. Existing runner code is not
+treated as completed runtime coverage. Exact reasons and close conditions are
+recorded in `STAGE_1_6_AUDIT_CLOSURE.md`.
 
 Stage 1.5 and Data Readiness were not Wave 2. Their accepted foundations prevent the Risk Engine from being built on an incomplete, stale or semantically unsafe base.
 
@@ -69,6 +80,7 @@ Detailed acceptance criteria: `INTERMEDIATE_STAGE_1_5.md`.
 
 ## Mandatory post-Wave1 specifications
 
+- `STAGE_1_6_AUDIT_CLOSURE.md`
 - `INTERMEDIATE_STAGE_1_5.md`
 - `POST_WAVE1_PRODUCT_PLAN.md`
 - `PRODUCT_FUNCTION_CATALOG.md`
@@ -100,6 +112,8 @@ Detailed acceptance criteria: `INTERMEDIATE_STAGE_1_5.md`.
 - Forecasts are not facts.
 - Public SEO projection includes only legally approved fields/conclusions.
 - Private person evidence remains isolated from public company/API/SEO projections unless separately approved.
+- Public MVP and Commercial B2B MVP are separate milestones. Public MVP includes Search, Card, Risk, Summary, Report, Platform 2.0, 10k enrichment, Security, Legal, Product Acceptance and SEO. Commercial B2B MVP adds account/workspace, saved lists, bulk checks, monitoring, notifications, export and minimal tariff/usage controls.
+- Platform 2.0 non-goals are Kubernetes, Kafka, OpenSearch and RabbitMQ unless Stage 1.6 objectively requires them, microservices and a full async rewrite.
 
 ## Source backlog
 

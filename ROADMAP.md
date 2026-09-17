@@ -1,6 +1,6 @@
 # ROADMAP — Kontragent
 
-Последнее обновление: 17.09.2026
+Последнее обновление: 18.09.2026
 
 ## Development Principles
 
@@ -51,7 +51,7 @@ Architecture evolves without rewrite.
    PROJECT_STATUS.md
 8. Этот файл является основным roadmap проекта.
 9. Существенно менять порядок или содержание фаз без отдельного решения Михаила нельзя.
-10. Массово открывать публичные страницы и SEO-индексацию можно только после прохождения обязательного Security & Resilience Gate между фазами 7 и 8.
+10. Массово открывать публичные страницы и SEO-индексацию можно только после Platform 2.0, 10k enrichment, Data Quality Gate, Production Candidate и обязательного Security & Resilience Gate v2.
 11. Для физических лиц открытая государственная web-страница сама по себе не считается разрешением на массовый парсинг, бессрочное хранение и коммерческую перепубликацию. Каждый Person-источник должен пройти отдельный access/privacy gate.
 12. Детальный перечень Person-источников, критериев и режимов подключения ведётся в `PERSON_CHECK_SOURCES.md` и синхронизируется с `ROADMAP_DETAILED.md`.
 13. Каждый источник принимается отдельно по шести постоянным критериям из `PROJECT_STATUS.md`: tests → реальный официальный ответ → PostgreSQL write/read → корректные состояния absence/N/A/failure → реальная карточка в браузере → количество/даты/покрытие. Код, загруженные данные, проверенная карточка и автообновление — разные статусы.
@@ -265,7 +265,7 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 # ФАЗА 5 — ПРОВЕРКИ И ЛОГИКА РИСКОВ
 
-Статус: 🟡 PRODUCT RECOVERY V3 / IN PROGRESS; Risk Engine v1 и Summary Engine v1 сохраняют historical COMPLETE / ACCEPTED; COMPANY CARD V2 BLOCKED
+Статус: 🟡 PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS; Risk Engine v1 и Summary Engine v1 сохраняют historical COMPLETE / ACCEPTED; COMPANY CARD V2 BLOCKED
 
 ## Цель
 
@@ -305,11 +305,19 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 Основные данные компании преобразуются в стабильный набор проверок, фактов, предупреждений и объяснений; Person использует те же принципы доказуемости и прозрачности.
 
+## Mandatory Stage 1.6
+
+Canonical status: `STAGE_1_6_AUDIT_CLOSURE.md`.
+
+Порядок: `Product Recovery v3 → Stage 1.6 → Golden-40 Acceptance → Product Recovery ACCEPTED → Recovery PR/main → Company Card v2`.
+
+Текущий verified runtime: 40/40 processed, Workflow Completion 100–100%, Evidence Coverage 47–72/100 (average 57.8), positive gate 0/40. Поэтому Stage 1.6 и Product Recovery остаются **IN PROGRESS**, а не ACCEPTED.
+
 ---
 
 # ФАЗА 6 — ПОЛНАЯ КАРТОЧКА КОМПАНИИ
 
-Статус: 🟡 УЖЕ НАЧАТА
+Статус: ⛔ COMPANY CARD V2 BLOCKED до Stage 1.6 и Product Recovery acceptance; исторический partial foundation не является началом v2
 
 ## Цель
 
@@ -393,7 +401,19 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 ---
 
-# ОБЯЗАТЕЛЬНЫЙ SECURITY & RESILIENCE GATE — ПЕРЕД ФАЗОЙ 8
+# PLATFORM 2.0 — ОБЯЗАТЕЛЬНЫЙ БУДУЩИЙ STAGE
+
+Статус: ⛔ BLOCKED / НЕ РЕАЛИЗУЕТСЯ СЕЙЧАС.
+
+Позиция: **после Company Card v2 и Report v1; до 10k enrichment и формального Security & Resilience Gate v2**.
+
+Approved scope: Source SDK; canonical Evidence, Facts и Derived Metrics; Company Projection и versioning; dependency graph; incremental recalculation; Enrichment Orchestrator; durable Job Engine; idempotency; workers; anomaly detection; quarantine; production scheduler; observability; backup/restore; load infrastructure.
+
+Current non-goals: Kubernetes, Kafka, OpenSearch, RabbitMQ без доказанной необходимости, microservices и full async rewrite.
+
+---
+
+# ОБЯЗАТЕЛЬНЫЙ SECURITY & RESILIENCE GATE V2 — ПЕРЕД МАССОВЫМ SEO
 
 Статус: 🔵 ЗАПЛАНИРОВАН. БЕЗ ЕГО ПРОХОЖДЕНИЯ МАССОВЫЙ ПУБЛИЧНЫЙ SEO-РЕЛИЗ ЗАПРЕЩЁН.
 
@@ -401,7 +421,15 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 Не допустить, чтобы публичный запуск привёл к потере продукта, базы, доступности сервиса, данных, домена, секретов или неконтролируемому копированию продукта сторонними ботами.
 
-Это не новая номерная фаза и не меняет порядок ROADMAP. Gate является обязательным критерием допуска от фазы 7 к публичной фазе 8.
+Это не текущая работа и не PASS от Stage 1.6. Формальный gate выполняется после Platform 2.0, 10k enrichment, Data Quality Gate и Production Candidate. Stage 1.6 закрывает только baseline: public-read safety, internal endpoint protection, secret safety, API boundary и CI security smoke.
+
+Будущий gate включает DDoS/WAF/anti-scraping/economic DoS, network isolation, PostgreSQL backup/PITR/restore, jobs/retry/DLQ, source failure simulation, app failover, home-PC failure, load/stress/soak, alerts и recovery drills.
+
+## Milestones: Public MVP и Commercial B2B MVP
+
+**Public MVP:** Search → Card → Risk → Summary → Report → Platform 2.0 → 10k enrichment → Security → Legal → Product Acceptance → SEO.
+
+**Commercial B2B MVP:** Public MVP + account/workspace, saved lists, bulk checks, monitoring, notifications, export и minimal tariff/usage controls. Этот scope сейчас не строится.
 
 ## 1. DDoS, сетевые атаки и перегрузка
 
@@ -558,7 +586,7 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 ## Важно
 
-SEO строится после того, как карточка действительно содержит достаточно полезных данных и пройден обязательный Security & Resilience Gate.
+SEO строится после того, как карточка действительно содержит достаточно полезных данных и пройдены Platform 2.0, 10k enrichment, Data Quality Gate, Production Candidate и обязательный Security & Resilience Gate v2.
 
 Публичное открытие карточек компаний должно быть поэтапным: сначала ограниченная контролируемая выборка, затем расширение объёма при нормальной нагрузке, работе anti-bot и отсутствии критичных ошибок.
 
@@ -632,16 +660,18 @@ SEO строится после того, как карточка действи
 
 # ТЕКУЩАЯ ПОЗИЦИЯ
 
-На 17.09.2026:
+На 18.09.2026:
 
 Фаза 1 ✅
 Фаза 2 ✅
 Фаза 3 ✅ ЗАВЕРШЕНА В СОГЛАСОВАННОМ ОБЪЁМЕ
 Фаза 4 ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED — Wave 1 и Stage 1.5 закрыты; Data Readiness принят и merged в PR #40; W1-005 B/C остаются deferred `SOURCE_BLOCKED`, W1-006 принят по Six Gates.
-Фаза 5 🟡 PRODUCT RECOVERY V3 / IN PROGRESS; Risk/Summary v1 historical acceptance сохранён
-Фаза 6 ⛔ COMPANY CARD V2 BLOCKED до Product Recovery acceptance
+Фаза 5 🟡 PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS; Risk/Summary v1 historical acceptance сохранён
+Фаза 6 ⛔ COMPANY CARD V2 BLOCKED до Stage 1.6 и Product Recovery acceptance
 Фаза 7 🔵
-Security & Resilience Gate 🔵 обязательный перед публичной фазой 8
+Platform 2.0 ⛔ future required после Card v2/Report v1 и до 10k enrichment
+10k enrichment ⛔ blocked до Platform 2.0
+Security & Resilience Gate v2 🔵 после 10k/Data Quality/Production Candidate и до массового SEO
 Privacy & Person Gate 🔵 обязательный перед публичным запуском Person
 Фаза 8 🔵
 Фаза 9 ⏸
@@ -651,12 +681,12 @@ Privacy & Person Gate 🔵 обязательный перед публичны�
 
 RISK ENGINE V1 ✅
 → SUMMARY ENGINE V1 ✅
-→ PRODUCT RECOVERY V3 (CURRENT; IN PROGRESS)
+→ PRODUCT RECOVERY V3 → STAGE 1.6 → GOLDEN-40 (CURRENT; IN PROGRESS)
 → КАРТОЧКА КОМПАНИИ V2 (BLOCKED)
 
-Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты. Текущий этап — PRODUCT RECOVERY V3 / IN PROGRESS: Coverage 47–80/100, average 58/100, positive gate 0/40. Company Card v2 заблокирован до Product Recovery acceptance. Порядок фаз и архитектура не меняются.
+Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты. Текущий этап — PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS: Workflow Completion 100–100%, Evidence Coverage 47–72/100, average 57.8, positive gate 0/40. Company Card v2 заблокирован до Product Recovery acceptance.
 
-Security & Resilience Gate не является текущей активной работой и не должен опережать утверждённую последовательность Risk Engine v1 → Summary Engine v1 → Product Recovery v3 → Company Card v2 → Report v1. Он становится обязательным перед массовым публичным открытием продукта.
+Security & Resilience Gate v2 не является текущей активной работой. Утверждённая последовательность: Risk Engine v1 → Summary Engine v1 → Product Recovery v3 → Stage 1.6 → Golden-40 → Product Recovery ACCEPTED → Recovery PR/main → Company Card v2 → Report v1 → Platform 2.0 → 10k enrichment → Data Quality Gate → Production Candidate → Security Gate v2 → Legal → Product Acceptance → SEO.
 
 Не отвлекаться сейчас на окончательный лендинг и монетизацию.
 

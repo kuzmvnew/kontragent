@@ -1,0 +1,87 @@
+{
+  "companies": 5,
+  "p50_ms": 1033.176,
+  "p95_ms": 1653.371,
+  "query_count_min": 90,
+  "query_count_max": 91,
+  "external_network_calls": 0,
+  "query_table_counts": {
+    "data_sets": 95,
+    "companies": 45,
+    "erknm_inspections": 35,
+    "roskomnadzor_company_facts": 30,
+    "roszdrav_license_entries": 20,
+    "company_tax_debt_snapshots": 15,
+    "fns_sme_support_entries": 15,
+    "cbr_warning_list_entries": 15,
+    "interactive_protected_source_sessions": 15,
+    "company_tax_debt_items": 10,
+    "company_tax_offences": 10,
+    "company_tax_payment_snapshots": 10,
+    "company_tax_payment_items": 10,
+    "disqualified_person_snapshots": 10,
+    "roszdrav_clinical_organization_entries": 10,
+    "data_sources": 5,
+    "company_contacts": 5,
+    "company_financials": 5,
+    "company_identifiers": 5,
+    "company_managers": 5,
+    "company_branches": 5,
+    "company_source_data": 5,
+    "company_headcounts": 5,
+    "company_msp_profiles": 5,
+    "company_tax_regime_snapshots": 5,
+    "company_revenue_expense_snapshots": 5,
+    "company_legal_events": 5,
+    "ingestion_runs": 5,
+    "cbr_finorg_checks": 5,
+    "roszdrav_unified_license_checks": 5,
+    "roskomnadzor_pd_operator_checks": 5,
+    "nostroy_member_checks": 5,
+    "nopriz_member_checks": 5,
+    "corporate_disclosure_checks": 5,
+    "arbitration_court_checks": 5,
+    "general_court_checks": 5,
+    "company_risk_assessments": 5,
+    "company_summaries": 5,
+    "company_risk_assessments_v3": 5,
+    "company_summaries_v3": 4
+  },
+  "rows": [
+    {
+      "inn": "8602203965",
+      "status": "found",
+      "latency_ms": 1653.371,
+      "sql_queries": 91,
+      "payload_bytes": 3918
+    },
+    {
+      "inn": "7838040910",
+      "status": "found",
+      "latency_ms": 1139.057,
+      "sql_queries": 91,
+      "payload_bytes": 4057
+    },
+    {
+      "inn": "7802275725",
+      "status": "found",
+      "latency_ms": 1033.176,
+      "sql_queries": 91,
+      "payload_bytes": 3780
+    },
+    {
+      "inn": "7743338473",
+      "status": "found",
+      "latency_ms": 916.096,
+      "sql_queries": 91,
+      "payload_bytes": 3707
+    },
+    {
+      "inn": "7730709480",
+      "status": "found",
+      "latency_ms": 883.166,
+      "sql_queries": 90,
+      "payload_bytes": 715
+    }
+  ]
+}
