@@ -50,17 +50,35 @@ Source errors, protection, timeout or incomplete official responses must never b
 
 ## Next stage
 
-No new Wave source should be started merely because Wave 1 is closed.
+The immediate approved next stage is **Intermediate Stage 1.5** defined in `INTERMEDIATE_STAGE_1_5.md`.
 
-Proceed according to the approved post-Wave1 order in `WAVE_IMPLEMENTATION_PLAN.md` and `POST_WAVE1_PRODUCT_PLAN.md`:
+Stage 1.5 exists before the full Risk Engine because the product must first:
 
-1. freeze/synchronize approved post-Wave1 product specifications;
-2. Auto-update / Data Readiness;
-3. Company Card v2 + Risk Engine + Summary Engine + Report v1;
-4. Security & Resilience Gate;
-5. Legal Launch Gate;
-6. Product / Company Card Acceptance Gate;
-7. only then the first 10,000 SEO company pages and the later Company B2B Core stages;
-8. Wave 2 only at the approved later gate.
+- close final acceptance for FNS Tax Debt;
+- close final acceptance for FNS Tax Offences;
+- inventory/recover prior FSSP work;
+- inventory/recover prior Fedresurs/EFРSB work;
+- add/verify Courts v1 for arbitration and courts of general jurisdiction;
+- model bankruptcy/liquidation as stages/events rather than a single flag;
+- add FNS bank-account suspension decisions;
+- complete the Bank of Russia public high-risk/KYC technical probe;
+- add free-first corporate disclosure foundation;
+- prepare core Company Card facts required later by Risk/Summary.
+
+Stage 1.5 is not Wave 2.
+
+After Stage 1.5:
+
+1. Auto-update / Data Readiness;
+2. Risk Engine;
+3. Summary Engine;
+4. Company Card v2;
+5. Report v1;
+6. Security & Resilience Gate;
+7. Legal Launch Gate;
+8. Product / Company Card Acceptance Gate;
+9. first 10,000 SEO company pages;
+10. Lists/Bulk, Monitoring/Event Engine and Workspace v1;
+11. Wave 2 only at the approved later gate.
 
 Project name remains **Kontragent**.
