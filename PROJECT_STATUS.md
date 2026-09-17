@@ -28,7 +28,7 @@
 
 Last completed stage: **Auto-update / Data Readiness — COMPLETE / ACCEPTED**.
 
-Current approved next stage: **RISK ENGINE — DO NOT START AUTOMATICALLY**.
+Current active stage: **RISK ENGINE — IN PROGRESS**.
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -38,7 +38,7 @@ Current approved next stage: **RISK ENGINE — DO NOT START AUTOMATICALLY**.
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
-| 5. Проверки и риски | ▶️ CURRENT NEXT | Контракты checks/evidence уже заложены; Risk Engine следует после принятых Stage 1.5 и Data Readiness |
+| 5. Проверки и риски | 🟡 IN PROGRESS | Risk Engine v1 implementation and local acceptance are in progress on `codex/risk-engine`; final acceptance requires green GitHub CI |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Security & Resilience Gate | 🔵 обязательно | До массового публичного/SEO-релиза |

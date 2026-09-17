@@ -495,6 +495,16 @@ body {
     font-weight: 700;
 }
 
+.risk-engine-summary { display: grid; gap: 16px; }
+.risk-engine-overall { display: flex; justify-content: space-between; gap: 12px; padding: 14px; border-radius: 10px; background: #f3f5f7; }
+.risk-engine-critical { background: #ffe8e8; color: #8b1d1d; }
+.risk-engine-attention { background: #fff4d8; color: #704b00; }
+.risk-section-list { display: grid; gap: 8px; }
+.risk-section-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e6e8eb; }
+.risk-signal { padding: 12px; border: 1px solid #e0e4e8; border-radius: 8px; }
+.risk-signal summary { cursor: pointer; font-weight: 600; }
+.risk-signal pre { max-height: 220px; overflow: auto; white-space: pre-wrap; }
+
 
 /* CARDS */
 

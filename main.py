@@ -35,6 +35,7 @@ from app.services.npd_service import (
     refresh_npd_check_for_inn,
 )
 from app.services.data_readiness_service import get_data_readiness
+from app.services.risk_engine_service import get_latest_company_risk, recalculate_company_risk
 
 
 # =========================================================
@@ -331,6 +332,11 @@ async def company_page(
             detail="Компания не найдена",
         )
 
+    risk_assessment = get_latest_company_risk(clean_inn)
+    company["risk_assessment"] = (
+        risk_assessment.model_dump(mode="json") if risk_assessment else None
+    )
+
     company = prepare_company_for_template(
         company
     )
@@ -342,6 +348,17 @@ async def company_page(
             "company": company,
         },
     )
+
+
+@app.post("/company/{inn}/risk-assessment")
+async def company_risk_assessment(inn: str):
+    """Explicit on-demand calculation; opening a card never triggers it."""
+    clean_inn = validate_company_inn(inn)
+    try:
+        recalculate_company_risk(clean_inn)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
 @app.post(

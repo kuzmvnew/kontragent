@@ -130,50 +130,12 @@
 
 
             <!-- ======================================== -->
-            <!-- ИНДЕКС НАДЁЖНОСТИ -->
+            <!-- RISK ENGINE: signals and completeness, no magic score -->
             <!-- ======================================== -->
 
             <section class="card">
 
-                <h2>
-                    Индекс надёжности
-                </h2>
-
-                {% if company.risk_score is not none %}
-
-                    <div class="risk-score">
-
-                        <div class="risk-score-number">
-                            {{ company.risk_score }} / 100
-                        </div>
-
-                        {% if company.risk_label %}
-
-                            <div class="risk-score-label">
-                                {{ company.risk_label }}
-                            </div>
-
-                        {% endif %}
-
-                    </div>
-
-                {% else %}
-
-                    <div class="risk-placeholder">
-
-                        <div class="risk-placeholder-title">
-                            Пока не рассчитан
-                        </div>
-
-                        <p>
-                            Индекс появится после подключения
-                            анализа официальных источников
-                            и факторов риска.
-                        </p>
-
-                    </div>
-
-                {% endif %}
+                {% include "partials/risk_engine.html" %}
 
             </section>
 

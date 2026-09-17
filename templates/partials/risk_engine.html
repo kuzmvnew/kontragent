@@ -1,0 +1,55 @@
+<h2>Оценка рисков</h2>
+
+{% set risk = company.risk_assessment %}
+{% if risk %}
+    <div class="risk-engine-summary" data-assessment-id="{{ risk.assessment_id }}">
+        <div class="risk-engine-overall risk-engine-{{ risk.overall_status|lower }}">
+            <strong>{{ risk.overall_status }}</strong>
+            <span>Профиль: {{ risk.profile }}</span>
+        </div>
+        <p>
+            Рассчитано: {{ risk.calculated_at }} · Engine {{ risk.risk_engine_version }} · Rules {{ risk.ruleset_version }}
+        </p>
+        <div class="info-grid">
+            <div class="info-item"><div class="info-label">Применимые проверки</div><div class="info-value">{{ risk.completeness.total_applicable_checks }}</div></div>
+            <div class="info-item"><div class="info-label">Выполнено</div><div class="info-value">{{ risk.completeness.completed }}</div></div>
+            <div class="info-item"><div class="info-label">Недоступно</div><div class="info-value">{{ risk.completeness.unavailable }}</div></div>
+            <div class="info-item"><div class="info-label">Не проверено</div><div class="info-value">{{ risk.completeness.not_checked }}</div></div>
+            <div class="info-item"><div class="info-label">Устарело</div><div class="info-value">{{ risk.completeness.stale }}</div></div>
+            <div class="info-item"><div class="info-label">Частичное покрытие</div><div class="info-value">{{ risk.completeness.partial }}</div></div>
+        </div>
+
+        <h3>Разделы</h3>
+        <div class="risk-section-list">
+            {% for section in risk.section_assessments %}
+                <div class="risk-section-row">
+                    <strong>{{ section.section_code }}</strong>
+                    <span>{{ section.status }} · {{ section.severity }} · confidence {{ section.confidence }}</span>
+                </div>
+            {% endfor %}
+        </div>
+
+        <h3>Основные сигналы и ограничения</h3>
+        {% for signal in risk.signals if signal.status in ["CONFIRMED_RISK", "WARNING", "UNAVAILABLE", "NOT_CHECKED", "STALE", "PARTIAL_COVERAGE"] %}
+            <details class="risk-signal" data-signal-code="{{ signal.signal_code }}">
+                <summary>{{ signal.status }} · {{ signal.title }}</summary>
+                <p>{{ signal.explanation }}</p>
+                <p class="source-note">
+                    {{ signal.source_code }} / {{ signal.dataset_code }} · source_as_of {{ signal.source_as_of or "—" }} · coverage {{ signal.coverage }} · freshness {{ signal.freshness }}
+                </p>
+                {% if signal.observed_value is not none %}<pre>{{ signal.observed_value | tojson(indent=2) }}</pre>{% endif %}
+                {% if signal.calculation %}<p>Расчёт: {{ signal.calculation }}</p>{% endif %}
+                <p>Правило: {{ signal.rule_code }} v{{ signal.rule_version }}</p>
+            </details>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="risk-placeholder">
+        <div class="risk-placeholder-title">Оценка ещё не рассчитана</div>
+        <p>Расчёт выполняется только по запросу и использует сохранённые факты, проверки, coverage и freshness. Недоступный источник не станет чистым результатом.</p>
+    </div>
+{% endif %}
+
+<form method="post" action="/company/{{ company.inn }}/risk-assessment">
+    <button type="submit">{{ "Пересчитать оценку" if risk else "Рассчитать оценку" }}</button>
+</form>
