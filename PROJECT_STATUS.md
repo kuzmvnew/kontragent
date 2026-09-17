@@ -110,7 +110,7 @@ Current work items:
 3. FSSP — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata exists, no implementation/data/runs.
 4. Fedresurs/EFРSB — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata/specification exists, no implementation/data/runs.
 5. Bankruptcy/liquidation — ✅ normalized 15-state event model accepted; migration `f8b9c0d1e2f3`; no unsupported source events fabricated. Protocol: `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`.
-6. Arbitration Courts v1.
+6. Arbitration Courts v1 — ⛔ `SOURCE_BLOCKED / DECISION_REQUIRED`: public interactive KAD works (54 cases for exact INN probe), but direct endpoint returns HTTP 451 and standard headless Chromium cannot obtain results; paid/licensed feed evaluation requires owner approval. See `COURTS_STAGE_1_5_ACCESS_DECISION.md`.
 7. Courts of General Jurisdiction v1.
 8. FNS account-suspension decisions.
 9. Bank of Russia public high-risk/KYC technical probe and production-mode decision.

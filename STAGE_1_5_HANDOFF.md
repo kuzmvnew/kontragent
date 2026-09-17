@@ -74,6 +74,8 @@ Fedresurs/EFRSB inventory was completed on 2026-09-17. See `FEDRESURS_STAGE_1_5_
 
 Bankruptcy/liquidation semantics were accepted on 2026-09-17. See `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`. Migration `f8b9c0d1e2f3` adds a 15-state evidence-backed event model and the current product can project stored events conservatively. No source record was fabricated: the table remains empty until a future adapter passes its own access review and six gates.
 
+Arbitration Courts v1 reached an access decision point on 2026-09-17. See `COURTS_STAGE_1_5_ACCESS_DECISION.md`. The official interactive KAD lookup returned real exact-INN results, but the equivalent machine request received HTTP 451 and standard headless Chromium did not produce results. No bypass is permitted; C1 is `SOURCE_BLOCKED / DECISION_REQUIRED` pending explicit approval to evaluate a licensed/paid machine feed (or an explicit scope reduction that would not satisfy the current automated C1 completion criterion).
+
 Parallel work is allowed only when it does not risk database/schema conflicts or duplicate an existing source implementation.
 
 ## Permanent six-gate protocol
