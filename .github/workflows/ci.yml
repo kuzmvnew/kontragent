@@ -48,5 +48,26 @@ jobs:
       - name: Sync dependencies
         run: uv sync --group dev
 
+      - name: Verify migrations
+        run: uv run alembic upgrade head
+
+      - name: Check diff whitespace
+        run: git diff --check
+
+      - name: Lint critical Python errors
+        run: uvx --from ruff==0.13.1 ruff check --select E9,F63,F7,F82 .
+
+      - name: Static import and bytecode sanity
+        run: uv run python -m compileall -q app main.py scripts
+
+      - name: Scan tracked files for secrets
+        run: uv run python scripts/scan_secrets.py
+
+      - name: Audit Python dependencies
+        run: uv run --with pip-audit==2.9.0 pip-audit
+
       - name: Run test suite
         run: uv run python -m pytest -q
+
+      - name: Application startup smoke
+        run: uv run python -c "from fastapi.testclient import TestClient; from main import app; response=TestClient(app).get('/api/health'); assert response.status_code == 200; assert response.json()['status'] == 'ok'"

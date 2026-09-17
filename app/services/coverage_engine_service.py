@@ -20,6 +20,19 @@ def build_coverage_v2(
     catalog: SourceCapabilityCatalog = CATALOG,
 ) -> CoverageAssessmentV2:
     capabilities = catalog.for_profile(profile)
+    mandatory_capabilities = tuple(
+        item for item in capabilities if profile in item.mandatory_for_profiles
+    )
+    workflow_unattempted = tuple(
+        item.capability_id
+        for item in mandatory_capabilities
+        if item.capability_id not in resolved
+    )
+    workflow_total = len(mandatory_capabilities)
+    workflow_completed = workflow_total - len(workflow_unattempted)
+    workflow_percent = (
+        round(100 * workflow_completed / workflow_total) if workflow_total else 100
+    )
     applicable = []
     not_applicable = []
     for capability in capabilities:
@@ -74,6 +87,10 @@ def build_coverage_v2(
     return CoverageAssessmentV2(
         profile=profile, coverage_score=coverage, mandatory_score=mandatory_score,
         mandatory_hard_checks_resolved=not mandatory_unresolved,
+        workflow_completion_percent=workflow_percent,
+        workflow_completed=workflow_completed,
+        workflow_total=workflow_total,
+        workflow_unattempted_capabilities=workflow_unattempted,
         resolved_capabilities=tuple(resolved_codes), unresolved_capabilities=tuple(unresolved),
         partial_capabilities=tuple(partial), not_applicable_capabilities=tuple(not_applicable),
         breakdown=CoverageBreakdown(**breakdown),

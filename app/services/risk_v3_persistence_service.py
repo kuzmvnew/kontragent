@@ -41,13 +41,14 @@ def persist_v3_assessment(
             .where(
                 CompanyRiskAssessmentV3.company_id == company_id,
                 CompanyRiskAssessmentV3.input_hash == input_hash,
-                CompanyRiskAssessmentV3.risk_engine_version == "risk-engine-3.0.2",
+                CompanyRiskAssessmentV3.risk_engine_version == "risk-engine-3.1.0",
             )
             .order_by(CompanyRiskAssessmentV3.id.desc()).limit(1)
         )
         if previous:
             summary_row = session.scalar(select(CompanySummaryV3).where(CompanySummaryV3.risk_assessment_id == previous.assessment_id))
-            return RiskAssessmentV3.model_validate(previous.result_payload), SummaryV3.model_validate(summary_row.structured_payload), previous.assessment_id, True
+            if summary_row and summary_row.summary_engine_version == "summary-engine-3.1.1":
+                return RiskAssessmentV3.model_validate(previous.result_payload), SummaryV3.model_validate(summary_row.structured_payload), previous.assessment_id, True
     risk = build_risk_v3(resolved, profile=profile)
     summary = build_summary_v3(risk, resolved)
     assessment_id, summary_id = str(uuid4()), str(uuid4())

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date
 import re
 
@@ -89,4 +90,102 @@ def refresh_pd_operator_check(inn, request_date=None, provider=None, *, force_re
 
 
 def get_roskomnadzor_checks(inn):
-    return {**{channel: get_roskomnadzor_bulk_check_for_inn(inn, channel) for channel in PUBLIC_CHANNELS}, "pd_operators": get_cached_pd_operator_check(inn)}
+    """Batch all persisted company channels in one read-only DB session."""
+
+    clean_inn = _valid_company_inn(inn)
+    if not clean_inn:
+        return {
+            **{
+                channel: build_check_result(
+                    checked=True, applicable=False, result="not_applicable",
+                    data_date=None, dataset_code=DATASETS[channel], source=SOURCE_CODE,
+                    reason="company_layer_requires_legal_entity_inn10",
+                    matching_method=None, records=[], record_count=0,
+                )
+                for channel in PUBLIC_CHANNELS
+            },
+            "pd_operators": build_check_result(
+                checked=True, applicable=False, result="not_applicable",
+                data_date=None, dataset_code=DATASETS["pd_operators"], source=SOURCE_CODE,
+                reason="company_layer_requires_legal_entity_inn10",
+                matching_method=None, records=[], record_count=0,
+            ),
+        }
+
+    codes = [DATASETS[channel] for channel in PUBLIC_CHANNELS]
+    session = get_session()
+    try:
+        datasets = session.scalars(select(DataSet).where(DataSet.code.in_(codes))).all()
+        by_code = {item.code: item for item in datasets}
+        ids = [item.id for item in datasets]
+        snapshot_counts = dict(session.execute(
+            select(RoskomnadzorCompanyFact.dataset_id, func.count())
+            .where(RoskomnadzorCompanyFact.dataset_id.in_(ids))
+            .group_by(RoskomnadzorCompanyFact.dataset_id)
+        ).all()) if ids else {}
+        matched = session.scalars(
+            select(RoskomnadzorCompanyFact)
+            .where(
+                RoskomnadzorCompanyFact.dataset_id.in_(ids),
+                RoskomnadzorCompanyFact.inn == clean_inn,
+            )
+            .order_by(RoskomnadzorCompanyFact.external_number)
+        ).all() if ids else []
+        matched_by_dataset = defaultdict(list)
+        for row in matched:
+            matched_by_dataset[row.dataset_id].append(row)
+
+        notes = {
+            "media": "Exact ИНН подтверждает публикацию компании как учредителя СМИ; это не доказывает текущее владение или контроль.",
+            "communications": "Запись подтверждает опубликованную лицензию связи и её состояние на дату snapshot.",
+            "broadcast": "Запись подтверждает опубликованную лицензию вещания и её состояние на дату snapshot.",
+            "information_distributors": "Запись подтверждает включение в реестр организаторов распространения информации.",
+            "hosting": "Запись подтверждает включение в реестр провайдеров хостинга.",
+        }
+        output = {}
+        for channel in PUBLIC_CHANNELS:
+            code = DATASETS[channel]
+            dataset = by_code.get(code)
+            if dataset is None or dataset.last_data_date is None:
+                output[channel] = build_check_result(
+                    checked=False, applicable=True, result="unavailable",
+                    data_date=None, dataset_code=code, source=SOURCE_CODE,
+                    reason="dataset_not_loaded", matching_method="inn_exact",
+                    records=[], record_count=None,
+                )
+                continue
+            if not snapshot_counts.get(dataset.id):
+                output[channel] = build_check_result(
+                    checked=False, applicable=True, result="unavailable",
+                    data_date=dataset.last_data_date, dataset_code=code, source=SOURCE_CODE,
+                    reason="dataset_snapshot_missing", matching_method="inn_exact",
+                    records=[], record_count=None,
+                )
+                continue
+            rows = matched_by_dataset.get(dataset.id, [])
+            records = [{
+                "external_number": row.external_number, "name": row.name,
+                "ogrn": row.ogrn, "status": row.status, "issued_at": row.issued_at,
+                "valid_until": row.valid_until, "details": dict(row.public_details or {}),
+            } for row in rows]
+            output[channel] = build_check_result(
+                checked=True, applicable=True, result="found" if rows else "not_found",
+                data_date=dataset.last_data_date, dataset_code=code, source=SOURCE_CODE,
+                reason=None, matching_method="inn_exact", records=records,
+                record_count=len(records), interpretation_note=notes[channel],
+                coverage_note="Физлица, ИП и записи без точного ИНН юрлица изолированы и не входят в публичный результат.",
+            )
+
+        pd_row = session.scalar(select(RoskomnadzorPdOperatorCheck).where(
+            RoskomnadzorPdOperatorCheck.inn == clean_inn,
+            RoskomnadzorPdOperatorCheck.request_date == date.today(),
+        ))
+        output["pd_operators"] = _pd_result(pd_row) if pd_row else build_check_result(
+            checked=False, applicable=True, result="unavailable", data_date=None,
+            dataset_code=DATASETS["pd_operators"], source=SOURCE_CODE,
+            reason="not_checked", request_date=date.today(), cached=False,
+            matching_method="inn_exact", records=[], record_count=None,
+        )
+        return output
+    finally:
+        session.close()

@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from fastapi import (
+    Depends,
     FastAPI,
     HTTPException,
     Query,
@@ -39,8 +40,11 @@ from app.services.npd_service import (
 from app.services.data_readiness_service import get_data_readiness
 from app.services.risk_engine_service import get_latest_company_risk, recalculate_company_risk
 from app.services.summary_engine_service import generate_company_summary, get_latest_company_summary
+from app.services.risk_v3_persistence_service import get_latest_v3
 from app.contracts.orchestrator import CompanyCheckMode
+from app.contracts.company_views import PublicCompanyView
 from app.services.company_check_orchestrator import run_company_check
+from app.security.internal_auth import require_internal_token
 
 
 # =========================================================
@@ -338,6 +342,27 @@ def validate_company_inn(
     return clean_inn
 
 
+def load_company_read_model(inn: str):
+    """Load the persisted/cached company view without provider calls or writes."""
+
+    company = get_company_for_web(inn)
+    if company is None:
+        return None
+    latest_v3 = get_latest_v3(inn)
+    if latest_v3:
+        risk_v3, summary_v3 = latest_v3
+        company["risk_v3"] = risk_v3.model_dump(mode="json")
+        company["summary_v3"] = summary_v3.model_dump(mode="json")
+    else:
+        risk_assessment = get_latest_company_risk(inn)
+        company["risk_assessment"] = (
+            risk_assessment.model_dump(mode="json") if risk_assessment else None
+        )
+        summary = get_latest_company_summary(inn)
+        company["summary"] = summary.model_dump(mode="json") if summary else None
+    return company
+
+
 # =========================================================
 # HOME
 # =========================================================
@@ -347,7 +372,7 @@ def validate_company_inn(
     "/",
     response_class=HTMLResponse,
 )
-async def home(
+def home(
     request: Request,
 ):
     return templates.TemplateResponse(
@@ -369,7 +394,7 @@ async def home(
     "/search",
     response_class=HTMLResponse,
 )
-async def search(
+def search(
     request: Request,
     q: str = "",
 ):
@@ -417,28 +442,19 @@ async def search(
     "/company/{inn}",
     response_class=HTMLResponse,
 )
-async def company_page(
+def company_page(
     request: Request,
     inn: str,
 ):
     clean_inn = validate_company_inn(inn)
 
-    company = get_company_for_web(
-        clean_inn
-    )
+    company = load_company_read_model(clean_inn)
 
     if company is None:
         raise HTTPException(
             status_code=404,
             detail="Компания не найдена",
         )
-
-    risk_assessment = get_latest_company_risk(clean_inn)
-    company["risk_assessment"] = (
-        risk_assessment.model_dump(mode="json") if risk_assessment else None
-    )
-    summary = get_latest_company_summary(clean_inn)
-    company["summary"] = summary.model_dump(mode="json") if summary else None
 
     company = prepare_company_for_template(
         company
@@ -453,8 +469,8 @@ async def company_page(
     )
 
 
-@app.post("/company/{inn}/risk-assessment")
-async def company_risk_assessment(inn: str):
+@app.post("/company/{inn}/risk-assessment", dependencies=[Depends(require_internal_token)])
+def company_risk_assessment(inn: str):
     """Explicit on-demand calculation; opening a card never triggers it."""
     clean_inn = validate_company_inn(inn)
     try:
@@ -464,8 +480,8 @@ async def company_risk_assessment(inn: str):
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/summary")
-async def company_summary(inn: str):
+@app.post("/company/{inn}/summary", dependencies=[Depends(require_internal_token)])
+def company_summary(inn: str):
     """Explicit deterministic summary generation from the latest saved risk assessment."""
     clean_inn = validate_company_inn(inn)
     try:
@@ -475,8 +491,8 @@ async def company_summary(inn: str):
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/check")
-async def company_full_check(inn: str):
+@app.post("/company/{inn}/check", dependencies=[Depends(require_internal_token)])
+def company_full_check(inn: str):
     """Run the bounded FULL orchestration flow for one company."""
     clean_inn = validate_company_inn(inn)
     try:
@@ -488,8 +504,9 @@ async def company_full_check(inn: str):
 
 @app.post(
     "/company/{inn}/npd-check",
+    dependencies=[Depends(require_internal_token)],
 )
-async def company_npd_check(
+def company_npd_check(
     inn: str,
 ):
     clean_inn = validate_company_inn(inn)
@@ -506,8 +523,9 @@ async def company_npd_check(
 
 @app.post(
     "/company/{inn}/cbr-finorg-check",
+    dependencies=[Depends(require_internal_token)],
 )
-async def company_cbr_finorg_check(
+def company_cbr_finorg_check(
     inn: str,
 ):
     clean_inn = validate_company_inn(inn)
@@ -522,51 +540,51 @@ async def company_cbr_finorg_check(
     )
 
 
-@app.post("/company/{inn}/roszdrav-license-check")
-async def company_roszdrav_license_check(inn: str):
+@app.post("/company/{inn}/roszdrav-license-check", dependencies=[Depends(require_internal_token)])
+def company_roszdrav_license_check(inn: str):
     clean_inn = validate_company_inn(inn)
     refresh_roszdrav_unified_license_check(clean_inn)
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/roskomnadzor-pd-check")
-async def company_roskomnadzor_pd_check(inn: str):
+@app.post("/company/{inn}/roskomnadzor-pd-check", dependencies=[Depends(require_internal_token)])
+def company_roskomnadzor_pd_check(inn: str):
     clean_inn = validate_company_inn(inn)
     refresh_pd_operator_check(clean_inn)
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/sro-check")
-async def company_sro_check(inn: str):
+@app.post("/company/{inn}/sro-check", dependencies=[Depends(require_internal_token)])
+def company_sro_check(inn: str):
     clean_inn = validate_company_inn(inn)
     refresh_nostroy_check(clean_inn, applicable=True)
     refresh_nopriz_check(clean_inn, applicable=True)
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/corporate-disclosure-check")
-async def company_corporate_disclosure_check(inn: str):
+@app.post("/company/{inn}/corporate-disclosure-check", dependencies=[Depends(require_internal_token)])
+def company_corporate_disclosure_check(inn: str):
     clean_inn = validate_company_inn(inn)
     refresh_corporate_disclosure_check(clean_inn)
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/arbitration-courts-check")
-async def company_arbitration_courts_check(inn: str, deepen: bool = False):
+@app.post("/company/{inn}/arbitration-courts-check", dependencies=[Depends(require_internal_token)])
+def company_arbitration_courts_check(inn: str, deepen: bool = False):
     clean_inn = validate_company_inn(inn)
     refresh_arbitration_court_check(clean_inn, deepen=deepen)
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/general-courts-check")
-async def company_general_courts_check(inn: str):
+@app.post("/company/{inn}/general-courts-check", dependencies=[Depends(require_internal_token)])
+def company_general_courts_check(inn: str):
     clean_inn = validate_company_inn(inn)
     refresh_general_court_check(clean_inn)
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
-@app.post("/company/{inn}/protected-source/{source_code}/start")
-async def company_protected_source_start(inn: str, source_code: str):
+@app.post("/company/{inn}/protected-source/{source_code}/start", dependencies=[Depends(require_internal_token)])
+def company_protected_source_start(inn: str, source_code: str):
     clean_inn = validate_company_inn(inn)
     start_protected_source_session(clean_inn, source_code)
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
@@ -579,15 +597,14 @@ async def company_protected_source_start(inn: str, source_code: str):
 
 @app.get(
     "/api/company/{inn}",
+    response_model=PublicCompanyView,
 )
-async def api_company(
+def api_company(
     inn: str,
 ):
     clean_inn = validate_company_inn(inn)
 
-    company = get_company_for_web(
-        clean_inn
-    )
+    company = load_company_read_model(clean_inn)
 
     if company is None:
         raise HTTPException(
@@ -595,13 +612,14 @@ async def api_company(
             detail="Компания не найдена",
         )
 
-    return company
+    return PublicCompanyView.from_read_model(company)
 
 
 @app.post(
     "/api/company/{inn}/npd-check",
+    dependencies=[Depends(require_internal_token)],
 )
-async def api_company_npd_check(
+def api_company_npd_check(
     inn: str,
 ):
     clean_inn = validate_company_inn(inn)
@@ -613,8 +631,9 @@ async def api_company_npd_check(
 
 @app.post(
     "/api/company/{inn}/cbr-finorg-check",
+    dependencies=[Depends(require_internal_token)],
 )
-async def api_company_cbr_finorg_check(
+def api_company_cbr_finorg_check(
     inn: str,
 ):
     clean_inn = validate_company_inn(inn)
@@ -624,18 +643,18 @@ async def api_company_cbr_finorg_check(
     )
 
 
-@app.post("/api/company/{inn}/roszdrav-license-check")
-async def api_company_roszdrav_license_check(inn: str):
+@app.post("/api/company/{inn}/roszdrav-license-check", dependencies=[Depends(require_internal_token)])
+def api_company_roszdrav_license_check(inn: str):
     return refresh_roszdrav_unified_license_check(validate_company_inn(inn))
 
 
-@app.post("/api/company/{inn}/roskomnadzor-pd-check")
-async def api_company_roskomnadzor_pd_check(inn: str):
+@app.post("/api/company/{inn}/roskomnadzor-pd-check", dependencies=[Depends(require_internal_token)])
+def api_company_roskomnadzor_pd_check(inn: str):
     return refresh_pd_operator_check(validate_company_inn(inn))
 
 
-@app.post("/api/company/{inn}/sro-check")
-async def api_company_sro_check(inn: str):
+@app.post("/api/company/{inn}/sro-check", dependencies=[Depends(require_internal_token)])
+def api_company_sro_check(inn: str):
     clean_inn = validate_company_inn(inn)
     return {
         "nostroy": refresh_nostroy_check(clean_inn, applicable=True),
@@ -643,36 +662,36 @@ async def api_company_sro_check(inn: str):
     }
 
 
-@app.post("/api/company/{inn}/corporate-disclosure-check")
-async def api_company_corporate_disclosure_check(inn: str):
+@app.post("/api/company/{inn}/corporate-disclosure-check", dependencies=[Depends(require_internal_token)])
+def api_company_corporate_disclosure_check(inn: str):
     return refresh_corporate_disclosure_check(validate_company_inn(inn))
 
 
-@app.post("/api/company/{inn}/arbitration-courts-check")
-async def api_company_arbitration_courts_check(inn: str, deepen: bool = False):
+@app.post("/api/company/{inn}/arbitration-courts-check", dependencies=[Depends(require_internal_token)])
+def api_company_arbitration_courts_check(inn: str, deepen: bool = False):
     return refresh_arbitration_court_check(validate_company_inn(inn), deepen=deepen)
 
 
-@app.post("/api/company/{inn}/general-courts-check")
-async def api_company_general_courts_check(inn: str):
+@app.post("/api/company/{inn}/general-courts-check", dependencies=[Depends(require_internal_token)])
+def api_company_general_courts_check(inn: str):
     return refresh_general_court_check(validate_company_inn(inn))
 
 
-@app.post("/api/company/{inn}/check")
-async def api_company_check(
+@app.post("/api/company/{inn}/check", dependencies=[Depends(require_internal_token)])
+def api_company_check(
     inn: str,
     mode: CompanyCheckMode = Query(default=CompanyCheckMode.QUICK),
 ):
     return run_company_check(validate_company_inn(inn), mode=mode)
 
 
-@app.post("/api/company/{inn}/protected-source/{source_code}/start")
-async def api_company_protected_source_start(inn: str, source_code: str):
+@app.post("/api/company/{inn}/protected-source/{source_code}/start", dependencies=[Depends(require_internal_token)])
+def api_company_protected_source_start(inn: str, source_code: str):
     return start_protected_source_session(validate_company_inn(inn), source_code)
 
 
-@app.post("/api/roszdrav/medical-device-check")
-async def api_roszdrav_medical_device_check(
+@app.post("/api/roszdrav/medical-device-check", dependencies=[Depends(require_internal_token)])
+def api_roszdrav_medical_device_check(
     registration_number: str = Query(min_length=1, max_length=160),
 ):
     return refresh_roszdrav_medical_device_check(registration_number)
@@ -686,7 +705,7 @@ async def api_roszdrav_medical_device_check(
 @app.get(
     "/api/search",
 )
-async def api_search(
+def api_search(
     q: str = "",
 ):
     query = q.strip()
@@ -715,8 +734,8 @@ async def api_search(
 # =========================================================
 
 
-@app.get("/internal/data-readiness", response_class=HTMLResponse, include_in_schema=False)
-async def internal_data_readiness_page(request: Request):
+@app.get("/internal/data-readiness", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(require_internal_token)])
+def internal_data_readiness_page(request: Request):
     response = templates.TemplateResponse(
         request=request,
         name="data_readiness.html",
@@ -727,15 +746,15 @@ async def internal_data_readiness_page(request: Request):
     return response
 
 
-@app.get("/internal/api/data-readiness", include_in_schema=False)
-async def internal_data_readiness_api():
+@app.get("/internal/api/data-readiness", include_in_schema=False, dependencies=[Depends(require_internal_token)])
+def internal_data_readiness_api():
     return get_data_readiness()
 
 
 @app.get(
     "/api/health",
 )
-async def health():
+def health():
     return {
         "status": "ok",
         "version": "0.5.0",

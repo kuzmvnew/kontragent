@@ -8,6 +8,8 @@ from urllib.parse import urlencode, urljoin
 
 import httpx
 
+from app.services.source_rate_governor import SourceRateGovernor, SourceRatePolicy
+
 
 MOSCOW_BASE_URL = "https://mos-gorsud.ru"
 MOSCOW_SEARCH_URL = MOSCOW_BASE_URL + "/search"
@@ -154,13 +156,16 @@ def parse_moscow_court_search_html(content: str, *, full_name: str) -> dict:
 class MoscowCourtProvider:
     code = "moscow_courts_official"
 
-    def __init__(self, client=None):
+    def __init__(self, client=None, governor: SourceRateGovernor | None = None):
         self.client = client or httpx.Client(
             timeout=45,
             follow_redirects=True,
             http2=False,
             headers={"User-Agent": "Mozilla/5.0 (compatible; Kontragent/1.0; targeted company lookup)"},
         )
+        self.governor = governor or SourceRateGovernor({
+            self.code: SourceRatePolicy(3, 6, concurrency=1, max_retries=1, max_session_requests=80, max_daily_requests=500),
+        })
 
     def search_company(self, *, inn: str, ogrn: str | None, full_name: str) -> dict:
         if not full_name.strip():
@@ -168,7 +173,10 @@ class MoscowCourtProvider:
         params = {"participant": full_name.strip(), "limit": 100, "page": 1}
         url = MOSCOW_SEARCH_URL + "?" + urlencode(params)
         try:
-            response = self.client.get(MOSCOW_SEARCH_URL, params=params)
+            response = self.governor.run(
+                self.code, inn,
+                lambda: self.client.get(MOSCOW_SEARCH_URL, params=params),
+            )
         except httpx.TimeoutException as error:
             raise GeneralCourtProviderError(kind="timeout", message="Превышено время ожидания портала судов Москвы") from error
         except httpx.RequestError as error:
@@ -186,9 +194,19 @@ class RegionalSudrfProvider:
     code = "regional_sudrf_official"
     exact_identifier_fields = {"inn": "G2_PARTS__INN_STRSS", "ogrn": "G2_PARTS__OGRN_STRSS"}
 
-    def __init__(self, *, base_url: str | None = None, delo_id: str = "1540005"):
+    def __init__(self, *, base_url: str | None = None, delo_id: str = "1540005", region_name: str = "регион", client=None, governor: SourceRateGovernor | None = None):
         self.base_url = base_url
         self.delo_id = delo_id
+        self.region_name = region_name
+        self.client = client or httpx.Client(
+            timeout=45,
+            follow_redirects=True,
+            http2=False,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Kontragent/1.0; targeted company lookup)"},
+        )
+        self.governor = governor or SourceRateGovernor({
+            self.code: SourceRatePolicy(4, 8, concurrency=1, max_retries=1, max_session_requests=80, max_daily_requests=500),
+        })
 
     @classmethod
     def build_exact_identifier_params(cls, *, inn: str, ogrn: str | None = None, delo_id: str) -> dict:
@@ -204,6 +222,45 @@ class RegionalSudrfProvider:
             raise ValueError("Regional sudrf target не настроен")
         params = self.build_exact_identifier_params(inn=inn, ogrn=ogrn, delo_id=self.delo_id)
         return self.base_url + "?" + urlencode(params)
+
+    def search_company(self, *, inn: str, ogrn: str | None, full_name: str) -> dict:
+        if not self.base_url:
+            raise GeneralCourtProviderError(kind="access_pending", message="Региональный портал не настроен")
+        params = self.build_exact_identifier_params(inn=inn, ogrn=ogrn, delo_id=self.delo_id)
+        url = self.build_search_url(inn=inn, ogrn=ogrn)
+        try:
+            response = self.governor.run(
+                self.code, f"{self.base_url}:{inn}:{ogrn or ''}",
+                lambda: self.client.get(self.base_url, params=params),
+            )
+        except httpx.TimeoutException as error:
+            raise GeneralCourtProviderError(kind="timeout", message="Превышено время ожидания регионального портала") from error
+        except httpx.RequestError as error:
+            raise GeneralCourtProviderError(kind="network_error", message="Сетевая ошибка регионального портала") from error
+        if response.status_code in {403, 429}:
+            raise GeneralCourtProviderError(kind="source_protection", message=f"Источник вернул HTTP {response.status_code}", http_status=response.status_code)
+        if response.status_code != 200:
+            raise GeneralCourtProviderError(kind="http_error", message=f"Источник вернул HTTP {response.status_code}", http_status=response.status_code)
+        text = " ".join(re.sub(r"<[^>]+>", " ", response.text).split())
+        if re.search(r"капч|подтвердите,? что вы не робот|smartcaptcha", text, re.I):
+            raise GeneralCourtProviderError(kind="challenge_required", message="Официальный портал запросил human challenge")
+        if re.search(r"по вашему запросу .{0,40} не найден|дела не найдены", text, re.I):
+            return {
+                "cases": [],
+                "coverage": {
+                    "coverage_source": self.code,
+                    "regions_checked": [self.region_name],
+                    "portals_checked": [self.base_url],
+                    "matching_confidence": "high",
+                    "coverage_label": "TARGETED REGIONAL EXACT IDENTIFIER QUERY",
+                },
+                "source_url": url,
+                "http_status": 200,
+            }
+        raise GeneralCourtProviderError(
+            kind="parser_unconfirmed",
+            message="Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        )
 
 
 class GasPravosudieProvider:
@@ -253,6 +310,6 @@ class GeneralCourtRouter:
             return route, MoscowCourtProvider()
         route = REGIONAL_TARGETS.get(code)
         if route:
-            return route, RegionalSudrfProvider(base_url=route.portal_url)
+            return route, RegionalSudrfProvider(base_url=route.portal_url, region_name=route.region_name)
         fallback = GeneralCourtRoute(code or None, "Регион не настроен", "gas_pravosudie_official", BSRProvider.source_url, "central_access_unconfirmed")
         return fallback, CentralGasProvider()

@@ -136,11 +136,15 @@ class CoverageBreakdown(ContractModel):
 
 
 class CoverageAssessmentV2(ContractModel):
-    version: str = "coverage-engine-2.0.0"
+    version: str = "coverage-engine-2.1.0"
     profile: RiskProfile
     coverage_score: int = Field(ge=0, le=100)
     mandatory_score: int = Field(ge=0, le=100)
     mandatory_hard_checks_resolved: bool
+    workflow_completion_percent: int = Field(default=0, ge=0, le=100)
+    workflow_completed: int = Field(default=0, ge=0)
+    workflow_total: int = Field(default=0, ge=0)
+    workflow_unattempted_capabilities: tuple[str, ...] = ()
     resolved_capabilities: tuple[str, ...]
     unresolved_capabilities: tuple[str, ...]
     partial_capabilities: tuple[str, ...]

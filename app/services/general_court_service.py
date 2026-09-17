@@ -9,7 +9,11 @@ from sqlalchemy.dialects.postgresql import insert
 from app.database.postgres import get_session
 from app.models.company import Company
 from app.models.stage15_checks import GeneralCourtCheck
-from app.providers.general_court_provider import GeneralCourtProviderError, MOSCOW_SEARCH_URL, MoscowCourtProvider
+from app.providers.general_court_provider import (
+    GeneralCourtProviderError,
+    GeneralCourtRouter,
+    MOSCOW_SEARCH_URL,
+)
 from app.services.check_result import build_check_result
 from app.services.stage15_registry_service import ensure_stage15_dataset
 
@@ -63,9 +67,17 @@ def refresh_general_court_check(inn, request_date=None, provider=None, *, force_
     if company is None:
         raise ValueError("Компания отсутствует в master registry")
     full_name = (company.full_name or company.name or "").strip()
-    provider = provider or MoscowCourtProvider()
-    values = {"company_id": company.id, "dataset_id": dataset_id, "inn": inn, "request_date": request_date, "provider_code": provider.code, "source_url": MOSCOW_SEARCH_URL}
+    route = None
+    if provider is None:
+        route, provider = GeneralCourtRouter().route(company.region_code)
+    source_url = route.portal_url if route else getattr(provider, "source_url", MOSCOW_SEARCH_URL)
+    values = {"company_id": company.id, "dataset_id": dataset_id, "inn": inn, "request_date": request_date, "provider_code": provider.code, "source_url": source_url}
     try:
+        if not hasattr(provider, "search_company"):
+            raise GeneralCourtProviderError(
+                kind="access_pending",
+                message="Для региона не настроен проверяемый official path",
+            )
         response = provider.search_company(inn=inn, ogrn=company.ogrn, full_name=full_name)
         values.update(result_status="success", cases=response["cases"], coverage=response["coverage"], source_url=response["source_url"], http_status=response["http_status"], error_code=None, error_message=None)
     except GeneralCourtProviderError as error:

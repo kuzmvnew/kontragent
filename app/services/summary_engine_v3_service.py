@@ -10,20 +10,59 @@ from app.contracts.summary_v3 import SummarySourceDetailV3, SummaryV3
 
 SOURCE_TYPE = {SourceClass.OFFICIAL_DIRECT:"официальный прямой источник",SourceClass.OFFICIAL_DOWNLOADED_DATASET:"официальный набор данных",SourceClass.AUTHORIZED_BRIDGE:"разрешённый информационный мост",SourceClass.DISCOVERY_ONLY:"поисковый сигнал"}
 NAMES = {"registration":"Регистрационный статус","bankruptcy":"ЕФРСБ / сведения о банкротстве","fssp":"ФССП","tax_debt":"Налоговая задолженность ФНС","tax_offence":"Налоговые правонарушения ФНС","finance":"Финансовая отчётность ФНС","arbitration":"Арбитражные дела","general_courts":"Суды общей юрисдикции","cbr_zsk":"Платформа ЗСК Банка России","cbr_warning":"Предупредительный список Банка России","bankinform":"Приостановления операций ФНС","management":"Реестр дисквалифицированных лиц ФНС","licences_sro":"Лицензии и СРО","procurement_rnp":"РНП","regulatory_inspections":"Контрольные мероприятия"}
+POSITIVE_TEXT = {
+    "cbr_warning": "Предупредительный список Банка России — совпадений не найдено.",
+    "management": "Реестр дисквалифицированных лиц ФНС — совпадений не найдено.",
+    "fssp": "ФССП — действующие производства не найдены.",
+    "cbr_zsk": "Платформа ЗСК Банка России — сведения о высокой группе риска не найдены.",
+}
+
+
+def _points_text(value: float) -> str:
+    """Return compact Russian client copy for a risk-point amount."""
+
+    absolute = abs(value)
+    if absolute == int(absolute):
+        integer = int(absolute) % 100
+        tail = integer % 10
+        word = "балл" if tail == 1 and integer != 11 else "балла" if tail in {2, 3, 4} and integer not in {12, 13, 14} else "баллов"
+    else:
+        word = "балла"
+    return f"{value:g} {word}"
+
+
+def _client_limitation(value: str | None) -> str:
+    """Keep transport terminology and parser details out of the first view."""
+
+    text = (value or "").strip()
+    lowered = text.lower()
+    if not text:
+        return "проверка не дала полного результата"
+    if "не настроен" in lowered or "не подключен" in lowered:
+        return "проверка источника пока недоступна в текущей среде"
+    if "challenge" in lowered or "интерактив" in lowered:
+        return "источник требует ручного подтверждения"
+    if "exact-inn" in lowered:
+        return "источник не подтвердил точное совпадение по ИНН"
+    if "firmoteka" in lowered and "структурирован" in lowered:
+        return "результат проверки пока неполный"
+    if "official flow" in lowered or "публичный/машинный" in lowered:
+        return "проверка официального источника пока недоступна"
+    return text
 
 
 def build_summary_v3(risk: RiskAssessmentV3, resolved: Mapping[str, NormalizedCheckResult]) -> SummaryV3:
     coverage=risk.coverage
     positive_allowed=coverage.coverage_score>=90 and coverage.mandatory_hard_checks_resolved and risk.risk_score<20
-    reasons=tuple(f"{point.fact} — {point.points:g} балла" for point in sorted(risk.points,key=lambda x:x.points,reverse=True)[:3])
+    reasons=tuple(f"{point.fact} — {_points_text(point.points)}" for point in sorted(risk.points,key=lambda x:x.points,reverse=True)[:3])
     positives=[]; limitations=[]; recommendations=[]
     for code,item in resolved.items():
         name=NAMES.get(code,code)
         if item.result==NormalizedResultStatus.NOT_FOUND and item.coverage>=1:
-            positives.append(f"{name} — совпадений или неблагоприятных сведений не найдено")
+            positives.append(POSITIVE_TEXT.get(code, f"{name} — неблагоприятные сведения не найдены."))
         elif item.result in {NormalizedResultStatus.UNAVAILABLE,NormalizedResultStatus.ERROR,NormalizedResultStatus.PARTIAL} or item.coverage<1:
-            reason=item.limitation or "проверка не дала полного результата"
-            limitations.append(f"{name}: {reason} Это ограничивает полноту, но не добавляет риск-баллы.")
+            reason=_client_limitation(item.limitation)
+            limitations.append(f"{name}: {reason}")
     for point in sorted(risk.points,key=lambda x:x.points,reverse=True)[:3]:
         recommendations.append({
             "bankruptcy":"Проверить текущую стадию банкротства и последнее сообщение ЕФРСБ.",
@@ -32,14 +71,15 @@ def build_summary_v3(risk: RiskAssessmentV3, resolved: Mapping[str, NormalizedCh
             "courts":"Открыть последние судебные акты и проверить роль компании и текущую стадию дел.",
             "finance":"Сверить финансовую отчётность и причины убытка за указанные периоды.",
             "compliance":"Проверить официальный результат и основания регуляторного сигнала.",
-        }.get(point.section,"Проверить первичный документ источника по указанному фактору."))
+        }.get(point.section,"Сверить сведения с документами контрагента."))
     details=[]
     point_by_cap={p.capability_id:p for p in risk.points}
     for code,item in resolved.items():
         point=point_by_cap.get(code)
         details.append(SummarySourceDetailV3(source=NAMES.get(code,item.source_code),source_type=SOURCE_TYPE[item.source_class],
             date=item.source_as_of.strftime("%d.%m.%Y") if item.source_as_of else item.checked_at.strftime("%d.%m.%Y") if item.checked_at else None,
-            coverage=f"{round(item.coverage*100)}/100",rule=point.rule if point else None,risk_points=point.points if point else 0))
+            coverage=f"{round(item.coverage*100)}/100",rule=point.rule if point else None,
+            calculation=point.calculation if point else None,risk_points=point.points if point else 0))
     if positive_allowed:
         conclusion="Существенных рисков по выполненным проверкам не выявлено. Обязательные проверки завершены."
     elif risk.overall=="Недостаточно данных для полного вывода":
@@ -48,7 +88,7 @@ def build_summary_v3(risk: RiskAssessmentV3, resolved: Mapping[str, NormalizedCh
         conclusion=f"Индекс отражает подтверждённые факторы, главный из них: {reasons[0]}. Это не вероятность дефолта или мошенничества."
     else:
         conclusion="Подтверждённые риск-факторы не выявлены, но положительный вывод ограничен полнотой проверки."
-    prefix="Предварительный индекс риска" if risk.preliminary else "Риск"
-    return SummaryV3(risk_line=f"{prefix}: {risk.risk_score}/100 — {risk.label.lower()}",coverage_line=f"Полнота проверки: {coverage.coverage_score}/100",
+    return SummaryV3(risk_line=f"Индекс риска: {risk.risk_score}/100 — {risk.label.lower()}",coverage_line=f"Полнота данных: {coverage.coverage_score}/100",
+        workflow_line=f"Проверки завершены: {coverage.workflow_completed}/{coverage.workflow_total} ({coverage.workflow_completion_percent}%)",
         conclusion=conclusion,main_reasons=reasons,positive_checks=tuple(positives),limitations=tuple(limitations),recommendations=tuple(dict.fromkeys(recommendations)),
         source_details=tuple(details),positive_conclusion_allowed=positive_allowed)

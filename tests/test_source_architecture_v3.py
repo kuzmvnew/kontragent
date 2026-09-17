@@ -13,7 +13,13 @@ from app.contracts.source_architecture import (
 from app.services.coverage_engine_service import build_coverage_v2
 from app.services.risk_engine_v3_service import build_risk_v3
 from app.services.source_capability_catalog import CATALOG
-from app.services.source_rate_governor import FIRMOTEKA_BASELINE_POLICY, CircuitOpenError, SourceRateGovernor
+from app.services.source_rate_governor import (
+    FIRMOTEKA_BASELINE_POLICY,
+    CircuitOpenError,
+    SourceBudgetExceededError,
+    SourceRateGovernor,
+    SourceRatePolicy,
+)
 from app.services.source_resolution_service import SourceResolver, SourceRunnerRegistry
 from app.services.summary_engine_v3_service import build_summary_v3
 from app.sources.direct_runners import CbrZskRunner, FnsBankinformRunner, FsspDirectRunner
@@ -181,11 +187,26 @@ def test_low_coverage_gate_and_positive_conclusion_gate():
     assert "Существенных рисков" in summary.conclusion
 
 
+def test_workflow_completion_is_separate_from_evidence_coverage():
+    attempted = clean_mandatory()
+    attempted["fssp"] = result(
+        "fssp", NormalizedResultStatus.UNAVAILABLE,
+        SourceClass.OFFICIAL_DIRECT, "fssp_direct", coverage=0,
+    )
+    coverage = build_coverage_v2(attempted, profile=RiskProfile.GENERAL_LE)
+    assert coverage.workflow_completion_percent == 100
+    assert coverage.coverage_score < 100
+    del attempted["general_courts"]
+    incomplete = build_coverage_v2(attempted, profile=RiskProfile.GENERAL_LE)
+    assert incomplete.workflow_completion_percent < 100
+    assert incomplete.workflow_unattempted_capabilities == ("general_courts",)
+
+
 def test_positive_wording_is_source_specific_and_has_no_internal_jargon():
     complete = clean_mandatory(); risk = build_risk_v3(complete, profile=RiskProfile.GENERAL_LE); summary=build_summary_v3(risk,complete)
     combined=" ".join(summary.positive_checks + summary.limitations + (summary.conclusion,))
     assert "Предупредительный список Банка России" in combined
-    for token in ("NOT_FOUND","UNAVAILABLE","PARTIAL","rule_code","dataset_code","not_checked","INACTIVE","competitive_proceedings"):
+    for token in ("NOT_FOUND","UNAVAILABLE","PARTIAL","rule_code","dataset_code","not_checked","INACTIVE","competitive_proceedings","official flow","Публичный/машинный"):
         assert token not in combined
 
 
@@ -221,3 +242,13 @@ def test_rate_governor_enforces_authorized_identity_cache_and_circuit():
     for _ in range(3):
         with pytest.raises(RuntimeError): failing.run("firmoteka",str(_),lambda:(_ for _ in ()).throw(RuntimeError("blocked")),worker_id="w1",egress_ip="1.2.3.4",shard="00")
     with pytest.raises(CircuitOpenError): failing.acquire("firmoteka",worker_id="w1",egress_ip="1.2.3.4",shard="00")
+
+
+def test_rate_governor_enforces_session_and_daily_budgets():
+    policy = SourceRatePolicy(
+        0, 0, max_retries=0, max_session_requests=1, max_daily_requests=1,
+    )
+    governor = SourceRateGovernor({"source": policy}, random_uniform=lambda _a, _b: 0)
+    assert governor.run("source", "first", lambda: "ok") == "ok"
+    with pytest.raises(SourceBudgetExceededError):
+        governor.run("source", "second", lambda: "must-not-run")

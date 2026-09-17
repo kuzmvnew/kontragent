@@ -1,4 +1,7 @@
-from sqlalchemy import select
+import re
+from difflib import SequenceMatcher
+
+from sqlalchemy import case, desc, func, literal, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.database.postgres import get_session
@@ -273,8 +276,34 @@ def get_company_by_inn(inn: str):
     return company
 
 
+LEGAL_FORM_PATTERN = re.compile(
+    r"\b(?:общество\s+с\s+ограниченной\s+ответственностью|публичное\s+акционерное\s+общество|"
+    r"акционерное\s+общество|закрытое\s+акционерное\s+общество|индивидуальный\s+предприниматель|"
+    r"ооо|пао|оао|ао|зао|ип)\b",
+    re.IGNORECASE,
+)
+
+
+def normalize_company_name(value: str) -> str:
+    value = str(value or "").casefold().replace("ё", "е")
+    value = re.sub(r"[«»„“”\"'`()\[\]{},.]", " ", value)
+    value = LEGAL_FORM_PATTERN.sub(" ", value)
+    return " ".join(value.split())
+
+
+def _search_result(company: Company) -> dict:
+    return {
+        "inn": company.inn,
+        "kpp": company.kpp,
+        "ogrn": company.ogrn,
+        "name": company.name,
+        "address": company.address,
+        "activity": company.activity,
+    }
+
+
 def search_companies(query: str, limit: int = 20):
-    query = query.strip()
+    query = " ".join(query.strip().split())
 
     if not query:
         return []
@@ -283,31 +312,52 @@ def search_companies(query: str, limit: int = 20):
 
     try:
         if query.isdigit():
-
+            # Identifier matches are deterministic and always outrank prefixes.
             statement = (
                 select(Company)
                 .where(
-                    Company.inn.startswith(query)
+                    or_(
+                        Company.inn == query,
+                        Company.ogrn == query,
+                        Company.inn.startswith(query),
+                    )
                 )
                 .order_by(
-                    Company.name
+                    case(
+                        (Company.inn == query, 0),
+                        (Company.ogrn == query, 1),
+                        else_=2,
+                    ),
+                    Company.name,
                 )
                 .limit(limit)
             )
 
         else:
-
+            raw = query.casefold().replace("ё", "е")
+            normalized = normalize_company_name(query)
+            lowered_name = func.lower(Company.name)
+            similarity = func.greatest(
+                func.word_similarity(raw, lowered_name),
+                func.word_similarity(normalized, lowered_name),
+            )
+            # Candidate lookup contains only expressions supported by the
+            # lower(name) pg_trgm index.  Legal-form normalization and final
+            # ranking run in Python over this bounded candidate set.
             statement = (
                 select(Company)
                 .where(
-                    Company.name.ilike(
-                        f"%{query}%"
+                    or_(
+                        lowered_name == raw,
+                        lowered_name.startswith(raw),
+                        lowered_name.ilike(f"%{raw}%"),
+                        lowered_name.ilike(f"%{normalized}%"),
+                        literal(raw).op("<%")(lowered_name),
+                        literal(normalized).op("<%")(lowered_name),
                     )
                 )
-                .order_by(
-                    Company.name
-                )
-                .limit(limit)
+                .order_by(desc(similarity), Company.name)
+                .limit(max(100, limit * 10))
             )
 
         companies = (
@@ -318,22 +368,27 @@ def search_companies(query: str, limit: int = 20):
             .all()
         )
 
-        results = []
+        if query.isdigit():
+            return [_search_result(company) for company in companies]
 
-        for company in companies:
-            results.append(
-                {
-                    "id": company.id,
-                    "inn": company.inn,
-                    "kpp": company.kpp,
-                    "ogrn": company.ogrn,
-                    "name": company.name,
-                    "address": company.address,
-                    "activity": company.activity,
-                }
+        def rank(company: Company):
+            name = company.name.casefold().replace("ё", "е")
+            canonical = normalize_company_name(company.name)
+            tier = (
+                0 if name == raw
+                else 1 if canonical == normalized
+                else 2 if name.startswith(raw) or canonical.startswith(normalized)
+                else 3 if raw in name or normalized in canonical
+                else 4
             )
+            fuzzy = max(
+                SequenceMatcher(None, name, raw).ratio(),
+                SequenceMatcher(None, canonical, normalized).ratio(),
+            )
+            return tier, -fuzzy, company.name
 
-        return results
+        companies.sort(key=rank)
+        return [_search_result(company) for company in companies[:limit]]
 
     finally:
         session.close()

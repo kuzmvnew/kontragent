@@ -7,6 +7,8 @@ from typing import Callable, Protocol
 
 import httpx
 
+from app.services.source_rate_governor import SourceRateGovernor, SourceRatePolicy
+
 
 CHECKO_URL = "https://api.checko.ru/v2/legal-cases"
 
@@ -60,10 +62,13 @@ def parse_checko_legal_cases(payload: dict, *, page: int, limit: int) -> dict:
 class CheckoArbitrationProvider:
     code = "checko_legal_cases"
 
-    def __init__(self, api_key: str | None = None, client=None, quota_guard: Callable[[], bool] | None = None):
+    def __init__(self, api_key: str | None = None, client=None, quota_guard: Callable[[], bool] | None = None, governor: SourceRateGovernor | None = None):
         self.api_key = api_key or os.getenv("CHECKO_API_KEY")
         self.client = client or httpx.Client(timeout=30, follow_redirects=True, http2=False)
         self.quota_guard = quota_guard
+        self.governor = governor or SourceRateGovernor({
+            self.code: SourceRatePolicy(1, 3, concurrency=1, max_retries=1, max_session_requests=80, max_daily_requests=500),
+        })
 
     def search_company(self, *, inn: str, date_from: date, date_to: date, page: int, limit: int = 100) -> dict:
         if not re.fullmatch(r"\d{10}|\d{12}", str(inn or "")):
@@ -85,7 +90,10 @@ class CheckoArbitrationProvider:
         }
         try:
             # POST keeps the credential out of URLs, access logs and persisted evidence.
-            response = self.client.post(CHECKO_URL, json=params)
+            response = self.governor.run(
+                self.code, f"{inn}:{date_from}:{date_to}:{page}",
+                lambda: self.client.post(CHECKO_URL, json=params),
+            )
         except httpx.TimeoutException as error:
             raise ArbitrationCourtProviderError(kind="timeout", message="Превышено время ожидания Checko") from error
         except httpx.RequestError as error:

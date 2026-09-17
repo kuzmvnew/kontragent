@@ -82,9 +82,13 @@ def get_roszdrav_bulk_license_check_for_inn(inn: str) -> dict:
                 interpretation_note="Три категории лицензий должны относиться к одной дате snapshot.",
                 coverage_note="Смешанные даты не трактуются как полный срез и не дают not_found.",
             )
+        snapshot_counts = dict(session.execute(
+            select(RoszdravLicenseEntry.dataset_id, func.count())
+            .where(RoszdravLicenseEntry.dataset_id.in_([item.id for item in datasets]))
+            .group_by(RoszdravLicenseEntry.dataset_id)
+        ).all())
         for code, dataset in by_code.items():
-            count = session.execute(select(func.count()).select_from(RoszdravLicenseEntry).where(RoszdravLicenseEntry.dataset_id == dataset.id)).scalar_one()
-            if count == 0:
+            if not snapshot_counts.get(dataset.id):
                 return build_check_result(
                     checked=False, applicable=True, result="unavailable", data_date=dataset.last_data_date,
                     dataset_code="roszdrav_bulk_licenses", source=SOURCE_CODE,

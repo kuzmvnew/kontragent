@@ -1534,30 +1534,15 @@ def get_company_for_web(
     inn: str,
 ):
     """
-    Режим сайта.
+    Read-only public-card mode.
 
-    Сначала только PostgreSQL.
-
-    Внешний API вызывается только,
-    если компании вообще нет
-    в нашей локальной базе.
+    A public GET must never discover or create a company through a provider.
+    Explicit enrichment workflows call ``aggregate_company`` with
+    ``refresh_external=True`` themselves after internal authorization.
     """
-
-    company = (
-        aggregate_company(
-            inn=(
-                inn
-            ),
-            refresh_external=False,
-        )
-    )
-
-    if company is not None:
-        return company
-
     return aggregate_company(
         inn=(
             inn
         ),
-        refresh_external=True,
+        refresh_external=False,
     )

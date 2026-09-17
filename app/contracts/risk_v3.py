@@ -28,7 +28,7 @@ class RiskPoint(ContractModel):
 
 
 class RiskAssessmentV3(ContractModel):
-    version: str = "risk-engine-3.0.2"
+    version: str = "risk-engine-3.1.0"
     profile: RiskProfile
     risk_score: int = Field(ge=0, le=100)
     reliability_index: int = Field(ge=0, le=100)

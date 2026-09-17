@@ -197,14 +197,15 @@ def get_erknm_check_for_company(
             matching_condition,
         )
 
-        total_count = (
-            session.execute(
-                select(func.count())
-                .select_from(ErknmInspection)
-                .where(*common_filters)
+        total_count, result_count, warning_count = session.execute(
+            select(
+                func.count(),
+                func.count().filter(ErknmInspection.result_text.is_not(None)),
+                func.count().filter(ErknmInspection.warning_caption.is_not(None)),
             )
-            .scalar_one()
-        )
+            .select_from(ErknmInspection)
+            .where(*common_filters)
+        ).one()
 
         rows = (
             session.execute(
@@ -234,30 +235,6 @@ def get_erknm_check_for_company(
                 )
             )
             .all()
-        )
-
-        result_count = (
-            session.execute(
-                select(func.count())
-                .select_from(ErknmInspection)
-                .where(
-                    *common_filters,
-                    ErknmInspection.result_text.is_not(None),
-                )
-            )
-            .scalar_one()
-        )
-
-        warning_count = (
-            session.execute(
-                select(func.count())
-                .select_from(ErknmInspection)
-                .where(
-                    *common_filters,
-                    ErknmInspection.warning_caption.is_not(None),
-                )
-            )
-            .scalar_one()
         )
 
         status_counts = {}

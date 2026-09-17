@@ -8,6 +8,7 @@ import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,6 +25,8 @@ class SourceRatePolicy:
     circuit_failures: int = 3
     circuit_cooldown_seconds: float = 300
     multi_ip_authorized: bool = False
+    max_session_requests: int = 100
+    max_daily_requests: int = 1000
 
 
 FIRMOTEKA_BASELINE_POLICY = SourceRatePolicy(
@@ -37,6 +40,8 @@ FIRMOTEKA_BASELINE_POLICY = SourceRatePolicy(
     circuit_failures=3,
     circuit_cooldown_seconds=900,
     multi_ip_authorized=True,
+    max_session_requests=600,
+    max_daily_requests=5000,
 )
 
 
@@ -47,6 +52,10 @@ class _Circuit:
 
 
 class CircuitOpenError(RuntimeError):
+    pass
+
+
+class SourceBudgetExceededError(RuntimeError):
     pass
 
 
@@ -62,11 +71,13 @@ class SourceRateGovernor:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         random_uniform: Callable[[float, float], float] = random.uniform,
+        current_day: Callable[[], date] = lambda: datetime.now(timezone.utc).date(),
     ):
         self.policies = policies
         self.clock = clock
         self.sleep = sleep
         self.random_uniform = random_uniform
+        self.current_day = current_day
         self._lock = threading.RLock()
         self._source_next: dict[str, float] = defaultdict(float)
         self._ip_next: dict[tuple[str, str], float] = defaultdict(float)
@@ -74,6 +85,8 @@ class SourceRateGovernor:
         self._active: dict[str, int] = defaultdict(int)
         self._circuits: dict[str, _Circuit] = defaultdict(_Circuit)
         self._cache: dict[tuple[str, str], Any] = {}
+        self._session_requests: dict[str, int] = defaultdict(int)
+        self._daily_requests: dict[tuple[str, date], int] = defaultdict(int)
 
     def _assert_worker(self, source: str, worker_id: str, egress_ip: str, shard: str) -> None:
         if not all((worker_id, egress_ip, shard)):
@@ -95,6 +108,11 @@ class SourceRateGovernor:
                 circuit.opened_at = None
             if self._active[source] >= policy.concurrency:
                 raise RuntimeError(f"concurrency budget exhausted for {source}")
+            day = self.current_day()
+            if self._session_requests[source] >= policy.max_session_requests:
+                raise SourceBudgetExceededError(f"session request budget exhausted for {source}")
+            if self._daily_requests[(source, day)] >= policy.max_daily_requests:
+                raise SourceBudgetExceededError(f"daily request budget exhausted for {source}")
             wait_until = max(self._source_next[source], self._ip_next[(source, egress_ip)], self._global_next)
             delay = max(0.0, wait_until - now)
             if delay:
@@ -105,6 +123,8 @@ class SourceRateGovernor:
             self._ip_next[(source, egress_ip)] = now + (policy.per_ip_interval_seconds or jitter)
             self._global_next = now + (policy.global_interval_seconds or 0)
             self._active[source] += 1
+            self._session_requests[source] += 1
+            self._daily_requests[(source, day)] += 1
 
     def release(self, source: str, *, success: bool, retry_after: float | None = None) -> None:
         policy = self.policies[source]
