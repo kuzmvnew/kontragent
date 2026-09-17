@@ -56,6 +56,8 @@ from app.models.revenue_expense import (
 )
 from app.models.source import (
     CompanySourceData,
+    DatasetPublication,
+    DatasetUpdateLock,
     DataSet,
     DataSource,
     IngestionRun,
@@ -107,6 +109,8 @@ __all__ = [
     "CompanyTaxPaymentItem",
     "CompanyTaxPaymentSnapshot",
     "DataSet",
+    "DatasetPublication",
+    "DatasetUpdateLock",
     "DataSource",
     "DisqualifiedPersonSnapshot",
     "ErknmInspection",

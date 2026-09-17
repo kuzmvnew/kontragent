@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -10,6 +11,7 @@ from app.models.source import (
     DataSource,
     IngestionRun,
 )
+from app.contracts.data_readiness import OperationalStatus
 
 
 # =========================================================
@@ -212,7 +214,18 @@ def start_ingestion(
             errors_count=0,
             error_message=None,
             details=details,
+            run_uuid=str(uuid4()),
+            trigger="manual",
+            retrieved_at=utc_now(),
+            records_seen=0,
+            records_written=0,
+            records_rejected=0,
+            duplicates=0,
+            conflicts=0,
         )
+
+        dataset.last_attempt_at = run.started_at
+        dataset.operational_status = OperationalStatus.UPDATING
 
         session.add(
             run
@@ -321,11 +334,30 @@ def finish_ingestion_success(
         dataset.last_success_at = (
             now
         )
+        dataset.retrieved_at = now
+        dataset.checked_at = now
+        dataset.published_at = now
+        dataset.record_count = rows_inserted + rows_updated
+        dataset.operational_status = OperationalStatus.CURRENT
+        dataset.last_error = None
+        dataset.last_error_at = None
+        dataset.retry_count = 0
+        dataset.next_retry_at = None
+        run.records_seen = rows_read
+        run.records_written = rows_inserted + rows_updated
+        run.records_rejected = errors_count
+        run.duration_ms = max(0, int((now - run.started_at).total_seconds() * 1000))
 
         if run.data_date is not None:
             dataset.last_data_date = (
                 run.data_date
             )
+            dataset.source_as_of = datetime.combine(
+                run.data_date,
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            )
+            run.source_as_of = dataset.source_as_of
 
         session.commit()
 
@@ -406,6 +438,18 @@ def finish_ingestion_failure(
         run.error_message = str(
             error_message
         )
+
+        dataset = session.get(DataSet, run.dataset_id)
+        if dataset is not None:
+            dataset.operational_status = OperationalStatus.ERROR
+            dataset.last_error = str(error_message)[:1000]
+            dataset.last_error_at = run.finished_at
+            dataset.retry_count += 1
+        run.error_code = (details or {}).get("error_code", "ingestion_failed")
+        run.records_seen = rows_read
+        run.records_written = rows_inserted + rows_updated
+        run.records_rejected = errors_count
+        run.duration_ms = max(0, int((run.finished_at - run.started_at).total_seconds() * 1000))
 
         run.details = _merge_details(
             run.details,
