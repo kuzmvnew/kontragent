@@ -1,6 +1,6 @@
 # WAVE IMPLEMENTATION PLAN — Kontragent
 
-Status: ACTIVE — SUMMARY ENGINE ACCEPTED; NEXT: COMPANY CARD V2
+Status: ACTIVE — PRODUCT RECOVERY V3 IN PROGRESS; COMPANY CARD V2 BLOCKED
 Date: 2026-09-17
 
 ## Wave 1 final state
@@ -25,23 +25,30 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 3. **Auto-update / Data Readiness — COMPLETE / ACCEPTED.** Operational registry, freshness, run history, atomic bulk contract, locks/backoff and internal status panel were accepted and merged in PR #40. Production scheduler deployment remains honestly `NOT_CONFIGURED` until handlers/supervisor are installed.
 4. **Risk Engine — COMPLETE / ACCEPTED.** Explainable signals, applicability, immutable assessments and separate completeness accepted in merged PR #43.
 5. **Summary Engine — COMPLETE / ACCEPTED.** Deterministic traceable summaries, modes, persistence, cache, explainability and minimal acceptance UI accepted in PR #44; merge remains a separate owner command.
-6. **Current next stage: build Company Card v2** using `COMPANY_CARD_V2_SCOPE.md`; do not start automatically.
-7. Build Report v1.
-8. Pass the mandatory Security & Resilience Gate.
-9. Pass the mandatory Legal Launch Gate.
-10. Pass the mandatory Product / Company Card Acceptance Gate: end-to-end user journey + source/data/risk/summary correctness.
-11. Publish the first 10,000 high-quality company pages for SEO only after all three gates pass.
-12. Build Lists + Bulk Check.
-13. Build Monitoring / Event Engine + expandable notification types.
-14. Build Workspace v1.
-15. Only after the above Company B2B Core is ready, start Wave 2 source integrations through the Source Access & Cost Gate.
-16. After Company B2B Core: Person Core.
-17. Then separate Compliance module.
-18. Then API / Enterprise / SSO / SLA / client integrations and government-procurement readiness when commercially justified.
+6. **Current stage: Product Recovery v3 — IN PROGRESS.** Operationalize the mandatory runtime sources, rerun the same 40-company regression, raise Coverage and pass the positive gate.
+7. **Company Card v2 — BLOCKED** until Product Recovery acceptance; then use `COMPANY_CARD_V2_SCOPE.md`.
+8. Build Report v1.
+9. Pass the mandatory Security & Resilience Gate.
+10. Pass the mandatory Legal Launch Gate.
+11. Pass the mandatory Product / Company Card Acceptance Gate: end-to-end user journey + source/data/risk/summary correctness.
+12. Publish the first 10,000 high-quality company pages for SEO only after all three gates pass.
+13. Build Lists + Bulk Check.
+14. Build Monitoring / Event Engine + expandable notification types.
+15. Build Workspace v1.
+16. Only after the above Company B2B Core is ready, start Wave 2 source integrations through the Source Access & Cost Gate.
+17. After Company B2B Core: Person Core.
+18. Then separate Compliance module.
+19. Then API / Enterprise / SSO / SLA / client integrations and government-procurement readiness when commercially justified.
 
 ## Current next stage
 
-Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness, Risk Engine and Summary Engine are **COMPLETE / ACCEPTED**. The current next approved stage is **COMPANY CARD V2**; it is not started automatically.
+Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness, Risk Engine v1 and Summary Engine v1 are **COMPLETE / ACCEPTED** historical stages. The current stage is **PRODUCT RECOVERY V3 — IN PROGRESS**. Company Card v2 is **BLOCKED** until Product Recovery acceptance.
+
+Current Product Recovery evidence: 40/40 unique companies processed; Coverage
+47–80/100, average 58/100; positive gate 0/40. Remaining engineering work is to
+operationalize FSSP, EFRSB, CBR ZSK and Bankinform, fill Arbitration 40/40,
+improve General Courts coverage and rerun the same regression. Existing runner
+code is not treated as completed runtime coverage.
 
 Stage 1.5 and Data Readiness were not Wave 2. Their accepted foundations prevent the Risk Engine from being built on an incomplete, stale or semantically unsafe base.
 

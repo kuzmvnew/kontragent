@@ -5,6 +5,34 @@ Status: **IN PROGRESS**
 
 Evidence labels follow `EVIDENCE_REPORTING_POLICY.md`.
 
+## Product Recovery v3 current run
+
+`VERIFIED_RUNTIME`, 40-company acceptance run and subsequent Mac control point:
+
+- 40/40 unique companies processed; buckets were formed, but Product Acceptance did not pass.
+- Coverage: minimum 47/100, maximum 80/100, average 58/100.
+- Positive gate: 0/40. This is an acceptance blocker, not a cosmetic limitation.
+- Mac control point at `3ed0506ce372eaaf7bb432b6f3093a137c0a1bf5`: 639 passed, Alembic `a7b8c9d0e1f2 (head)`, local SHA equals origin SHA, clean diff/worktree.
+
+| Capability | Code state | Runtime unresolved in 40 |
+|---|---|---:|
+| Arbitration | Resolver exists | 39 |
+| General Courts | Partial targeted foundation exists | 40 |
+| CBR ZSK | Runner foundation exists | 40 |
+| FNS Bankinform | Runner foundation exists | 40 |
+| FSSP | Direct runner foundation exists | 24 |
+| Bankruptcy direct / EFRSB | Runner foundation exists | 21 |
+
+Code state and runtime completion are intentionally separate. A runner existing
+in the repository does not prove that its source completed the 40-company run.
+
+## Source classification and authorization
+
+- Firmoteka is a first-class `AUTHORIZED_BRIDGE`, not a Source of Truth.
+- Precedence is `OFFICIAL_DIRECT > OFFICIAL_DOWNLOADED_DATASET > AUTHORIZED_BRIDGE > DISCOVERY_ONLY`.
+- Authorization for Firmoteka automated parsing and FSSP, EFRSB/Fedresurs and CBR ZSK automated public flows is recorded only as `USER_REPORTED`. No contract or authorization letter was independently inspected.
+- For INN `0274101890`, Firmoteka reported 74 proceedings and FSSP direct reported 96; classification is `MISMATCH`. One company is insufficient for a general conclusion about Firmoteka FSSP quality.
+
 ## Runtime population audit
 
 `VERIFIED_RUNTIME`, local PostgreSQL, 2026-09-17:
@@ -59,7 +87,7 @@ though it does not provide full EGRUL/EGRIP registration state.
 
 ## Hard blockers to acceptance
 
-1. Official EGRUL/EGRIP integration access and full files are not available in the environment.
-2. Fedresurs production REST access is not available; zero bankruptcy records exist.
-3. No FSSP checks have been manually completed for acceptance companies.
-4. Therefore the 10 bankruptcy and 10 low-risk/high-coverage buckets cannot yet be populated truthfully.
+1. Operationalize FSSP, EFRSB, CBR ZSK and Bankinform runtime paths.
+2. Resolve Arbitration for 40/40 companies and improve General Courts coverage.
+3. Rerun the same 40-company regression and raise mandatory Coverage.
+4. Open the positive gate from its current 0/40 only after sufficient Coverage and all mandatory checks are closed.

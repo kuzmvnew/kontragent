@@ -7,6 +7,12 @@ The newer v3 integration checkpoint is recorded in
 `PRODUCT_RECOVERY_V3_ACCEPTANCE.md`. This historical v2 checkpoint remains
 unchanged below and is not used as current-run proof.
 
+Canonical current state: **PRODUCT RECOVERY V3 — IN PROGRESS**. The verified
+control point is `3ed0506ce372eaaf7bb432b6f3093a137c0a1bf5`; Mac regression is
+639 passed at Alembic `a7b8c9d0e1f2 (head)`. Coverage is 47–80/100 (average
+58/100), positive gate 0/40, and Company Card v2 remains blocked. These current
+facts do not rewrite the historical v2 evidence below.
+
 ## Verified in this run
 
 - `VERIFIED_FROM_GIT`: recovery branch created from `c8d4fc79d856a350422583f4c46e4ed4bacef279`.

@@ -7,7 +7,7 @@ Status: **FIRST-CLASS AUTHORIZED BRIDGE / PRODUCT RECOVERY V3**
 
 - `USER_REPORTED`: product owner reports authorization for low-load automated parsing, including coordinated multiple stable egress IPs.
 - Codex did not inspect a contract or authorization letter.
-- `EXTERNAL_HISTORICAL_EVIDENCE`: the dated 500-company pilot records 500/500 exact-INN pages, 100% HTTP success, no 403/429/challenge/parse errors, status and registration date 500/500, address 420/500 and FSSP coverage 420/500.
+- `EXTERNAL_HISTORICAL_EVIDENCE`: the dated 500-company pilot records 500/500 processed, 500/500 exact-INN pages, 100% HTTP success, no 403/429/challenge/parse errors, status 500/500, registration date 500/500, OKVED 500/500, address/region 420/500, FSSP bridge coverage 420/500 and 24 bankruptcy candidates.
 - Source class: `AUTHORIZED_BRIDGE`. It is never represented as `OFFICIAL_DIRECT`.
 
 ## Accepted capabilities
@@ -36,14 +36,15 @@ fallback; it does not erase it.
 
 ## Rate and scaling policy
 
-Observed baseline is one request per six seconds per IP with concurrency one.
+Observed safe baseline is one request per six seconds per IP with concurrency one.
 `SourceRateGovernor` defaults Firmoteka to randomized 6–12 second intervals,
 per-source/per-IP/global budgets, concurrency one, retry/backoff, Retry-After,
 circuit breaking, cache and atomic checkpoint/resume.
 
 Controlled scaling is prepared for 2 → 4 → 6 → 8 stable-IP workers with stable
-shards. IP rotation to hide blocking is prohibited. A 100k run is not authorized
-by this iteration and was not started.
+shards. Future multi-IP scaling has not passed production acceptance. IP
+rotation to hide blocking is prohibited. A 100k run is not authorized by this
+iteration and was not started.
 
 ## Known discrepancies
 

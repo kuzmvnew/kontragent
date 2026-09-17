@@ -60,9 +60,9 @@ ROADMAP.md становится продуктовым документом.
 | 3 | Админ-панель и аналитика v1 | 🟡 Internal Data Readiness panel ACCEPTED; полный admin/feature-flags scope не завершён | Видно состояние источников, загрузок и приложения |
 | 4 | Автоматическое обновление данных | 🟡 Data Readiness foundation ACCEPTED; production scheduler deployment `NOT_CONFIGURED` | Обновления без ручной обработки каждого архива |
 | 5 | Бесплатная волна официальных источников | 🟡 Wave 1 CLOSED / ACCEPTED; поздние источники остаются будущим backlog | Полезное наполнение карточек официальными данными |
-| 6 | Движки выводов, требований и рисков | 🟡 Risk Engine + Summary Engine COMPLETE / ACCEPTED; remaining engine scope stays explicit | Объяснимые выводы с учётом покрытия и сделки |
+| 6 | Движки выводов, требований и рисков | 🟡 Product Recovery v3 IN PROGRESS; Risk/Summary v1 historical acceptance сохранён | Объяснимые выводы с учётом покрытия и сделки |
 | 7 | Продуктовая оболочка | 🔵 Далее | Понятный вход в Check и будущие направления |
-| 8 | Карточка компании v2 | 🟡 Уже есть отдельные блоки | Цельная проверка: факты, выводы, источники, даты |
+| 8 | Карточка компании v2 | ⛔ BLOCKED до Product Recovery acceptance | Цельная проверка: факты, выводы, источники, даты |
 | 9 | SEO-бета | 🔵 Далее | Первые качественные страницы доступны поиску |
 | 10 | Первая монетизация | 🔵 Далее | Реальные оплаты и проверка экономики |
 | 11 | Реинвестиции в реестры, Person Registry и граф связей | 🔵 При обосновании затрат | Полнее данные о компаниях, людях и связях |
@@ -71,7 +71,7 @@ ROADMAP.md становится продуктовым документом.
 | 14 | Полноценный B2B SaaS | 🔵 Далее | Регулярная работа команд, подписки и автоматизация |
 | 15 | Корпоративный уровень — Enterprise | 🔵 Позже | Интеграции, безопасность и договорные уровни сервиса |
 
-**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine и Summary Engine — COMPLETE / ACCEPTED. Summary Engine evidence: 609 tests, Alembic `f6a7b8c9d0e1`, five real-company summaries, PostgreSQL/Chromium and PR #44 green CI. Scheduler deployment остаётся `NOT_CONFIGURED`. Текущий следующий отдельный этап — Company Card v2; он не начат автоматически. Структура фаз 0–15 и архитектура не меняются.
+**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages. Summary Engine v1 evidence: 609 tests, Alembic `f6a7b8c9d0e1`, five real-company summaries, PostgreSQL/Chromium and PR #44 green CI. Scheduler deployment остаётся `NOT_CONFIGURED`. Текущий этап — Product Recovery v3 / IN PROGRESS: 40/40 companies processed, Coverage 47–80/100 (average 58), positive gate 0/40. Company Card v2 заблокирован до Product Recovery acceptance. Структура фаз 0–15 и архитектура не меняются.
 
 ## Фаза 0. Закрытие текущего блока TaxOffence
 
@@ -204,7 +204,7 @@ ROADMAP.md становится продуктовым документом.
 
 Критерий закрытия: согласованный минимум источников доведён до результата. Техническую доступность, права использования и условия подключения проверять при реализации; архивный список не является их актуальной проверкой.
 
-**Ближайший утверждённый этап:** COMPANY CARD V2. Wave 1, Stage 1.5, Data Readiness, Risk Engine и Summary Engine приняты; новые source integrations и Company Card v2 автоматически не начинаются.
+**Текущий утверждённый этап:** PRODUCT RECOVERY V3 / IN PROGRESS. Wave 1, Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты; Company Card v2 заблокирован до Product Recovery acceptance.
 
 ## Фаза 6. Движки выводов, требований и рисков
 

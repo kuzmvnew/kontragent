@@ -215,7 +215,7 @@ Does not block further development.
 
 Статус: ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED; дальнейшая source-specific нормализация остаётся частью соответствующих будущих источников
 
-Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт как deferred external-source exception: A/D/E/F подтверждены, B/C остаются `SOURCE_BLOCKED` и не переименовываются в Six Gates PASS. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 — CLOSED / ACCEPTED. Auto-update / Data Readiness, Risk Engine и Summary Engine — COMPLETE / ACCEPTED; scheduler deployment остаётся `NOT_CONFIGURED` до фактического развёртывания handler/supervisor. Текущий следующий отдельный этап — COMPANY CARD V2.
+Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт как deferred external-source exception: A/D/E/F подтверждены, B/C остаются `SOURCE_BLOCKED` и не переименовываются в Six Gates PASS. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 — CLOSED / ACCEPTED. Auto-update / Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages; scheduler deployment остаётся `NOT_CONFIGURED` до фактического развёртывания handler/supervisor. Текущий этап — PRODUCT RECOVERY V3 / IN PROGRESS; COMPANY CARD V2 заблокирован до его приёмки.
 
 ## Цель
 
@@ -265,7 +265,7 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 # ФАЗА 5 — ПРОВЕРКИ И ЛОГИКА РИСКОВ
 
-Статус: ✅ RISK + SUMMARY ENGINES COMPLETE / ACCEPTED; следующий отдельный этап — COMPANY CARD V2
+Статус: 🟡 PRODUCT RECOVERY V3 / IN PROGRESS; Risk Engine v1 и Summary Engine v1 сохраняют historical COMPLETE / ACCEPTED; COMPANY CARD V2 BLOCKED
 
 ## Цель
 
@@ -632,14 +632,14 @@ SEO строится после того, как карточка действи
 
 # ТЕКУЩАЯ ПОЗИЦИЯ
 
-На 16.09.2026:
+На 17.09.2026:
 
 Фаза 1 ✅
 Фаза 2 ✅
 Фаза 3 ✅ ЗАВЕРШЕНА В СОГЛАСОВАННОМ ОБЪЁМЕ
 Фаза 4 ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED — Wave 1 и Stage 1.5 закрыты; Data Readiness принят и merged в PR #40; W1-005 B/C остаются deferred `SOURCE_BLOCKED`, W1-006 принят по Six Gates.
-Фаза 5 ✅ RISK + SUMMARY ENGINES COMPLETE / ACCEPTED
-Фаза 6 🟡 разработка уже начата
+Фаза 5 🟡 PRODUCT RECOVERY V3 / IN PROGRESS; Risk/Summary v1 historical acceptance сохранён
+Фаза 6 ⛔ COMPANY CARD V2 BLOCKED до Product Recovery acceptance
 Фаза 7 🔵
 Security & Resilience Gate 🔵 обязательный перед публичной фазой 8
 Privacy & Person Gate 🔵 обязательный перед публичным запуском Person
@@ -649,13 +649,14 @@ Privacy & Person Gate 🔵 обязательный перед публичны�
 
 Текущий основной приоритет:
 
-RISK ENGINE ✅
-→ SUMMARY ENGINE ✅
-→ КАРТОЧКА КОМПАНИИ V2 (NEXT; NOT STARTED)
+RISK ENGINE V1 ✅
+→ SUMMARY ENGINE V1 ✅
+→ PRODUCT RECOVERY V3 (CURRENT; IN PROGRESS)
+→ КАРТОЧКА КОМПАНИИ V2 (BLOCKED)
 
-Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine и Summary Engine приняты. Текущий следующий этап — COMPANY CARD V2; он не начат автоматически. Порядок фаз и архитектура не меняются.
+Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты. Текущий этап — PRODUCT RECOVERY V3 / IN PROGRESS: Coverage 47–80/100, average 58/100, positive gate 0/40. Company Card v2 заблокирован до Product Recovery acceptance. Порядок фаз и архитектура не меняются.
 
-Security & Resilience Gate не является текущей активной работой и не должен опережать утверждённую последовательность Risk Engine → Summary Engine → Company Card v2 → Report v1. Он становится обязательным перед массовым публичным открытием продукта.
+Security & Resilience Gate не является текущей активной работой и не должен опережать утверждённую последовательность Risk Engine v1 → Summary Engine v1 → Product Recovery v3 → Company Card v2 → Report v1. Он становится обязательным перед массовым публичным открытием продукта.
 
 Не отвлекаться сейчас на окончательный лендинг и монетизацию.
 
