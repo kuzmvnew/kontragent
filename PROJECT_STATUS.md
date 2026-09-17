@@ -28,7 +28,7 @@
 
 Last completed stage: **Risk Engine — COMPLETE / ACCEPTED**.
 
-Current approved next stage: **SUMMARY ENGINE — DO NOT START AUTOMATICALLY**.
+Current active stage: **SUMMARY ENGINE — IN PROGRESS**.
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -38,7 +38,7 @@ Current approved next stage: **SUMMARY ENGINE — DO NOT START AUTOMATICALLY**.
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
-| 5. Проверки и риски | ✅ RISK ENGINE COMPLETE / ACCEPTED | Explainable signals, applicability, versioned rules, immutable assessments, separate coverage/completeness and minimal acceptance UI; PR #43 open with green CI, merge requires Михаил's command |
+| 5. Проверки и риски | 🟡 SUMMARY ENGINE IN PROGRESS | Risk Engine COMPLETE / ACCEPTED; PR #43 merged as `510fa97792be43a4eb561288d2a2e78cd8764d79`. Summary Engine implementation and current-run acceptance are in progress. |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Security & Resilience Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
@@ -156,7 +156,7 @@ No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readine
 - Data Readiness final local regression: **556 passed**.
 - Data Readiness Alembic: `d4e5f6a7b8c9 (head)`.
 - Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green and merged as `d6ba029bc2095acaa194a1fde0e207bd651c18f3`.
-- Risk Engine v1: **COMPLETE / ACCEPTED** on branch `codex/risk-engine`; local regression **586 passed**, Alembic `e5f6a7b8c9d0 (head)`, five real-company assessments, PostgreSQL readback, Chromium acceptance and PR #43 CI green. PR is not merged.
+- Risk Engine v1: **COMPLETE / ACCEPTED**; local regression **586 passed**, Alembic `e5f6a7b8c9d0 (head)`, five real-company assessments, PostgreSQL readback and Chromium acceptance are preserved as historical evidence in `RISK_ENGINE_ACCEPTANCE.md`. PR #43 merged as `510fa97792be43a4eb561288d2a2e78cd8764d79`.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
