@@ -213,9 +213,9 @@ Does not block further development.
 
 # ФАЗА 4 — DATA NORMALIZATION & QUALITY FOUNDATION
 
-Статус: ▶️ ACTIVE
+Статус: ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED; дальнейшая source-specific нормализация остаётся частью соответствующих будущих источников
 
-Wave 1 содержит шесть источников. W1-001—W1-004 приняты на Mac. W1-005 Роскомнадзор — IN PROGRESS / SOURCE-BLOCKED (B, C): A/D/E/F подтверждены, Six Gates не объявлен. W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
+Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт как deferred external-source exception: A/D/E/F подтверждены, B/C остаются `SOURCE_BLOCKED` и не переименовываются в Six Gates PASS. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 — CLOSED / ACCEPTED. Auto-update / Data Readiness — COMPLETE / ACCEPTED, PR #40 merged; scheduler deployment остаётся `NOT_CONFIGURED` до фактического развёртывания handler/supervisor. Текущий следующий этап — RISK ENGINE. Порядок фаз и архитектура не меняются.
 
 ## Цель
 
@@ -265,7 +265,7 @@ Wave 1 содержит шесть источников. W1-001—W1-004 при�
 
 # ФАЗА 5 — ПРОВЕРКИ И ЛОГИКА РИСКОВ
 
-Статус: 🟡 ФУНДАМЕНТ ЧАСТИЧНО СОЗДАН
+Статус: ▶️ CURRENT NEXT — RISK ENGINE; фундамент контрактов частично создан
 
 ## Цель
 
@@ -637,8 +637,8 @@ SEO строится после того, как карточка действи
 Фаза 1 ✅
 Фаза 2 ✅
 Фаза 3 ✅ ЗАВЕРШЕНА В СОГЛАСОВАННОМ ОБЪЁМЕ
-Фаза 4 ▶️ ACTIVE — Wave 1 содержит шесть источников. W1-001—W1-004 приняты на Mac. W1-005 Роскомнадзор — IN PROGRESS / SOURCE-BLOCKED (B, C); W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
-Фаза 5 🟡 фундамент частично готов
+Фаза 4 ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED — Wave 1 и Stage 1.5 закрыты; Data Readiness принят и merged в PR #40; W1-005 B/C остаются deferred `SOURCE_BLOCKED`, W1-006 принят по Six Gates.
+Фаза 5 ▶️ CURRENT NEXT — RISK ENGINE; фундамент контрактов частично готов
 Фаза 6 🟡 разработка уже начата
 Фаза 7 🔵
 Security & Resilience Gate 🔵 обязательный перед публичной фазой 8
@@ -649,14 +649,13 @@ Privacy & Person Gate 🔵 обязательный перед публичны�
 
 Текущий основной приоритет:
 
-ОФИЦИАЛЬНЫЕ ИСТОЧНИКИ
-→ НОРМАЛИЗАЦИЯ
-→ ПРОВЕРКИ
+RISK ENGINE
+→ SUMMARY ENGINE
 → КАРТОЧКА КОМПАНИИ
 
-Person backlog сохранён, но не исполняется сейчас. Wave 1 содержит шесть источников. W1-001—W1-004 приняты на Mac. W1-005 Роскомнадзор — IN PROGRESS / SOURCE-BLOCKED (B, C); person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Порядок фаз и архитектура не меняются.
+Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 и Data Readiness приняты. Текущий следующий этап — RISK ENGINE. Порядок фаз и архитектура не меняются.
 
-Security & Resilience Gate не является текущей активной работой и не должен отвлекать от согласованной Wave 1. Он становится обязательным перед массовым публичным открытием продукта.
+Security & Resilience Gate не является текущей активной работой и не должен опережать утверждённую последовательность Risk Engine → Summary Engine → Company Card v2 → Report v1. Он становится обязательным перед массовым публичным открытием продукта.
 
 Не отвлекаться сейчас на окончательный лендинг и монетизацию.
 
