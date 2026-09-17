@@ -110,15 +110,17 @@ Current work items:
 3. FSSP — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata exists, no implementation/data/runs.
 4. Fedresurs/EFРSB — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata/specification exists, no implementation/data/runs.
 5. Bankruptcy/liquidation — ✅ normalized 15-state event model accepted; migration `f8b9c0d1e2f3`; no unsupported source events fabricated. Protocol: `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`.
-6. Arbitration Courts v1 — ⛔ `SOURCE_BLOCKED / DECISION_REQUIRED`: public interactive KAD works (54 cases for exact INN probe), but direct endpoint returns HTTP 451 and standard headless Chromium cannot obtain results; paid/licensed feed evaluation requires owner approval. See `COURTS_STAGE_1_5_ACCESS_DECISION.md`.
-7. Courts of General Jurisdiction v1.
-8. FNS account-suspension decisions.
-9. Bank of Russia public high-risk/KYC technical probe and production-mode decision.
-10. Free-first corporate disclosure.
-11. Company contact/address/public-bank-details/mass-address/director/founder facts needed by later Risk/Summary.
+6. Arbitration Courts v1 — ⛔ `PAID ACCESS DECISION REQUIRED`: official/free machine path rechecked and remains blocked; Casebook, Focus, Checko, SPARK, and Seldon compared without purchase, registration, contract, or paid dependency. See `COURTS_V1_ACCESS_RESEARCH.md`.
+7. Courts of General Jurisdiction v1 — ⛔ `TECHNICAL_ACCESS_UNCONFIRMED / SOURCE_BLOCKED FOR COMPANY MATCHING`: official UI/instructions found, but BSR machine access and exact INN/OGRN matching were not established. See `COURTS_GENERAL_STAGE_1_5_ACCESS.md`.
+8. FNS account-suspension decisions — ⛔ `SOURCE_BLOCKED FOR UNATTENDED MACHINE ACCESS`: one real dated official negative response confirmed; subsequent request and direct endpoint require CAPTCHA. See `FNS_ACCOUNT_SUSPENSION_STAGE_1_5_ACCESS.md`.
+9. Bank of Russia public high-risk/KYC probe — ✅ `PROBE COMPLETE / PRODUCTION MACHINE MODE BLOCKED`: exact meaning and CAPTCHA/fingerprint boundary documented; no bypass. See `CBR_ZSK_STAGE_1_5_TECHNICAL_PROBE.md`.
+10. Free-first corporate disclosure — ✅ `ACCEPTED / SIX GATES PASS FOR PRIME FOUNDATION`; migration `a1c2d3e4f5b6`. See `docs/STAGE_1_5_G_CORPORATE_DISCLOSURE_ACCEPTANCE.md`.
+11. Company facts — 🟡 `FOUNDATION ACCEPTED / SOURCE COVERAGE PARTIAL`; migration `b2c3d4e5f6a7`, real source-backed registered/postal addresses accepted; remaining fact types need sources. See `docs/STAGE_1_5_H_COMPANY_FACT_NORMALIZATION.md`.
 12. Stage 1.5 acceptance review.
 
 Stage 1.5 is NOT Wave 2.
+
+Stage 1.5 remains **ACTIVE / NOT COMPLETE**. C1 does not meet its completion criteria and no paid source has been approved; C2 and E also remain blocked as production machine workstreams.
 
 ## Current Release Goal
 

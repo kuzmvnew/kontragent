@@ -7,6 +7,7 @@ from app.services.cbr_finorg_service import (
 from app.services.cbr_warning_list_service import (
     get_cbr_warning_list_check_for_inn,
 )
+from app.services.corporate_disclosure_service import get_cached_corporate_disclosure_check
 from app.services.disqualified_service import (
     get_disqualified_check_for_inn,
 )
@@ -49,6 +50,17 @@ def _copy_company(company):
         company.get("sources_used")
         or []
     )
+    return result
+
+
+def enrich_company_with_corporate_disclosure(company):
+    if company is None:
+        return None
+    result = _copy_company(company)
+    check = get_cached_corporate_disclosure_check(result.get("inn"))
+    result["corporate_disclosure_check"] = check
+    if check.get("result") in {"found", "not_found"}:
+        _append_source_once(result, "prime_disclosure")
     return result
 
 
@@ -294,4 +306,5 @@ def get_company_for_web(
     company = enrich_company_with_cbr_finorg(company)
     company = enrich_company_with_roszdrav(company)
     company = enrich_company_with_roskomnadzor(company)
-    return enrich_company_with_sro(company)
+    company = enrich_company_with_sro(company)
+    return enrich_company_with_corporate_disclosure(company)

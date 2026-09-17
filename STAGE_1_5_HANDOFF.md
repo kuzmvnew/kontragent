@@ -74,7 +74,17 @@ Fedresurs/EFRSB inventory was completed on 2026-09-17. See `FEDRESURS_STAGE_1_5_
 
 Bankruptcy/liquidation semantics were accepted on 2026-09-17. See `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`. Migration `f8b9c0d1e2f3` adds a 15-state evidence-backed event model and the current product can project stored events conservatively. No source record was fabricated: the table remains empty until a future adapter passes its own access review and six gates.
 
-Arbitration Courts v1 reached an access decision point on 2026-09-17. See `COURTS_STAGE_1_5_ACCESS_DECISION.md`. The official interactive KAD lookup returned real exact-INN results, but the equivalent machine request received HTTP 451 and standard headless Chromium did not produce results. No bypass is permitted; C1 is `SOURCE_BLOCKED / DECISION_REQUIRED` pending explicit approval to evaluate a licensed/paid machine feed (or an explicit scope reduction that would not satisfy the current automated C1 completion criterion).
+Arbitration Courts v1 was researched further on 2026-09-17 under explicit permission to evaluate licensed/paid APIs without buying or contracting. See `COURTS_V1_ACCESS_RESEARCH.md` and `COURTS_STAGE_1_5_ACCESS_DECISION.md`. No approved free official/public machine path was found. Casebook, Kontur Focus, Checko, SPARK, and Seldon were compared; no account/trial was opened and no provider was accepted as a dependency. C1 is `PAID ACCESS DECISION REQUIRED` and Stage 1.5 remains incomplete.
+
+C2 official court surfaces were rechecked and are `TECHNICAL_ACCESS_UNCONFIRMED / SOURCE_BLOCKED FOR COMPANY MATCHING`; no exact-INN/OGRN production adapter was fabricated. See `COURTS_GENERAL_STAGE_1_5_ACCESS.md`.
+
+The official FNS account-suspension service produced one real dated negative browser result, then required CAPTCHA; unattended production access is blocked and no bypass was attempted. See `FNS_ACCOUNT_SUSPENSION_STAGE_1_5_ACCESS.md`.
+
+The Bank of Russia high-risk public check probe is complete, but its mandatory SmartCaptcha/fingerprint workflow blocks production machine mode. See `CBR_ZSK_STAGE_1_5_TECHNICAL_PROBE.md`.
+
+The PRIME free/public corporate-disclosure foundation passed Six Gates for targeted exact-INN retrieval. Migration `a1c2d3e4f5b6` adds dated disclosure checks; the company card and API expose source-attributed profile/document metadata without mirroring documents. See `PRIME_CORPORATE_DISCLOSURE_SOURCE_PASSPORT.md` and `docs/STAGE_1_5_G_CORPORATE_DISCLOSURE_ACCEPTANCE.md`.
+
+Migration `b2c3d4e5f6a7` adds evidence-backed normalized company public facts. Real PRIME legal/postal addresses were persisted for AVTOVAZ. The model vocabulary covers later contacts, mass indicators, disclosed bank details, and relationships, but those source mappings remain partial and must not be inferred. See `docs/STAGE_1_5_H_COMPANY_FACT_NORMALIZATION.md`.
 
 Parallel work is allowed only when it does not risk database/schema conflicts or duplicate an existing source implementation.
 

@@ -4,7 +4,9 @@ Date: 2026-09-17
 
 ## C1 Arbitration Courts
 
-Status: **SOURCE_BLOCKED / PRODUCT-OWNER DECISION REQUIRED**
+Status: **PAID ACCESS DECISION REQUIRED**
+
+Commercial/API research: `COURTS_V1_ACCESS_RESEARCH.md`.
 
 ### Official/public path tested
 
@@ -27,18 +29,20 @@ The interactive browser result is valid real-source evidence, but it is not a pr
 
 Therefore the current free path cannot honestly satisfy the required working Arbitration Courts v1 provider. No code emits `not_found`; an automated attempt under these conditions must remain `unavailable`.
 
-To continue C1, the product owner must authorize one of:
+The authorised research found real commercial options (Casebook API, Kontur.Focus API, Checko API, SPARK API, and Seldon.Basis.API), but no production dependency was approved. Checko advertises a free registered tier, yet its published court schema omits several C1 fields and its public terms do not establish the necessary storage/public-display/republication rights. No vendor account, payment, subscription, contract, or API key was created.
+
+To continue C1 implementation, the product owner must authorize one of:
 
 1. evaluation/procurement of a licensed machine feed or API; or
 2. a reduced manual/operator-assisted import scope, explicitly acknowledging that it does not satisfy on-demand product automation and therefore does not close the current Stage 1.5 criterion.
 
-The first option may introduce a paid source and requires a separate cost/access decision. No vendor or commercial aggregator is approved by this document.
+The first option may introduce a paid source and requires a separate cost/access decision. No vendor or commercial aggregator is approved by this document. Stage 1.5 continues with C2/E/F/G/H, but cannot be declared complete while C1 remains open under the current acceptance criterion.
 
 ## C2 Courts of General Jurisdiction
 
-Status: **NOT STARTED**
+Status: **TECHNICAL_ACCESS_UNCONFIRMED / SOURCE_BLOCKED FOR COMPANY MATCHING**
 
-Per the approved sequential work order, C2 research is paused until the C1 decision. No protection bypass or paid substitute has been attempted.
+The product owner explicitly authorised continuing C2 and the remaining Stage 1.5 workstreams while C1 awaits a paid-access decision. The official GAS “Pravosudie” portal was reviewed; its cross-court search is human-facing, documents case-number/name rather than exact INN/OGRN search, and the central BSR target timed out in ordinary Chromium. Evidence and the Six Gates result are in `COURTS_GENERAL_STAGE_1_5_ACCESS.md`. No protection bypass or paid substitute was attempted.
 
 ## Semantics retained
 

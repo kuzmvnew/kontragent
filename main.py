@@ -17,6 +17,7 @@ from app.aggregators.company_product_aggregator import (
 from app.services.cbr_finorg_service import (
     refresh_cbr_finorg_check_for_inn,
 )
+from app.services.corporate_disclosure_service import refresh_corporate_disclosure_check
 from app.services.roszdrav_service import (
     refresh_roszdrav_medical_device_check,
     refresh_roszdrav_unified_license_check,
@@ -397,6 +398,13 @@ async def company_sro_check(inn: str):
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
+@app.post("/company/{inn}/corporate-disclosure-check")
+async def company_corporate_disclosure_check(inn: str):
+    clean_inn = validate_company_inn(inn)
+    refresh_corporate_disclosure_check(clean_inn)
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
 # =========================================================
 # API: COMPANY
 # =========================================================
@@ -466,6 +474,11 @@ async def api_company_sro_check(inn: str):
         "nostroy": refresh_nostroy_check(clean_inn, applicable=True),
         "nopriz": refresh_nopriz_check(clean_inn, applicable=True),
     }
+
+
+@app.post("/api/company/{inn}/corporate-disclosure-check")
+async def api_company_corporate_disclosure_check(inn: str):
+    return refresh_corporate_disclosure_check(validate_company_inn(inn))
 
 
 @app.post("/api/roszdrav/medical-device-check")

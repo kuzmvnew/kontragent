@@ -4,6 +4,7 @@ from app.models.cbr_finorg import (
 from app.models.cbr_warning_list import (
     CbrWarningListEntry,
 )
+from app.models.corporate_disclosure import CorporateDisclosureCheck
 from app.models.roszdrav import (
     RoszdravClinicalOrganizationEntry,
     RoszdravLicenseEntry,
@@ -28,6 +29,7 @@ from app.models.company import (
     CompanyIdentifier,
     CompanyManager,
 )
+from app.models.company_fact import CompanyPublicFact
 from app.models.disqualified_person import (
     DisqualifiedPersonSnapshot,
 )
@@ -78,6 +80,8 @@ __all__ = [
     "CbrFinorgCheck",
     "CbrWarningListEntry",
     "Company",
+    "CompanyPublicFact",
+    "CorporateDisclosureCheck",
     "CompanyBranch",
     "CompanyContact",
     "CompanyFinancial",
