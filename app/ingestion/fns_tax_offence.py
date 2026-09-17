@@ -15,6 +15,16 @@ from app.models.source import DataSet
 
 DATASET_CODE = "fns_tax_offence"
 
+SOURCE_PAGE_URL = (
+    "https://www.nalog.gov.ru/"
+    "opendata/7707329152-taxoffence/"
+)
+
+SOURCE_FILE_BASE_URL = (
+    "https://data.nalog.ru/"
+    "opendata/7707329152-taxoffence/"
+)
+
 DEFAULT_BATCH_SIZE = 10000
 
 ZERO = Decimal("0.00")
@@ -78,8 +88,11 @@ def parse_decimal(value):
             Decimal("0.01")
         )
 
-    except InvalidOperation:
-        return ZERO
+    except InvalidOperation as error:
+        raise ValueError(
+            "Некорректное денежное значение "
+            f"в FNS Tax Offences: {value!r}"
+        ) from error
 
 
 # =========================================================
@@ -132,6 +145,7 @@ def parse_tax_offence_document(
     inn = None
     company_name = None
     fine_amount = ZERO
+    offence_count = 0
 
     for element in document:
 
@@ -166,6 +180,8 @@ def parse_tax_offence_document(
 
         elif tag == "СведНаруш":
 
+            offence_count += 1
+
             fine_amount += (
                 parse_decimal(
                     element.attrib.get(
@@ -193,6 +209,9 @@ def parse_tax_offence_document(
         return None
 
     if data_date is None:
+        return None
+
+    if offence_count == 0:
         return None
 
     return {
@@ -801,5 +820,12 @@ def import_fns_tax_offence_zip(
 
     finally:
         raw_connection.close()
+
+    if totals["invalid"]:
+        raise RuntimeError(
+            "FNS Tax Offences snapshot contains "
+            f"{totals['invalid']} invalid documents; "
+            "dataset date was not published"
+        )
 
     return totals

@@ -1117,4 +1117,11 @@ def import_fns_tax_debt_zip(
 
         raw_connection.close()
 
+    if totals["invalid"]:
+        raise RuntimeError(
+            "FNS Tax Debt snapshot contains "
+            f"{totals['invalid']} invalid documents; "
+            "dataset date was not published"
+        )
+
     return totals

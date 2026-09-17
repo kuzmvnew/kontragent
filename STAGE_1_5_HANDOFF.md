@@ -38,7 +38,7 @@ These sources already exist at least at code/data/product-foundation level and m
 |---|---|---|
 | Master Registry | ready | reuse |
 | FNS Tax Debt | ACCEPTED / SIX GATES PASS on 2026-09-17 | reuse; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md` |
-| FNS Tax Offences | code/product foundation exists; final acceptance open | close six-gate acceptance |
+| FNS Tax Offences | ACCEPTED / SIX GATES PASS on 2026-09-17 | reuse; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md` |
 | FNS Paid Taxes | connected | reuse |
 | FNS Revenue & Expenses | connected | reuse |
 | FNS Average Employees | connected | reuse |

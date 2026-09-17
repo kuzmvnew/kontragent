@@ -106,7 +106,7 @@ Detailed scope: `INTERMEDIATE_STAGE_1_5.md`.
 Current work items:
 
 1. FNS Tax Debt — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
-2. FNS Tax Offences — close final six-gate acceptance.
+2. FNS Tax Offences — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.
 3. FSSP — inventory/recover prior implementation before any rewrite.
 4. Fedresurs/EFРSB — inventory/recover prior implementation before any rewrite.
 5. Bankruptcy/liquidation — build event/stage semantics rather than one boolean.
@@ -302,9 +302,11 @@ DaMIA изучена как возможный резервный bridge чер�
 
 ### ФНС налоговые правонарушения
 
-Статус: 🟡 code/product foundation есть; финальная six-gate приёмка не закрыта.
+Статус: ✅ **ACCEPTED / SIX GATES PASS** 17.09.2026.
 
-Stage 1.5 обязан завершить тот же постоянный acceptance protocol и окончательную сверку карточки/состояний.
+Протокол: `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.
+
+Подтверждены официальный snapshot ФНС `7707329152-taxoffence`, SHA-256, parser fail-closed, 24 139 PostgreSQL документов/компаний, сумма штрафа и даты, real found, dated not_found, IP not_applicable, unavailable contracts, Chromium и coverage. Тип нарушения источник не публикует и продукт его не выдумывает. Auto-update остаётся `NOT_CONFIGURED`.
 
 Остальные ранее подключённые блоки: ФНС уплаченные налоги, REVEXP доходы/расходы, среднесписочная численность, Реестр МСП.
 

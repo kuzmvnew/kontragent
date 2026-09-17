@@ -292,6 +292,25 @@ DEFAULT_DATASETS = [
     },
     {
         "source_code": "fns",
+        "code": "fns_tax_offence",
+        "name": "ФНС: Налоговые правонарушения и штрафы",
+        "domain": "tax_offence",
+        "update_mode": "bulk",
+        "data_format": "xml",
+        "refresh_schedule": "annual",
+        "priority": 10,
+        "enabled": False,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-taxoffence/"
+        ),
+        "description": (
+            "Сведения о налоговых правонарушениях "
+            "и общем размере штрафа"
+        ),
+    },
+    {
+        "source_code": "fns",
         "code": "fns_revenue_expenses",
         "name": "ФНС: Доходы и расходы",
         "domain": "revenue_expenses",
