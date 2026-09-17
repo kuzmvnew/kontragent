@@ -12,6 +12,8 @@
 - Handoff этапа 1.5: `STAGE_1_5_HANDOFF.md`
 - Детальный план: `ROADMAP_DETAILED.md`
 - Person sources/access matrix: `PERSON_CHECK_SOURCES.md`
+- Evidence/reporting policy: `EVIDENCE_REPORTING_POLICY.md`
+- Forensic audit: `docs/HALLUCINATION_AUDIT_2026-09-17.md`
 - Текущее состояние: `PROJECT_STATUS.md`
 
 ## Правило работы
@@ -20,15 +22,13 @@
 
 При приёмке источника всегда отдельно проверять шесть постоянных критериев: tests → реальный официальный/публичный ответ → PostgreSQL write/read → корректная семантика состояний → реальная карточка в браузере → количество/даты/покрытие. Наличие кода, загруженных данных, проверенной карточки и настроенного автообновления — разные статусы.
 
+Любое утверждение о готовности или проверке должно иметь evidence-class из `EVIDENCE_REPORTING_POLICY.md`. Если доказательства нет, статус — `UNVERIFIED` или `NOT PRESENT`, а не оптимистичная формулировка.
+
 ## Где проект сейчас
 
-Current Phase:
+Last completed stage: **Auto-update / Data Readiness — COMPLETE / ACCEPTED**.
 
-Auto-update / Data Readiness
-
-Status:
-
-COMPLETE / ACCEPTED; NEXT: RISK ENGINE (DO NOT START AUTOMATICALLY)
+Current approved next stage: **RISK ENGINE — DO NOT START AUTOMATICALLY**.
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -98,13 +98,13 @@ Official EIS remains the only Source of Truth.
 
 Deferred source does not block current development.
 
-## Current Stage 1.5
+## Stage 1.5 — Final Accepted State
 
 Stage 1.5 is the mandatory bridge between Wave 1 and the full Risk Engine.
 
 Detailed scope: `INTERMEDIATE_STAGE_1_5.md`.
 
-Current work items:
+Final disposition of work items:
 
 1. FNS Tax Debt — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
 2. FNS Tax Offences — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.

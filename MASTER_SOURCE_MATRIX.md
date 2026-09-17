@@ -7,7 +7,11 @@ The canonical spreadsheet artifact for the researched source matrix is:
 
 `Kontragent_MASTER_DATA_SOURCE_MATRIX_17_blocks.xlsx`
 
-It contains:
+Repository artifact status (forensic check 2026-09-17): **NOT PRESENT IN GIT**. The exact original workbook was not found among tracked files, untracked repository files, accessible local copies, or repository history. The repository currently contains only this textual index/snapshot. Until the unchanged original workbook is obtained, its provenance is recorded, its SHA-256 is calculated, and it is committed, Git must not be described as containing the complete canonical matrix.
+
+`EXTERNAL_HISTORICAL_EVIDENCE` reported by the owner from a separate ChatGPT Library audit, not independently verified from the workbook in this repository: 214 total positions; 191 rows from the original 17 blocks; 23 additions/gaps; 13 positions carrying the conversation-derived label `Реализован`; among the original 191 rows, Wave 1 = 29, Wave 2 = 79, Wave 3 = 83, and `Реализован` = 11. These are row/position counts, not counts of unique APIs, registries, or source families. The label `Реализован` does not prove current data loading, PostgreSQL/browser acceptance, or configured auto-update.
+
+The unavailable workbook is described by the external research snapshot as containing:
 
 - 17 researched source blocks;
 - consolidated source table;
@@ -19,10 +23,10 @@ It contains:
 ## Development sequence
 
 1. Wave 1 is officially CLOSED / ACCEPTED. See `WAVE1_CLOSURE_DECISION.md` and `WAVE1_STATUS.md`.
-2. Execute `INTERMEDIATE_STAGE_1_5.md` before the full Risk Engine.
-3. Stage 1.5 closes unfinished acceptance of FNS Tax Debt/Tax Offences and adds/recovers critical free-source foundations: FSSP, Fedresurs/EFРSB, courts, FNS account-suspension decisions, Bank of Russia high-risk public check and corporate disclosure.
-4. Build Auto-update/Data Readiness.
-5. Build Risk Engine -> Summary Engine -> Company Card v2 -> Report v1.
+2. Intermediate Stage 1.5 is COMPLETE / CLOSED / ACCEPTED; its historical scope is in `INTERMEDIATE_STAGE_1_5.md`.
+3. Auto-update/Data Readiness is COMPLETE / ACCEPTED; production scheduler deployment remains `NOT_CONFIGURED` until handlers/supervisor are installed.
+4. Current approved next stage: Risk Engine. Do not start it automatically from this index update.
+5. Then build Summary Engine -> Company Card v2 -> Report v1.
 6. Pass Security & Resilience, Legal Launch and Product / Company Card Acceptance gates.
 7. Release the first 10,000 company pages for SEO.
 8. Build Lists/Bulk Check, Monitoring/Event Engine and Workspace v1.
@@ -30,11 +34,11 @@ It contains:
 
 See `WAVE_IMPLEMENTATION_PLAN.md` for the active order of work.
 
-## Stage 1.5 source class
+## Stage 1.5 source class — accepted historical scope
 
 Stage 1.5 is not Wave 2. It is a prerequisite data-quality/product-foundation stage required before the agreed Risk Engine.
 
-Current Stage 1.5 source/work items:
+Final Stage 1.5 source/work scope:
 
 - FNS Tax Debt — final six-gate acceptance;
 - FNS Tax Offences — final six-gate acceptance;
@@ -104,4 +108,4 @@ Project name remains **Kontragent**. “Next” module/product names are working
 
 ## Binary workbook storage
 
-The `.xlsx` workbook itself must be committed as a binary repository file (recommended path: `docs/research/Kontragent_MASTER_DATA_SOURCE_MATRIX_17_blocks.xlsx`). The current text documentation index does not replace the binary workbook with a partial CSV export.
+The unchanged original `.xlsx` workbook, if obtained, must be committed as a binary repository file (recommended path: `docs/research/Kontragent_MASTER_DATA_SOURCE_MATRIX_17_blocks.xlsx`) with its provenance and exact SHA-256. **Current status: NOT PRESENT IN GIT.** Do not reconstruct or generate an equivalent workbook from this text or from memory. This textual index does not replace the canonical binary artifact.

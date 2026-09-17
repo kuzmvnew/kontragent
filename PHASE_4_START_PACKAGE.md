@@ -6,6 +6,8 @@ Status: APPROVED
 
 Date: 2026-09-17
 
+Historical document notice: this start package records the original Phase 4 starting point. Its `Immediate Next Step` sequence below is preserved as historical context and was superseded after Stage 1.5 and Auto-update / Data Readiness were accepted. For current status and execution order use `PROJECT_STATUS.md` and `WAVE_IMPLEMENTATION_PLAN.md`. The current approved next stage is Risk Engine; it is not started by this documentation update.
+
 ---
 
 # Phase
@@ -147,7 +149,7 @@ Wave-level governance may explicitly disposition an external source blocker with
 
 ---
 
-# Immediate Next Step
+# Immediate Next Step — Historical, Superseded
 
 Do not start a new Wave source.
 
@@ -158,6 +160,8 @@ Proceed with the approved post-Wave1 transition:
 3. Company Card v2 + Risk Engine + Summary Engine + Report v1;
 4. mandatory Security & Resilience, Legal Launch and Product / Company Card Acceptance gates;
 5. first 10k SEO only after those gates.
+
+Superseded status as of 2026-09-17: items 1–2 reached their documented accepted disposition. The current approved next stage is Risk Engine, in the order defined by `WAVE_IMPLEMENTATION_PLAN.md`.
 
 W1-005 B/C may be revisited later as deferred source maintenance when the official source becomes complete/stable. This does not automatically reopen Wave 1.
 
