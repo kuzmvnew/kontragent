@@ -1,20 +1,23 @@
-# Wave 1 — официальный промежуточный статус
+# Wave 1 — официальный финальный статус
 
 Дата: 17.09.2026. Фаза 3 завершена в согласованном объёме; Фаза 4 ACTIVE.
-Это статус результатов, не изменение утверждённой архитектуры.
 
-| Шаг | Источник | Фактическое состояние |
+**Wave 1: CLOSED / ACCEPTED BY EXPLICIT PROJECT DECISION.**
+
+Решение о закрытии зафиксировано в `WAVE1_CLOSURE_DECISION.md`. Это управленческое закрытие Wave 1 и не переписывает фактические evidence/status отдельных источников.
+
+| Шаг | Источник | Финальное состояние Wave 1 |
 |---|---|---|
 | W1-001 | CBR Warning List | ACCEPTED / SIX GATES PASS на Mac |
 | W1-002 | CBR FinOrg | ACCEPTED / SIX GATES PASS на Mac |
 | W1-003 | ФНС — МСП, получатели поддержки | ACCEPTED / SIX GATES PASS на Mac |
 | W1-004 | Росздравнадзор | ACCEPTED / SIX GATES PASS на Mac |
-| W1-005 | Роскомнадзор | IN PROGRESS / SOURCE-BLOCKED (B, C) |
+| W1-005 | Роскомнадзор | DEFERRED EXCEPTION / SOURCE-BLOCKED (B, C); A/D/E/F verified |
 | W1-006 | НОСТРОЙ / НОПРИЗ / СРО | ACCEPTED / SIX GATES PASS на Mac |
 
-Полностью приняты на пользовательском Mac 5 шагов из 6. W1-005 Роскомнадзор реализован для scope A–F, но не принят: официальные bulk-файлы B/C обрываются до XML EOF и корректно остаются `unavailable`. W1-006 принят; Wave 1 остаётся открытой только из-за отдельного W1-005 blocker.
+Пять шагов полностью приняты по Six Gates. W1-005 не переименовывается в `SIX GATES PASS`: официальные bulk-файлы B/C продолжают обрываться до XML EOF и корректно остаются `unavailable`. По отдельному решению владельца продукта этот внешний blocker перенесён как deferred exception и больше не блокирует закрытие Wave 1.
 
-Разрешено начинать W1-006, пока W1-005 ожидает исправления/полного ответа официальных B/C-источников. Это не считается закрытием W1-005. Wave 1 остаётся открытой до приёмки W1-006 и отдельного закрытия/решения по W1-005 blocker.
+Повторное возвращение к W1-005 B/C при восстановлении официального источника не переоткрывает Wave 1 автоматически.
 
 ## W1-001
 Протокол: [docs/W1_001_ACCEPTANCE.md](docs/W1_001_ACCEPTANCE.md). Импорт не повторять.
@@ -30,18 +33,23 @@
 Финальная приёмка: [docs/W1_003_ACCEPTANCE.md](docs/W1_003_ACCEPTANCE.md). На Mac `SIX GATES PASS`; импорт не повторять.
 
 ## W1-004
-Финальная приёмка: [docs/W1_004_ACCEPTANCE.md](docs/W1_004_ACCEPTANCE.md). Scope A–D принят на пользовательском Mac: bulk-лицензии, точечный Единый реестр лицензий, exact-number lookup медизделий без автопривязки к Company и перечень клинических организаций. Все gates 1–6 PASS; 450 tests; PostgreSQL `kontragent`; Alembic `a9c4e6f8b201`; Chromium HTTP 200, `page_errors=[]`. `auto_update=NOT_CONFIGURED`.
+Финальная приёмка: [docs/W1_004_ACCEPTANCE.md](docs/W1_004_ACCEPTANCE.md). Scope A–D принят на пользовательском Mac: bulk-лицензии, точечный Единый реестр лицензий, exact-number lookup медизделий без автопривязки к Company и перечень клинических организаций. Все gates 1—6 PASS; 450 tests; PostgreSQL `kontragent`; Alembic `a9c4e6f8b201`; Chromium HTTP 200, `page_errors=[]`. `auto_update=NOT_CONFIGURED`.
 
 ## W1-005
-Паспорт: [ROSKOMNADZOR_SOURCE_PASSPORT.md](ROSKOMNADZOR_SOURCE_PASSPORT.md). Scope A–F утверждён. A, D, E загружены из полных официальных файлов; F прошёл live found/not_found и PostgreSQL cache. B/C не публиковались из-за повторяемого premature EOF официального сервера. Person/IP-данные изолированы в отдельной непубличной таблице. 458 tests PASS; фактический Chromium показал A=`found`, B/C=`unavailable`, ошибок страницы нет. Итоговый Six Gates остаётся NOT CONFIRMED до полных B/C. `auto_update=NOT_CONFIGURED`.
+Паспорт: [ROSKOMNADZOR_SOURCE_PASSPORT.md](ROSKOMNADZOR_SOURCE_PASSPORT.md). Scope A–F утверждён. A, D, E загружены из полных официальных файлов; F прошёл live found/not_found и PostgreSQL cache. B/C не публиковались из-за повторяемого premature EOF официального сервера. Person/IP-данные изолированы в отдельной непубличной таблице. 458 tests PASS; фактический Chromium показал A=`found`, B/C=`unavailable`, ошибок страницы нет. Итоговый Six Gates по самому W1-005 остаётся NOT CONFIRMED. `auto_update=NOT_CONFIGURED`.
+
+Финальное решение Wave 1: W1-005 B/C перенесены в deferred external-source exception. Не маскировать blocker как успешную проверку и не превращать `unavailable` в `not_found`.
 
 ## W1-006
 W1-006 НОСТРОЙ / НОПРИЗ / СРО — **ACCEPTED / SIX GATES PASS на пользовательском Mac**. Протокол: [docs/W1_006_ACCEPTANCE.md](docs/W1_006_ACCEPTANCE.md). Реализованы company-safe exact-INN checks НОСТРОЙ/НОПРИЗ, private НРС НОПРИЗ и безопасное состояние защиты НРС НОСТРОЙ. PostgreSQL `kontragent`, Alembic `e7a8b9c0d1e2`, 472 tests, три реальные Chromium-карточки HTTP 200 / `page_errors=[]`. Person storage `1`, public exposure `0`. On-demand cache — не bulk snapshot; auto-update `NOT_CONFIGURED`; права на automation/reuse/republication требуют отдельного review.
 
 ## После Wave 1
 
-Утверждённый порядок и спецификации находятся в `POST_WAVE1_PRODUCT_PLAN.md` и `WAVE_IMPLEMENTATION_PLAN.md`. До 10k SEO обязательны три независимых допуска: Security & Resilience, Legal Launch и Product / Company Card Acceptance.
+Wave 1 официально закрыта. Следующая работа выполняется только по утверждённому post-Wave1 порядку из `POST_WAVE1_PRODUCT_PLAN.md` и `WAVE_IMPLEMENTATION_PLAN.md`.
+
+До 10k SEO обязательны три независимых допуска: Security & Resilience, Legal Launch и Product / Company Card Acceptance.
 
 ## Общие ограничения
-Каждый источник проходит отдельно: tests; реальный официальный ответ; PostgreSQL write/read; found/not_found/not_applicable/unavailable; настоящий Chromium; количества/даты/покрытие. Только exact identifiers. Код готов, данные загружены, PostgreSQL подтверждён, браузер проверен, покрытие измерено и auto-update настроен — разные статусы.
-Person-продукт / Leads / CRM / Enterprise не начинать во время Wave 1. Private person evidence из официальных источников не выбрасывать: хранить минимизированно в закрытом контуре и не публиковать без отдельного допуска. РНП/ЕИС отложен до официального доступа; DaMIA не подключать.
+Каждый новый/возвращённый источник продолжает проходить отдельно: tests; реальный официальный ответ; PostgreSQL write/read; found/not_found/not_applicable/unavailable; настоящий Chromium; количества/даты/покрытие. Только exact identifiers. Код готов, данные загружены, PostgreSQL подтверждён, браузер проверен, покрытие измерено и auto-update настроен — разные статусы.
+
+Private person evidence из официальных источников не выбрасывать: хранить минимизированно в закрытом контуре и не публиковать без отдельного допуска. РНП/ЕИС отложен до официального доступа; DaMIA не подключать без отдельного решения.

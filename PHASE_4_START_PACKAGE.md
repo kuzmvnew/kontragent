@@ -1,6 +1,6 @@
 # PHASE 4 START PACKAGE
 
-Version: 1.1
+Version: 1.2
 
 Status: APPROVED
 
@@ -20,9 +20,11 @@ Data Normalization & Quality Foundation
 
 Build a unified business data foundation.
 
-Approved clarification: all six agreed Wave 1 source steps remain part of Wave 1. Five are fully accepted. W1-005 Roskomnadzor is implemented for A–F but remains `IN PROGRESS / SOURCE-BLOCKED (B, C)` because the official B/C bulk responses terminate before complete XML EOF. W1-006 NOSTROY / NOPRIZ / SRO is `ACCEPTED / SIX GATES PASS`.
+Wave 1 is now **CLOSED / ACCEPTED BY EXPLICIT PROJECT DECISION**. Five source steps are fully accepted by Six Gates. W1-005 Roskomnadzor remains a factual `DEFERRED EXCEPTION / SOURCE-BLOCKED (B, C)`: A/D/E/F are implemented and verified, while B/C remain `unavailable` because the official responses terminate before complete XML EOF. W1-005 is not relabeled SIX GATES PASS.
 
-W1-006 may proceed while the external W1-005 blocker remains open. This does not mark W1-005 or Wave 1 complete.
+W1-006 NOSTROY / NOPRIZ / SRO is `ACCEPTED / SIX GATES PASS`.
+
+The W1-005 external blocker no longer blocks Wave 1 closure and stays in deferred-source maintenance/backlog. See `WAVE1_CLOSURE_DECISION.md`.
 
 Current official sources become one coherent business model.
 
@@ -83,9 +85,9 @@ Every business conclusion must reference evidence.
 
 ---
 
-# Out of Scope during Wave 1 / current Phase 4 source work
+# Out of Scope during the completed Wave 1 source work
 
-The following product tracks are not implemented as part of W1-006 itself:
+The following product tracks were not implemented as part of W1-006 itself:
 
 - Person Product
 - Leads
@@ -95,7 +97,7 @@ The following product tracks are not implemented as part of W1-006 itself:
 - SEO release
 - AI Chat
 
-Their approved later order is documented in `POST_WAVE1_PRODUCT_PLAN.md`.
+Their approved later order is documented in `POST_WAVE1_PRODUCT_PLAN.md` and `WAVE_IMPLEMENTATION_PLAN.md`.
 
 ---
 
@@ -127,27 +129,37 @@ Phase 4 source work is accepted only when:
 
 Code, downloaded data, database import, browser rendering, measured coverage and configured auto-update are different statuses.
 
+Wave-level governance may explicitly disposition an external source blocker without rewriting that source's own factual acceptance status. `WAVE1_CLOSURE_DECISION.md` records the W1-005 B/C exception.
+
 ---
 
-# Wave 1 Handoff
+# Wave 1 Final Handoff
 
 - W1-001 CBR Warning List: ACCEPTED / SIX GATES PASS on user Mac.
 - W1-002 CBR FinOrg: ACCEPTED / SIX GATES PASS on user Mac; protocol `docs/W1_002_ACCEPTANCE.md`.
 - W1-003 FNS SME support recipients: ACCEPTED / SIX GATES PASS on user Mac; protocol `docs/W1_003_ACCEPTANCE.md`.
 - W1-004 Roszdravnadzor: ACCEPTED / SIX GATES PASS; protocol `docs/W1_004_ACCEPTANCE.md`.
-- W1-005 Roskomnadzor: `IN PROGRESS / SOURCE-BLOCKED (B, C)`; A/D/E/F implemented and verified; B/C remain `unavailable`; 458 tests PASS; Six Gates NOT CONFIRMED.
+- W1-005 Roskomnadzor: `DEFERRED EXCEPTION / SOURCE-BLOCKED (B, C)`; A/D/E/F implemented and verified; B/C remain `unavailable`; Six Gates for W1-005 itself NOT CONFIRMED.
 - W1-006 NOSTROY / NOPRIZ / SRO: `ACCEPTED / SIX GATES PASS`; protocol `docs/W1_006_ACCEPTANCE.md`; private person data remains isolated and non-public.
+- Wave 1 overall: **CLOSED / ACCEPTED BY EXPLICIT PROJECT DECISION**.
 - RNP/EIS: deferred until official access.
 - DaMIA: not connected.
-- Person / Leads / CRM / Enterprise: do not start during Wave 1.
 
 ---
 
 # Immediate Next Step
 
-Do not start a new Wave source. Preserve the accepted W1-006 evidence and wait
-for a separate decision or corrected official responses for W1-005 B/C. Do not
-treat W1-006 acceptance as permission to mark Wave 1 complete.
+Do not start a new Wave source.
+
+Proceed with the approved post-Wave1 transition:
+
+1. freeze/synchronize post-Wave1 specifications with the accepted implementation baseline;
+2. Auto-update / Data Readiness;
+3. Company Card v2 + Risk Engine + Summary Engine + Report v1;
+4. mandatory Security & Resilience, Legal Launch and Product / Company Card Acceptance gates;
+5. first 10k SEO only after those gates.
+
+W1-005 B/C may be revisited later as deferred source maintenance when the official source becomes complete/stable. This does not automatically reopen Wave 1.
 
 ---
 
