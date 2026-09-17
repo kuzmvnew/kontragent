@@ -109,7 +109,7 @@ Current work items:
 2. FNS Tax Offences — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.
 3. FSSP — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata exists, no implementation/data/runs.
 4. Fedresurs/EFРSB — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata/specification exists, no implementation/data/runs.
-5. Bankruptcy/liquidation — build event/stage semantics rather than one boolean.
+5. Bankruptcy/liquidation — ✅ normalized 15-state event model accepted; migration `f8b9c0d1e2f3`; no unsupported source events fabricated. Protocol: `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`.
 6. Arbitration Courts v1.
 7. Courts of General Jurisdiction v1.
 8. FNS account-suspension decisions.

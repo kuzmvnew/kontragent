@@ -400,6 +400,35 @@
 
             {% include "partials/sro.html" %}
 
+            {% if company.legal_events %}
+                <section class="card" data-testid="legal-events">
+                    <h2>Банкротство, ликвидация и исключение</h2>
+                    <p>
+                        События показаны раздельно: ликвидация и исключение
+                        не считаются банкротством, а намерение или заявление
+                        не означает введение процедуры.
+                    </p>
+                    {% for event in company.legal_events %}
+                        <div class="detail-row" data-event-type="{{ event.event_type }}">
+                            <div class="detail-label">
+                                {{ event.event_date.strftime("%d.%m.%Y") }}
+                            </div>
+                            <div class="detail-value">
+                                <strong>{{ event.label }}</strong><br>
+                                {{ event.interpretation_note }}<br>
+                                Источник:
+                                <a href="{{ event.source_url }}" rel="nofollow noopener">
+                                    {{ event.source }} / {{ event.source_identifier }}
+                                </a>
+                                {% if event.checked_at %}
+                                    · проверено {{ event.checked_at.strftime("%d.%m.%Y") }}
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </section>
+            {% endif %}
+
 
             <!-- ======================================== -->
             <!-- НАЛОГОВАЯ ЗАДОЛЖЕННОСТЬ -->

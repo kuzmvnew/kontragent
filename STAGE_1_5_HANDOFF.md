@@ -72,6 +72,8 @@ FSSP inventory was completed on 2026-09-17. See `FSSP_STAGE_1_5_INVENTORY.md`. N
 
 Fedresurs/EFRSB inventory was completed on 2026-09-17. See `FEDRESURS_STAGE_1_5_INVENTORY.md`. No working or reusable implementation was found in the same repository/history/local/database surfaces; the disabled catalog rows and financial-distress specification are not an integration.
 
+Bankruptcy/liquidation semantics were accepted on 2026-09-17. See `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`. Migration `f8b9c0d1e2f3` adds a 15-state evidence-backed event model and the current product can project stored events conservatively. No source record was fabricated: the table remains empty until a future adapter passes its own access review and six gates.
+
 Parallel work is allowed only when it does not risk database/schema conflicts or duplicate an existing source implementation.
 
 ## Permanent six-gate protocol

@@ -40,6 +40,9 @@ from app.models.fns_sme_support import (
 from app.models.headcount import (
     CompanyHeadcount,
 )
+from app.models.legal_event import (
+    CompanyLegalEvent,
+)
 from app.models.msp import (
     CompanyMspProfile,
 )
@@ -79,6 +82,7 @@ __all__ = [
     "CompanyContact",
     "CompanyFinancial",
     "CompanyHeadcount",
+    "CompanyLegalEvent",
     "CompanyIdentifier",
     "CompanyManager",
     "CompanyMspProfile",

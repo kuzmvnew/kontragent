@@ -18,6 +18,9 @@ from app.services.company_service import (
 from app.services.headcount_service import (
     get_latest_headcount_for_company,
 )
+from app.services.legal_event_service import (
+    get_legal_events_for_company,
+)
 from app.services.msp_service import (
     get_msp_profile_for_company,
 )
@@ -731,6 +734,10 @@ def load_structured_domain_data(
         tax_payment
     )
 
+    legal_events = get_legal_events_for_company(
+        company_id=company_id,
+    )
+
     return {
         "msp_profile": (
             msp_profile
@@ -779,6 +786,8 @@ def load_structured_domain_data(
         "tax_payment_history": (
             tax_payment_history
         ),
+
+        "legal_events": legal_events,
     }
 
 
@@ -1510,6 +1519,8 @@ def aggregate_company(
         result[
             "tax_payment_history"
         ] = []
+
+        result["legal_events"] = []
 
     return result
 
