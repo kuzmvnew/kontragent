@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow,noarchive">
+    <title>Data Readiness — Kontragent</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .readiness { width:min(1500px,calc(100% - 32px)); margin:32px auto; }
+        .readiness h1 { margin-bottom:4px; }
+        .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin:24px 0; }
+        .metric { background:#fff; border:1px solid #e3e7ec; border-radius:10px; padding:14px; }
+        .metric strong { display:block; font-size:24px; }
+        .table-wrap { overflow:auto; background:#fff; border:1px solid #e3e7ec; border-radius:10px; }
+        table { width:100%; border-collapse:collapse; font-size:13px; }
+        th,td { padding:10px; border-bottom:1px solid #edf0f3; text-align:left; vertical-align:top; white-space:nowrap; }
+        th { position:sticky; top:0; background:#f8fafc; }
+        .status { display:inline-block; border-radius:999px; padding:3px 8px; font-weight:650; }
+        .current { background:#dcfce7;color:#166534 }.stale{background:#fef3c7;color:#92400e}
+        .updating{background:#dbeafe;color:#1d4ed8}.error{background:#fee2e2;color:#991b1b}
+        .unavailable,.source_blocked{background:#f3e8ff;color:#6b21a8}.access_pending{background:#ffedd5;color:#9a3412}
+        .manual{background:#e0e7ff;color:#3730a3}.user_triggered{background:#cffafe;color:#155e75}
+        .not_configured{background:#e5e7eb;color:#374151}.muted{color:#667085}.error-text{white-space:normal;max-width:320px;color:#991b1b}
+    </style>
+</head>
+<body>
+<main class="readiness">
+    <h1>Data Readiness / Sources Status</h1>
+    <div class="muted">Operational review: {{ readiness.summary.last_full_operational_review or 'ещё не выполнен для всех datasets' }}</div>
+    <section class="summary">
+        {% for key in ['total_datasets','current','stale','updating','error','source_blocked','access_pending','manual','user_triggered'] %}
+        <div class="metric"><span>{{ key }}</span><strong>{{ readiness.summary[key] }}</strong></div>
+        {% endfor %}
+    </section>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Source</th><th>Dataset</th><th>Mode</th><th>Status</th><th>Source as of</th><th>Last attempt</th><th>Last success</th><th>Freshness</th><th>Records</th><th>Coverage</th><th>Auto-update</th><th>Next expected</th><th>Last error</th></tr></thead>
+        <tbody>
+        {% for item in readiness.datasets %}
+        <tr>
+            <td>{{ item.source }}<br><span class="muted">{{ item.source_code }}</span></td>
+            <td>{{ item.dataset }}<br><span class="muted">{{ item.dataset_code }}</span></td>
+            <td>{{ item.mode }}</td>
+            <td><span class="status {{ item.status }}">{{ item.status }}</span></td>
+            <td>{{ item.source_as_of or '—' }}</td><td>{{ item.last_attempt_at or '—' }}</td><td>{{ item.last_success_at or '—' }}</td>
+            <td>{{ item.freshness_policy }}</td><td>{{ item.record_count if item.record_count is not none else '—' }}</td>
+            <td>{{ item.coverage or '—' }}</td><td>{{ item.auto_update }}</td><td>{{ item.next_expected_update_at or item.next_retry_at or '—' }}</td>
+            <td class="error-text">{{ item.last_error or '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <h2>Recent update runs</h2>
+    <div class="table-wrap"><table>
+        <thead><tr><th>Run</th><th>Source / dataset</th><th>Status</th><th>Started</th><th>Duration</th><th>Seen / written / rejected</th><th>Error</th></tr></thead>
+        <tbody>{% for run in readiness.recent_runs %}<tr>
+            <td>{{ run.run_id }}</td><td>{{ run.source_code }} / {{ run.dataset_code }}</td>
+            <td><span class="status {{ 'current' if run.status == 'success' else 'error' }}">{{ run.status }}</span></td>
+            <td>{{ run.started_at }}</td><td>{{ run.duration_ms or '—' }}</td>
+            <td>{{ run.records_seen }} / {{ run.records_written }} / {{ run.records_rejected }}</td>
+            <td class="error-text">{{ run.error_code or '' }} {{ run.error_message or '—' }}</td>
+        </tr>{% endfor %}</tbody>
+    </table></div>
+</main>
+</body>
+</html>

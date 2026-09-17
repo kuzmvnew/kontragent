@@ -34,6 +34,7 @@ from app.services.company_service import (
 from app.services.npd_service import (
     refresh_npd_check_for_inn,
 )
+from app.services.data_readiness_service import get_data_readiness
 
 
 # =========================================================
@@ -562,6 +563,23 @@ async def api_search(
 # =========================================================
 # HEALTH
 # =========================================================
+
+
+@app.get("/internal/data-readiness", response_class=HTMLResponse, include_in_schema=False)
+async def internal_data_readiness_page(request: Request):
+    response = templates.TemplateResponse(
+        request=request,
+        name="data_readiness.html",
+        context={"readiness": get_data_readiness()},
+    )
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/internal/api/data-readiness", include_in_schema=False)
+async def internal_data_readiness_api():
+    return get_data_readiness()
 
 
 @app.get(
