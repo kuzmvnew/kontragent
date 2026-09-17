@@ -1,6 +1,6 @@
 # Risk Engine v2 rules
 
-Version: `risk-engine-2.0.1` / `risk-rules-2.0.0`  
+Version: `risk-engine-2.0.1` / `risk-rules-2.0.0`
 Status: implementation foundation; product acceptance pending live data gates.
 
 ## Correctness changes

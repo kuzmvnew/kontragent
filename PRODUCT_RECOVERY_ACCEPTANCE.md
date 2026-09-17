@@ -1,6 +1,6 @@
 # Product Recovery acceptance
 
-Date: 2026-09-17  
+Date: 2026-09-17
 Decision: **PRODUCT RECOVERY IN PROGRESS**
 
 ## Verified in this run

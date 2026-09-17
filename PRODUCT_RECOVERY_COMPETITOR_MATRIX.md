@@ -1,6 +1,6 @@
 # Product Recovery — public competitor benchmark
 
-Date: 2026-09-17  
+Date: 2026-09-17
 Scope: public product materials only; no design or wording copied.
 
 | Product | First-screen / overall pattern | Facts and sources | Product lesson for Kontragent |
@@ -21,4 +21,3 @@ Scope: public product materials only; no design or wording copied.
 5. Enforcement needs current/historical distinction and published amounts where available.
 6. The result must lead to a concrete next action and preserve source/date drill-down.
 7. Unavailable information should limit the conclusion, not increase business severity.
-

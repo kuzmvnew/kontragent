@@ -1,6 +1,6 @@
 # Product Recovery — factual source status
 
-Date: 2026-09-17  
+Date: 2026-09-17
 Status: **IN PROGRESS**
 
 Evidence labels follow `EVIDENCE_REPORTING_POLICY.md`.
@@ -63,4 +63,3 @@ though it does not provide full EGRUL/EGRIP registration state.
 2. Fedresurs production REST access is not available; zero bankruptcy records exist.
 3. No FSSP checks have been manually completed for acceptance companies.
 4. Therefore the 10 bankruptcy and 10 low-risk/high-coverage buckets cannot yet be populated truthfully.
-

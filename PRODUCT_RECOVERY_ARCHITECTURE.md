@@ -26,4 +26,3 @@ Risk calculation remains pure and does not perform network access.
 The orchestrator contract and tests do not prove production source completion.
 Full acceptance requires real EGRUL/EGRIP, Fedresurs and manually completed FSSP
 flows for the 40-company matrix.
-

@@ -1,6 +1,6 @@
 # Summary Engine v2 wording
 
-Version: `summary-engine-2.0.1`  
+Version: `summary-engine-2.0.1`
 Status: implementation foundation; browser and 40-company acceptance pending.
 
 ## Client rules
