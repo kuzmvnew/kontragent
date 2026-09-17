@@ -4,7 +4,7 @@ Date: 2026-09-17
 
 Migration: `c3d4e5f6a7b8`
 
-Verification at checkpoint: 523 automated tests passed; Alembic is at head; the real AVTOVAZ card rendered all four new blocks in the in-app Chromium with zero console errors. PostgreSQL contains one C2 check with three cases, one C1 access-pending check, and one ZSK challenge session.
+Verification at final checkpoint: 531 automated tests passed; Alembic is at head; the real AVTOVAZ card rendered all four new blocks. PostgreSQL contains C2 cases, C1 access-pending, H address context, and completed E/F results.
 
 ## Invariants
 
@@ -51,25 +51,25 @@ Current acceptance:
 - tests: PASS for fail-closed states;
 - real official source: PASS, positive result;
 - PostgreSQL: schema/session lifecycle PASS; golden result not linked because company is absent from master registry;
-- browser: official result PASS; embedded same-session hand-off/resume pending;
+- browser: official positive and AVTOVAZ dated negative PASS;
 - coverage: current FNS suspension decisions only, not every account/authority;
-- limitation: human challenge and product browser ownership;
+- limitation: a future challenge still requires manual same-session resume;
 - future paid/free bridge: none accepted; Checko `/company` has no published suspension field.
 
 ## F Bank of Russia ZSK
 
-The ordinary browser reached mandatory SmartCaptcha with AVTOVAZ data filled. `challenge_required` was saved in PostgreSQL. The product wording is limited to presence/absence of CBR high-risk information.
+The ordinary browser completed the official request for AVTOVAZ and returned a dated absence of high-risk information. The result is cached in PostgreSQL. Product wording remains limited to presence/absence of CBR high-risk information.
 
 Current acceptance:
 
 - tests: PASS;
-- real official result: pending human solve;
-- PostgreSQL: PASS for challenge state/evidence;
-- browser: official form/challenge PASS, same-session resume pending;
+- real official result: PASS, dated negative;
+- PostgreSQL: PASS for completed result/evidence;
+- browser: official form/result PASS;
 - coverage: point-in-time official high-risk presence only;
-- limitation: no completed result yet;
+- limitation: future challenges remain human-only;
 - future paid: Kontur Focus marker; DaMIA score is not semantic-equivalent.
 
 ## Stage status
 
-Stage 1.5 is **IN PROGRESS**. C2 has a usable free official partial foundation. C1 still needs a lawful free key/live probe. E and F still need the visible browser session to be controlled/resumed end-to-end in the product, and F needs one human-completed official result. No merge is permitted before the final acceptance review.
+Stage 1.5 is **IN PROGRESS**. E/F pass and H is a complete foundation. C1 still needs a server-visible free key/live probe; C2 needs live regional acceptance beyond routing contracts. No merge is permitted.

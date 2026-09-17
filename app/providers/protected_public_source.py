@@ -50,7 +50,9 @@ def parse_cbr_zsk_result_text(text: str) -> dict:
     normalized = " ".join(str(text or "").split())
     if re.search(r"smartcaptcha|подтвердите,? что вы не робот", normalized, re.I):
         return {"result": "challenge_required", "evidence_hash": evidence_sha256(normalized)}
-    if re.search(r"сведени[яй].*(?:высок|высокой).*(?:не найден|не имеют|отсутств)", normalized, re.I):
+    has_risk_context = bool(re.search(r"сведени", normalized, re.I) and re.search(r"высок", normalized, re.I))
+    has_explicit_absence = bool(re.search(r"не найден|не имеют|отсутств", normalized, re.I))
+    if has_risk_context and has_explicit_absence:
         return {"result": "high_risk_information_not_found", "evidence_hash": evidence_sha256(normalized)}
     if re.search(r"сведени[яй].*(?:высок|высокой).*(?:найден|имеют|содерж)", normalized, re.I):
         return {"result": "high_risk_information_found", "evidence_hash": evidence_sha256(normalized)}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from html.parser import HTMLParser
 import re
+from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlencode, urljoin
 
@@ -185,6 +186,10 @@ class RegionalSudrfProvider:
     code = "regional_sudrf_official"
     exact_identifier_fields = {"inn": "G2_PARTS__INN_STRSS", "ogrn": "G2_PARTS__OGRN_STRSS"}
 
+    def __init__(self, *, base_url: str | None = None, delo_id: str = "1540005"):
+        self.base_url = base_url
+        self.delo_id = delo_id
+
     @classmethod
     def build_exact_identifier_params(cls, *, inn: str, ogrn: str | None = None, delo_id: str) -> dict:
         params = {"name": "sud_delo", "name_op": "sf", "new": "5", "delo_id": delo_id}
@@ -194,12 +199,60 @@ class RegionalSudrfProvider:
             params[cls.exact_identifier_fields["ogrn"]] = ogrn
         return params
 
+    def build_search_url(self, *, inn: str, ogrn: str | None = None) -> str:
+        if not self.base_url:
+            raise ValueError("Regional sudrf target не настроен")
+        params = self.build_exact_identifier_params(inn=inn, ogrn=ogrn, delo_id=self.delo_id)
+        return self.base_url + "?" + urlencode(params)
+
 
 class GasPravosudieProvider:
     code = "gas_pravosudie_official"
     access_status = "central_search_technical_access_unconfirmed"
 
 
+class CentralGasProvider(GasPravosudieProvider):
+    pass
+
+
+class BSRProvider:
+    code = "bsr_sudrf_official"
+    source_url = "https://bsr.sudrf.ru/bigs/portal.html"
+    access_status = "timeout_observed"
+
+
 class SudactDiscoveryProvider:
     code = "sudact_public_discovery"
     source_of_truth = False
+
+
+@dataclass(frozen=True)
+class GeneralCourtRoute:
+    region_code: str | None
+    region_name: str
+    provider_code: str
+    portal_url: str
+    coverage_status: str
+
+
+REGIONAL_TARGETS = {
+    "78": GeneralCourtRoute("78", "Санкт-Петербург", "regional_sudrf_official", "https://sankt-peterburgsky--spb.sudrf.ru/modules.php", "targeted_regional_portal"),
+    "66": GeneralCourtRoute("66", "Свердловская область", "regional_sudrf_official", "https://oblsud--svd.sudrf.ru/modules.php", "targeted_regional_portal"),
+    "16": GeneralCourtRoute("16", "Республика Татарстан", "regional_sudrf_official", "https://vs--tat.sudrf.ru/modules.php", "targeted_regional_portal"),
+    "54": GeneralCourtRoute("54", "Новосибирская область", "regional_sudrf_official", "https://oblsud--nsk.sudrf.ru/modules.php", "targeted_regional_portal"),
+}
+
+
+class GeneralCourtRouter:
+    """Selects one low-load official target from company region; never fans out nationally."""
+
+    def route(self, region_code: str | None) -> tuple[GeneralCourtRoute, object]:
+        code = str(region_code or "").zfill(2)
+        if code == "77":
+            route = GeneralCourtRoute("77", "Москва", "moscow_courts_official", MOSCOW_SEARCH_URL, "targeted_city_portal")
+            return route, MoscowCourtProvider()
+        route = REGIONAL_TARGETS.get(code)
+        if route:
+            return route, RegionalSudrfProvider(base_url=route.portal_url)
+        fallback = GeneralCourtRoute(code or None, "Регион не настроен", "gas_pravosudie_official", BSRProvider.source_url, "central_access_unconfirmed")
+        return fallback, CentralGasProvider()

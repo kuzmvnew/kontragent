@@ -3,7 +3,8 @@ from datetime import date
 import pytest
 
 from app.providers.arbitration_court_provider import ArbitrationCourtProviderError, CheckoArbitrationProvider, parse_checko_legal_cases
-from app.providers.general_court_provider import MoscowCourtProvider, RegionalSudrfProvider, parse_moscow_court_search_html
+from app.providers.general_court_provider import GeneralCourtRouter, MoscowCourtProvider, RegionalSudrfProvider, parse_moscow_court_search_html
+from app.services.arbitration_court_service import calculate_arbitration_signals
 
 
 MOSCOW_HTML = """
@@ -106,3 +107,32 @@ def test_moscow_provider_makes_one_targeted_first_page_request():
     provider.search_company(inn="6320002223", ogrn="1026301983113", full_name='АКЦИОНЕРНОЕ ОБЩЕСТВО "АВТОВАЗ"')
     assert len(client.calls) == 1
     assert client.calls[0][1] == {"participant": 'АКЦИОНЕРНОЕ ОБЩЕСТВО "АВТОВАЗ"', "limit": 100, "page": 1}
+
+
+@pytest.mark.parametrize("region_code,expected", [("77", "moscow_courts_official"), ("78", "regional_sudrf_official"), ("66", "regional_sudrf_official")])
+def test_general_court_router_selects_one_targeted_region(region_code, expected):
+    route, provider = GeneralCourtRouter().route(region_code)
+    assert route.provider_code == expected
+    assert provider.code == expected
+
+
+def test_spb_and_sverdlovsk_routes_keep_exact_identifier_contract():
+    router = GeneralCourtRouter()
+    for region_code in ("78", "66"):
+        route, provider = router.route(region_code)
+        url = provider.build_search_url(inn="6320002223", ogrn="1026301983113")
+        assert route.portal_url in url
+        assert "G2_PARTS__INN_STRSS=6320002223" in url
+        assert "G2_PARTS__OGRN_STRSS=1026301983113" in url
+
+
+def test_arbitration_signals_are_period_and_coverage_aware():
+    cases = [{"filing_date": "2026-09-10", "claim_amount": "100.50", "claimants": [{"ИНН": "1215214540"}], "defendants": []}]
+    signals = calculate_arbitration_signals(cases=cases, inn="1215214540", date_from=date(2025, 9, 17), date_to=date(2026, 9, 17), total_count=54, full_period_loaded=False)
+    assert signals["total_case_count"]["numerator"] == 1
+    assert signals["total_case_count"]["coverage"] == "loaded_sample"
+    assert signals["claimant_count"]["numerator"] == 1
+    assert signals["total_claim_amount"]["numerator"] == "100.50"
+    assert signals["new_cases_30d"]["numerator"] == 1
+    assert signals["active_count"]["coverage"] == "unavailable_not_provable"
+    assert signals["claims_to_revenue"]["coverage"] == "unavailable_revenue"

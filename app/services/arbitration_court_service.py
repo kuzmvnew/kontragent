@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 import re
 
 from sqlalchemy import select
@@ -19,6 +20,57 @@ DATASET_CODE = "checko_arbitration_cases"
 SOURCE_CODE = "checko_legal_cases"
 
 
+def _party_has_inn(parties, inn):
+    return any(str(item.get("ИНН") or item.get("inn") or "") == inn for item in (parties or []) if isinstance(item, dict))
+
+
+def _decimal(value):
+    try:
+        return Decimal(str(value or 0).replace(" ", "").replace(",", "."))
+    except InvalidOperation:
+        return Decimal("0")
+
+
+def _case_date(value):
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(str(value or "")[:10], fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def calculate_arbitration_signals(*, cases: list, inn: str, date_from: date, date_to: date, total_count: int | None, full_period_loaded: bool, revenue=None) -> dict:
+    amounts = [_decimal(case.get("claim_amount")) for case in cases]
+    claimant_count = sum(_party_has_inn(case.get("claimants"), inn) for case in cases)
+    defendant_count = sum(_party_has_inn(case.get("defendants"), inn) for case in cases)
+    dates = [_case_date(case.get("filing_date")) for case in cases]
+    coverage = "full_period" if full_period_loaded else "loaded_sample"
+    calculated_at = datetime.now(timezone.utc).isoformat()
+    period = {"from": date_from.isoformat(), "to": date_to.isoformat()}
+
+    def metric(numerator, denominator=None, metric_coverage=coverage):
+        return {"period": period, "numerator": numerator, "denominator": denominator, "coverage": metric_coverage, "calculated_at": calculated_at}
+
+    result = {
+        "total_case_count": metric(total_count if full_period_loaded and total_count is not None else len(cases)),
+        "loaded_case_count": metric(len(cases)),
+        "claimant_count": metric(claimant_count),
+        "defendant_count": metric(defendant_count),
+        "active_count": metric(None, metric_coverage="unavailable_not_provable"),
+        "active_defendant_count": metric(None, metric_coverage="unavailable_not_provable"),
+        "total_claim_amount": metric(str(sum(amounts, Decimal("0")))),
+        "largest_claim": metric(str(max(amounts, default=Decimal("0")))),
+    }
+    for days in (30, 90, 365):
+        cutoff = date_to.fromordinal(date_to.toordinal() - days)
+        result[f"new_cases_{days}d"] = metric(sum(bool(case_date and cutoff <= case_date <= date_to) for case_date in dates))
+    revenue_value = _decimal(revenue) if revenue is not None else None
+    result["claims_to_revenue"] = metric(str(sum(amounts, Decimal("0")) / revenue_value) if revenue_value and revenue_value > 0 else None, str(revenue_value) if revenue_value is not None else None, coverage if revenue_value else "unavailable_revenue")
+    result["largest_claim_to_revenue"] = metric(str(max(amounts, default=Decimal("0")) / revenue_value) if revenue_value and revenue_value > 0 else None, str(revenue_value) if revenue_value is not None else None, coverage if revenue_value else "unavailable_revenue")
+    return result
+
+
 def _year_before(value: date) -> date:
     return value.replace(year=value.year - 1, day=min(value.day, monthrange(value.year - 1, value.month)[1]))
 
@@ -31,7 +83,8 @@ def _serialize(row, *, cached=True):
     if row.result_status != "success":
         return build_check_result(checked=False, applicable=True, result="unavailable", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=row.error_code or "source_error", message=row.error_message, cached=cached, cases=list(row.cases or []), loaded_pages=row.loaded_pages, total_pages=row.total_pages, total_count=row.total_count, is_full_period_loaded=False, source_url=row.source_url, checked_at=row.checked_at)
     cases = list(row.cases or [])
-    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=None, cached=cached, cases=cases, loaded_pages=row.loaded_pages, total_pages=row.total_pages, total_count=row.total_count, loaded_count=len(cases), is_full_period_loaded=(row.total_pages or 0) <= row.loaded_pages, source_url=row.source_url, checked_at=row.checked_at, last_error=row.error_code, last_error_message=row.error_message, coverage_note="Показан загруженный sample; полный период подтверждён только когда загружены все страницы.")
+    full_period_loaded = (row.total_pages or 0) <= row.loaded_pages
+    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=None, cached=cached, cases=cases, loaded_pages=row.loaded_pages, total_pages=row.total_pages, total_count=row.total_count, loaded_count=len(cases), is_full_period_loaded=full_period_loaded, signals=calculate_arbitration_signals(cases=cases, inn=row.inn, date_from=row.date_from, date_to=row.date_to, total_count=row.total_count, full_period_loaded=full_period_loaded), source_url=row.source_url, checked_at=row.checked_at, last_error=row.error_code, last_error_message=row.error_message, coverage_note="Показан загруженный sample; полный период подтверждён только когда загружены все страницы. Сумма иска не является подтверждённым долгом.")
 
 
 def get_cached_arbitration_court_check(inn, request_date=None):

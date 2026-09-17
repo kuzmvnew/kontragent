@@ -23,6 +23,8 @@ def test_cbr_challenge_and_timeout_cannot_be_negative():
 def test_cbr_semantics_are_high_risk_presence_only():
     assert parse_cbr_zsk_result_text("Сведения об отнесении к группе высокой степени риска не найдены")["result"] == "high_risk_information_not_found"
     assert parse_cbr_zsk_result_text("Сведения об отнесении к группе высокой степени риска найдены")["result"] == "high_risk_information_found"
+    official = "По состоянию на 16.09.2026 отсутствуют сведения об отнесении юридического лица, которому присвоен ИНН 6320002223, к группе высокой степени риска"
+    assert parse_cbr_zsk_result_text(official)["result"] == "high_risk_information_not_found"
 
 
 def test_protected_session_rejects_cross_source_result(monkeypatch):
@@ -37,3 +39,7 @@ def test_protected_session_rejects_cross_source_result(monkeypatch):
     monkeypatch.setattr(protected_source_session_service, "get_session", lambda: Session())
     with pytest.raises(ValueError, match="Недопустимый result"):
         protected_source_session_service.update_protected_source_session(1, status="completed", result="active_suspensions_not_found")
+
+
+def test_common_protected_session_state_machine_is_complete():
+    assert {"browser_started", "challenge_required", "waiting_for_user", "challenge_completed", "result_ready", "expired", "failed"} <= protected_source_session_service.SESSION_STATUSES

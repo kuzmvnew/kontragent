@@ -74,13 +74,13 @@ Fedresurs/EFRSB inventory was completed on 2026-09-17. See `FEDRESURS_STAGE_1_5_
 
 Bankruptcy/liquidation semantics were accepted on 2026-09-17. See `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`. Migration `f8b9c0d1e2f3` adds a 15-state evidence-backed event model and the current product can project stored events conservatively. No source record was fabricated: the table remains empty until a future adapter passes its own access review and six gates.
 
-Arbitration Courts v1 was researched further on 2026-09-17 under explicit permission to evaluate licensed/paid APIs without buying or contracting. See `COURTS_V1_ACCESS_RESEARCH.md` and `COURTS_STAGE_1_5_ACCESS_DECISION.md`. No approved free official/public machine path was found. Casebook, Kontur Focus, Checko, SPARK, and Seldon were compared; no account/trial was opened and no provider was accepted as a dependency. C1 is `PAID ACCESS DECISION REQUIRED` and Stage 1.5 remains incomplete.
+Arbitration Courts v1 has a vendor-neutral Checko free bridge, progressive one-page loading and risk-signal facts, but the key installed in Михаил's terminal was not visible to the server process. C1 remains `ACCESS_PENDING`, not accepted and not paid.
 
-C2 official court surfaces were rechecked and are `TECHNICAL_ACCESS_UNCONFIRMED / SOURCE_BLOCKED FOR COMPANY MATCHING`; no exact-INN/OGRN production adapter was fabricated. See `COURTS_GENERAL_STAGE_1_5_ACCESS.md`.
+C2 has a real Moscow adapter/result plus targeted routing contracts for Saint Petersburg and Sverdlovsk official sudrf portals. Regional live execution remains incomplete; nationwide coverage is not claimed.
 
 The official FNS account-suspension service produced one real dated negative browser result, then required CAPTCHA; unattended production access is blocked and no bypass was attempted. See `FNS_ACCOUNT_SUSPENSION_STAGE_1_5_ACCESS.md`.
 
-The Bank of Russia high-risk public check now has a shared human-assisted session foundation and a PostgreSQL `challenge_required` record for AVTOVAZ. A human-completed same-session result is still pending. See `CBR_ZSK_STAGE_1_5_TECHNICAL_PROBE.md`.
+The Bank of Russia ZSK and FNS BANKINFORM visible-browser flows both completed for AVTOVAZ and their dated negative results are stored in PostgreSQL/cache. Future CAPTCHA challenges remain human-only.
 
 Checkpoint `c3d4e5f6a7b8` adds vendor-neutral C1/C2 providers, dated court caches, user-triggered company-card controls, and common `InteractiveProtectedSourceSession` storage. The official Moscow adapter produced and cached three AVTOVAZ cases. The Checko arbitration bridge enforces one 100-row page per click and remains access-pending without a free API key. The official FNS browser probe produced 10 current suspension rows for golden INN `7702059544`; requester BIK was proven not to filter decision BIKs. See `docs/STAGE_1_5_COURTS_PROTECTED_FOUNDATION.md`.
 

@@ -11,7 +11,12 @@ from app.models.stage15_checks import InteractiveProtectedSourceSession
 from app.providers.protected_public_source import PROTECTED_SOURCES
 
 
-OPEN_STATUSES = {"created", "browser_open", "challenge_required", "result_ready"}
+SESSION_STATUSES = {
+    "not_started", "created", "browser_started", "challenge_required",
+    "waiting_for_user", "challenge_completed", "result_ready", "completed",
+    "expired", "failed", "closed",
+}
+OPEN_STATUSES = SESSION_STATUSES - {"not_started", "completed", "expired", "failed", "closed"}
 
 
 def _serialize(row):
@@ -69,7 +74,7 @@ def update_protected_source_session(session_id: int, *, status: str, result: str
         if row is None:
             raise ValueError("Interactive session не найдена")
         definition = PROTECTED_SOURCES[row.source_code]
-        if status not in {"browser_open", "challenge_required", "result_ready", "completed", "unavailable", "closed"}:
+        if status not in SESSION_STATUSES - {"not_started", "created"}:
             raise ValueError("Недопустимый session status")
         if result is not None and result not in definition.allowed_results:
             raise ValueError("Недопустимый result для источника")
@@ -84,7 +89,7 @@ def update_protected_source_session(session_id: int, *, status: str, result: str
         if status == "completed":
             row.checked_at = datetime.now(timezone.utc)
             row.closed_at = row.checked_at
-        elif status == "closed":
+        elif status in {"closed", "expired", "failed"}:
             row.closed_at = datetime.now(timezone.utc)
         session.commit()
         session.refresh(row)
@@ -94,6 +99,26 @@ def update_protected_source_session(session_id: int, *, status: str, result: str
         raise
     finally:
         session.close()
+
+
+def mark_browser_started(session_id: int, *, browser_metadata=None):
+    return update_protected_source_session(session_id, status="browser_started", browser_metadata=browser_metadata)
+
+
+def mark_waiting_for_user(session_id: int, *, evidence=None, evidence_hash=None, browser_metadata=None):
+    return update_protected_source_session(session_id, status="waiting_for_user", result="challenge_required", evidence=evidence, evidence_hash=evidence_hash, browser_metadata=browser_metadata)
+
+
+def mark_challenge_completed(session_id: int, *, browser_metadata=None):
+    return update_protected_source_session(session_id, status="challenge_completed", browser_metadata=browser_metadata)
+
+
+def mark_result_ready(session_id: int, *, result: str, evidence: dict, evidence_hash: str, browser_metadata=None):
+    return update_protected_source_session(session_id, status="result_ready", result=result, evidence=evidence, evidence_hash=evidence_hash, browser_metadata=browser_metadata)
+
+
+def persist_and_close(session_id: int, *, result: str, evidence: dict, evidence_hash: str, browser_metadata=None):
+    return update_protected_source_session(session_id, status="completed", result=result, evidence=evidence, evidence_hash=evidence_hash, browser_metadata=browser_metadata)
 
 
 def get_latest_protected_source_check(inn: str, source_code: str):

@@ -2,7 +2,13 @@
 
 Date: 2026-09-17
 
-Status: **HUMAN-ASSISTED FOUNDATION / CHALLENGE_REQUIRED**
+Status: **HUMAN-ASSISTED PRODUCT FLOW PASS**
+
+## Final live acceptance
+
+An ordinary visible browser session submitted INN `6320002223` without stealth or bypass. SmartCaptcha completed in the ordinary session without requiring manual intervention. The official result states that, as of `16.09.2026`, information assigning the entity to the high-risk group is absent; source update time is `16.09.2026 18:26 GMT+3`.
+
+The result was parsed as `high_risk_information_not_found`, persisted in PostgreSQL with evidence hash/browser metadata, and is served from cache. It means only absence of published high-risk information at that point in time, not “low risk”, full CBR scoring, or absence of AML concerns.
 
 ## Superseding implementation checkpoint
 
@@ -72,4 +78,4 @@ The 24-hour value is a conservative product proposal, not a published CBR SLA, a
 
 ## Six Gates / acceptance
 
-The Stage 1.5 human-assisted foundation is implemented and the PostgreSQL `challenge_required` state is confirmed. A real found/not-found result and end-to-end same-session resume still require a human to complete SmartCaptcha with action-time confirmation. Therefore F is not yet Six Gates complete.
+F now has the complete user-triggered visible-browser/result/parser/PostgreSQL/cache path and passes its Stage 1.5 product-flow acceptance. Future challenges must still stop at `waiting_for_user`; automatic CAPTCHA solving remains prohibited.

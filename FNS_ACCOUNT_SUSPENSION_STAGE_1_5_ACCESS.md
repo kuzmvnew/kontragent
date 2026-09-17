@@ -2,7 +2,13 @@
 
 Date: 2026-09-17
 
-Status: **OFFICIAL HUMAN-ASSISTED FOUNDATION / REAL FOUND CONFIRMED**
+Status: **HUMAN-ASSISTED PRODUCT FLOW PASS**
+
+## Final live product acceptance
+
+A new ordinary visible-browser query for master-registry company AVTOVAZ (`6320002223`) with requester BIK `044525161` completed without challenge. At `17.09.2026 13:42:10 МСК`, the official result stated that current suspension decisions are absent. The result was parsed as `active_suspensions_not_found`, persisted with source scope/evidence hash/browser metadata, and is cache-readable by the company card.
+
+This does not replace the earlier positive golden-company evidence and does not claim all accounts or non-FNS restrictions are absent.
 
 ## Superseding BIK experiment and implementation checkpoint
 
@@ -64,4 +70,4 @@ The form labels the supplied value as “БИК банка, выполняюще
 
 ## Decision
 
-E is **HUMAN-ASSISTED FOUNDATION IMPLEMENTED / PRODUCT BROWSER RESUME PENDING**. The official flow and real positive result are confirmed. A completed challenge must be resumed in the same visible browser session; the current web card exposes the operator hand-off, but does not yet embed/control that browser session end-to-end. No CAPTCHA service, bypass, stealth, proxy rotation or fingerprint evasion is used.
+E is **HUMAN-ASSISTED PRODUCT FLOW PASS**: positive semantics, dated negative semantics, PostgreSQL cache and product projection are all evidenced. If CAPTCHA appears later, the framework transitions to `waiting_for_user` and must resume the same session after manual completion.

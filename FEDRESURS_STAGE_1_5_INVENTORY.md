@@ -2,7 +2,7 @@
 
 Date: 2026-09-17
 
-Classification: **NOT_FOUND**
+Classification: **INVENTORY COMPLETE / LEGACY IMPLEMENTATION NOT FOUND**
 
 ## Decision
 
@@ -63,3 +63,5 @@ The six acceptance gates do not pass because there is no source implementation t
 ## Outcome
 
 Inventory/recovery decision is complete. There is nothing safe to migrate or accept. Any future Fedresurs/EFRSB work is a new source integration and requires an access/cost decision, source passport, explicit bankruptcy/liquidation semantics, and full six-gate acceptance.
+
+Backlog: **FEDRESURS NEW IMPLEMENTATION / FREE-FIRST SOURCE RESEARCH** in the next data-enrichment planning cycle. The accepted D event model remains unchanged.

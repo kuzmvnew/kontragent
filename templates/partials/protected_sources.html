@@ -3,8 +3,8 @@
     {% set check = company.fns_bankinform_check %}
     {% if check.status == "not_checked" %}<p>Проверка не выполнялась.</p>
     {% elif check.status == "created" %}<p>Интерактивная сессия создана. Откройте официальный сервис в видимом браузере; CAPTCHA может завершить только человек.</p><p><a href="{{ check.source_url }}" target="_blank" rel="nofollow noopener">Открыть БАНКИНФОРМ ФНС</a></p>
-    {% elif check.status == "challenge_required" %}<p>Требуется участие человека в той же браузерной сессии. Challenge не считается отрицательным результатом.</p>
-    {% elif check.checked %}<p>Результат: {{ check.result }} · проверено {{ check.checked_at }}</p>
+    {% elif check.status in ["challenge_required", "waiting_for_user"] %}<p>Требуется участие человека в той же браузерной сессии. Challenge не считается отрицательным результатом.</p>
+    {% elif check.checked %}<p>{% if check.result == "active_suspensions_found" %}Найдены действующие решения ФНС о приостановлении операций.{% elif check.result == "active_suspensions_not_found" %}Действующие решения ФНС о приостановлении операций не найдены в датированной проверке.{% else %}Результат временно недоступен.{% endif %} Проверено: {{ check.checked_at }}.</p>
     {% else %}<p>Статус сессии: {{ check.status }}. Отрицательный вывод не сделан.</p>{% endif %}
     <form method="post" action="/company/{{ company.inn }}/protected-source/fns_bankinform/start"><button type="submit">Проверить ФНС</button></form>
 </section>
@@ -15,8 +15,8 @@
     <p>Проверяется только наличие сведений об отнесении к группе высокой степени риска, а не полный внутренний scoring Банка России.</p>
     {% if check.status == "not_checked" %}<p>Проверка не выполнялась.</p>
     {% elif check.status == "created" %}<p>Интерактивная сессия создана. SmartCaptcha проходит только человек в видимом браузере.</p><p><a href="{{ check.source_url }}" target="_blank" rel="nofollow noopener">Открыть проверку ЗСК</a></p>
-    {% elif check.status == "challenge_required" %}<p>Требуется участие человека. CAPTCHA, timeout или ошибка никогда не трактуются как отсутствие сведений.</p>
-    {% elif check.checked %}<p>Результат: {{ check.result }} · проверено {{ check.checked_at }}</p>
+    {% elif check.status in ["challenge_required", "waiting_for_user"] %}<p>Требуется участие человека. CAPTCHA, timeout или ошибка никогда не трактуются как отсутствие сведений.</p>
+    {% elif check.checked %}<p>{% if check.result == "high_risk_information_found" %}Банк России сообщает о наличии сведений об отнесении к группе высокой степени риска.{% elif check.result == "high_risk_information_not_found" %}На дату проверки сведения об отнесении к группе высокой степени риска отсутствуют.{% else %}Результат временно недоступен.{% endif %} Проверено: {{ check.checked_at }}.</p>
     {% else %}<p>Статус сессии: {{ check.status }}. Отрицательный вывод не сделан.</p>{% endif %}
     <form method="post" action="/company/{{ company.inn }}/protected-source/cbr_zsk/start"><button type="submit">Проверить ЗСК</button></form>
 </section>

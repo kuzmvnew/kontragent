@@ -2,7 +2,7 @@
 
 Date: 2026-09-17
 
-Classification: **NOT_FOUND**
+Classification: **INVENTORY COMPLETE / LEGACY IMPLEMENTATION NOT FOUND**
 
 ## Decision
 
@@ -60,3 +60,5 @@ The six acceptance gates do not pass because there is no source implementation t
 ## Outcome
 
 Inventory/recovery decision is complete. There is nothing safe to migrate or accept. Any future FSSP integration is new source work and requires its own source passport and full six-gate acceptance.
+
+Backlog: **FSSP NEW IMPLEMENTATION / FREE-FIRST SOURCE RESEARCH**. This is not part of the remaining Stage 1.5 implementation work.

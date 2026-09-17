@@ -8,6 +8,8 @@ Scope: machine-readable Russian commercial-court cases for company cards. This i
 
 **C1 status: `ACCESS_PENDING` — free Checko key required; Court v1 foundation implemented, Six Gates not yet complete.**
 
+Final-session note: Михаил reported that the key is installed in his terminal environment, but both the Codex login shell and the server-side `python-dotenv` load returned only `exists=false` (the value was never read or printed). Therefore no live request was attempted and the key was not logged, committed, sent to a browser, or copied into documentation.
+
 No candidate qualifies as `APPROVED_FREE_OFFICIAL`. The official KAD remains the source of truth but has no documented public machine API. Checko is now treated as a narrow `TRIAL_AVAILABLE` free bridge: its documented `/v2/legal-cases` method is implemented behind the vendor-neutral Court v1 contract, but no key has been registered and no live response has been accepted.
 
 No purchase, subscription, contract, payment data, or paid dependency was added. No account was opened.
