@@ -62,6 +62,18 @@ def test_serialize_record_marks_activity():
 def _patch_later_product_sources(monkeypatch):
     monkeypatch.setattr(
         company_product_aggregator,
+        "enrich_company_with_stage15_on_demand_checks",
+        lambda company: company,
+    )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cached_corporate_disclosure_check",
+        lambda inn: {
+            "result": "unavailable",
+        },
+    )
+    monkeypatch.setattr(
+        company_product_aggregator,
         "get_erknm_check_for_company",
         lambda inn, ogrn: {
             "result": "unavailable",

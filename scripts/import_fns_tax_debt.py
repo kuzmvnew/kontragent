@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.ingestion.fns_tax_debt import (
     DATASET_CODE,
+    SOURCE_FILE_BASE_URL,
     import_fns_tax_debt_zip,
 )
 from app.services.ingestion_service import (
@@ -163,6 +164,10 @@ def main():
         dataset_code=DATASET_CODE,
         source_file_name=(
             path.name
+        ),
+        source_url=(
+            SOURCE_FILE_BASE_URL
+            + path.name
         ),
         file_checksum=checksum,
         details={

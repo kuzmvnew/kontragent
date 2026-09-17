@@ -120,6 +120,16 @@ def test_product_aggregator_adds_erknm_check(monkeypatch):
         "enrich_company_with_sro",
         lambda company: company,
     )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cached_corporate_disclosure_check",
+        lambda inn: {"result": "unavailable"},
+    )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "enrich_company_with_stage15_on_demand_checks",
+        lambda company: company,
+    )
 
     result = company_product_aggregator.get_company_for_web(
         "7701364231"

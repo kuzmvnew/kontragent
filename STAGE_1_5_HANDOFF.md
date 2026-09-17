@@ -1,7 +1,7 @@
 # STAGE 1.5 HANDOFF — Kontragent
 
 Date: 2026-09-17
-Status: READY TO START
+Status: CLOSED / ACCEPTED
 
 ## Baseline
 
@@ -37,8 +37,8 @@ These sources already exist at least at code/data/product-foundation level and m
 | Source/block | Current documented state | Stage 1.5 action |
 |---|---|---|
 | Master Registry | ready | reuse |
-| FNS Tax Debt | ingestion/product foundation exists; final acceptance open | close six-gate acceptance |
-| FNS Tax Offences | code/product foundation exists; final acceptance open | close six-gate acceptance |
+| FNS Tax Debt | ACCEPTED / SIX GATES PASS on 2026-09-17 | reuse; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md` |
+| FNS Tax Offences | ACCEPTED / SIX GATES PASS on 2026-09-17 | reuse; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md` |
 | FNS Paid Taxes | connected | reuse |
 | FNS Revenue & Expenses | connected | reuse |
 | FNS Average Employees | connected | reuse |
@@ -48,8 +48,8 @@ These sources already exist at least at code/data/product-foundation level and m
 | NPD | completed on-demand/cache | reuse |
 | ERKNM | completed | reuse |
 | RNP/EIS | deferred external access blocker | do not substitute with paid mirror by default |
-| FSSP | product owner states it was developed earlier; current active implementation needs inventory | inventory current/history/local first |
-| Fedresurs/EFРSB | product owner states it was developed earlier; current active implementation needs inventory | inventory current/history/local first |
+| FSSP | inventory complete: `NOT_FOUND`; only disabled catalog metadata exists | do not claim integration; future work requires approved official/public access path and six-gate acceptance |
+| Fedresurs/EFРSB | inventory complete: `NOT_FOUND`; only disabled catalog metadata and planning specs exist | do not claim integration; future work requires access/cost decision and six-gate acceptance |
 
 ## Stage 1.5 work order
 
@@ -67,6 +67,26 @@ Recommended implementation order:
 10. Free corporate-disclosure foundation.
 11. Normalise company contacts/addresses/public bank details/mass address-director-founder facts needed by later Risk/Summary.
 12. Full Stage 1.5 acceptance review.
+
+FSSP inventory was completed on 2026-09-17. See `FSSP_STAGE_1_5_INVENTORY.md`. No working or reusable implementation was found in the current tree, visible history, unreachable commits, local backup, or PostgreSQL; the existing disabled source/dataset rows are catalog placeholders only.
+
+Fedresurs/EFRSB inventory was completed on 2026-09-17. See `FEDRESURS_STAGE_1_5_INVENTORY.md`. No working or reusable implementation was found in the same repository/history/local/database surfaces; the disabled catalog rows and financial-distress specification are not an integration.
+
+Bankruptcy/liquidation semantics were accepted on 2026-09-17. See `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`. Migration `f8b9c0d1e2f3` adds a 15-state evidence-backed event model and the current product can project stored events conservatively. No source record was fabricated: the table remains empty until a future adapter passes its own access review and six gates.
+
+Arbitration Courts v1 passed the agreed free-bridge Six Gates: one authorised live request for INN `1215214540` returned 7/7 cases for the 12-month period, persisted and reread from cache, then rendered in Chromium. The credential was not retained or exposed. Checko remains a bridge, not the official source of truth or a paid dependency.
+
+C2 has a real Moscow adapter/result plus targeted routing contracts for Saint Petersburg and Sverdlovsk official sudrf portals. Bounded regional HTTP calls returned empty replies and visible exact-INN/OGRN submissions required CAPTCHA. No bypass occurred; partial targeted coverage is accepted and nationwide coverage is not claimed.
+
+The official FNS account-suspension service produced one real dated negative browser result, then required CAPTCHA; unattended production access is blocked and no bypass was attempted. See `FNS_ACCOUNT_SUSPENSION_STAGE_1_5_ACCESS.md`.
+
+The Bank of Russia ZSK and FNS BANKINFORM visible-browser flows both completed for AVTOVAZ and their dated negative results are stored in PostgreSQL/cache. Future CAPTCHA challenges remain human-only.
+
+Checkpoint `c3d4e5f6a7b8` adds vendor-neutral C1/C2 providers, dated court caches, user-triggered company-card controls, and common `InteractiveProtectedSourceSession` storage. The official Moscow adapter produced and cached three AVTOVAZ cases. The Checko arbitration bridge enforces one 100-row page per click and passed live acceptance. The official FNS browser probe produced 10 current suspension rows for golden INN `7702059544`; requester BIK was proven not to filter decision BIKs. See `docs/STAGE_1_5_COURTS_PROTECTED_FOUNDATION.md`.
+
+The PRIME free/public corporate-disclosure foundation passed Six Gates for targeted exact-INN retrieval. Migration `a1c2d3e4f5b6` adds dated disclosure checks; the company card and API expose source-attributed profile/document metadata without mirroring documents. See `PRIME_CORPORATE_DISCLOSURE_SOURCE_PASSPORT.md` and `docs/STAGE_1_5_G_CORPORATE_DISCLOSURE_ACCEPTANCE.md`.
+
+Migration `b2c3d4e5f6a7` adds evidence-backed normalized company public facts. Real PRIME legal/postal addresses were persisted for AVTOVAZ. The model vocabulary covers later contacts, mass indicators, disclosed bank details, and relationships, but those source mappings remain partial and must not be inferred. See `docs/STAGE_1_5_H_COMPANY_FACT_NORMALIZATION.md`.
 
 Parallel work is allowed only when it does not risk database/schema conflicts or duplicate an existing source implementation.
 
@@ -114,7 +134,7 @@ Code-ready, data-loaded, product-visible and auto-update-ready are separate stat
 
 ## Definition of Stage 1.5 completion
 
-Stage 1.5 closes only when the criteria in `INTERMEDIATE_STAGE_1_5.md` are met.
+Stage 1.5 closed on 2026-09-17 after the criteria in `INTERMEDIATE_STAGE_1_5.md` were met with the explicit C2 partial-coverage disposition. See `STAGE_1_5_ACCEPTANCE.md`.
 
 After that the approved order is:
 

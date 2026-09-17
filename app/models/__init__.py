@@ -4,6 +4,7 @@ from app.models.cbr_finorg import (
 from app.models.cbr_warning_list import (
     CbrWarningListEntry,
 )
+from app.models.corporate_disclosure import CorporateDisclosureCheck
 from app.models.roszdrav import (
     RoszdravClinicalOrganizationEntry,
     RoszdravLicenseEntry,
@@ -28,6 +29,7 @@ from app.models.company import (
     CompanyIdentifier,
     CompanyManager,
 )
+from app.models.company_fact import CompanyPublicFact
 from app.models.disqualified_person import (
     DisqualifiedPersonSnapshot,
 )
@@ -39,6 +41,9 @@ from app.models.fns_sme_support import (
 )
 from app.models.headcount import (
     CompanyHeadcount,
+)
+from app.models.legal_event import (
+    CompanyLegalEvent,
 )
 from app.models.msp import (
     CompanyMspProfile,
@@ -54,6 +59,11 @@ from app.models.source import (
     DataSet,
     DataSource,
     IngestionRun,
+)
+from app.models.stage15_checks import (
+    ArbitrationCourtCheck,
+    GeneralCourtCheck,
+    InteractiveProtectedSourceSession,
 )
 from app.models.tax_debt import (
     CompanyTaxDebtItem,
@@ -72,13 +82,19 @@ from app.models.tax_payment import (
 
 
 __all__ = [
+    "ArbitrationCourtCheck",
     "CbrFinorgCheck",
     "CbrWarningListEntry",
     "Company",
+    "CompanyPublicFact",
+    "CorporateDisclosureCheck",
+    "GeneralCourtCheck",
+    "InteractiveProtectedSourceSession",
     "CompanyBranch",
     "CompanyContact",
     "CompanyFinancial",
     "CompanyHeadcount",
+    "CompanyLegalEvent",
     "CompanyIdentifier",
     "CompanyManager",
     "CompanyMspProfile",

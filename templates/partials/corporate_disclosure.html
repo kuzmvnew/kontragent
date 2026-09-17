@@ -1,0 +1,51 @@
+{% if company.corporate_disclosure_check %}
+{% set check = company.corporate_disclosure_check %}
+<section class="card" data-testid="corporate-disclosure" data-result="{{ check.result }}">
+    <h2>Корпоративное раскрытие</h2>
+
+    {% if check.result == "found" %}
+        <p>Найдена публичная страница эмитента по exact ИНН.</p>
+        {% if check.profile %}
+            <div class="detail-row">
+                <div class="detail-label">Эмитент</div>
+                <div class="detail-value">
+                    <strong>{{ check.profile.full_name or check.profile.short_name }}</strong><br>
+                    ИНН {{ check.profile.inn }}{% if check.profile.ogrn %} · ОГРН {{ check.profile.ogrn }}{% endif %}
+                </div>
+            </div>
+            {% if check.profile.legal_address %}
+            <div class="detail-row">
+                <div class="detail-label">Раскрытый юридический адрес</div>
+                <div class="detail-value">{{ check.profile.legal_address }}</div>
+            </div>
+            {% endif %}
+        {% endif %}
+        <p>Документов на странице: {{ check.record_count }}.</p>
+        {% for document in check.documents[:10] %}
+            <div class="detail-row">
+                <div class="detail-label">{{ document.publication_date or "Дата не указана" }}</div>
+                <div class="detail-value">
+                    <a href="{{ document.source_url }}" rel="nofollow noopener">{{ document.title }}</a>
+                </div>
+            </div>
+        {% endfor %}
+    {% elif check.result == "not_found" %}
+        <p>У ПРАЙМ нет страницы эмитента для этого exact ИНН на {{ check.data_date.strftime("%d.%m.%Y") }}.</p>
+        <p>Это не негативный признак: раскрытие применяется не ко всем компаниям.</p>
+    {% elif check.reason == "not_checked" %}
+        <p>Публичная страница раскрытия ещё не проверялась.</p>
+    {% else %}
+        <p>Источник сейчас недоступен: {{ check.reason }}.</p>
+    {% endif %}
+
+    {% if check.result not in ["found", "not_found"] %}
+    <form action="/company/{{ company.inn }}/corporate-disclosure-check" method="post">
+        <button type="submit">Проверить раскрытие</button>
+    </form>
+    {% endif %}
+    <p>
+        Источник: <a href="{{ check.source_url }}" rel="nofollow noopener">ПРАЙМ Раскрытие</a>.
+        Храним профиль и метаданные документов; содержимое документов не перепубликуется.
+    </p>
+</section>
+{% endif %}

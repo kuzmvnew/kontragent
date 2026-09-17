@@ -106,6 +106,12 @@ def test_structured_domain_data_contains_tax_regime(
         lambda company_id, limit=10: [],
     )
 
+    monkeypatch.setattr(
+        company_aggregator,
+        "get_legal_events_for_company",
+        lambda company_id: [],
+    )
+
     result = (
         company_aggregator.load_structured_domain_data(
             company_id=123

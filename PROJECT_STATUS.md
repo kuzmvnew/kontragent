@@ -24,11 +24,11 @@
 
 Current Phase:
 
-Phase 4 / Intermediate Stage 1.5
+Post-Stage 1.5 transition
 
 Status:
 
-ACTIVE / READY TO START
+CLOSED / ACCEPTED; NEXT: AUTO-UPDATE / DATA READINESS (NOT STARTED)
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -36,7 +36,7 @@ ACTIVE / READY TO START
 | 2. Master Registry | ✅ | Единый реестр ЮЛ/ИП по ИНН |
 | 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
-| Intermediate Stage 1.5 | ▶️ ACTIVE / READY | Финальная приёмка Tax Debt/Tax Offences + критические бесплатные источники до Risk Engine |
+| Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены; полный Risk Engine после Stage 1.5 |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
@@ -105,20 +105,22 @@ Detailed scope: `INTERMEDIATE_STAGE_1_5.md`.
 
 Current work items:
 
-1. FNS Tax Debt — close final six-gate acceptance.
-2. FNS Tax Offences — close final six-gate acceptance.
-3. FSSP — inventory/recover prior implementation before any rewrite.
-4. Fedresurs/EFРSB — inventory/recover prior implementation before any rewrite.
-5. Bankruptcy/liquidation — build event/stage semantics rather than one boolean.
-6. Arbitration Courts v1.
-7. Courts of General Jurisdiction v1.
-8. FNS account-suspension decisions.
-9. Bank of Russia public high-risk/KYC technical probe and production-mode decision.
-10. Free-first corporate disclosure.
-11. Company contact/address/public-bank-details/mass-address/director/founder facts needed by later Risk/Summary.
+1. FNS Tax Debt — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
+2. FNS Tax Offences — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.
+3. FSSP — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata exists, no implementation/data/runs.
+4. Fedresurs/EFРSB — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata/specification exists, no implementation/data/runs.
+5. Bankruptcy/liquidation — ✅ normalized 15-state event model accepted; migration `f8b9c0d1e2f3`; no unsupported source events fabricated. Protocol: `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`.
+6. Arbitration Courts v1 — ✅ `ACCEPTED FOUNDATION / CHECKO FREE BRIDGE`: one live request returned and persisted 7/7 cases; cache, semantics, Chromium, counts/dates/coverage passed. KAD remains official reference. See `COURTS_V1_ACCESS_RESEARCH.md`.
+7. Courts of General Jurisdiction v1 — ✅ `FOUNDATION ACCEPTED / PARTIAL TARGETED COVERAGE / REGIONAL SOURCE TIMEOUT-CHALLENGE`: Moscow 3-case path passed; SPb/Sverdlovsk exact fields confirmed but regional result access stopped at empty HTTP/CAPTCHA without bypass.
+8. FNS account-suspension decisions — ✅ `HUMAN-ASSISTED PRODUCT FLOW PASS`: official positive capability plus dated AVTOVAZ negative, PostgreSQL/cache/card and fail-closed challenge semantics.
+9. Bank of Russia public high-risk/KYC probe — ✅ `HUMAN-ASSISTED PRODUCT FLOW PASS`: dated official AVTOVAZ result, PostgreSQL/cache/card and fail-closed challenge semantics.
+10. Free-first corporate disclosure — ✅ `ACCEPTED / SIX GATES PASS FOR PRIME FOUNDATION`; migration `a1c2d3e4f5b6`. See `docs/STAGE_1_5_G_CORPORATE_DISCLOSURE_ACCEPTANCE.md`.
+11. Company facts — 🟡 `FOUNDATION ACCEPTED / SOURCE COVERAGE PARTIAL`; migration `b2c3d4e5f6a7`, real source-backed registered/postal addresses accepted; remaining fact types need sources. See `docs/STAGE_1_5_H_COMPANY_FACT_NORMALIZATION.md`.
 12. Stage 1.5 acceptance review.
 
 Stage 1.5 is NOT Wave 2.
+
+Stage 1.5 is **CLOSED / ACCEPTED**. Detailed evidence and boundaries are recorded in `STAGE_1_5_ACCEPTANCE.md` and `docs/STAGE_1_5_ACCEPTANCE_MATRIX.md`. No paid source was purchased or accepted as a production dependency.
 
 ## Current Release Goal
 
@@ -148,6 +150,8 @@ No approved release may be delayed by unrelated backlog. Stage 1.5 is not unrela
 - PostgreSQL: ✅
 - Git / GitHub main: ✅
 - GitHub Actions CI: ✅
+- Stage 1.5 final local regression: **534 passed**.
+- Stage 1.5 Alembic: `c3d4e5f6a7b8 (head)`.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
@@ -282,9 +286,13 @@ DaMIA изучена как возможный резервный bridge чер�
 
 ### ФНС налоговая задолженность
 
-Статус: 🟡 implementation/product foundation есть; финальная six-gate приёмка не закрыта.
+Статус: ✅ **ACCEPTED / SIX GATES PASS** 17.09.2026.
 
-Stage 1.5 обязан завершить:
+Протокол: `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
+
+Подтверждены официальный snapshot ФНС `7707329152-debtam`, SHA-256, parser fail-closed, 625 395 PostgreSQL snapshots / 2 031 361 items, отдельные недоимка/пени/штрафы, real found, dated not_found, IP not_applicable, unavailable contracts, Chromium и coverage. Auto-update остаётся `NOT_CONFIGURED`. Обычная опубликованная задолженность не смешивается с отдельным фактом передачи пороговой задолженности приставу.
+
+Принятые критерии:
 
 - tests;
 - реальный found;
@@ -298,9 +306,11 @@ Stage 1.5 обязан завершить:
 
 ### ФНС налоговые правонарушения
 
-Статус: 🟡 code/product foundation есть; финальная six-gate приёмка не закрыта.
+Статус: ✅ **ACCEPTED / SIX GATES PASS** 17.09.2026.
 
-Stage 1.5 обязан завершить тот же постоянный acceptance protocol и окончательную сверку карточки/состояний.
+Протокол: `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.
+
+Подтверждены официальный snapshot ФНС `7707329152-taxoffence`, SHA-256, parser fail-closed, 24 139 PostgreSQL документов/компаний, сумма штрафа и даты, real found, dated not_found, IP not_applicable, unavailable contracts, Chromium и coverage. Тип нарушения источник не публикует и продукт его не выдумывает. Auto-update остаётся `NOT_CONFIGURED`.
 
 Остальные ранее подключённые блоки: ФНС уплаченные налоги, REVEXP доходы/расходы, среднесписочная численность, Реестр МСП.
 
@@ -316,6 +326,10 @@ Stage 1.5 обязан завершить тот же постоянный accep
 4. найти models/migrations/providers/services/tests/UI;
 5. классифицировать результат `READY / PARTIAL / LEGACY_MIGRATION / NOT_FOUND`;
 6. переиспользовать рабочий код/данные и не дублировать интеграцию.
+
+FSSP inventory result: `NOT_FOUND` on 17.09.2026. Evidence is recorded in `FSSP_STAGE_1_5_INVENTORY.md`. The disabled `fssp` / `fssp_enforcement` catalog rows are placeholders, not a working integration. No new FSSP implementation was added during the inventory step.
+
+Fedresurs/EFRSB inventory result: `NOT_FOUND` on 17.09.2026. Evidence is recorded in `FEDRESURS_STAGE_1_5_INVENTORY.md`. The disabled catalog rows and planning specification are not a working integration. No new Fedresurs/EFRSB implementation was added during the inventory step.
 
 ## Постоянные критерии приёмки результата
 
@@ -352,4 +366,5 @@ Person остаётся отдельным последующим продукт
 - Судебные требования не равны подтверждённому долгу.
 - Ликвидация не равна банкротству.
 - Платный источник не становится обязательным без отдельного решения; free/public/official first.
+- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`; Auto-update/Data Readiness is next and not started.
 - Новый источник не добавляется в Wave 2 обязательный scope автоматически.

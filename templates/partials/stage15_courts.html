@@ -1,0 +1,51 @@
+<section class="card" data-testid="arbitration-courts">
+    <h2>Арбитражные суды</h2>
+    {% set check = company.arbitration_court_check %}
+    {% if check.checked %}
+        <p>Загружено {{ check.loaded_count }} из {{ check.total_count or check.loaded_count }} дел за последние 12 месяцев.</p>
+        <p>{% if check.is_full_period_loaded %}Период загружен полностью.{% else %}Показан загруженный sample, не полный период.{% endif %}</p>
+        {% if check.signals %}
+            <p>В роли истца: {{ check.signals.claimant_count.numerator }}; в роли ответчика: {{ check.signals.defendant_count.numerator }}.</p>
+            <p>Сумма исков в {% if check.coverage_complete %}полном периоде{% else %}загруженном sample{% endif %}: {{ check.signals.total_claim_amount.numerator }}; крупнейший иск: {{ check.signals.largest_claim.numerator }}. Иск не является подтверждённым долгом.</p>
+            <p>Новых дел: 30 дней — {{ check.signals.new_cases_30d.numerator }}, 90 дней — {{ check.signals.new_cases_90d.numerator }}, 365 дней — {{ check.signals.new_cases_365d.numerator }}.</p>
+        {% endif %}
+        <p>Checko — бесплатный bridge-провайдер, не официальный source of truth. Официальные карточки дел открываются в КАД. {% if check.cached %}Результат показан из локального кэша.{% endif %}</p>
+        {% for case in check.cases %}
+            <div class="detail-row">
+                <div class="detail-label">{{ case.case_number or "Дело" }}</div>
+                <div class="detail-value">{{ case.court or "Суд не указан" }}{% if case.filing_date %} · {{ case.filing_date }}{% endif %}{% if case.source_url %}<br><a href="{{ case.source_url }}" rel="nofollow noopener">Карточка дела</a>{% endif %}</div>
+            </div>
+        {% endfor %}
+        {% if not check.is_full_period_loaded %}
+            <form method="post" action="/company/{{ company.inn }}/arbitration-courts-check?deepen=true"><button type="submit">Углубить анализ (+1 страница)</button></form>
+        {% endif %}
+    {% else %}
+        <p>{% if check.reason == "access_pending" %}Для бесплатного Checko API нужен API key после регистрации; покупка не выполнялась.{% else %}Проверка не выполнялась.{% endif %}</p>
+        <form method="post" action="/company/{{ company.inn }}/arbitration-courts-check"><button type="submit">Проверить суды</button></form>
+    {% endif %}
+</section>
+
+<section class="card" data-testid="general-courts">
+    <h2>Суды общей юрисдикции</h2>
+    {% set check = company.general_court_check %}
+    {% if check.checked %}
+        <p>{{ check.coverage.coverage_label }}</p>
+        {% for case in check.cases %}
+            <div class="detail-row">
+                <div class="detail-label">{{ case.case_number or "Дело" }}</div>
+                <div class="detail-value">
+                    <strong>{{ case.court or "Суд не указан" }}</strong><br>
+                    {{ case.category or "Категория не указана" }}<br>
+                    Роль: {{ case.role or "не определена" }} · дата: {{ case.event_date or "—" }} · состояние: {{ case.stage or "—" }} · результат: {{ case.result or "—" }}<br>
+                    Уверенность: {{ case.confidence }} ({{ case.matching_method }})<br>
+                    <a href="{{ case.source_url }}" rel="nofollow noopener">Официальная карточка</a>
+                </div>
+            </div>
+        {% else %}
+            <p>Совпадения на проверенном официальном портале не найдены. Это не национальный отрицательный результат.</p>
+        {% endfor %}
+    {% else %}
+        <p>Проверка не выполнялась. Первый этап — официальный портал судов Москвы; остальные регионы остаются частичным покрытием.</p>
+    {% endif %}
+    <form method="post" action="/company/{{ company.inn }}/general-courts-check"><button type="submit">Проверить суды общей юрисдикции</button></form>
+</section>

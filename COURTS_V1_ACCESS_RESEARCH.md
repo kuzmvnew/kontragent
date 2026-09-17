@@ -1,0 +1,128 @@
+# Arbitration Courts v1 — access research
+
+Date: 2026-09-17
+
+Scope: machine-readable Russian commercial-court cases for company cards. This is an access and licensing review, not approval of a paid dependency. No purchase, subscription, contract, payment details, account registration, CAPTCHA solving, stealth, proxy rotation, fingerprint evasion, or protection bypass was performed.
+
+## Result
+
+**C1 status: `ACCEPTED FOUNDATION / CHECKO FREE BRIDGE` — live Six Gates passed for the agreed 12-month, one-page-on-demand foundation.**
+
+Live-acceptance note: the product owner supplied and explicitly authorised a temporary free-tier key for this local acceptance only. One Checko request for exact INN `1215214540` returned 7 cases for 2025-09-17…2026-09-17; all 7 fit on page 1 and were newest-first. PostgreSQL readback, cache-only refresh, real Chromium, counts, dates and coverage passed. The key was not logged, committed, documented, sent to the browser, persisted in PostgreSQL or retained in a URL.
+
+No candidate qualifies as `APPROVED_FREE_OFFICIAL`. The official KAD remains the source of truth but has no documented public machine API. Checko is accepted only as a narrow `TRIAL_AVAILABLE` free bridge behind the vendor-neutral Court v1 contract; it does not become an official source or paid production dependency.
+
+No purchase, subscription, contract, payment data, or paid dependency was added. No account was opened.
+
+## 2026-09-17 implementation checkpoint
+
+- `ArbitrationCourtProvider` is vendor-neutral; `CheckoArbitrationProvider` is one adapter.
+- First user click requests exactly the last 12 months with `limit=100&page=1`.
+- “Углубить анализ” requests exactly the next page; it never preloads all pages.
+- Cache stores `loaded_pages`, provider `total_pages`, `loaded_count`, `total_count`, and `is_full_period_loaded`, so a sample is never labelled a complete period.
+- Company-card reads are cache-only and make zero external requests.
+- Without `CHECKO_API_KEY`, the adapter makes no HTTP request and persists `access_pending`/`unavailable`, never `not_found`.
+- PostgreSQL migration: `c3d4e5f6a7b8`; live golden-company result was written/read independently.
+- The credential is sent in a POST body, never in the URL; persisted source evidence contains only the credential-free endpoint and KAD case links.
+- The accepted live result reported 7 cases, loaded 7, one page, complete coverage; claimant 1, defendant 6; 30/90/365-day new-case counts 0/2/7.
+- Published Checko contract confirmed INN/OGRN query support, case number, filing date, court, plaintiffs/defendants and INNs, claim amount, KAD URL, `limit<=100`, pagination, totals, and 1–2 week source delay. Published method does not supply awarded amount, third parties, judicial-act bodies/documents, or procedural history.
+
+## Status vocabulary
+
+| Status | Meaning in this review |
+|---|---|
+| `APPROVED_FREE_OFFICIAL` | Official, free, documented machine channel with adequate rights and coverage. |
+| `APPROVED_FREE_PUBLIC` | Non-official but free/public machine channel with adequate rights and coverage. |
+| `TRIAL_AVAILABLE` | A free/demo route is advertised, but it is time-, quota-, schema-, account-, or contract-limited. |
+| `PAID_OPTION` | A real commercial integration exists; procurement and contract review are required. |
+| `ACCESS_PENDING` | Credentials, current documentation, commercial terms, or rights must be obtained from the provider. |
+| `BLOCKED` | The tested route is not a lawful/reliable production machine path. |
+
+## Free official/public path re-check
+
+### Official KAD
+
+- Owner/channel: federal arbitration-court information system, listed by the courts themselves as the Automated Information System “Kartoteka arbitrazhnykh del”: <https://arbitr.ru/materials/ojfederal_nixjarbitrazhnixjsudax/list_is>.
+- Public UI: <https://kad.arbitr.ru/Kad> supports party role, court, case number, and filing-date filters. It links the Bank of Decisions and exposes case cards/documents for human use.
+- Exact-INN interactive check on 2026-09-17: INN `1215214540` returned 54 cases in ordinary Chromium.
+- Machine check: the UI uses an undocumented internal `SearchInstances` call with CAPTCHA/`RecaptchaToken` support. One equivalent low-load direct POST returned HTTP 451 from DDoS protection. One ordinary headless Chromium attempt produced no results within 90 seconds.
+- Official documentation search found no public API specification, key-registration procedure, bulk feed, rate limits, or machine-use licence for company case search.
+
+Conclusion: `BLOCKED` for unattended production access. The interactive success is evidence that KAD is live, not permission or proof of a stable API.
+
+### Other free/public candidates
+
+Searches of official arbitration-court surfaces and the public documentation of the commercial providers below found no separate official open-data feed equivalent to KAD. Third-party sites are commercial aggregators, even where they have a zero-price quota. Therefore no route is classified `APPROVED_FREE_OFFICIAL` or `APPROVED_FREE_PUBLIC`.
+
+## Candidate summary
+
+| Candidate | Provider / channel | Underlying source and proximity to KAD | Docs | Access status |
+|---|---|---|---|---|
+| KAD | Federal arbitration courts; official | Primary official source of truth | Public UI/manual only; no documented public machine API found | `BLOCKED` |
+| Casebook API / ПравоДанные | PravoTech; commercial aggregator | Judicial data/monitoring product built around court records; close commercial substitute, not an official court channel | [API v3 documentation index](https://pravo.tech/documents/casebook-api) | `PAID_OPTION`, `ACCESS_PENDING` |
+| Контур.Фокус API | SKB Kontur; commercial aggregator | Provider explicitly names arbitration courts among official sources; not an official court channel | [API demo/docs entry](https://focus.kontur.ru/site/demo/requisites) | `PAID_OPTION`, `ACCESS_PENDING` |
+| Checko API `/v2/legal-cases` | ООО «Дата Максимум»; commercial aggregator | Returns KAD links and court-derived records, but documents a 1–2 week arbitration-data delay; not official | [API](https://checko.ru/integration/api), [legal cases method](https://checko.ru/integration/api/legal-cases) | `TRIAL_AVAILABLE`; accepted Stage 1.5 bridge |
+| СПАРК API | Интерфакс; commercial aggregator | Aggregates arbitration-court information; reports >40,000 incoming court documents/day | [integration](https://spark-interfax.ru/integration), [arbitration](https://spark-interfax.ru/features/arbitration-proceedings) | `PAID_OPTION`, `ACCESS_PENDING` |
+| Seldon.Basis.API | ООО «Селдон 2»; commercial aggregator | Provider says official-source changes flow into its data and API includes arbitration cases; not official | [API](https://basis.myseldon.com/ru/home/api) | `PAID_OPTION`, `ACCESS_PENDING` |
+
+## Published field coverage
+
+Legend: `Y` published support; `P` partial/derived/plan-dependent; `N` absent in the published method; `U` not confirmed in public API documentation.
+
+| Field / capability | KAD UI | Casebook API | Focus API | Checko legal-cases | SPARK API | Seldon API |
+|---|---:|---:|---:|---:|---:|---:|
+| Exact INN / OGRN company lookup | P / P | Y | Y | Y | Y | Y |
+| Case number | Y | Y | P | Y | Y | U |
+| Parties | Y | Y | P | Y | Y | U |
+| Claimant / defendant roles | Y | Y | P | Y | Y | P |
+| Third-party role | Y | P | U | N | U | U |
+| Filing date | Y | Y | P | Y | Y | U |
+| Court | Y | Y | P | Y | Y | U |
+| Claim amount | Y | Y | P | Y | Y | Y |
+| Awarded amount | P | U | U | N | P | U |
+| Stage / status | Y | Y | P | P (`actual`/`active`) | Y | P |
+| Judicial acts / documents | Y | Y | U | N (KAD link only) | Y | U |
+| Historical cases / process history | Y | Y | P | P (case list, no process history) | Y | P |
+
+`P` for KAD exact identifiers means the public party filter accepted and returned the exact-INN test, but no documented OGRN/exact machine contract exists. For commercial products, public marketing UI capability is not assumed to be API schema: where current API method documentation was unavailable, the value remains `U`.
+
+## Commercial, operational, and rights comparison
+
+| Candidate | Update / history | Published pricing and trial | Limits | Storage / cache / commercial use / display | SLA and personal data |
+|---|---|---|---|---|---|
+| KAD | Live public case system and historical cards | Free human UI | Undocumented; protected by CAPTCHA/DDoS controls | No public machine licence or republication grant found | No machine SLA found; statutory publication restrictions still apply |
+| Casebook API | Monitoring and judicial history are product features | Published API price list: 5,000 requests/month from 588,600 RUB/year; 10,000 from 1,112,264 RUB/year. No self-serve API trial confirmed | Published ceiling 400 requests/min; monthly tier quota | Not granted by the public documentation index; contract review required for storage, cache, derived facts, public card display, and republication | PravoTech publishes support and personal-data policies, but API SLA/data-processing allocation must be confirmed in contract |
+| Focus API | Provider uses official sources; exact arbitration refresh/history terms not public on the reviewed page | Demo request advertised, but the public demo says it has ended and offers examples/application. Current court-API price not publicly established | Current court-method limits not confirmed | Licence/terms review required; no public grant identified for permanent storage or public republication | SLA and personal-data allocation require commercial documents |
+| Checko API | General API says daily updates; arbitration docs say delay may be 1–2 weeks. Historical case list, no act history | Free `Light` plan advertised for registered users: all methods, up to 100 requests/day. Paid per-request plans are also advertised | 100/day on Light; legal-cases page size up to 100 | Public pages do not clearly grant production caching, long-term storage, commercial public display, or republication; registration/key and terms review required | No court-specific SLA found; party names/addresses may include personal data, so public projection needs minimisation and legal review |
+| SPARK API | Daily aggregation; >40,000 court documents/day; process history and monitoring | Price not public. UI demo: free view of 5 companies, corporate email and IP binding; this is not a confirmed API key trial | 100 requests/sec/client and 25m/day platform figures published; contract quotas may differ | Integration page explicitly mentions creating own stores with full data, but public display/republication scope still requires the licence | Reliability claims are marketing, not a quantified SLA; personal-data rules and permitted projections require contract review |
+| Seldon API | Claims changes appear when reflected in government sources; history/monitoring exists in product | API connection requires contacting provider/application. Site product tariffs exist, but API price is personalised. A free one-day product access is advertised, not a confirmed unrestricted API trial | Not public | Public offer is an end-user software licence and does not establish API cache/republication rights; separate API terms required | Support says responses within a day, not API uptime SLA; personal-data consent applies to applicants and data use needs contract review |
+
+Prices are vendor-published list information observed on 2026-09-17, not quotations. VAT, tier inclusions, document traffic, monitoring calls, and public-display rights can change and must be confirmed directly before any decision.
+
+## Minimal trial/probe decision
+
+One authorised free-tier Checko probe was run after the product owner supplied a temporary key:
+
+- KAD was already tested without bypass and is blocked as a machine path.
+- Checko's free tier requires registration and an API key; the reviewed public pages still do not make broad cache/storage/commercial display/republication rights clear, and its court method cannot supply third parties, awarded amounts, acts, or process history. The probe therefore accepts a narrow technical foundation, not unrestricted republication rights.
+- Focus and SPARK offer application-based demos rather than an anonymous/self-serve court API key.
+- Casebook and Seldon require provider contact/access terms.
+
+No purchase, payment detail, subscription or paid dependency was added.
+
+## Procurement questions required before approval
+
+For any shortlisted provider, obtain a written answer and contract exhibit for:
+
+1. exact request/response schema and a sandbox response for INN, OGRN, case number, every party role, dates, court, claimed/awarded amounts, stage, acts, and documents;
+2. KAD/court source lineage, refresh latency, corrections, deletion, and full-history availability;
+3. request, concurrency, monthly-object, document-download, monitoring, and overage limits;
+4. rights to persist raw responses and normalized facts, cache duration, re-check cadence, backups, and termination handling;
+5. rights to use the data commercially in Kontragent, show facts to end users, publish company-card/SEO facts, quote acts, and expose results through an API/report;
+6. uptime/support SLA, incident notice, versioning/deprecation, and data-quality remedies;
+7. personal-data roles, lawful-basis allocation, suppression/expiry requirements, locality, subprocessors, and incident duties;
+8. annual price including sandbox, production, history, acts/documents, monitoring, public-display/republication rights, VAT, and overages.
+
+## C1 decision
+
+C1 is **`ACCEPTED FOUNDATION / CHECKO FREE BRIDGE`** for Stage 1.5. Six Gates passed at the agreed minimum scope. KAD remains the official reference, Checko remains a limited commercial bridge, and no paid option is accepted. Any expansion to broad republication, acts/documents, full procedural history or a paid provider still requires a separate rights/procurement decision.
