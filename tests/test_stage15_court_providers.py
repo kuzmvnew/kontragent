@@ -4,7 +4,7 @@ import pytest
 
 from app.providers.arbitration_court_provider import ArbitrationCourtProviderError, CheckoArbitrationProvider, parse_checko_legal_cases
 from app.providers.general_court_provider import GeneralCourtRouter, MoscowCourtProvider, RegionalSudrfProvider, parse_moscow_court_search_html
-from app.services.arbitration_court_service import calculate_arbitration_signals
+from app.services.arbitration_court_service import _serialize, calculate_arbitration_signals
 
 
 MOSCOW_HTML = """
@@ -52,7 +52,7 @@ def test_checko_parser_preserves_loaded_sample_vs_full_period():
         "ЗапВсего": 250,
         "СтрВсего": 3,
         "СтрТекущ": 1,
-        "Записи": [{"Номер": "А40-1/2026", "Суд": "АС г. Москвы", "Истцы": [], "Ответчики": [], "СуммаИска": 123}],
+        "Записи": [{"Номер": "А40-1/2026", "Суд": "АС г. Москвы", "СтрКАД": "https://kad.arbitr.ru/Card/test", "Ист": [{"ИНН": "1215214540"}], "Ответ": [], "СуммИск": 123}],
     }
     result = parse_checko_legal_cases(payload, page=1, limit=100)
     assert result["loaded_count"] == 1
@@ -60,11 +60,14 @@ def test_checko_parser_preserves_loaded_sample_vs_full_period():
     assert result["total_pages"] == 3
     assert result["is_full_period_loaded"] is False
     assert result["cases"][0]["matching_method"] == "inn_exact"
+    assert result["cases"][0]["source_url"] == "https://kad.arbitr.ru/Card/test"
+    assert result["cases"][0]["claimants"][0]["ИНН"] == "1215214540"
+    assert result["cases"][0]["claim_amount"] == 123
 
 
 def test_checko_requires_key_without_making_request():
     class NeverCalled:
-        def get(self, *args, **kwargs):
+        def post(self, *args, **kwargs):
             raise AssertionError("external request must not occur without key")
 
     provider = CheckoArbitrationProvider(api_key=None, client=NeverCalled())
@@ -77,12 +80,12 @@ def test_checko_requires_key_without_making_request():
 def test_checko_one_click_is_exactly_one_page_of_100():
     class Response:
         status_code = 200
-        url = "https://api.checko.ru/v2/legal-cases?page=2"
+        url = "https://api.checko.ru/v2/legal-cases"
         def json(self): return {"ЗапВсего": 201, "СтрВсего": 3, "СтрТекущ": 2, "Записи": []}
 
     class Client:
         def __init__(self): self.calls = []
-        def get(self, url, params): self.calls.append((url, params)); return Response()
+        def post(self, url, json): self.calls.append((url, json)); return Response()
 
     client = Client()
     provider = CheckoArbitrationProvider(api_key="free-key", client=client)
@@ -90,7 +93,38 @@ def test_checko_one_click_is_exactly_one_page_of_100():
     assert len(client.calls) == 1
     assert client.calls[0][1]["limit"] == 100
     assert client.calls[0][1]["page"] == 2
+    assert client.calls[0][1]["sort"] == "-date"
     assert result["current_page"] == 2
+    assert result["source_url"] == "https://api.checko.ru/v2/legal-cases"
+
+
+def test_checko_exhausted_local_quota_is_unavailable_without_request():
+    class NeverCalled:
+        def post(self, *args, **kwargs):
+            raise AssertionError("external request must not occur after local quota exhaustion")
+
+    provider = CheckoArbitrationProvider(api_key="free-key", client=NeverCalled(), quota_guard=lambda: False)
+    with pytest.raises(ArbitrationCourtProviderError) as error:
+        provider.search_company(inn="1215214540", date_from=date(2025, 9, 17), date_to=date(2026, 9, 17), page=1)
+    assert error.value.kind == "quota_exhausted"
+
+
+def test_checko_http_200_api_error_is_not_false_not_found():
+    class Response:
+        status_code = 200
+        url = "https://api.checko.ru/v2/legal-cases"
+
+        def json(self):
+            return {"meta": {"status": "error", "message": "Дневной лимит запросов исчерпан"}}
+
+    class Client:
+        def post(self, *args, **kwargs):
+            return Response()
+
+    provider = CheckoArbitrationProvider(api_key="free-key", client=Client())
+    with pytest.raises(ArbitrationCourtProviderError) as error:
+        provider.search_company(inn="1215214540", date_from=date(2025, 9, 17), date_to=date(2026, 9, 17), page=1)
+    assert error.value.kind == "quota_exhausted"
 
 
 def test_moscow_provider_makes_one_targeted_first_page_request():
@@ -130,9 +164,33 @@ def test_arbitration_signals_are_period_and_coverage_aware():
     cases = [{"filing_date": "2026-09-10", "claim_amount": "100.50", "claimants": [{"ИНН": "1215214540"}], "defendants": []}]
     signals = calculate_arbitration_signals(cases=cases, inn="1215214540", date_from=date(2025, 9, 17), date_to=date(2026, 9, 17), total_count=54, full_period_loaded=False)
     assert signals["total_case_count"]["numerator"] == 1
+    assert signals["reported_total_cases"]["numerator"] == 54
     assert signals["total_case_count"]["coverage"] == "loaded_sample"
     assert signals["claimant_count"]["numerator"] == 1
     assert signals["total_claim_amount"]["numerator"] == "100.50"
     assert signals["new_cases_30d"]["numerator"] == 1
     assert signals["active_count"]["coverage"] == "unavailable_not_provable"
     assert signals["claims_to_revenue"]["coverage"] == "unavailable_revenue"
+
+
+def test_arbitration_result_semantics_keep_not_found_and_unavailable_distinct():
+    class Row:
+        result_status = "success"
+        date_to = date(2026, 9, 17)
+        date_from = date(2025, 9, 17)
+        cases = []
+        loaded_pages = 1
+        total_pages = 1
+        total_count = 0
+        inn = "1215214540"
+        source_url = "https://api.checko.ru/v2/legal-cases"
+        checked_at = None
+        error_code = None
+        error_message = None
+
+    assert _serialize(Row())["result"] == "not_found"
+    Row.result_status = "error"
+    Row.error_code = "quota_exhausted"
+    result = _serialize(Row())
+    assert result["result"] == "unavailable"
+    assert result["reason"] == "quota_exhausted"

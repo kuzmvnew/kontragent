@@ -1,6 +1,6 @@
 # WAVE IMPLEMENTATION PLAN — Kontragent
 
-Status: ACTIVE
+Status: ACTIVE — STAGE 1.5 CLOSED
 Date: 2026-09-17
 
 ## Wave 1 final state
@@ -21,7 +21,7 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 ## Approved execution order
 
 1. **Wave 1 — COMPLETE / CLOSED.**
-2. **Intermediate Stage 1.5 — verify unfinished pre-Wave1 source acceptance and add/recover critical free sources required before Risk Engine.** See `INTERMEDIATE_STAGE_1_5.md`.
+2. **Intermediate Stage 1.5 — COMPLETE / CLOSED / ACCEPTED.** See `STAGE_1_5_ACCEPTANCE.md`.
 3. Build Auto-update / Data Readiness for production sources: schedules, last success, source_as_of, completeness, errors, retry/backoff and source status.
 4. Build the full Risk Engine on top of the verified Stage 1.5 data foundation.
 5. Build Summary Engine on top of verified facts/risk results.
@@ -41,9 +41,9 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 
 ## Current next stage
 
-The project is now ready to start **Intermediate Stage 1.5**.
+Stage 1.5 is **CLOSED / ACCEPTED**. The next approved stage is **Auto-update / Data Readiness**, which was not started by the Stage 1.5 closure.
 
-Stage 1.5 is not Wave 2. It exists so the Risk Engine is not built on an incomplete foundation.
+Stage 1.5 was not Wave 2. Its accepted foundation prevents the Risk Engine from being built on an incomplete or semantically unsafe base.
 
 Immediate Stage 1.5 scope:
 

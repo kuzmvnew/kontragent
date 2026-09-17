@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 import os
 import re
-from typing import Protocol
+from typing import Callable, Protocol
 
 import httpx
 
@@ -33,12 +33,12 @@ def parse_checko_legal_cases(payload: dict, *, page: int, limit: int) -> dict:
         cases.append(
             {
                 "case_number": item.get("Номер") or item.get("НомерДела") or item.get("number"),
-                "source_url": item.get("Ссылка") or item.get("СсылкаКАД") or item.get("url"),
+                "source_url": item.get("СтрКАД") or item.get("Ссылка") or item.get("СсылкаКАД") or item.get("url"),
                 "filing_date": item.get("Дата") or item.get("ДатаПоступления") or item.get("filing_date"),
                 "court": item.get("Суд") or item.get("court"),
-                "claimants": item.get("Истцы") or item.get("claimants") or [],
-                "defendants": item.get("Ответчики") or item.get("defendants") or [],
-                "claim_amount": item.get("СуммаИска") or item.get("claim_amount"),
+                "claimants": item.get("Ист") or item.get("Истцы") or item.get("claimants") or [],
+                "defendants": item.get("Ответ") or item.get("Ответчики") or item.get("defendants") or [],
+                "claim_amount": item.get("СуммИск") or item.get("СуммаИска") or item.get("claim_amount"),
                 "stage": item.get("Статус") or item.get("stage"),
                 "matching_method": "inn_exact",
                 "confidence": "high",
@@ -60,9 +60,10 @@ def parse_checko_legal_cases(payload: dict, *, page: int, limit: int) -> dict:
 class CheckoArbitrationProvider:
     code = "checko_legal_cases"
 
-    def __init__(self, api_key: str | None = None, client=None):
+    def __init__(self, api_key: str | None = None, client=None, quota_guard: Callable[[], bool] | None = None):
         self.api_key = api_key or os.getenv("CHECKO_API_KEY")
         self.client = client or httpx.Client(timeout=30, follow_redirects=True, http2=False)
+        self.quota_guard = quota_guard
 
     def search_company(self, *, inn: str, date_from: date, date_to: date, page: int, limit: int = 100) -> dict:
         if not re.fullmatch(r"\d{10}|\d{12}", str(inn or "")):
@@ -71,6 +72,8 @@ class CheckoArbitrationProvider:
             raise ArbitrationCourtProviderError(kind="access_pending", message="CHECKO_API_KEY не настроен; бесплатная регистрация не выполнена")
         if page < 1 or limit != 100:
             raise ValueError("Court v1 загружает ровно одну страницу по 100 записей")
+        if self.quota_guard is not None and not self.quota_guard():
+            raise ArbitrationCourtProviderError(kind="quota_exhausted", message="Локальный лимит Checko исчерпан; запрос не отправлен")
         params = {
             "key": self.api_key,
             "inn": inn,
@@ -78,13 +81,29 @@ class CheckoArbitrationProvider:
             "date_to": date_to.isoformat(),
             "limit": 100,
             "page": page,
+            "sort": "-date",
         }
         try:
-            response = self.client.get(CHECKO_URL, params=params)
+            # POST keeps the credential out of URLs, access logs and persisted evidence.
+            response = self.client.post(CHECKO_URL, json=params)
         except httpx.TimeoutException as error:
             raise ArbitrationCourtProviderError(kind="timeout", message="Превышено время ожидания Checko") from error
         except httpx.RequestError as error:
             raise ArbitrationCourtProviderError(kind="network_error", message="Сетевая ошибка Checko") from error
         if response.status_code != 200:
             raise ArbitrationCourtProviderError(kind="http_error", message=f"Checko вернул HTTP {response.status_code}", http_status=response.status_code)
-        return {**parse_checko_legal_cases(response.json(), page=page, limit=100), "source_url": str(response.url), "http_status": 200}
+        payload = response.json()
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+        if isinstance(meta, dict) and meta.get("status") == "error":
+            message = str(meta.get("message") or "").lower()
+            quota_error = any(marker in message for marker in ("лимит", "квот", "баланс", "request"))
+            raise ArbitrationCourtProviderError(
+                kind="quota_exhausted" if quota_error else "provider_error",
+                message="Лимит Checko исчерпан" if quota_error else "Checko вернул ошибку API",
+            )
+        return {
+            **parse_checko_legal_cases(payload, page=page, limit=100),
+            "source_url": CHECKO_URL,
+            "http_status": 200,
+            "today_request_count": meta.get("today_request_count") if isinstance(meta, dict) else None,
+        }

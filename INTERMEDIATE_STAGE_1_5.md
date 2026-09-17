@@ -1,6 +1,6 @@
 # INTERMEDIATE STAGE 1.5 — Kontragent
 
-Status: APPROVED / READY TO START
+Status: CLOSED / ACCEPTED
 Date: 2026-09-17
 
 ## Purpose
@@ -247,6 +247,8 @@ Mass address/director/founder is a context signal, not an automatic guilt/fraud 
 For business centres, shopping centres, technoparks and similar multi-tenant locations, distinguish building-level concentration from exact-room/office coincidence and explain uncertainty.
 
 ## Completion criteria for Stage 1.5
+
+Closure decision on 2026-09-17: all criteria below are satisfied or have the explicit safe disposition recorded in `STAGE_1_5_ACCEPTANCE.md`. C1 passed the agreed Checko free-bridge minimum. C2 is accepted with partial targeted coverage after bounded SPb/Sverdlovsk HTTP and visible-browser attempts stopped at source timeout/CAPTCHA without bypass.
 
 Stage 1.5 is complete only when:
 

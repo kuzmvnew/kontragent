@@ -24,11 +24,11 @@
 
 Current Phase:
 
-Phase 4 / Intermediate Stage 1.5
+Post-Stage 1.5 transition
 
 Status:
 
-ACTIVE / IN PROGRESS
+CLOSED / ACCEPTED; NEXT: AUTO-UPDATE / DATA READINESS (NOT STARTED)
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -36,7 +36,7 @@ ACTIVE / IN PROGRESS
 | 2. Master Registry | ✅ | Единый реестр ЮЛ/ИП по ИНН |
 | 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
-| Intermediate Stage 1.5 | ▶️ ACTIVE / IN PROGRESS | Tax Debt/Tax Offences accepted; FSSP inventory `NOT_FOUND`; remaining work follows the approved order |
+| Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены; полный Risk Engine после Stage 1.5 |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
@@ -110,17 +110,17 @@ Current work items:
 3. FSSP — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata exists, no implementation/data/runs.
 4. Fedresurs/EFРSB — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata/specification exists, no implementation/data/runs.
 5. Bankruptcy/liquidation — ✅ normalized 15-state event model accepted; migration `f8b9c0d1e2f3`; no unsupported source events fabricated. Protocol: `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`.
-6. Arbitration Courts v1 — ⛔ `PAID ACCESS DECISION REQUIRED`: official/free machine path rechecked and remains blocked; Casebook, Focus, Checko, SPARK, and Seldon compared without purchase, registration, contract, or paid dependency. See `COURTS_V1_ACCESS_RESEARCH.md`.
-7. Courts of General Jurisdiction v1 — ⛔ `TECHNICAL_ACCESS_UNCONFIRMED / SOURCE_BLOCKED FOR COMPANY MATCHING`: official UI/instructions found, but BSR machine access and exact INN/OGRN matching were not established. See `COURTS_GENERAL_STAGE_1_5_ACCESS.md`.
-8. FNS account-suspension decisions — ⛔ `SOURCE_BLOCKED FOR UNATTENDED MACHINE ACCESS`: one real dated official negative response confirmed; subsequent request and direct endpoint require CAPTCHA. See `FNS_ACCOUNT_SUSPENSION_STAGE_1_5_ACCESS.md`.
-9. Bank of Russia public high-risk/KYC probe — ✅ `PROBE COMPLETE / PRODUCTION MACHINE MODE BLOCKED`: exact meaning and CAPTCHA/fingerprint boundary documented; no bypass. See `CBR_ZSK_STAGE_1_5_TECHNICAL_PROBE.md`.
+6. Arbitration Courts v1 — ✅ `ACCEPTED FOUNDATION / CHECKO FREE BRIDGE`: one live request returned and persisted 7/7 cases; cache, semantics, Chromium, counts/dates/coverage passed. KAD remains official reference. See `COURTS_V1_ACCESS_RESEARCH.md`.
+7. Courts of General Jurisdiction v1 — ✅ `FOUNDATION ACCEPTED / PARTIAL TARGETED COVERAGE / REGIONAL SOURCE TIMEOUT-CHALLENGE`: Moscow 3-case path passed; SPb/Sverdlovsk exact fields confirmed but regional result access stopped at empty HTTP/CAPTCHA without bypass.
+8. FNS account-suspension decisions — ✅ `HUMAN-ASSISTED PRODUCT FLOW PASS`: official positive capability plus dated AVTOVAZ negative, PostgreSQL/cache/card and fail-closed challenge semantics.
+9. Bank of Russia public high-risk/KYC probe — ✅ `HUMAN-ASSISTED PRODUCT FLOW PASS`: dated official AVTOVAZ result, PostgreSQL/cache/card and fail-closed challenge semantics.
 10. Free-first corporate disclosure — ✅ `ACCEPTED / SIX GATES PASS FOR PRIME FOUNDATION`; migration `a1c2d3e4f5b6`. See `docs/STAGE_1_5_G_CORPORATE_DISCLOSURE_ACCEPTANCE.md`.
 11. Company facts — 🟡 `FOUNDATION ACCEPTED / SOURCE COVERAGE PARTIAL`; migration `b2c3d4e5f6a7`, real source-backed registered/postal addresses accepted; remaining fact types need sources. See `docs/STAGE_1_5_H_COMPANY_FACT_NORMALIZATION.md`.
 12. Stage 1.5 acceptance review.
 
 Stage 1.5 is NOT Wave 2.
 
-Stage 1.5 remains **ACTIVE / NOT COMPLETE**. C1 does not meet its completion criteria and no paid source has been approved; C2 and E also remain blocked as production machine workstreams.
+Stage 1.5 is **CLOSED / ACCEPTED**. Detailed evidence and boundaries are recorded in `STAGE_1_5_ACCEPTANCE.md` and `docs/STAGE_1_5_ACCEPTANCE_MATRIX.md`. No paid source was purchased or accepted as a production dependency.
 
 ## Current Release Goal
 
@@ -150,6 +150,8 @@ No approved release may be delayed by unrelated backlog. Stage 1.5 is not unrela
 - PostgreSQL: ✅
 - Git / GitHub main: ✅
 - GitHub Actions CI: ✅
+- Stage 1.5 final local regression: **534 passed**.
+- Stage 1.5 Alembic: `c3d4e5f6a7b8 (head)`.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
@@ -364,5 +366,5 @@ Person остаётся отдельным последующим продукт
 - Судебные требования не равны подтверждённому долгу.
 - Ликвидация не равна банкротству.
 - Платный источник не становится обязательным без отдельного решения; free/public/official first.
-- Final checkpoint 17.09.2026: C2 has 3 real Moscow cases plus SPb/Sverdlovsk routing contracts; C1 remains `ACCESS_PENDING` because the key is not visible to the server process. E and F completed official visible-browser checks for AVTOVAZ and persist dated cache results. H includes real Master Registry address context. Stage 1.5 remains `IN PROGRESS` only on C1 live acceptance and C2 live regional acceptance.
+- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`; Auto-update/Data Readiness is next and not started.
 - Новый источник не добавляется в Wave 2 обязательный scope автоматически.

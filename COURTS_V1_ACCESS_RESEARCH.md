@@ -6,11 +6,11 @@ Scope: machine-readable Russian commercial-court cases for company cards. This i
 
 ## Result
 
-**C1 status: `ACCESS_PENDING` — free Checko key required; Court v1 foundation implemented, Six Gates not yet complete.**
+**C1 status: `ACCEPTED FOUNDATION / CHECKO FREE BRIDGE` — live Six Gates passed for the agreed 12-month, one-page-on-demand foundation.**
 
-Final-session note: Михаил reported that the key is installed in his terminal environment, but both the Codex login shell and the server-side `python-dotenv` load returned only `exists=false` (the value was never read or printed). Therefore no live request was attempted and the key was not logged, committed, sent to a browser, or copied into documentation.
+Live-acceptance note: the product owner supplied and explicitly authorised a temporary free-tier key for this local acceptance only. One Checko request for exact INN `1215214540` returned 7 cases for 2025-09-17…2026-09-17; all 7 fit on page 1 and were newest-first. PostgreSQL readback, cache-only refresh, real Chromium, counts, dates and coverage passed. The key was not logged, committed, documented, sent to the browser, persisted in PostgreSQL or retained in a URL.
 
-No candidate qualifies as `APPROVED_FREE_OFFICIAL`. The official KAD remains the source of truth but has no documented public machine API. Checko is now treated as a narrow `TRIAL_AVAILABLE` free bridge: its documented `/v2/legal-cases` method is implemented behind the vendor-neutral Court v1 contract, but no key has been registered and no live response has been accepted.
+No candidate qualifies as `APPROVED_FREE_OFFICIAL`. The official KAD remains the source of truth but has no documented public machine API. Checko is accepted only as a narrow `TRIAL_AVAILABLE` free bridge behind the vendor-neutral Court v1 contract; it does not become an official source or paid production dependency.
 
 No purchase, subscription, contract, payment data, or paid dependency was added. No account was opened.
 
@@ -22,7 +22,9 @@ No purchase, subscription, contract, payment data, or paid dependency was added.
 - Cache stores `loaded_pages`, provider `total_pages`, `loaded_count`, `total_count`, and `is_full_period_loaded`, so a sample is never labelled a complete period.
 - Company-card reads are cache-only and make zero external requests.
 - Without `CHECKO_API_KEY`, the adapter makes no HTTP request and persists `access_pending`/`unavailable`, never `not_found`.
-- PostgreSQL migration: `c3d4e5f6a7b8`; AVTOVAZ access-pending state was written/read.
+- PostgreSQL migration: `c3d4e5f6a7b8`; live golden-company result was written/read independently.
+- The credential is sent in a POST body, never in the URL; persisted source evidence contains only the credential-free endpoint and KAD case links.
+- The accepted live result reported 7 cases, loaded 7, one page, complete coverage; claimant 1, defendant 6; 30/90/365-day new-case counts 0/2/7.
 - Published Checko contract confirmed INN/OGRN query support, case number, filing date, court, plaintiffs/defendants and INNs, claim amount, KAD URL, `limit<=100`, pagination, totals, and 1–2 week source delay. Published method does not supply awarded amount, third parties, judicial-act bodies/documents, or procedural history.
 
 ## Status vocabulary
@@ -59,7 +61,7 @@ Searches of official arbitration-court surfaces and the public documentation of 
 | KAD | Federal arbitration courts; official | Primary official source of truth | Public UI/manual only; no documented public machine API found | `BLOCKED` |
 | Casebook API / ПравоДанные | PravoTech; commercial aggregator | Judicial data/monitoring product built around court records; close commercial substitute, not an official court channel | [API v3 documentation index](https://pravo.tech/documents/casebook-api) | `PAID_OPTION`, `ACCESS_PENDING` |
 | Контур.Фокус API | SKB Kontur; commercial aggregator | Provider explicitly names arbitration courts among official sources; not an official court channel | [API demo/docs entry](https://focus.kontur.ru/site/demo/requisites) | `PAID_OPTION`, `ACCESS_PENDING` |
-| Checko API `/v2/legal-cases` | ООО «Дата Максимум»; commercial aggregator | Returns KAD links and court-derived records, but documents a 1–2 week arbitration-data delay; not official | [API](https://checko.ru/integration/api), [legal cases method](https://checko.ru/integration/api/legal-cases) | `TRIAL_AVAILABLE`, `ACCESS_PENDING` |
+| Checko API `/v2/legal-cases` | ООО «Дата Максимум»; commercial aggregator | Returns KAD links and court-derived records, but documents a 1–2 week arbitration-data delay; not official | [API](https://checko.ru/integration/api), [legal cases method](https://checko.ru/integration/api/legal-cases) | `TRIAL_AVAILABLE`; accepted Stage 1.5 bridge |
 | СПАРК API | Интерфакс; commercial aggregator | Aggregates arbitration-court information; reports >40,000 incoming court documents/day | [integration](https://spark-interfax.ru/integration), [arbitration](https://spark-interfax.ru/features/arbitration-proceedings) | `PAID_OPTION`, `ACCESS_PENDING` |
 | Seldon.Basis.API | ООО «Селдон 2»; commercial aggregator | Provider says official-source changes flow into its data and API includes arbitration cases; not official | [API](https://basis.myseldon.com/ru/home/api) | `PAID_OPTION`, `ACCESS_PENDING` |
 
@@ -99,14 +101,14 @@ Prices are vendor-published list information observed on 2026-09-17, not quotati
 
 ## Minimal trial/probe decision
 
-No commercial probe was run:
+One authorised free-tier Checko probe was run after the product owner supplied a temporary key:
 
 - KAD was already tested without bypass and is blocked as a machine path.
-- Checko's free tier requires registration and an API key; the reviewed public pages did not make the required cache/storage/commercial display/republication rights clear, and its court method cannot supply third parties, awarded amounts, acts, or process history.
+- Checko's free tier requires registration and an API key; the reviewed public pages still do not make broad cache/storage/commercial display/republication rights clear, and its court method cannot supply third parties, awarded amounts, acts, or process history. The probe therefore accepts a narrow technical foundation, not unrestricted republication rights.
 - Focus and SPARK offer application-based demos rather than an anonymous/self-serve court API key.
 - Casebook and Seldon require provider contact/access terms.
 
-Creating an account or submitting corporate/personal contact data would accept terms or start commercial engagement without resolving the decisive rights/coverage gaps. That is not necessary for this technical conclusion and was not done.
+No purchase, payment detail, subscription or paid dependency was added.
 
 ## Procurement questions required before approval
 
@@ -123,4 +125,4 @@ For any shortlisted provider, obtain a written answer and contract exhibit for:
 
 ## C1 decision
 
-C1 remains open as **`ACCESS_PENDING`**. The free Checko bridge is code-ready but cannot pass the real-response, rights, and full Six Gates checks until Михаил supplies/authorises a free API key and the applicable terms are reviewed. If the free bridge proves insufficient, the decision becomes **`PAID ACCESS DECISION REQUIRED`**; Casebook API and SPARK remain the strongest published full-history candidates. No paid option is accepted.
+C1 is **`ACCEPTED FOUNDATION / CHECKO FREE BRIDGE`** for Stage 1.5. Six Gates passed at the agreed minimum scope. KAD remains the official reference, Checko remains a limited commercial bridge, and no paid option is accepted. Any expansion to broad republication, acts/documents, full procedural history or a paid provider still requires a separate rights/procurement decision.

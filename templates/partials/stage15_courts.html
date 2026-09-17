@@ -4,6 +4,12 @@
     {% if check.checked %}
         <p>Загружено {{ check.loaded_count }} из {{ check.total_count or check.loaded_count }} дел за последние 12 месяцев.</p>
         <p>{% if check.is_full_period_loaded %}Период загружен полностью.{% else %}Показан загруженный sample, не полный период.{% endif %}</p>
+        {% if check.signals %}
+            <p>В роли истца: {{ check.signals.claimant_count.numerator }}; в роли ответчика: {{ check.signals.defendant_count.numerator }}.</p>
+            <p>Сумма исков в {% if check.coverage_complete %}полном периоде{% else %}загруженном sample{% endif %}: {{ check.signals.total_claim_amount.numerator }}; крупнейший иск: {{ check.signals.largest_claim.numerator }}. Иск не является подтверждённым долгом.</p>
+            <p>Новых дел: 30 дней — {{ check.signals.new_cases_30d.numerator }}, 90 дней — {{ check.signals.new_cases_90d.numerator }}, 365 дней — {{ check.signals.new_cases_365d.numerator }}.</p>
+        {% endif %}
+        <p>Checko — бесплатный bridge-провайдер, не официальный source of truth. Официальные карточки дел открываются в КАД. {% if check.cached %}Результат показан из локального кэша.{% endif %}</p>
         {% for case in check.cases %}
             <div class="detail-row">
                 <div class="detail-label">{{ case.case_number or "Дело" }}</div>

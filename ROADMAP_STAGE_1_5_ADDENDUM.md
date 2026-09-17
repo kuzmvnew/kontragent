@@ -1,7 +1,7 @@
 # ROADMAP STAGE 1.5 ADDENDUM — Kontragent
 
 Date: 2026-09-17
-Status: APPROVED CURRENT TRANSITION
+Status: STAGE 1.5 CLOSED / NEXT TRANSITION APPROVED
 
 ## Purpose
 
@@ -14,7 +14,8 @@ Where older roadmap paragraphs still describe Wave 1 as open or W1-006 as not st
 - Wave 1 — CLOSED / ACCEPTED.
 - W1-005 B/C — deferred external-source exception; not Six Gates PASS.
 - W1-006 — ACCEPTED / SIX GATES PASS.
-- Current next executable work — Intermediate Stage 1.5.
+- Intermediate Stage 1.5 — CLOSED / ACCEPTED.
+- Current next executable work — Auto-update / Data Readiness; not started by this closure.
 - Wave 2 — NOT STARTED.
 
 ## Current execution sequence

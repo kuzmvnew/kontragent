@@ -1,7 +1,7 @@
 # STAGE 1.5 HANDOFF — Kontragent
 
 Date: 2026-09-17
-Status: READY TO START
+Status: CLOSED / ACCEPTED
 
 ## Baseline
 
@@ -74,15 +74,15 @@ Fedresurs/EFRSB inventory was completed on 2026-09-17. See `FEDRESURS_STAGE_1_5_
 
 Bankruptcy/liquidation semantics were accepted on 2026-09-17. See `docs/STAGE_1_5_D_LEGAL_EVENTS_ACCEPTANCE.md`. Migration `f8b9c0d1e2f3` adds a 15-state evidence-backed event model and the current product can project stored events conservatively. No source record was fabricated: the table remains empty until a future adapter passes its own access review and six gates.
 
-Arbitration Courts v1 has a vendor-neutral Checko free bridge, progressive one-page loading and risk-signal facts, but the key installed in Михаил's terminal was not visible to the server process. C1 remains `ACCESS_PENDING`, not accepted and not paid.
+Arbitration Courts v1 passed the agreed free-bridge Six Gates: one authorised live request for INN `1215214540` returned 7/7 cases for the 12-month period, persisted and reread from cache, then rendered in Chromium. The credential was not retained or exposed. Checko remains a bridge, not the official source of truth or a paid dependency.
 
-C2 has a real Moscow adapter/result plus targeted routing contracts for Saint Petersburg and Sverdlovsk official sudrf portals. Regional live execution remains incomplete; nationwide coverage is not claimed.
+C2 has a real Moscow adapter/result plus targeted routing contracts for Saint Petersburg and Sverdlovsk official sudrf portals. Bounded regional HTTP calls returned empty replies and visible exact-INN/OGRN submissions required CAPTCHA. No bypass occurred; partial targeted coverage is accepted and nationwide coverage is not claimed.
 
 The official FNS account-suspension service produced one real dated negative browser result, then required CAPTCHA; unattended production access is blocked and no bypass was attempted. See `FNS_ACCOUNT_SUSPENSION_STAGE_1_5_ACCESS.md`.
 
 The Bank of Russia ZSK and FNS BANKINFORM visible-browser flows both completed for AVTOVAZ and their dated negative results are stored in PostgreSQL/cache. Future CAPTCHA challenges remain human-only.
 
-Checkpoint `c3d4e5f6a7b8` adds vendor-neutral C1/C2 providers, dated court caches, user-triggered company-card controls, and common `InteractiveProtectedSourceSession` storage. The official Moscow adapter produced and cached three AVTOVAZ cases. The Checko arbitration bridge enforces one 100-row page per click and remains access-pending without a free API key. The official FNS browser probe produced 10 current suspension rows for golden INN `7702059544`; requester BIK was proven not to filter decision BIKs. See `docs/STAGE_1_5_COURTS_PROTECTED_FOUNDATION.md`.
+Checkpoint `c3d4e5f6a7b8` adds vendor-neutral C1/C2 providers, dated court caches, user-triggered company-card controls, and common `InteractiveProtectedSourceSession` storage. The official Moscow adapter produced and cached three AVTOVAZ cases. The Checko arbitration bridge enforces one 100-row page per click and passed live acceptance. The official FNS browser probe produced 10 current suspension rows for golden INN `7702059544`; requester BIK was proven not to filter decision BIKs. See `docs/STAGE_1_5_COURTS_PROTECTED_FOUNDATION.md`.
 
 The PRIME free/public corporate-disclosure foundation passed Six Gates for targeted exact-INN retrieval. Migration `a1c2d3e4f5b6` adds dated disclosure checks; the company card and API expose source-attributed profile/document metadata without mirroring documents. See `PRIME_CORPORATE_DISCLOSURE_SOURCE_PASSPORT.md` and `docs/STAGE_1_5_G_CORPORATE_DISCLOSURE_ACCEPTANCE.md`.
 
@@ -134,7 +134,7 @@ Code-ready, data-loaded, product-visible and auto-update-ready are separate stat
 
 ## Definition of Stage 1.5 completion
 
-Stage 1.5 closes only when the criteria in `INTERMEDIATE_STAGE_1_5.md` are met.
+Stage 1.5 closed on 2026-09-17 after the criteria in `INTERMEDIATE_STAGE_1_5.md` were met with the explicit C2 partial-coverage disposition. See `STAGE_1_5_ACCEPTANCE.md`.
 
 After that the approved order is:
 

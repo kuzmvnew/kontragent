@@ -53,6 +53,7 @@ def calculate_arbitration_signals(*, cases: list, inn: str, date_from: date, dat
         return {"period": period, "numerator": numerator, "denominator": denominator, "coverage": metric_coverage, "calculated_at": calculated_at}
 
     result = {
+        "reported_total_cases": metric(total_count, metric_coverage="provider_reported_total"),
         "total_case_count": metric(total_count if full_period_loaded and total_count is not None else len(cases)),
         "loaded_case_count": metric(len(cases)),
         "claimant_count": metric(claimant_count),
@@ -84,7 +85,7 @@ def _serialize(row, *, cached=True):
         return build_check_result(checked=False, applicable=True, result="unavailable", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=row.error_code or "source_error", message=row.error_message, cached=cached, cases=list(row.cases or []), loaded_pages=row.loaded_pages, total_pages=row.total_pages, total_count=row.total_count, is_full_period_loaded=False, source_url=row.source_url, checked_at=row.checked_at)
     cases = list(row.cases or [])
     full_period_loaded = (row.total_pages or 0) <= row.loaded_pages
-    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=None, cached=cached, cases=cases, loaded_pages=row.loaded_pages, total_pages=row.total_pages, total_count=row.total_count, loaded_count=len(cases), is_full_period_loaded=full_period_loaded, signals=calculate_arbitration_signals(cases=cases, inn=row.inn, date_from=row.date_from, date_to=row.date_to, total_count=row.total_count, full_period_loaded=full_period_loaded), source_url=row.source_url, checked_at=row.checked_at, last_error=row.error_code, last_error_message=row.error_message, coverage_note="Показан загруженный sample; полный период подтверждён только когда загружены все страницы. Сумма иска не является подтверждённым долгом.")
+    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=None, cached=cached, cases=cases, loaded_pages=row.loaded_pages, total_pages=row.total_pages, reported_total_cases=row.total_count, total_count=row.total_count, loaded_case_count=len(cases), loaded_count=len(cases), coverage_complete=full_period_loaded, is_full_period_loaded=full_period_loaded, signals=calculate_arbitration_signals(cases=cases, inn=row.inn, date_from=row.date_from, date_to=row.date_to, total_count=row.total_count, full_period_loaded=full_period_loaded), source_url=row.source_url, checked_at=row.checked_at, last_error=row.error_code, last_error_message=row.error_message, coverage_note="Показан загруженный sample; полный период подтверждён только когда загружены все страницы. Сумма иска не является подтверждённым долгом.")
 
 
 def get_cached_arbitration_court_check(inn, request_date=None):

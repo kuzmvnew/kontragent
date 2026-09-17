@@ -4,7 +4,7 @@ Date: 2026-09-17
 
 Migration: `c3d4e5f6a7b8`
 
-Verification at final checkpoint: 531 automated tests passed; Alembic is at head; the real AVTOVAZ card rendered all four new blocks. PostgreSQL contains C2 cases, C1 access-pending, H address context, and completed E/F results.
+Verification baseline: 531 automated tests passed; Alembic is at head; real Chromium rendered the C1 golden result plus the AVTOVAZ C2/E/F/H blocks. PostgreSQL contains live C1, Moscow C2, H address context, and completed E/F results.
 
 ## Invariants
 
@@ -21,11 +21,12 @@ Verification at final checkpoint: 531 automated tests passed; Alembic is at head
 Current acceptance:
 
 - tests: PASS;
-- real source: published Checko method/schema confirmed, live keyed response pending;
-- PostgreSQL: PASS for dated `access_pending` state;
-- browser: docs and product card verified; live keyed response pending;
-- coverage: 12-month paged sample, no claim of full period until all pages loaded;
-- limitation: no configured free key and rights review incomplete;
+- real source: PASS; one authorised request for exact INN `1215214540` returned 7 cases;
+- PostgreSQL: PASS for live write, independent readback and cache-only refresh;
+- browser: PASS; 7/7 cases, dates, complete period and official KAD links rendered;
+- coverage: 2025-09-17…2026-09-17, page 1/1, complete; progressive loading remains one explicit page per click for larger results;
+- security: credential stayed out of URLs, browser, logs, repository, docs and persisted data;
+- limitation: Checko is a bridge rather than official source of truth; broad display/republication rights remain a later legal decision;
 - future paid: Casebook/SPARK/Kontur only after separate approval.
 
 ## C2 General-jurisdiction courts
@@ -38,8 +39,8 @@ Current acceptance:
 - real official source: PASS, 3 cases;
 - PostgreSQL write/read: PASS;
 - browser: official portal query and product card PASS;
-- coverage: first 100 results of the targeted Moscow query; other regions not checked;
-- limitation: no national completeness and BSR timeout;
+- coverage: first 100 results of the targeted Moscow query; exact INN/OGRN form contracts confirmed for SPb and Sverdlovsk;
+- limitation: bounded direct HTTP received empty replies and visible official searches required CAPTCHA; no bypass, no regional results, no national completeness;
 - future paid: Kontur Focus `/api3/generalCourtCases`, Casebook, SPARK.
 
 ## E FNS account suspension
@@ -72,4 +73,4 @@ Current acceptance:
 
 ## Stage status
 
-Stage 1.5 is **IN PROGRESS**. E/F pass and H is a complete foundation. C1 still needs a server-visible free key/live probe; C2 needs live regional acceptance beyond routing contracts. No merge is permitted.
+Stage 1.5 is **CLOSED / ACCEPTED** under the owner-approved C2 partial-coverage exception. C1 passes its free-bridge Six Gates; C2 retains Moscow evidence and explicitly records regional timeout/challenge without a false nationwide claim. Auto-update/Data Readiness is next and was not started here.
