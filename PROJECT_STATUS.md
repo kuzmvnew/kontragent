@@ -26,9 +26,9 @@
 
 ## Где проект сейчас
 
-Last completed stage: **Risk Engine — COMPLETE / ACCEPTED**.
+Last completed stage: **Summary Engine — COMPLETE / ACCEPTED**.
 
-Current active stage: **SUMMARY ENGINE — IN PROGRESS**.
+Current approved next stage: **COMPANY CARD V2 — DO NOT START AUTOMATICALLY**.
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -38,8 +38,8 @@ Current active stage: **SUMMARY ENGINE — IN PROGRESS**.
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
-| 5. Проверки и риски | 🟡 SUMMARY ENGINE IN PROGRESS | Risk Engine COMPLETE / ACCEPTED; PR #43 merged as `510fa97792be43a4eb561288d2a2e78cd8764d79`. Summary Engine implementation and current-run acceptance are in progress. |
-| 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
+| 5. Проверки и риски | ✅ RISK + SUMMARY ENGINES COMPLETE / ACCEPTED | Risk PR #43 merged as `510fa97792be43a4eb561288d2a2e78cd8764d79`; deterministic traceable Summary Engine accepted in PR #44 with current-run tests, PostgreSQL, Alembic and Chromium evidence. PR #44 remains open/unmerged pending Михаил's command. |
+| 6. Карточка компании | 🟡 NEXT / частично | Следующий утверждённый этап — финальная Company Card v2; автоматически не начат |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Security & Resilience Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
 | Legal Launch Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
@@ -135,7 +135,7 @@ Highest
 
 Approved path before SEO:
 
-Completed: `Stage 1.5 -> Auto-update/Data Readiness -> Risk Engine`. Current next: `Summary Engine -> Company Card v2 -> Report v1 -> Security Gate -> Legal Gate -> Product/Card Acceptance -> 10k SEO`.
+Completed: `Stage 1.5 -> Auto-update/Data Readiness -> Risk Engine -> Summary Engine`. Current next: `Company Card v2 -> Report v1 -> Security Gate -> Legal Gate -> Product/Card Acceptance -> 10k SEO`.
 
 ## Current Development Rule
 
@@ -143,7 +143,7 @@ Current project priority:
 
 Release First, but not before the agreed quality/data gates.
 
-No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readiness and Risk Engine are accepted; the next approved engineering focus is Summary Engine, which must not start automatically.
+No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readiness, Risk Engine and Summary Engine are accepted; the next approved engineering focus is Company Card v2, which must not start automatically.
 
 ## Текущее техническое состояние
 
@@ -157,6 +157,7 @@ No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readine
 - Data Readiness Alembic: `d4e5f6a7b8c9 (head)`.
 - Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green and merged as `d6ba029bc2095acaa194a1fde0e207bd651c18f3`.
 - Risk Engine v1: **COMPLETE / ACCEPTED**; local regression **586 passed**, Alembic `e5f6a7b8c9d0 (head)`, five real-company assessments, PostgreSQL readback and Chromium acceptance are preserved as historical evidence in `RISK_ENGINE_ACCEPTANCE.md`. PR #43 merged as `510fa97792be43a4eb561288d2a2e78cd8764d79`.
+- Summary Engine v1: **COMPLETE / ACCEPTED** on branch `codex/summary-engine`; current-run Summary tests **23 passed**, full regression **609 passed**, Alembic `f6a7b8c9d0e1 (head)`, five real-company summaries, PostgreSQL save/readback/cache and Chromium acceptance. PR #44 CI is green and the PR remains open/unmerged.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
@@ -371,5 +372,5 @@ Person остаётся отдельным последующим продукт
 - Судебные требования не равны подтверждённому долгу.
 - Ликвидация не равна банкротству.
 - Платный источник не становится обязательным без отдельного решения; free/public/official first.
-- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`. Auto-update/Data Readiness and Risk Engine subsequently completed and were accepted; current next stage is `SUMMARY ENGINE`.
+- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`. Auto-update/Data Readiness, Risk Engine and Summary Engine subsequently completed and were accepted; current next stage is `COMPANY CARD V2`.
 - Новый источник не добавляется в Wave 2 обязательный scope автоматически.

@@ -1,7 +1,7 @@
 # Summary Engine Acceptance
 
 Date/environment: 2026-09-17, user Mac, local branch `codex/summary-engine`, PostgreSQL database `kontragent`.  
-Status: **SUMMARY ENGINE IN PROGRESS**
+Status: **SUMMARY ENGINE COMPLETE / ACCEPTED**
 
 Evidence classes follow `EVIDENCE_REPORTING_POLICY.md`.
 
@@ -19,13 +19,14 @@ Evidence classes follow `EVIDENCE_REPORTING_POLICY.md`.
 | Gate | Evidence Class | Artifact / command | Observed result | Limitations / not checked |
 |---|---|---|---|---|
 | Architecture and boundary | VERIFIED_FROM_GIT | `app/contracts/summary.py`, `app/services/summary_engine_service.py`, `app/models/summary.py`, `SUMMARY_ENGINE_ARCHITECTURE.md` | Deterministic projection from saved Risk assessment; no provider/raw-page/LLM path | No external AI wording |
-| Automated semantics | VERIFIED_RUNTIME | `.venv/bin/python -m pytest tests/test_summary_engine.py -q` | `23 passed`; claim/debt, ZSK, unavailable, not-checked, not-applicable, partial, denominator, numeric wording, ordering, traceability, modes, privacy, versioning and cache covered | Final full-suite result recorded below |
+| Automated semantics | VERIFIED_RUNTIME | `.venv/bin/python -m pytest tests/test_summary_engine.py -q` | `23 passed`; claim/debt, ZSK, unavailable, not-checked, not-applicable, partial, denominator, numeric wording, ordering, traceability, modes, privacy, versioning and cache covered | Browser/DB gates separate |
+| Full regression | VERIFIED_RUNTIME | `.venv/bin/python -m pytest tests -q` | `609 passed in 1.06s` | Local test environment; GitHub CI recorded separately |
 | Migration round trip | VERIFIED_RUNTIME | `uv run alembic upgrade head`; `downgrade e5f6a7b8c9d0`; `upgrade head`; `current` after transitions | `e5f6a7b8c9d0 -> f6a7b8c9d0e1 -> e5f6a7b8c9d0 -> f6a7b8c9d0e1 (head)` | Local PostgreSQL only; no production migration |
 | Real persisted assessments | VERIFIED_RUNTIME | `generate_company_summary` over five existing Risk assessment rows | tax `6612045859`; court `1215214540`; partial `6320002223`; regulatory `9309029650`; low observed/incomplete `9727092307` | Five golden cases are not a population claim |
 | PostgreSQL save/readback | VERIFIED_RUNTIME | SQL join of `company_summaries` to `companies`; service readback | five USER v1.0.1 summaries saved with Risk/Rules versions and explainability refs; repeated generation reused the same summary id | User Mac database only |
 | Browser/UI | VERIFIED_RUNTIME | local uvicorn `127.0.0.1:8766`; in-app Chromium; server access log; browser console log | five real cards HTTP 200; Summary visible with conclusions, factors, limitations, actions, dates/versions and “Почему” links; POST returned 303 then GET 200; console error/warn `[]` | Desktop Chromium only; responsive/mobile not checked; Company Card v2 not claimed |
 | Counts/dates/versions/traceability | VERIFIED_RUNTIME | Chromium DOM plus PostgreSQL structured payload/readback | UI showed `summary-engine-1.0.1`, `risk-engine-1.0.0`, `risk-rules-1.0.0`; tax values/date/ratio, court claimed amount/caveat and completeness counts visible; statements link summary/risk ids, rules, evidence and dates | Some persisted Risk signals do not contain every possible denominator/period; Summary states the missing metric rather than inventing it |
-| GitHub PR and CI | UNVERIFIED | PR/CI not yet recorded in this draft | Pending final commit/push/PR | Must be updated from GitHub evidence before handoff |
+| GitHub PR and CI | VERIFIED_RUNTIME | GitHub PR #44 and workflow runs for implementation commit `11df109f5ec589cd1f194b907e719acaa9776a7c` | PR `https://github.com/kuzmvnew/kontragent/pull/44` exists; `CI` and three acceptance workflows completed with `success` | PR remains open and unmerged pending Михаил's separate command |
 
 ## Golden-company observations
 
@@ -49,4 +50,4 @@ Evidence classes follow `EVIDENCE_REPORTING_POLICY.md`.
 
 ## Final decision
 
-The final decision is conditional on replacing the pending PR/CI row with current GitHub evidence and completing the final full regression. No merge is performed automatically.
+All required current-run gates are recorded above. **SUMMARY ENGINE COMPLETE / ACCEPTED.** The next approved stage is Company Card v2, which was not started automatically. PR #44 remains open and no merge was performed.
