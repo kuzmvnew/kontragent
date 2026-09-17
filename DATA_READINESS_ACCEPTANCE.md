@@ -65,4 +65,4 @@ FastAPI поднят локально на `127.0.0.1:8766`. В реальном
 - GitHub Actions PR #40: Python tests + three acceptance jobs GREEN;
 - PR: `https://github.com/kuzmvnew/kontragent/pull/40`.
 
-Merge намеренно не выполнен. Следующие этапы автоматически не начинаются.
+PR #40 merged в `main`: `d6ba029bc2095acaa194a1fde0e207bd651c18f3`. Следующие этапы автоматически не начинались.

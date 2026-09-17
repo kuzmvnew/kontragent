@@ -8,7 +8,7 @@
 - Порядок разработки: `ROADMAP.md`
 - Активный порядок после Wave 1: `WAVE_IMPLEMENTATION_PLAN.md`
 - Wave 1 closure: `WAVE1_CLOSURE_DECISION.md`
-- Текущий промежуточный этап: `INTERMEDIATE_STAGE_1_5.md`
+- Исторический scope закрытого промежуточного этапа: `INTERMEDIATE_STAGE_1_5.md`
 - Handoff этапа 1.5: `STAGE_1_5_HANDOFF.md`
 - Детальный план: `ROADMAP_DETAILED.md`
 - Person sources/access matrix: `PERSON_CHECK_SOURCES.md`
@@ -38,7 +38,7 @@ COMPLETE / ACCEPTED; NEXT: RISK ENGINE (DO NOT START AUTOMATICALLY)
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
-| 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены; полный Risk Engine после Stage 1.5 |
+| 5. Проверки и риски | ▶️ CURRENT NEXT | Контракты checks/evidence уже заложены; Risk Engine следует после принятых Stage 1.5 и Data Readiness |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Security & Resilience Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
@@ -135,7 +135,7 @@ Highest
 
 Approved path before SEO:
 
-`Stage 1.5 -> Auto-update/Data Readiness -> Risk Engine -> Summary Engine -> Company Card v2 -> Report v1 -> Security Gate -> Legal Gate -> Product/Card Acceptance -> 10k SEO`
+Completed: `Stage 1.5 -> Auto-update/Data Readiness`. Current next: `Risk Engine -> Summary Engine -> Company Card v2 -> Report v1 -> Security Gate -> Legal Gate -> Product/Card Acceptance -> 10k SEO`.
 
 ## Current Development Rule
 
@@ -143,7 +143,7 @@ Current project priority:
 
 Release First, but not before the agreed quality/data gates.
 
-No approved release may be delayed by unrelated backlog. Stage 1.5 is not unrelated backlog: it is an approved prerequisite for Risk/Summary correctness.
+No approved release may be delayed by unrelated backlog. Stage 1.5 and Data Readiness are accepted prerequisites; the current approved engineering focus is Risk Engine.
 
 ## Текущее техническое состояние
 
@@ -155,7 +155,7 @@ No approved release may be delayed by unrelated backlog. Stage 1.5 is not unrela
 - Stage 1.5 Alembic: `c3d4e5f6a7b8 (head)`.
 - Data Readiness final local regression: **556 passed**.
 - Data Readiness Alembic: `d4e5f6a7b8c9 (head)`.
-- Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green.
+- Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green and merged as `d6ba029bc2095acaa194a1fde0e207bd651c18f3`.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
@@ -370,5 +370,5 @@ Person остаётся отдельным последующим продукт
 - Судебные требования не равны подтверждённому долгу.
 - Ликвидация не равна банкротству.
 - Платный источник не становится обязательным без отдельного решения; free/public/official first.
-- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`; Auto-update/Data Readiness is next and not started.
+- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`. Auto-update/Data Readiness subsequently completed and was accepted in merged PR #40; current next stage is `RISK ENGINE`.
 - Новый источник не добавляется в Wave 2 обязательный scope автоматически.

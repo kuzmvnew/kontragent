@@ -1,6 +1,6 @@
 # WAVE IMPLEMENTATION PLAN — Kontragent
 
-Status: ACTIVE — STAGE 1.5 CLOSED
+Status: ACTIVE — DATA READINESS ACCEPTED; NEXT: RISK ENGINE
 Date: 2026-09-17
 
 ## Wave 1 final state
@@ -22,8 +22,8 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 
 1. **Wave 1 — COMPLETE / CLOSED.**
 2. **Intermediate Stage 1.5 — COMPLETE / CLOSED / ACCEPTED.** See `STAGE_1_5_ACCEPTANCE.md`.
-3. Build Auto-update / Data Readiness for production sources: schedules, last success, source_as_of, completeness, errors, retry/backoff and source status.
-4. Build the full Risk Engine on top of the verified Stage 1.5 data foundation.
+3. **Auto-update / Data Readiness — COMPLETE / ACCEPTED.** Operational registry, freshness, run history, atomic bulk contract, locks/backoff and internal status panel were accepted and merged in PR #40. Production scheduler deployment remains honestly `NOT_CONFIGURED` until handlers/supervisor are installed.
+4. **Current next stage: build the full Risk Engine** on top of the verified Stage 1.5 and Data Readiness foundations.
 5. Build Summary Engine on top of verified facts/risk results.
 6. Build Company Card v2 using `COMPANY_CARD_V2_SCOPE.md`.
 7. Build Report v1.
@@ -41,11 +41,11 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 
 ## Current next stage
 
-Stage 1.5 is **CLOSED / ACCEPTED**. The next approved stage is **Auto-update / Data Readiness**, which was not started by the Stage 1.5 closure.
+Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness is **COMPLETE / ACCEPTED**. The current next approved stage is **RISK ENGINE**.
 
-Stage 1.5 was not Wave 2. Its accepted foundation prevents the Risk Engine from being built on an incomplete or semantically unsafe base.
+Stage 1.5 and Data Readiness were not Wave 2. Their accepted foundations prevent the Risk Engine from being built on an incomplete, stale or semantically unsafe base.
 
-Immediate Stage 1.5 scope:
+Accepted Stage 1.5 scope (historical boundary; all items are dispositioned in `STAGE_1_5_ACCEPTANCE.md`):
 
 - close final six-gate acceptance for FNS Tax Debt;
 - close final six-gate acceptance for FNS Tax Offences;
@@ -80,7 +80,7 @@ Detailed acceptance criteria: `INTERMEDIATE_STAGE_1_5.md`.
 
 ## Guardrails
 
-- Do not start Wave 2 during Stage 1.5.
+- Do not start Wave 2 before the approved Company B2B Core sequence is complete.
 - Free/public/official sources are preferred; a paid source requires a separate explicit product decision.
 - Before reimplementing FSSP/Fedresurs, inventory current/historical/local work and reuse verified code/data where possible.
 - Every new/recovered source must close a concrete product workflow and retain source/date/evidence.
