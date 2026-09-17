@@ -2,6 +2,17 @@
 
 Status: **IN PROGRESS**
 
+## Product Recovery v3 increment
+
+The compatible v3 path is now:
+
+`SourceCapabilityCatalog -> SourceRunnerRegistry -> SourceRateGovernor -> SourceResolver -> NormalizedCheckResult -> Coverage Engine v2 -> Risk Engine v3 -> Summary Engine v3`.
+
+The resolver applies official-direct, official-dataset, authorized-bridge and
+discovery-only precedence and returns one fact per capability. Coverage and risk
+are separate 0–100 values. See `PRODUCT_RECOVERY_V3_ACCEPTANCE.md` for current
+runtime evidence and blockers.
+
 ## Implemented foundation
 
 `CompanyCheckOrchestrator` now defines three bounded modes:

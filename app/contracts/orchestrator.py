@@ -9,6 +9,9 @@ from pydantic import Field, field_validator
 from app.contracts.decision import ContractModel
 from app.contracts.risk import RiskAssessmentResult
 from app.contracts.summary import SummaryResult
+from app.contracts.risk_v3 import RiskAssessmentV3
+from app.contracts.source_architecture import CoverageAssessmentV2, NormalizedCheckResult
+from app.contracts.summary_v3 import SummaryV3
 
 
 class CompanyCheckMode(StrEnum):
@@ -57,3 +60,7 @@ class CompanyCheckResult(ContractModel):
     risk: RiskAssessmentResult
     summary: SummaryResult
     human_action_queue: tuple[CompanyCheckOutcome, ...] = ()
+    normalized_results: tuple[NormalizedCheckResult, ...] = ()
+    coverage_v2: CoverageAssessmentV2 | None = None
+    risk_v3: RiskAssessmentV3 | None = None
+    summary_v3: SummaryV3 | None = None

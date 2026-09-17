@@ -9,6 +9,7 @@ REFRESH_DUE calls only runners whose cached result is missing, stale, or failed.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from collections.abc import Iterable
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -29,6 +30,18 @@ from app.services.risk_engine_service import (
     get_dataset_states,
 )
 from app.services.summary_engine_service import build_summary, generate_company_summary
+from app.contracts.risk import RiskProfile
+from app.contracts.source_architecture import (
+    FreshnessStatus,
+    NormalizedCheckResult,
+    NormalizedEvidence,
+    NormalizedResultStatus,
+    SourceClass,
+)
+from app.services.risk_engine_v3_service import build_risk_v3
+from app.services.source_resolution_service import DEFAULT_RESOLVER
+from app.services.summary_engine_v3_service import build_summary_v3
+from app.services.risk_v3_persistence_service import persist_v3_assessment
 
 
 Runner = Callable[[str], dict[str, Any]]
@@ -143,6 +156,96 @@ def _cached_outcomes(company: dict[str, Any]) -> list[CompanyCheckOutcome]:
     return [_outcome(code, source, check) for code, source, check in definitions]
 
 
+def _profile(company: dict[str, Any]) -> RiskProfile:
+    if company.get("entity_type") == "individual_entrepreneur":
+        return RiskProfile.IP
+    return RiskProfile.GENERAL_LE
+
+
+def _source_class(check: dict[str, Any]) -> SourceClass:
+    source = str(check.get("source") or check.get("dataset_code") or "").casefold()
+    if "firmoteka" in source:
+        return SourceClass.AUTHORIZED_BRIDGE
+    if any(token in source for token in ("direct", "checko", "court", "fssp", "bankinform", "zsk")):
+        return SourceClass.OFFICIAL_DIRECT
+    return SourceClass.OFFICIAL_DOWNLOADED_DATASET
+
+
+def _normalize_legacy_company(company: dict[str, Any], now: datetime) -> tuple[NormalizedCheckResult, ...]:
+    definitions = (
+        ("tax_debt", company.get("tax_debt_check") or {}),
+        ("tax_offence", company.get("tax_offence_check") or {}),
+        ("finance", company.get("revenue_expense_check") or {}),
+        ("bankruptcy", company.get("bankruptcy_check") or {}),
+        ("fssp", company.get("fssp_check") or {}),
+        ("arbitration", company.get("arbitration_court_check") or {}),
+        ("general_courts", company.get("general_court_check") or {}),
+        ("cbr_warning", company.get("cbr_warning_list_check") or {}),
+        ("cbr_zsk", company.get("cbr_zsk_check") or {}),
+        ("bankinform", company.get("fns_bankinform_check") or {}),
+        ("management", company.get("disqualified_check") or {}),
+    )
+    output: list[NormalizedCheckResult] = []
+    status = company.get("status")
+    registration_value = {
+        "status": status, "registration_date": company.get("registration_date"),
+        "termination_date": company.get("termination_date"), "ogrn": company.get("ogrn"),
+    }
+    output.append(NormalizedCheckResult(
+        check_code="registration",
+        result=NormalizedResultStatus.FOUND if status else NormalizedResultStatus.UNAVAILABLE,
+        source_class=SourceClass.OFFICIAL_DOWNLOADED_DATASET,
+        source_code="fns_egrul_egrip", original_source="ФНС ЕГРЮЛ/ЕГРИП",
+        exact_identifier_match=True if status else None, checked_at=now,
+        source_as_of=_as_datetime(company.get("master_data_date")),
+        freshness=FreshnessStatus.CURRENT if status else FreshnessStatus.UNKNOWN,
+        coverage=1 if status else 0, confidence=1 if status else 0,
+        evidence=(NormalizedEvidence(fact="Регистрационные сведения", value=registration_value,
+            evidence_id=f"company:{company.get('inn')}:registration"),) if status else (),
+        limitation=None if status else "Регистрационный статус не получен.",
+    ))
+    result_map = {
+        "found": NormalizedResultStatus.FOUND, "not_found": NormalizedResultStatus.NOT_FOUND,
+        "not_applicable": NormalizedResultStatus.NOT_APPLICABLE,
+        "unavailable": NormalizedResultStatus.UNAVAILABLE,
+    }
+    for code, check in definitions:
+        raw_result = check.get("result")
+        if raw_result is None and check.get("status") == "completed":
+            raw_result = "found" if str(check.get("result") or "").endswith("_found") else "not_found"
+        result = result_map.get(raw_result, NormalizedResultStatus.UNAVAILABLE)
+        partial = code in {"arbitration", "general_courts"} and (
+            check.get("coverage_complete") is False or bool(check.get("coverage"))
+        )
+        if partial and result in {NormalizedResultStatus.FOUND, NormalizedResultStatus.NOT_FOUND}:
+            result = NormalizedResultStatus.PARTIAL
+        coverage = 1 if result in {NormalizedResultStatus.FOUND, NormalizedResultStatus.NOT_FOUND, NormalizedResultStatus.NOT_APPLICABLE} else .35 if result == NormalizedResultStatus.PARTIAL else 0
+        source_code = str(check.get("dataset_code") or check.get("source") or code)
+        evidence = tuple(
+            [NormalizedEvidence(fact=code, value=check, evidence_id=f"{source_code}:{company.get('inn')}:{code}")]
+            if result in {NormalizedResultStatus.FOUND, NormalizedResultStatus.NOT_FOUND, NormalizedResultStatus.PARTIAL} else []
+        )
+        raw_limitation = str(check.get("coverage_note") or check.get("reason") or "Проверка не завершена.")
+        limitation = {
+            "not_checked": "Источник ещё не проверен.",
+            "access_pending": "Для источника требуется официальный доступ.",
+            "source_blocked": "Источник не позволил завершить проверку.",
+            "provider_error": "Поставщик данных вернул ошибку.",
+            "error": "Проверка завершилась ошибкой.",
+        }.get(raw_limitation, raw_limitation)
+        output.append(NormalizedCheckResult(
+            check_code=code, result=result, source_class=_source_class(check), source_code=source_code,
+            original_source=str(check.get("source") or source_code), exact_identifier_match=True if coverage else None,
+            checked_at=_as_datetime(check.get("checked_at")) or now,
+            source_as_of=_as_datetime(check.get("data_date") or check.get("source_as_of")),
+            freshness=FreshnessStatus.CURRENT if coverage else FreshnessStatus.UNKNOWN,
+            coverage=coverage, confidence=1 if coverage == 1 else .5 if coverage else 0,
+            evidence=evidence, source_url=check.get("source_url"),
+            limitation=limitation if coverage < 1 else None,
+        ))
+    return tuple(output)
+
+
 def _ensure_human_action(inn: str, source_code: str) -> CompanyCheckOutcome:
     latest = get_latest_protected_source_check(inn, source_code)
     if latest.get("status") in {None, "not_checked", "expired", "failed", "closed"}:
@@ -172,6 +275,7 @@ def run_company_check(
     inn: str, *, mode: CompanyCheckMode = CompanyCheckMode.QUICK,
     runners: dict[str, Runner] | None = None, persist: bool = True,
     now: datetime | None = None,
+    source_results: Iterable[NormalizedCheckResult] | None = None,
 ) -> CompanyCheckResult:
     now = now or datetime.now(timezone.utc)
     company = get_company_for_web(inn)
@@ -215,6 +319,14 @@ def run_company_check(
     else:
         risk = build_risk_assessment(refreshed, datasets=get_dataset_states(), now=now)
         summary = build_summary(risk, now=now)
+    normalized = (*_normalize_legacy_company(refreshed, now), *(source_results or ()))
+    resolved = DEFAULT_RESOLVER.resolve(normalized)
+    risk_v3 = build_risk_v3(resolved, profile=_profile(refreshed))
+    summary_v3 = build_summary_v3(risk_v3, resolved)
+    if persist:
+        risk_v3, summary_v3, _, _ = persist_v3_assessment(
+            inn, resolved, profile=_profile(refreshed), now=now,
+        )
     completed_at = datetime.now(timezone.utc)
     queue = tuple(item for item in outcomes if item.status == CompanyCheckStatus.HUMAN_ACTION_REQUIRED)
     return CompanyCheckResult(
@@ -222,4 +334,6 @@ def run_company_check(
         started_at=now, completed_at=completed_at,
         outcomes=tuple(sorted(outcomes, key=lambda item: item.check_code)),
         risk=risk, summary=summary, human_action_queue=queue,
+        normalized_results=tuple(resolved.values()), coverage_v2=risk_v3.coverage,
+        risk_v3=risk_v3, summary_v3=summary_v3,
     )

@@ -3,6 +3,10 @@
 Date: 2026-09-17
 Decision: **PRODUCT RECOVERY IN PROGRESS**
 
+The newer v3 integration checkpoint is recorded in
+`PRODUCT_RECOVERY_V3_ACCEPTANCE.md`. This historical v2 checkpoint remains
+unchanged below and is not used as current-run proof.
+
 ## Verified in this run
 
 - `VERIFIED_FROM_GIT`: recovery branch created from `c8d4fc79d856a350422583f4c46e4ed4bacef279`.
