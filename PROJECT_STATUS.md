@@ -6,47 +6,69 @@
 
 - Код: GitHub repository `kuzmvnew/kontragent`
 - Порядок разработки: `ROADMAP.md`
+- Активный порядок после Wave 1: `WAVE_IMPLEMENTATION_PLAN.md`
+- Wave 1 closure: `WAVE1_CLOSURE_DECISION.md`
+- Текущий промежуточный этап: `INTERMEDIATE_STAGE_1_5.md`
+- Handoff этапа 1.5: `STAGE_1_5_HANDOFF.md`
 - Детальный план: `ROADMAP_DETAILED.md`
-- Граница текущей Фазы 3: `PHASE3_SCOPE.md`
 - Person sources/access matrix: `PERSON_CHECK_SOURCES.md`
 - Текущее состояние: `PROJECT_STATUS.md`
-- Протокол W1-001: `docs/W1_001_ACCEPTANCE.md`
 
 ## Правило работы
 
-Перед крупной задачей сверять `PROJECT_STATUS.md`, `ROADMAP.md` и актуальный код. Не повторять завершённую работу и не менять утверждённый порядок фаз без отдельного решения Михаила. После изменения кода: CI/tests → реальная проверка, если нужна → обновление статуса → GitHub.
+Перед крупной задачей сверять `PROJECT_STATUS.md`, `WAVE_IMPLEMENTATION_PLAN.md`, `ROADMAP.md` и актуальный код. Не повторять завершённую работу и не менять утверждённый порядок фаз без отдельного решения Михаила. После изменения кода: CI/tests → реальная проверка, если нужна → обновление статуса → GitHub.
 
-При приёмке источника всегда отдельно проверять шесть постоянных критериев: tests → реальный официальный ответ → PostgreSQL write/read → корректная семантика состояний → реальная карточка в браузере → количество/даты/покрытие. Наличие кода, загруженных данных, проверенной карточки и настроенного автообновления — разные статусы.
+При приёмке источника всегда отдельно проверять шесть постоянных критериев: tests → реальный официальный/публичный ответ → PostgreSQL write/read → корректная семантика состояний → реальная карточка в браузере → количество/даты/покрытие. Наличие кода, загруженных данных, проверенной карточки и настроенного автообновления — разные статусы.
 
 ## Где проект сейчас
 
 Current Phase:
 
-Phase 4
+Phase 4 / Intermediate Stage 1.5
 
 Status:
 
-ACTIVE
+ACTIVE / READY TO START
 
-| Фаза | Статус | Текущее состояние |
+| Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
 | 1. Фундамент | ✅ | FastAPI, PostgreSQL, Git, тестовая база |
 | 2. Master Registry | ✅ | Единый реестр ЮЛ/ИП по ИНН |
 | 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
-| 4. Качество данных | ▶️ ACTIVE | Wave 1: W1-006 принят; W1-005 остаётся IN PROGRESS / SOURCE-BLOCKED (B, C) |
-| 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены |
-| 6. Карточка компании | 🟡 частично | Несколько официальных источников уже отображаются |
+| Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
+| Intermediate Stage 1.5 | ▶️ ACTIVE / READY | Финальная приёмка Tax Debt/Tax Offences + критические бесплатные источники до Risk Engine |
+| 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены; полный Risk Engine после Stage 1.5 |
+| 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Security & Resilience Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
-| 8. SEO | 🔵 далее | После security gate |
+| Legal Launch Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
+| Product / Company Card Acceptance Gate | 🔵 обязательно | До массового публичного/SEO-релиза |
+| 8. SEO | 🔵 далее | Первые 10k только после трёх Gates |
 | 9. Лендинг и привлечение | ⏸ | Пауза до готовности ядра/карточки |
 | 10. Монетизация | 🔵 позже | После работающего продукта |
+
+## Wave 1 closure
+
+Wave 1 официально закрыта 17.09.2026 отдельным решением владельца продукта.
+
+Authoritative document: `WAVE1_CLOSURE_DECISION.md`.
+
+Финальный статус:
+
+- W1-001 CBR Warning List — ACCEPTED / SIX GATES PASS;
+- W1-002 CBR FinOrg — ACCEPTED / SIX GATES PASS;
+- W1-003 ФНС — МСП, получатели поддержки — ACCEPTED / SIX GATES PASS;
+- W1-004 Росздравнадзор — ACCEPTED / SIX GATES PASS;
+- W1-005 Роскомнадзор — DEFERRED EXCEPTION / SOURCE-BLOCKED (B, C); A/D/E/F verified; B/C остаются `unavailable`;
+- W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS.
+
+W1-005 B/C не считаются успешной проверкой и не превращаются в `not_found`. Возврат к ним после восстановления официального источника не переоткрывает Wave 1 автоматически.
 
 ## Phase 3 Result
 
 Phase 3 completed successfully.
 
-Official datasets integrated:
+Official datasets integrated / product foundation present:
 
 - Master Registry
 - Tax Debt
@@ -73,21 +95,30 @@ Decision:
 
 Official EIS remains the only Source of Truth.
 
-Deferred source does not block Phase 4.
+Deferred source does not block current development.
 
-## Next Active Phase
+## Current Stage 1.5
 
-Phase 4
+Stage 1.5 is the mandatory bridge between Wave 1 and the full Risk Engine.
 
-Data Normalization & Quality Foundation
+Detailed scope: `INTERMEDIATE_STAGE_1_5.md`.
 
-Primary objectives:
+Current work items:
 
-- Entity Registry
-- Relationship Registry
-- Facts Layer
-- Dataset Quality
-- Evidence Layer
+1. FNS Tax Debt — close final six-gate acceptance.
+2. FNS Tax Offences — close final six-gate acceptance.
+3. FSSP — inventory/recover prior implementation before any rewrite.
+4. Fedresurs/EFРSB — inventory/recover prior implementation before any rewrite.
+5. Bankruptcy/liquidation — build event/stage semantics rather than one boolean.
+6. Arbitration Courts v1.
+7. Courts of General Jurisdiction v1.
+8. FNS account-suspension decisions.
+9. Bank of Russia public high-risk/KYC technical probe and production-mode decision.
+10. Free-first corporate disclosure.
+11. Company contact/address/public-bank-details/mass-address/director/founder facts needed by later Risk/Summary.
+12. Stage 1.5 acceptance review.
+
+Stage 1.5 is NOT Wave 2.
 
 ## Current Release Goal
 
@@ -99,13 +130,17 @@ Priority:
 
 Highest
 
+Approved path before SEO:
+
+`Stage 1.5 -> Auto-update/Data Readiness -> Risk Engine -> Summary Engine -> Company Card v2 -> Report v1 -> Security Gate -> Legal Gate -> Product/Card Acceptance -> 10k SEO`
+
 ## Current Development Rule
 
 Current project priority:
 
-Release First.
+Release First, but not before the agreed quality/data gates.
 
-No approved release may be delayed by new features.
+No approved release may be delayed by unrelated backlog. Stage 1.5 is not unrelated backlog: it is an approved prerequisite for Risk/Summary correctness.
 
 ## Текущее техническое состояние
 
@@ -113,30 +148,25 @@ No approved release may be delayed by new features.
 - PostgreSQL: ✅
 - Git / GitHub main: ✅
 - GitHub Actions CI: ✅
-- Исторический CI после RNP/EIS: **341 passed**; это не текущий размер набора.
-- На исходном `c2b440b`: **361 passed**.
-- W1-001 hardening/acceptance code был слит в `main` commit `8937cd7bafbc67b2accd2ebf185ced8418c45d2d` (PR #26).
-- После W1-001 hardening: **384 passed** в изолированной Python 3.13 и GitHub Actions Python 3.14.
-- W1-001 CI run `35094003682`: SUCCESS — PostgreSQL 17, миграции, реальный официальный импорт, повторное чтение, Chromium и rollback. Это отдельный CI-стенд.
-- **W1-001 также полностью принят на пользовательском Mac:** `W1-001 SIX GATES: PASS`; локальная PostgreSQL `kontragent`, реальный официальный sync, exact-INN coverage и Chromium подтверждены. Подробности: `docs/W1_001_ACCEPTANCE.md`.
-- Mac перед локальной приёмкой был fast-forwarded до code commit `8937cd7`. После самого acceptance terminal log не печатал отдельный `git status`, поэтому в следующей сессии всё равно сначала сверять текущий `main`.
-- Alembic на Mac в локальном прогоне: `e5a7f4c2b9d1`.
-- Локальная БД Master Registry в acceptance report: **6 781 485** сущностей.
-- W1-001 `auto_update`: **NOT_CONFIGURED** — ручной успешный sync не равен настроенному расписанию.
+- W1-006 full regression: **472 passed**.
+- PostgreSQL database: `kontragent`.
+- Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
+- Master Registry observed at Wave 1 closure on user Mac: **6 781 487** entities.
+- W1-006 Chromium: three real company cards HTTP 200 / `page_errors=[]`.
+- Private SRO person evidence: `PRIVATE_INTERNAL`; public exposure confirmed `0`.
+- Auto-update remains a separate status and is not implied by Wave 1 closure.
+
+Historical acceptance checkpoints remain valid in their own dated reports. Older Master Registry counts in those reports are not overwritten by the later Wave 1 closure count.
 
 ## Master Registry
 
-После безопасного расширения Excel-выборкой `Компании-4.xlsx`:
+Master Registry remains the canonical entity base.
 
-- всего ЮЛ/ИП: **6 781 485**;
-- ЮЛ: **2 043 659**;
-- ИП: **4 737 826**;
-- Excel содержал 85 948 уникальных валидных ИНН ЮЛ;
-- новых компаний добавлено: **13 674**;
-- существующих/конфликтов пропущено: **72 274**;
-- существующие компании не обновлялись и их официальные данные/источники не перезаписывались.
+At Wave 1 closure the user Mac reported **6 781 487** entities.
 
-Excel используется только как вспомогательный источник покрытия/разработки и не заменяет официальные источники.
+Earlier W1 acceptance reports may contain the prior dated value **6 781 485**; those numbers remain historical evidence for those specific runs.
+
+Excel/import helper sources remain auxiliary for coverage/development and do not replace official Sources of Truth.
 
 ## Завершённые источники текущего блока Фазы 3
 
@@ -225,18 +255,16 @@ Privacy/load policy: `docs/RNP_EIS_PRIVACY_LOAD_POLICY.md`.
 - scraping публичного HTML-поиска не используется;
 - credential-safe provider, SOAP request builders, response parser, archive downloader и live-probe уже реализованы;
 - регистрация получателя через ЕСИА начата;
-- ЕИС обнаружила отсутствие актуальных сведений ЕГРИП и автоматически направила запрос в ФНС, показанный срок — до 5 рабочих дней;
 - ЕИС также показала требование квалифицированного сертификата ключа проверки электронной подписи для доступа в кабинет потребителя машиночитаемых данных.
 
 ### Решение по DaMIA
 
-DaMIA зарегистрирована/изучена как возможный резервный источник через `API-Закупки`, но принято решение:
+DaMIA изучена как возможный резервный bridge через `API-Закупки`, но принято решение:
 
-- **сейчас DaMIA не подключать**;
+- сейчас DaMIA не подключать;
 - не покупать временный API ради обхода blocker ЕИС;
 - не строить базу РНП на DaMIA;
 - оставить DaMIA только как резервный bridge/fallback на будущее;
-- если временный bridge когда-либо понадобится, ответ DaMIA нормализовать в нашу собственную модель РНП, чтобы затем без переделки продукта заменить transport на официальный ЕИС;
 - официальный ЕИС остаётся source of truth.
 
 ### Privacy / load
@@ -246,57 +274,62 @@ DaMIA зарегистрирована/изучена как возможный 
 - персональные данные физических лиц из РНП не публиковать в публичной карточке, API, SEO, выгрузках или поиске;
 - не хранить лишние person-поля, если они не нужны для строгого matching;
 - matching только по ИНН/ОГРН/ОГРНИП;
-- LOW LOAD: один worker, один запрос одновременно, интервал не менее 30 секунд, cache/archive reuse, exponential backoff, остановка при rate-limit/защитных ошибках.
+- LOW LOAD / cache / backoff до подтверждения иных официальных лимитов.
 
-### Когда возвращаемся к №12
+## Незакрытые исторические пункты, перенесённые в Stage 1.5
 
-Возвращаемся к реализации РНП, когда:
+Фаза 3 и Wave 1 закрыты в согласованном объёме, но это не отменяет незакрытую приёмку двух старых налоговых источников.
 
-1. ЕИС завершит синхронизацию/регистрацию и появится официальный credential/token; либо
-2. Михаил отдельно решит временно использовать DaMIA как bridge.
+### ФНС налоговая задолженность
 
-До этого полноценный RNP ingestion/model не строим.
+Статус: 🟡 implementation/product foundation есть; финальная six-gate приёмка не закрыта.
 
-## Исторические пункты приёмки Фазы 3 (не отменяют согласованное закрытие)
+Stage 1.5 обязан завершить:
 
-Фаза 3 закрыта в согласованном объёме. Ниже сохранены исторические пункты для трассируемости; они не являются новой командой повторить работу или отменить открытие Фазы 4:
+- tests;
+- реальный found;
+- корректный dated not_found внутри покрытия;
+- not_applicable/unavailable semantics;
+- PostgreSQL write/read;
+- browser;
+- counts/dates/coverage;
+- детализацию долг/пени/штрафы там, где источник её предоставляет;
+- отсутствие ложного clean-result при сбое источника.
 
-- ФНС налоговая задолженность — ingestion/product foundation подключены; нужна финальная сверка приёмки;
-- ФНС налоговые нарушения — code/product foundation есть; нужна окончательная приёмка состояний/экрана.
+### ФНС налоговые правонарушения
 
-Остальные уже подключённые блоки: ФНС уплаченные налоги, REVEXP доходы/расходы, среднесписочная численность, Реестр МСП.
+Статус: 🟡 code/product foundation есть; финальная six-gate приёмка не закрыта.
 
-## Действующее решение по Фазе 4 / Wave 1
+Stage 1.5 обязан завершить тот же постоянный acceptance protocol и окончательную сверку карточки/состояний.
 
-Фаза 3 завершена в согласованном объёме. Фаза 4 открыта (ACTIVE).
-Прежняя пауза перед Фазой 4 снята явной командой Михаила.
-Текущий приоритет: завершить согласованную Wave 1 источников до SEO MVP.
+Остальные ранее подключённые блоки: ФНС уплаченные налоги, REVEXP доходы/расходы, среднесписочная численность, Реестр МСП.
 
-- **W1-001 CBR Warning List — ACCEPTED на Mac по шести критериям.** Локальный официальный sync 16.09.2026: HTTP 200, source/imported/snapshot **27 163 / 27 163 / 27 163**, rejected **0**, duplicates **0**, conflicting duplicates **0**. С usable INN **2 995**, без usable INN **24 168**. Exact-INN пересечение с Master Registry: **857** source records / **857** unique master companies; Master Registry **6 781 485**; source records with INN unmatched **2 138**. Реальный `found`: ИНН `0105064330`, CBR ID `9806`, ООО «ИНВЕСТКАПИТАЛ24». Реальный snapshot `not_found`: ИНН `9102309919`. Chromium открыл обе карточки с HTTP 200 и `page_errors=[]`. Даты внесения: **01.02.2021–16.09.2026**; даты обновления: **29.04.2021–16.09.2026**. `data_date=16.09.2026` — дата получения snapshot, не официальная дата состояния всего списка. `auto_update=NOT_CONFIGURED`.
-- W1-002 CBR FinOrg: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026; PostgreSQL/Chromium/coverage PASS, 435 tests. Команда и доказательства: docs/W1_002_ACCEPTANCE.md.
-- W1-003 ФНС — МСП, получатели поддержки: ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026, code de32573 (PR #29). Snapshot 15.09.2026; PostgreSQL 11 925 998 фактов ЮЛ/ИП; Master Registry 6 781 485, exact-INN связаны 1 897 870 сущностей. Подробности: docs/W1_003_ACCEPTANCE.md.
-- **W1-004 Росздравнадзор — ACCEPTED / SIX GATES PASS на пользовательском Mac 16.09.2026.** Scope A–D: три bulk-категории лицензий, точечный Единый реестр лицензий, exact-number lookup медизделий без автопривязки к Company и перечень клинических организаций. PostgreSQL `kontragent`, Alembic `a9c4e6f8b201`, 450 tests, Chromium HTTP 200 и `page_errors=[]`. Подробности: `docs/W1_004_ACCEPTANCE.md`. `auto_update=NOT_CONFIGURED`.
-- W1-005 Роскомнадзор: IN PROGRESS / SOURCE-BLOCKED (B, C); scope A–F реализован, A/D/E/F подтверждены, Six Gates не объявлен. W1-006 НОСТРОЙ / НОПРИЗ / СРО: ACCEPTED / SIX GATES PASS на Mac; 472 tests, Alembic `e7a8b9c0d1e2`, private person records `1`, public exposure `0`. Полная таблица: [WAVE1_STATUS.md](WAVE1_STATUS.md).
-- Person, Leads, CRM, Enterprise не начинаем. РНП/ЕИС отложен до официального доступа; DaMIA не подключаем.
+## FSSP / Fedresurs inventory rule
 
-Проверенный code baseline W1-001: `8937cd7bafbc67b2accd2ebf185ced8418c45d2d` (PR #26). Последующие docs-only commits не меняют код W1-001.
-Размер Master Registry **6 781 485** в W1-001 acceptance report подтверждён самой локальной PostgreSQL на момент прогона 16.09.2026.
+Владелец продукта указывает, что ФССП и Федресурс уже разрабатывались ранее.
+
+До новой реализации Stage 1.5 обязан:
+
+1. проверить текущий `main`;
+2. проверить исторические ветки/коммиты;
+3. проверить локальный проект/БД при необходимости;
+4. найти models/migrations/providers/services/tests/UI;
+5. классифицировать результат `READY / PARTIAL / LEGACY_MIGRATION / NOT_FOUND`;
+6. переиспользовать рабочий код/данные и не дублировать интеграцию.
 
 ## Постоянные критерии приёмки результата
 
 Для каждого источника отдельно подтверждаем:
 
 1. Автоматические тесты.
-2. Реальную компанию с найденными сведениями из официального источника.
+2. Реальную компанию с найденными сведениями из официального/допустимого публичного источника.
 3. Сохранение и повторное чтение PostgreSQL.
 4. Отсутствие записи, неприменимость и ошибку источника без ложного «всё хорошо».
 5. Открытие реальной карточки в настоящем браузере.
-6. Количество записей, даты и покрытие.
+6. Количество записей, даты и покрытие/полноту проверки.
 
 Для каждого пункта: подтверждено / не подтверждено / неприменимо с причиной.
 Код готов, данные загружены, карточка проверена и автообновление настроено — разные статусы.
-Это критерии проверки результата, не изменение архитектуры.
-Протокол и команды: [W1-001 acceptance](docs/W1_001_ACCEPTANCE.md).
 
 ## Person
 
@@ -313,11 +346,10 @@ Person остаётся отдельным последующим продукт
 ## Важные продуктовые ограничения
 
 - Не строить общий итоговый «индекс надёжности» как единственную истину без отдельного решения.
-- Показывать факты, проверки, источники, даты, покрытие и объяснение результата.
+- Показывать факты, проверки, источники, даты, `Полноту проверки` и объяснение результата.
 - `unavailable`/ошибка источника нельзя превращать в «ничего не найдено».
 - Отсутствие записи относится только к конкретному набору/дате/проверке.
-- Новый источник не добавляется в обязательный scope автоматически.
-
-
-### W1-002 final Mac acceptance — 16.09.2026
-W1-002 is ACCEPTED / SIX GATES PASS on the user Mac. Real found exact-INN: 9706063520 (БАНК ЭЛЕМЕНТ (ООО), 2 licences/rights); real not_found: 9102309919. PostgreSQL kontragent reread PASS; Chromium found/not_found HTTP 200, page_errors=[]; 435 tests PASS. On-demand coverage is dated cache coverage, not a bulk CBR registry. auto_update=NOT_CONFIGURED. Source protocol: docs/W1_002_ACCEPTANCE.md.
+- Судебные требования не равны подтверждённому долгу.
+- Ликвидация не равна банкротству.
+- Платный источник не становится обязательным без отдельного решения; free/public/official first.
+- Новый источник не добавляется в Wave 2 обязательный scope автоматически.
