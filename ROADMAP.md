@@ -1,6 +1,6 @@
 # ROADMAP — Kontragent
 
-Последнее обновление: 16.09.2026
+Последнее обновление: 17.09.2026
 
 ## Development Principles
 
