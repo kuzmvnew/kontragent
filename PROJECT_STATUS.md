@@ -28,7 +28,7 @@ Phase 4 / Intermediate Stage 1.5
 
 Status:
 
-ACTIVE / READY TO START
+ACTIVE / IN PROGRESS
 
 | Фаза / этап | Статус | Текущее состояние |
 |---|---|---|
@@ -36,7 +36,7 @@ ACTIVE / READY TO START
 | 2. Master Registry | ✅ | Единый реестр ЮЛ/ИП по ИНН |
 | 3. Официальные источники | ✅ ЗАВЕРШЕНА | MVP CORE завершён; РНП/ЕИС отложен до официального доступа |
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
-| Intermediate Stage 1.5 | ▶️ ACTIVE / READY | Финальная приёмка Tax Debt/Tax Offences + критические бесплатные источники до Risk Engine |
+| Intermediate Stage 1.5 | ▶️ ACTIVE / IN PROGRESS | Tax Debt/Tax Offences accepted; FSSP inventory `NOT_FOUND`; remaining work follows the approved order |
 | 5. Проверки и риски | 🟡 фундамент есть | Контракты checks/evidence уже заложены; полный Risk Engine после Stage 1.5 |
 | 6. Карточка компании | 🟡 частично | Финальная Company Card v2 после Risk + Summary |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
@@ -107,7 +107,7 @@ Current work items:
 
 1. FNS Tax Debt — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
 2. FNS Tax Offences — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.
-3. FSSP — inventory/recover prior implementation before any rewrite.
+3. FSSP — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata exists, no implementation/data/runs.
 4. Fedresurs/EFРSB — inventory/recover prior implementation before any rewrite.
 5. Bankruptcy/liquidation — build event/stage semantics rather than one boolean.
 6. Arbitration Courts v1.
@@ -322,6 +322,8 @@ DaMIA изучена как возможный резервный bridge чер�
 4. найти models/migrations/providers/services/tests/UI;
 5. классифицировать результат `READY / PARTIAL / LEGACY_MIGRATION / NOT_FOUND`;
 6. переиспользовать рабочий код/данные и не дублировать интеграцию.
+
+FSSP inventory result: `NOT_FOUND` on 17.09.2026. Evidence is recorded in `FSSP_STAGE_1_5_INVENTORY.md`. The disabled `fssp` / `fssp_enforcement` catalog rows are placeholders, not a working integration. No new FSSP implementation was added during the inventory step.
 
 ## Постоянные критерии приёмки результата
 

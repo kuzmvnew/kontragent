@@ -48,7 +48,7 @@ These sources already exist at least at code/data/product-foundation level and m
 | NPD | completed on-demand/cache | reuse |
 | ERKNM | completed | reuse |
 | RNP/EIS | deferred external access blocker | do not substitute with paid mirror by default |
-| FSSP | product owner states it was developed earlier; current active implementation needs inventory | inventory current/history/local first |
+| FSSP | inventory complete: `NOT_FOUND`; only disabled catalog metadata exists | do not claim integration; future work requires approved official/public access path and six-gate acceptance |
 | Fedresurs/EFРSB | product owner states it was developed earlier; current active implementation needs inventory | inventory current/history/local first |
 
 ## Stage 1.5 work order
@@ -67,6 +67,8 @@ Recommended implementation order:
 10. Free corporate-disclosure foundation.
 11. Normalise company contacts/addresses/public bank details/mass address-director-founder facts needed by later Risk/Summary.
 12. Full Stage 1.5 acceptance review.
+
+FSSP inventory was completed on 2026-09-17. See `FSSP_STAGE_1_5_INVENTORY.md`. No working or reusable implementation was found in the current tree, visible history, unreachable commits, local backup, or PostgreSQL; the existing disabled source/dataset rows are catalog placeholders only.
 
 Parallel work is allowed only when it does not risk database/schema conflicts or duplicate an existing source implementation.
 
