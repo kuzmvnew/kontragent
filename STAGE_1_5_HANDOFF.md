@@ -49,7 +49,7 @@ These sources already exist at least at code/data/product-foundation level and m
 | ERKNM | completed | reuse |
 | RNP/EIS | deferred external access blocker | do not substitute with paid mirror by default |
 | FSSP | inventory complete: `NOT_FOUND`; only disabled catalog metadata exists | do not claim integration; future work requires approved official/public access path and six-gate acceptance |
-| Fedresurs/EFРSB | product owner states it was developed earlier; current active implementation needs inventory | inventory current/history/local first |
+| Fedresurs/EFРSB | inventory complete: `NOT_FOUND`; only disabled catalog metadata and planning specs exist | do not claim integration; future work requires access/cost decision and six-gate acceptance |
 
 ## Stage 1.5 work order
 
@@ -69,6 +69,8 @@ Recommended implementation order:
 12. Full Stage 1.5 acceptance review.
 
 FSSP inventory was completed on 2026-09-17. See `FSSP_STAGE_1_5_INVENTORY.md`. No working or reusable implementation was found in the current tree, visible history, unreachable commits, local backup, or PostgreSQL; the existing disabled source/dataset rows are catalog placeholders only.
+
+Fedresurs/EFRSB inventory was completed on 2026-09-17. See `FEDRESURS_STAGE_1_5_INVENTORY.md`. No working or reusable implementation was found in the same repository/history/local/database surfaces; the disabled catalog rows and financial-distress specification are not an integration.
 
 Parallel work is allowed only when it does not risk database/schema conflicts or duplicate an existing source implementation.
 

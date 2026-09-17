@@ -108,7 +108,7 @@ Current work items:
 1. FNS Tax Debt — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A1_TAX_DEBT_ACCEPTANCE.md`.
 2. FNS Tax Offences — ACCEPTED / SIX GATES PASS; protocol `docs/STAGE_1_5_A2_TAX_OFFENCE_ACCEPTANCE.md`.
 3. FSSP — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata exists, no implementation/data/runs.
-4. Fedresurs/EFРSB — inventory/recover prior implementation before any rewrite.
+4. Fedresurs/EFРSB — ✅ inventory complete: `NOT_FOUND`; only disabled catalog metadata/specification exists, no implementation/data/runs.
 5. Bankruptcy/liquidation — build event/stage semantics rather than one boolean.
 6. Arbitration Courts v1.
 7. Courts of General Jurisdiction v1.
@@ -324,6 +324,8 @@ DaMIA изучена как возможный резервный bridge чер�
 6. переиспользовать рабочий код/данные и не дублировать интеграцию.
 
 FSSP inventory result: `NOT_FOUND` on 17.09.2026. Evidence is recorded in `FSSP_STAGE_1_5_INVENTORY.md`. The disabled `fssp` / `fssp_enforcement` catalog rows are placeholders, not a working integration. No new FSSP implementation was added during the inventory step.
+
+Fedresurs/EFRSB inventory result: `NOT_FOUND` on 17.09.2026. Evidence is recorded in `FEDRESURS_STAGE_1_5_INVENTORY.md`. The disabled catalog rows and planning specification are not a working integration. No new Fedresurs/EFRSB implementation was added during the inventory step.
 
 ## Постоянные критерии приёмки результата
 
