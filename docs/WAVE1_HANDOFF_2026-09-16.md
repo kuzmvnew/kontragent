@@ -1,6 +1,6 @@
 # Wave 1 handoff — 2026-09-16
 
-Purpose: authoritative working handoff for the next Kontragent chat. Updated after W1-004 local SIX GATES PASS. Status only; no change to architecture or roadmap order.
+Purpose: authoritative working handoff for the next Kontragent chat. Updated after W1-006 local SIX GATES PASS. Status only; no change to architecture or roadmap order.
 
 ## Repository
 
@@ -93,7 +93,7 @@ W1-004 Росздравнадзор: ACCEPTED / SIX GATES PASS на пользо
 
 ## W1-005—W1-006
 
-W1-005 Роскомнадзор — NEXT / NOT STARTED. W1-006 НОСТРОЙ / СРО — NOT STARTED. Точка входа: WAVE1_STATUS.md. Актуальная локальная миграция после W1-004: `a9c4e6f8b201`. Каждый следующий источник требует отдельной команды и собственного source passport.
+W1-005 Роскомнадзор — `IN PROGRESS / SOURCE-BLOCKED (B, C)`; A/D/E/F подтверждены, B/C официального сервера остаются `unavailable`. W1-006 НОСТРОЙ / НОПРИЗ / СРО — `ACCEPTED / SIX GATES PASS` на Mac: 472 tests, PostgreSQL `kontragent`, Alembic `e7a8b9c0d1e2`, три реальные Chromium-карточки без page errors, private person records `1`, public exposure `0`. Протокол: `docs/W1_006_ACCEPTANCE.md`. Wave 1 остаётся открытой из-за W1-005 B/C.
 
 ## Boundaries
 

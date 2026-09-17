@@ -15,6 +15,11 @@ from app.models.roskomnadzor import (
     RoskomnadzorPdOperatorCheck,
     RoskomnadzorPrivatePersonRecord,
 )
+from app.models.nostroy import (
+    NoprizMemberCheck,
+    NostroyMemberCheck,
+    SroPersonRegistryRecord,
+)
 from app.models.company import (
     Company,
     CompanyBranch,
@@ -92,7 +97,10 @@ __all__ = [
     "FnsSmeSupportEntry",
     "IngestionRun",
     "NpdStatusCheck",
+    "NoprizMemberCheck",
+    "NostroyMemberCheck",
     "RoskomnadzorCompanyFact",
     "RoskomnadzorPdOperatorCheck",
     "RoskomnadzorPrivatePersonRecord",
+    "SroPersonRegistryRecord",
 ]

@@ -22,6 +22,8 @@ from app.services.roszdrav_service import (
     refresh_roszdrav_unified_license_check,
 )
 from app.services.roskomnadzor_service import refresh_pd_operator_check
+from app.services.nopriz_service import refresh_nopriz_check
+from app.services.nostroy_service import refresh_nostroy_check
 from app.services.company_service import (
     search_companies,
 )
@@ -387,6 +389,14 @@ async def company_roskomnadzor_pd_check(inn: str):
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
+@app.post("/company/{inn}/sro-check")
+async def company_sro_check(inn: str):
+    clean_inn = validate_company_inn(inn)
+    refresh_nostroy_check(clean_inn, applicable=True)
+    refresh_nopriz_check(clean_inn, applicable=True)
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
 # =========================================================
 # API: COMPANY
 # =========================================================
@@ -447,6 +457,15 @@ async def api_company_roszdrav_license_check(inn: str):
 @app.post("/api/company/{inn}/roskomnadzor-pd-check")
 async def api_company_roskomnadzor_pd_check(inn: str):
     return refresh_pd_operator_check(validate_company_inn(inn))
+
+
+@app.post("/api/company/{inn}/sro-check")
+async def api_company_sro_check(inn: str):
+    clean_inn = validate_company_inn(inn)
+    return {
+        "nostroy": refresh_nostroy_check(clean_inn, applicable=True),
+        "nopriz": refresh_nopriz_check(clean_inn, applicable=True),
+    }
 
 
 @app.post("/api/roszdrav/medical-device-check")

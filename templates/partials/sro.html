@@ -1,0 +1,44 @@
+{% if company.sro_checks %}
+<section class="card" data-testid="sro-registries">
+    <h2>Саморегулируемые организации</h2>
+    {% set labels = {
+        "nostroy": "НОСТРОЙ — строительные СРО",
+        "nopriz": "НОПРИЗ — изыскания и проектирование"
+    } %}
+    {% for code, label in labels.items() %}
+        {% set check = company.sro_checks[code] %}
+        <div class="detail-row" data-testid="sro-{{ code }}" data-result="{{ check['result'] }}">
+            <div class="detail-label">{{ label }}</div>
+            <div class="detail-value">
+            {% if check["result"] == "found" %}
+                Найдено записей по точному ИНН: {{ check["record_count"] }}.
+                Действующих записей: {{ check["active_record_count"] }}.
+                {% for record in check["records"] %}
+                    <div>
+                        {{ record["member_status"] }};
+                        номер записи {{ record["inventory_number"] or record["registration_number"] }};
+                        СРО {{ record["sro_registration_number"] }}.
+                    </div>
+                {% endfor %}
+            {% elif check["result"] == "not_found" %}
+                Записей по точному ИНН не найдено.
+            {% elif check["result"] == "not_applicable" %}
+                Проверка неприменима к этой сущности или контексту.
+            {% elif check["reason"] == "not_checked" %}
+                Точечная проверка ещё не выполнялась.
+            {% else %}
+                Источник сейчас недоступен: {{ check["reason"] }}.
+            {% endif %}
+            {% if check["data_date"] %}<div>Дата проверки: {{ check["data_date"] }}</div>{% endif %}
+            {% if check["interpretation_note"] %}<div>{{ check["interpretation_note"] }}</div>{% endif %}
+            {% if check["coverage_note"] %}<div>{{ check["coverage_note"] }}</div>{% endif %}
+            </div>
+        </div>
+    {% endfor %}
+    {% if company.sro_checks["nostroy"]["reason"] == "not_checked" or company.sro_checks["nopriz"]["reason"] == "not_checked" %}
+    <form action="/company/{{ company.inn }}/sro-check" method="post"><button type="submit">Проверить официальные реестры СРО</button></form>
+    {% endif %}
+    <p>Источник истины: НОСТРОЙ и НОПРИЗ. Сопоставление только по exact ИНН. Наличие исторической записи не означает действующее членство.</p>
+    <p>Сведения о специалистах НРС хранятся только во внутреннем private-контуре и на этой странице не публикуются.</p>
+</section>
+{% endif %}

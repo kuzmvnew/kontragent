@@ -20,7 +20,7 @@ Data Normalization & Quality Foundation
 
 Build a unified business data foundation.
 
-Approved clarification: all six agreed Wave 1 source steps remain part of Wave 1. Four are fully accepted. W1-005 Roskomnadzor is implemented for A–F but remains `IN PROGRESS / SOURCE-BLOCKED (B, C)` because the official B/C bulk responses terminate before complete XML EOF. W1-006 NOSTROY / SRO is `NEXT EXECUTABLE / NOT STARTED`.
+Approved clarification: all six agreed Wave 1 source steps remain part of Wave 1. Five are fully accepted. W1-005 Roskomnadzor is implemented for A–F but remains `IN PROGRESS / SOURCE-BLOCKED (B, C)` because the official B/C bulk responses terminate before complete XML EOF. W1-006 NOSTROY / NOPRIZ / SRO is `ACCEPTED / SIX GATES PASS`.
 
 W1-006 may proceed while the external W1-005 blocker remains open. This does not mark W1-005 or Wave 1 complete.
 
@@ -136,7 +136,7 @@ Code, downloaded data, database import, browser rendering, measured coverage and
 - W1-003 FNS SME support recipients: ACCEPTED / SIX GATES PASS on user Mac; protocol `docs/W1_003_ACCEPTANCE.md`.
 - W1-004 Roszdravnadzor: ACCEPTED / SIX GATES PASS; protocol `docs/W1_004_ACCEPTANCE.md`.
 - W1-005 Roskomnadzor: `IN PROGRESS / SOURCE-BLOCKED (B, C)`; A/D/E/F implemented and verified; B/C remain `unavailable`; 458 tests PASS; Six Gates NOT CONFIRMED.
-- W1-006 NOSTROY / SRO: `NEXT EXECUTABLE / NOT STARTED`.
+- W1-006 NOSTROY / NOPRIZ / SRO: `ACCEPTED / SIX GATES PASS`; protocol `docs/W1_006_ACCEPTANCE.md`; private person data remains isolated and non-public.
 - RNP/EIS: deferred until official access.
 - DaMIA: not connected.
 - Person / Leads / CRM / Enterprise: do not start during Wave 1.
@@ -145,21 +145,9 @@ Code, downloaded data, database import, browser rendering, measured coverage and
 
 # Immediate Next Step
 
-W1-006 — NOSTROY / SRO.
-
-Before implementation:
-
-1. fast-forward/sync local work to current `main`;
-2. confirm clean working tree;
-3. create source passport / exact source scope;
-4. confirm official machine-readable access and matching identifiers;
-5. implement ingestion/service/product path;
-6. run PostgreSQL and browser acceptance;
-7. measure counts/dates/coverage;
-8. pass the permanent six-gate protocol;
-9. update status only after evidence exists.
-
-Do not treat the open W1-005 B/C blocker as permission to mark Wave 1 complete.
+Do not start a new Wave source. Preserve the accepted W1-006 evidence and wait
+for a separate decision or corrected official responses for W1-005 B/C. Do not
+treat W1-006 acceptance as permission to mark Wave 1 complete.
 
 ---
 

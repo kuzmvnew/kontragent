@@ -26,6 +26,8 @@ from app.services.roszdrav_service import (
     get_roszdrav_medical_device_company_check,
 )
 from app.services.roskomnadzor_service import get_roskomnadzor_checks
+from app.services.nopriz_service import get_cached_nopriz_check
+from app.services.nostroy_service import get_cached_nostroy_check
 
 
 def _append_source_once(
@@ -247,6 +249,21 @@ def enrich_company_with_roskomnadzor(company):
     return result
 
 
+def enrich_company_with_sro(company):
+    if company is None:
+        return None
+    result = _copy_company(company)
+    inn = result.get("inn")
+    checks = {
+        "nostroy": get_cached_nostroy_check(inn, applicable=True),
+        "nopriz": get_cached_nopriz_check(inn, applicable=True),
+    }
+    result["sro_checks"] = checks
+    if any(check.get("result") in {"found", "not_found"} for check in checks.values()):
+        _append_source_once(result, "sro_registries")
+    return result
+
+
 def get_company_for_web(
     inn: str,
 ):
@@ -276,4 +293,5 @@ def get_company_for_web(
 
     company = enrich_company_with_cbr_finorg(company)
     company = enrich_company_with_roszdrav(company)
-    return enrich_company_with_roskomnadzor(company)
+    company = enrich_company_with_roskomnadzor(company)
+    return enrich_company_with_sro(company)
