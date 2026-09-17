@@ -6,11 +6,22 @@ Scope: machine-readable Russian commercial-court cases for company cards. This i
 
 ## Result
 
-**C1 status: `PAID ACCESS DECISION REQUIRED`.**
+**C1 status: `ACCESS_PENDING` — free Checko key required; Court v1 foundation implemented, Six Gates not yet complete.**
 
-No candidate currently qualifies as `APPROVED_FREE_OFFICIAL` or `APPROVED_FREE_PUBLIC` for the required production scope. The official KAD is the source of truth and works interactively, but no documented public machine API was found and ordinary direct/headless access was blocked. Commercial feeds exist. Checko advertises a free API tier, but its published court schema is materially narrower than C1 and public terms do not establish the storage, cache, commercial display, or republication rights required by Kontragent.
+No candidate qualifies as `APPROVED_FREE_OFFICIAL`. The official KAD remains the source of truth but has no documented public machine API. Checko is now treated as a narrow `TRIAL_AVAILABLE` free bridge: its documented `/v2/legal-cases` method is implemented behind the vendor-neutral Court v1 contract, but no key has been registered and no live response has been accepted.
 
-No provider was added as a production dependency and no trial account was opened.
+No purchase, subscription, contract, payment data, or paid dependency was added. No account was opened.
+
+## 2026-09-17 implementation checkpoint
+
+- `ArbitrationCourtProvider` is vendor-neutral; `CheckoArbitrationProvider` is one adapter.
+- First user click requests exactly the last 12 months with `limit=100&page=1`.
+- “Углубить анализ” requests exactly the next page; it never preloads all pages.
+- Cache stores `loaded_pages`, provider `total_pages`, `loaded_count`, `total_count`, and `is_full_period_loaded`, so a sample is never labelled a complete period.
+- Company-card reads are cache-only and make zero external requests.
+- Without `CHECKO_API_KEY`, the adapter makes no HTTP request and persists `access_pending`/`unavailable`, never `not_found`.
+- PostgreSQL migration: `c3d4e5f6a7b8`; AVTOVAZ access-pending state was written/read.
+- Published Checko contract confirmed INN/OGRN query support, case number, filing date, court, plaintiffs/defendants and INNs, claim amount, KAD URL, `limit<=100`, pagination, totals, and 1–2 week source delay. Published method does not supply awarded amount, third parties, judicial-act bodies/documents, or procedural history.
 
 ## Status vocabulary
 
@@ -110,4 +121,4 @@ For any shortlisted provider, obtain a written answer and contract exhibit for:
 
 ## C1 decision
 
-No option is approved. C1 remains open as **`PAID ACCESS DECISION REQUIRED`**. If procurement is later authorised, Casebook API and SPARK are the strongest full-history candidates on published capability; Checko is a low-cost schema/prototype candidate only and does not meet the present C1 completion criteria. A provider can pass C1 only after the contractual rights above are confirmed and the implementation passes all Six Gates.
+C1 remains open as **`ACCESS_PENDING`**. The free Checko bridge is code-ready but cannot pass the real-response, rights, and full Six Gates checks until Михаил supplies/authorises a free API key and the applicable terms are reviewed. If the free bridge proves insufficient, the decision becomes **`PAID ACCESS DECISION REQUIRED`**; Casebook API and SPARK remain the strongest published full-history candidates. No paid option is accepted.

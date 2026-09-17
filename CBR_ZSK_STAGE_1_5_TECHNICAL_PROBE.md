@@ -2,7 +2,20 @@
 
 Date: 2026-09-17
 
-Status: **PROBE COMPLETE / PRODUCTION MACHINE MODE BLOCKED**
+Status: **HUMAN-ASSISTED FOUNDATION / CHALLENGE_REQUIRED**
+
+## Superseding implementation checkpoint
+
+The official form was prepared in an ordinary visible browser for INN `6320002223`, requester type “potential counterparty”, purpose “Проверка потенциального контрагента”. Yandex SmartCaptcha was visible, so the result was correctly stored as `challenge_required`; no solve, bypass, OCR, stealth, proxy or token reuse was attempted.
+
+The common `InteractiveProtectedSourceSession` persists source, INN, status, allowed result vocabulary, evidence hash, browser metadata, timestamps and same-session-resume requirement. The company card is user-triggered and cache-only. CAPTCHA/timeout cannot become a negative result.
+
+Fallback research:
+
+- Checko `/company` documents a CBR illegal-financial-activity warning indicator, not the official ZSK high-risk presence result.
+- DaMIA advertises a free 100-request starter tier and a proprietary `_zsk` scoring model; that statistical score is not equivalent to the official binary ZSK result and requires an account/key.
+- Kontur Focus publicly advertises the ZSK marker and remains a future paid candidate.
+- No anonymous free Saby/SBIS ZSK field was confirmed.
 
 ## Official source and exact meaning
 
@@ -59,4 +72,4 @@ The 24-hour value is a conservative product proposal, not a published CBR SLA, a
 
 ## Six Gates / acceptance
 
-The Stage 1.5 **technical probe and production-mode decision are complete**. A production source adapter is intentionally not implemented. Found/not-found, PostgreSQL, and product-browser gates are not applicable until the Bank of Russia publishes an approved machine route or the product owner separately approves a lawful licensed source.
+The Stage 1.5 human-assisted foundation is implemented and the PostgreSQL `challenge_required` state is confirmed. A real found/not-found result and end-to-end same-session resume still require a human to complete SmartCaptcha with action-time confirmation. Therefore F is not yet Six Gates complete.

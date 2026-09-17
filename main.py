@@ -18,6 +18,9 @@ from app.services.cbr_finorg_service import (
     refresh_cbr_finorg_check_for_inn,
 )
 from app.services.corporate_disclosure_service import refresh_corporate_disclosure_check
+from app.services.arbitration_court_service import refresh_arbitration_court_check
+from app.services.general_court_service import refresh_general_court_check
+from app.services.protected_source_session_service import start_protected_source_session
 from app.services.roszdrav_service import (
     refresh_roszdrav_medical_device_check,
     refresh_roszdrav_unified_license_check,
@@ -405,6 +408,27 @@ async def company_corporate_disclosure_check(inn: str):
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
 
 
+@app.post("/company/{inn}/arbitration-courts-check")
+async def company_arbitration_courts_check(inn: str, deepen: bool = False):
+    clean_inn = validate_company_inn(inn)
+    refresh_arbitration_court_check(clean_inn, deepen=deepen)
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
+@app.post("/company/{inn}/general-courts-check")
+async def company_general_courts_check(inn: str):
+    clean_inn = validate_company_inn(inn)
+    refresh_general_court_check(clean_inn)
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
+@app.post("/company/{inn}/protected-source/{source_code}/start")
+async def company_protected_source_start(inn: str, source_code: str):
+    clean_inn = validate_company_inn(inn)
+    start_protected_source_session(clean_inn, source_code)
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
 # =========================================================
 # API: COMPANY
 # =========================================================
@@ -479,6 +503,21 @@ async def api_company_sro_check(inn: str):
 @app.post("/api/company/{inn}/corporate-disclosure-check")
 async def api_company_corporate_disclosure_check(inn: str):
     return refresh_corporate_disclosure_check(validate_company_inn(inn))
+
+
+@app.post("/api/company/{inn}/arbitration-courts-check")
+async def api_company_arbitration_courts_check(inn: str, deepen: bool = False):
+    return refresh_arbitration_court_check(validate_company_inn(inn), deepen=deepen)
+
+
+@app.post("/api/company/{inn}/general-courts-check")
+async def api_company_general_courts_check(inn: str):
+    return refresh_general_court_check(validate_company_inn(inn))
+
+
+@app.post("/api/company/{inn}/protected-source/{source_code}/start")
+async def api_company_protected_source_start(inn: str, source_code: str):
+    return start_protected_source_session(validate_company_inn(inn), source_code)
 
 
 @app.post("/api/roszdrav/medical-device-check")

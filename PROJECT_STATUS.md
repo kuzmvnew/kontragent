@@ -364,4 +364,5 @@ Person остаётся отдельным последующим продукт
 - Судебные требования не равны подтверждённому долгу.
 - Ликвидация не равна банкротству.
 - Платный источник не становится обязательным без отдельного решения; free/public/official first.
+- Checkpoint 17.09.2026: migration `c3d4e5f6a7b8` adds C1/C2 dated caches and common protected-source sessions. C2 official Moscow adapter has a real three-case AVTOVAZ result in PostgreSQL. C1 Checko bridge is code-ready but `ACCESS_PENDING` without a free key. E has a real official 10-row positive browser result and confirmed requester-BIK semantics; end-to-end browser resume remains pending. F stores the real `challenge_required` state; no CAPTCHA was solved. Stage 1.5 remains `IN PROGRESS`.
 - Новый источник не добавляется в Wave 2 обязательный scope автоматически.

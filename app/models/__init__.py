@@ -60,6 +60,11 @@ from app.models.source import (
     DataSource,
     IngestionRun,
 )
+from app.models.stage15_checks import (
+    ArbitrationCourtCheck,
+    GeneralCourtCheck,
+    InteractiveProtectedSourceSession,
+)
 from app.models.tax_debt import (
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
@@ -77,11 +82,14 @@ from app.models.tax_payment import (
 
 
 __all__ = [
+    "ArbitrationCourtCheck",
     "CbrFinorgCheck",
     "CbrWarningListEntry",
     "Company",
     "CompanyPublicFact",
     "CorporateDisclosureCheck",
+    "GeneralCourtCheck",
+    "InteractiveProtectedSourceSession",
     "CompanyBranch",
     "CompanyContact",
     "CompanyFinancial",

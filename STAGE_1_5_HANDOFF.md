@@ -80,7 +80,9 @@ C2 official court surfaces were rechecked and are `TECHNICAL_ACCESS_UNCONFIRMED 
 
 The official FNS account-suspension service produced one real dated negative browser result, then required CAPTCHA; unattended production access is blocked and no bypass was attempted. See `FNS_ACCOUNT_SUSPENSION_STAGE_1_5_ACCESS.md`.
 
-The Bank of Russia high-risk public check probe is complete, but its mandatory SmartCaptcha/fingerprint workflow blocks production machine mode. See `CBR_ZSK_STAGE_1_5_TECHNICAL_PROBE.md`.
+The Bank of Russia high-risk public check now has a shared human-assisted session foundation and a PostgreSQL `challenge_required` record for AVTOVAZ. A human-completed same-session result is still pending. See `CBR_ZSK_STAGE_1_5_TECHNICAL_PROBE.md`.
+
+Checkpoint `c3d4e5f6a7b8` adds vendor-neutral C1/C2 providers, dated court caches, user-triggered company-card controls, and common `InteractiveProtectedSourceSession` storage. The official Moscow adapter produced and cached three AVTOVAZ cases. The Checko arbitration bridge enforces one 100-row page per click and remains access-pending without a free API key. The official FNS browser probe produced 10 current suspension rows for golden INN `7702059544`; requester BIK was proven not to filter decision BIKs. See `docs/STAGE_1_5_COURTS_PROTECTED_FOUNDATION.md`.
 
 The PRIME free/public corporate-disclosure foundation passed Six Gates for targeted exact-INN retrieval. Migration `a1c2d3e4f5b6` adds dated disclosure checks; the company card and API expose source-attributed profile/document metadata without mirroring documents. See `PRIME_CORPORATE_DISCLOSURE_SOURCE_PASSPORT.md` and `docs/STAGE_1_5_G_CORPORATE_DISCLOSURE_ACCEPTANCE.md`.
 

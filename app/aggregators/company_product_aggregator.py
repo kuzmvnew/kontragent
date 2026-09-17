@@ -8,6 +8,9 @@ from app.services.cbr_warning_list_service import (
     get_cbr_warning_list_check_for_inn,
 )
 from app.services.corporate_disclosure_service import get_cached_corporate_disclosure_check
+from app.services.arbitration_court_service import get_cached_arbitration_court_check
+from app.services.general_court_service import get_cached_general_court_check
+from app.services.protected_source_session_service import get_latest_protected_source_check
 from app.services.disqualified_service import (
     get_disqualified_check_for_inn,
 )
@@ -61,6 +64,27 @@ def enrich_company_with_corporate_disclosure(company):
     result["corporate_disclosure_check"] = check
     if check.get("result") in {"found", "not_found"}:
         _append_source_once(result, "prime_disclosure")
+    return result
+
+
+def enrich_company_with_stage15_on_demand_checks(company):
+    """Cache reads only: this function must never contact an external source."""
+    if company is None:
+        return None
+    result = _copy_company(company)
+    inn = result.get("inn")
+    result["arbitration_court_check"] = get_cached_arbitration_court_check(inn)
+    result["general_court_check"] = get_cached_general_court_check(inn)
+    result["fns_bankinform_check"] = get_latest_protected_source_check(inn, "fns_bankinform")
+    result["cbr_zsk_check"] = get_latest_protected_source_check(inn, "cbr_zsk")
+    for code, check in (
+        ("checko_arbitration_cases", result["arbitration_court_check"]),
+        ("moscow_general_court_cases", result["general_court_check"]),
+        ("fns_bankinform", result["fns_bankinform_check"]),
+        ("cbr_zsk", result["cbr_zsk_check"]),
+    ):
+        if check.get("checked"):
+            _append_source_once(result, code)
     return result
 
 
@@ -307,4 +331,5 @@ def get_company_for_web(
     company = enrich_company_with_roszdrav(company)
     company = enrich_company_with_roskomnadzor(company)
     company = enrich_company_with_sro(company)
-    return enrich_company_with_corporate_disclosure(company)
+    company = enrich_company_with_corporate_disclosure(company)
+    return enrich_company_with_stage15_on_demand_checks(company)

@@ -2,7 +2,23 @@
 
 Date: 2026-09-17
 
-Status: **SOURCE_BLOCKED FOR UNATTENDED MACHINE ACCESS**
+Status: **OFFICIAL HUMAN-ASSISTED FOUNDATION / REAL FOUND CONFIRMED**
+
+## Superseding BIK experiment and implementation checkpoint
+
+A second golden-company experiment supersedes the earlier “real found not confirmed” conclusion:
+
+- INN `7702059544`, requester BIK `044525161` (LOCO-Bank), ordinary visible browser;
+- official result at `17.09.2026 11:38:29 МСК`: 10 active suspension rows for АО «ЦЕНТРОДОРСТРОЙ»;
+- returned decision BIKs included `044525225`, `044525411`, `044525593`, `044525666`, `044525823` — not the requester BIK;
+- observed start date `16.06.2025`, decision numbers including `14674761` and `24115347`, decision dates `14.09.2026` and `16.09.2026`, basis `01`, tax office `7702`, and negative ENS balances;
+- the next query with another real BIK opened the official rate-limit CAPTCHA. It was not solved or bypassed.
+
+This is direct evidence that the entered BIK is requester context, not a filter restricting the returned decisions to that bank. The first response itself returned five other BIKs. Additional automated repetitions would add load and are neither required nor allowed through the challenge.
+
+`InteractiveProtectedSourceSession` now provides the common FNS/ZSK lifecycle: create, visible-browser mode, `challenge_required`, same-session resume requirement, evidence hash/metadata, completed result, close, and cache. The card creates a session only after a user click and otherwise makes zero requests. Result parsing is fail-closed. The golden company is not in the current master registry, so its research evidence was documented but not forced into a company FK; production sessions are stored for master-registry companies.
+
+Checko `/company` public API documentation contains no published suspension field. Checko HTML is therefore not used as a production adapter.
 
 ## Official source
 
@@ -39,13 +55,13 @@ The form labels the supplied value as “БИК банка, выполняюще
 
 | Gate | Result |
 |---|---|
-| Automated tests | Not applicable: no production-safe adapter |
-| Real found | Not confirmed; further requests require CAPTCHA |
-| PostgreSQL write/read | Not applicable |
+| Automated tests | PASS for challenge/unavailable fail-closed parser and session result constraints |
+| Real found | PASS in official visible browser: 10 active rows for INN 7702059544 |
+| PostgreSQL write/read | Foundation schema PASS; golden evidence not inserted because the company is absent from master registry |
 | State semantics | Real dated `not_found` observed; CAPTCHA/direct access correctly classified `unavailable` |
 | Real Chromium | Confirmed |
 | Counts/dates/coverage | Single official negative response confirmed; multi-BIK and positive coverage not confirmed |
 
 ## Decision
 
-The official service is useful for manual verification but is not presently a stable unattended machine path. An adapter that relies on CAPTCHA solving, session cycling, stealth, proxy rotation, or fingerprint evasion is prohibited and was not implemented. E remains open as `SOURCE_BLOCKED FOR UNATTENDED MACHINE ACCESS`.
+E is **HUMAN-ASSISTED FOUNDATION IMPLEMENTED / PRODUCT BROWSER RESUME PENDING**. The official flow and real positive result are confirmed. A completed challenge must be resumed in the same visible browser session; the current web card exposes the operator hand-off, but does not yet embed/control that browser session end-to-end. No CAPTCHA service, bypass, stealth, proxy rotation or fingerprint evasion is used.
