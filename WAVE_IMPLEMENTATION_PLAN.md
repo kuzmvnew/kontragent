@@ -3,20 +3,24 @@
 Status: ACTIVE
 Date: 2026-09-17
 
-## Current Wave 1 state
+## Wave 1 final state
+
+**Wave 1: CLOSED / ACCEPTED BY EXPLICIT PROJECT DECISION.**
+
+Authoritative closure decision: `WAVE1_CLOSURE_DECISION.md`.
 
 - W1-001 CBR Warning List — ACCEPTED / SIX GATES PASS.
 - W1-002 CBR FinOrg — ACCEPTED / SIX GATES PASS.
 - W1-003 ФНС — МСП, получатели поддержки — ACCEPTED / SIX GATES PASS.
 - W1-004 Росздравнадзор — ACCEPTED / SIX GATES PASS.
-- W1-005 Роскомнадзор — IN PROGRESS / SOURCE-BLOCKED (B, C). A/D/E/F implemented and verified; the source remains open and is not accepted by all six gates.
-- W1-006 НОСТРОЙ / СРО — NEXT EXECUTABLE / NOT STARTED.
+- W1-005 Роскомнадзор — DEFERRED EXCEPTION / SOURCE-BLOCKED (B, C). A/D/E/F implemented and verified; B/C remain `unavailable`; W1-005 itself is not relabeled SIX GATES PASS.
+- W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS.
 
-W1-006 may proceed while W1-005 waits for complete official B/C source responses. This does not close W1-005. Wave 1 remains open until W1-006 is accepted and the W1-005 blocker is resolved or separately dispositioned by an explicit project decision.
+The unresolved W1-005 B/C external-source blocker has been explicitly dispositioned as a deferred exception and no longer blocks Wave 1 closure. It remains visible and may be revisited when the official source is complete/stable.
 
 ## Approved execution order
 
-1. Finish Wave 1 under the status rule above.
+1. **Wave 1 — COMPLETE / CLOSED.**
 2. Freeze the approved post-Wave1 product/function specifications and keep them synchronized with actual code.
 3. Build Auto-update / Data Readiness for production sources: schedules, last success, source_as_of, coverage, errors, retry/backoff and source status.
 4. Build Company Card v2 + Risk Engine + Summary Engine + Report v1.
@@ -31,6 +35,19 @@ W1-006 may proceed while W1-005 waits for complete official B/C source responses
 13. After Company B2B Core: Person Core.
 14. Then separate Compliance module.
 15. Then API / Enterprise / SSO / SLA / client integrations and government-procurement readiness when commercially justified.
+
+## Current next stage
+
+The project is now in the post-Wave1 transition. Do not start Wave 2 sources yet.
+
+Immediate sequence:
+
+1. synchronize/freeze the post-Wave1 specifications with the accepted code baseline;
+2. execute Auto-update / Data Readiness;
+3. execute Company Card v2 + Risk/Summary/Report;
+4. pass the three mandatory launch/product gates before 10k SEO.
+
+Returning to W1-005 B/C is a separate deferred-source maintenance task and does not automatically reopen Wave 1.
 
 ## Mandatory post-Wave1 specifications
 
@@ -58,9 +75,12 @@ W1-006 may proceed while W1-005 waits for complete official B/C source responses
 - Court claims are not confirmed debt.
 - Forecasts are not facts.
 - Public SEO projection includes only legally approved fields/conclusions.
+- Private person evidence remains isolated from public company/API/SEO projections unless separately approved.
 
 ## Source backlog
 
 The researched source backlog remains indexed by `MASTER_SOURCE_MATRIX.md` and is expanded by source-specific research documents such as `TRANSPORT_SOURCE_AUDIT.md`. Before implementation, every new Wave 2 source must pass `SOURCE_ACCESS_COST_GATE.md`.
+
+W1-005 B/C stays in the deferred-source backlog as an external blocker, not as an unfinished Wave 1 gate.
 
 Project name remains **Kontragent**. Names using “Next” are working product/module naming ideas only and are not the approved project name.
