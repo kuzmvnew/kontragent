@@ -5,6 +5,10 @@
 ## Источники истины
 
 - Код: GitHub repository `kuzmvnew/kontragent`
+- Главный динамический AI-контекст: `AI_PROJECT_CONTEXT.md`
+- Правила интеграции Engineering Knowledge Base: `ENGINEERING_KB_INTEGRATION.md`
+- Immutable engineering baseline 18.09.2026: `PROJECT_BASELINE_2026_09_18.md`
+- Database schema reconciliation: `docs/SCHEMA_RECONCILIATION_2026-09-18.md`
 - Порядок разработки: `ROADMAP.md`
 - Активный порядок после Wave 1: `WAVE_IMPLEMENTATION_PLAN.md`
 - Wave 1 closure: `WAVE1_CLOSURE_DECISION.md`
