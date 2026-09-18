@@ -29,7 +29,9 @@
 
 Last completed historical engine stage: **Summary Engine v1 — COMPLETE / ACCEPTED**.
 
-Current stage: **PRODUCT RECOVERY V3 / STAGE 1.6 — IN PROGRESS**.
+Current stage: **PRODUCT RECOVERY V3 — BLOCKED BY EXTERNAL RUNTIME ACCESS**.
+
+Stage 1.6 audit status: **CLOSED / PRODUCT RECOVERY NOT ACCEPTED**.
 
 Current next stage: **COMPANY CARD V2 — BLOCKED** until Product Recovery acceptance.
 
@@ -41,8 +43,8 @@ Current next stage: **COMPANY CARD V2 — BLOCKED** until Product Recovery accep
 | Wave 1 | ✅ CLOSED / ACCEPTED | W1-001/002/003/004/006 accepted; W1-005 B/C — deferred external-source exception |
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
-| 5. Проверки и риски | 🟡 PRODUCT RECOVERY V3 — IN PROGRESS | Historical Risk/Summary v1 acceptance remains valid. V3 code exists and Mac verification passed, but Product Recovery acceptance is blocked by mandatory runtime coverage and a 0/40 positive gate. |
-| Stage 1.6 | 🟡 ACTIVE / REQUIRED — IN PROGRESS | Audit-hardening implementation verified; 40/40 workflows terminal, Coverage 47–72/100, positive gate 0/40. Exact blockers: `STAGE_1_6_AUDIT_CLOSURE.md`. |
+| 5. Проверки и риски | 🟡 PRODUCT RECOVERY V3 — EXTERNALLY BLOCKED | Historical Risk/Summary v1 acceptance remains valid. V3 audit/hardening is complete, but Product Recovery acceptance is blocked by mandatory runtime coverage and a 0/40 positive gate. |
+| Stage 1.6 | ✅ AUDIT CLOSED / PRODUCT NOT ACCEPTED | Applicability, existing-source wiring, read-path, Golden-40, browser and regression audits complete. Coverage 51–78/100, average 63.5; positive gate 0/40. Exact blockers: `STAGE_1_6_AUDIT_CLOSURE.md`. |
 | 6. Карточка компании | ⛔ BLOCKED / частично | Company Card v2 не начинается до Product Recovery acceptance |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Platform 2.0 | ⛔ BLOCKED / future required | После Company Card v2 и Report v1; до 10k enrichment. Сейчас не реализуется. |
@@ -141,7 +143,7 @@ Highest
 
 Approved path before SEO:
 
-Completed historical stages: `Stage 1.5 -> Auto-update/Data Readiness -> Risk Engine v1 -> Summary Engine v1`. Current: `Product Recovery v3 -> Stage 1.6 -> Golden-40 acceptance`. Blocked sequence: `Product Recovery ACCEPTED -> Recovery PR/main -> Company Card v2 -> Report v1 -> Platform 2.0 -> 10k enrichment -> Data Quality Gate -> Production Candidate -> Security Gate v2 -> Legal Gate -> Product/Card Acceptance -> SEO`.
+Completed historical stages: `Stage 1.5 -> Auto-update/Data Readiness -> Risk Engine v1 -> Summary Engine v1 -> Stage 1.6 audit closure`. Current: `Product Recovery v3 — external runtime blockers`. Blocked sequence: `Product Recovery ACCEPTED -> Recovery PR/main -> Company Card v2 -> Report v1 -> Platform 2.0 -> 10k enrichment -> Data Quality Gate -> Production Candidate -> Security Gate v2 -> Legal Gate -> Product/Card Acceptance -> SEO`.
 
 ## Current Development Rule
 
@@ -149,7 +151,7 @@ Current project priority:
 
 Release First, but not before the agreed quality/data gates.
 
-No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readiness, Risk Engine v1 and Summary Engine v1 remain accepted historical stages. The current engineering focus is Product Recovery v3 / mandatory Stage 1.6. Company Card v2 is blocked until Stage 1.6 and Product Recovery acceptance.
+No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readiness, Risk Engine v1 and Summary Engine v1 remain accepted historical stages. The Stage 1.6 audit is closed; Product Recovery remains blocked only by the documented source-runtime gaps. Company Card v2 is blocked until Product Recovery acceptance.
 
 ## Текущее техническое состояние
 
@@ -164,10 +166,10 @@ No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readine
 - Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green and merged as `d6ba029bc2095acaa194a1fde0e207bd651c18f3`.
 - Risk Engine v1: **COMPLETE / ACCEPTED**; local regression **586 passed**, Alembic `e5f6a7b8c9d0 (head)`, five real-company assessments, PostgreSQL readback and Chromium acceptance are preserved as historical evidence in `RISK_ENGINE_ACCEPTANCE.md`. PR #43 merged as `510fa97792be43a4eb561288d2a2e78cd8764d79`.
 - Summary Engine v1: **COMPLETE / ACCEPTED** on branch `codex/summary-engine`; current-run Summary tests **23 passed**, full regression **609 passed**, Alembic `f6a7b8c9d0e1 (head)`, five real-company summaries, PostgreSQL save/readback/cache and Chromium acceptance. PR #44 CI is green and the PR remains open/unmerged.
-- Product Recovery v3 / Stage 1.6: **IN PROGRESS** on `codex/risk-summary-product-recovery`; preflight local/origin SHA was `f5f77d687d9fa38849ae289f47828a09bca3b666`; verified implementation checkpoint is `b8e115e`.
-- Stage 1.6 verification: **648 passed**, Alembic downgrade/upgrade/head at `b8c9d0e1f2a3`, Ruff/compile/diff/secret scan/pip-audit/startup smoke passed; desktop and mobile browser acceptance passed.
-- Product Recovery v3 runtime: the locked 40/40 cohort was processed; Workflow Completion **100–100%**; Evidence Coverage **47–72/100**, average **57.8/100**; positive gate **0/40** and **0/10** low-risk candidates. Direct-source gaps remain factual blockers; code existence is not runtime completion.
-- Public read profile: **75–78 SQL queries**, p50 **1098.022 ms**, p95 **1676.589 ms**, **0 external network calls** across five representative companies. Query fan-out improved from 90–91; the sample does not demonstrate a latency improvement.
+- Product Recovery v3 / Stage 1.6 code checkpoint: `d92ef5a82bb42506d7b31f802f92ec64b8d8fa24` on `codex/risk-summary-product-recovery`.
+- Stage 1.6 verification: **655 passed**, Alembic head `b8c9d0e1f2a3`; browser smoke passed with 40 cards, 1/40 search, 10/40 low-risk filter, ≤4 grouped limitations and no internal jargon.
+- Product Recovery v3 runtime: the locked 40/40 cohort was processed and persisted; Workflow Completion **100–100%**; Evidence Coverage **51–78/100**, average **63.5/100**; positive gate **0/40** and **0/10** low-risk candidates. ERKNM is now 40/40 terminal; Bankinform is contextual N/A; RNP is separately deferred.
+- Public read profile: **62–69 SQL queries**, p50 **1012.274 ms**, p95 **1578.178 ms**, **0 external network calls** across the same five representative companies. Previous profile was 75–78 queries, p50 1098.022 ms, p95 1676.589 ms.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.
@@ -382,5 +384,5 @@ Person остаётся отдельным последующим продукт
 - Судебные требования не равны подтверждённому долгу.
 - Ликвидация не равна банкротству.
 - Платный источник не становится обязательным без отдельного решения; free/public/official first.
-- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`. Auto-update/Data Readiness, Risk Engine v1 and Summary Engine v1 subsequently completed and remain accepted historical stages. Current stage is `PRODUCT RECOVERY V3 / STAGE 1.6 — IN PROGRESS`; Company Card v2 is blocked.
+- Final Stage 1.5 checkpoint 17.09.2026: C1 passed live Six Gates with one Checko request and 7/7 cached cases. C2 has 3 real Moscow cases; SPb/Sverdlovsk official exact-identifier forms were bounded-tested and stopped at timeout/CAPTCHA without bypass, accepted as partial targeted coverage. E/F regression, PostgreSQL and Chromium passed. Stage 1.5 is `CLOSED / ACCEPTED`. Auto-update/Data Readiness, Risk Engine v1 and Summary Engine v1 subsequently completed and remain accepted historical stages. Stage 1.6 audit is `CLOSED / PRODUCT RECOVERY NOT ACCEPTED`; Company Card v2 is blocked.
 - Новый источник не добавляется в Wave 2 обязательный scope автоматически.

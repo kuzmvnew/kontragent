@@ -1,17 +1,17 @@
 {
-  "generated_at": "2026-09-17T21:49:13.982012+00:00",
+  "generated_at": "2026-09-18T03:39:20.102500+00:00",
   "target": 40,
   "actual": 40,
   "buckets": {
     "Банкротство": 10,
     "Налоговые факторы": 10,
     "Действующие": 10,
-    "Высокая полнота": 10
+    "Низкий наблюдаемый риск — кандидат": 10
   },
   "coverage": {
-    "min": 47,
-    "max": 72,
-    "average": 57.8
+    "min": 51,
+    "max": 78,
+    "average": 63.5
   },
   "workflow_completion": {
     "min": 100,
@@ -25,11 +25,8 @@
     "arbitration": 40,
     "general_courts": 40,
     "cbr_zsk": 40,
-    "bankinform": 40,
-    "licences_sro": 25,
-    "procurement_rnp": 40,
-    "regulatory_inspections": 40,
     "fssp": 24,
+    "licences_sro": 7,
     "bankruptcy": 21
   },
   "terminal_states": {
@@ -43,16 +40,19 @@
     "general_courts:UNAVAILABLE": 40,
     "cbr_warning:NOT_FOUND": 40,
     "cbr_zsk:UNAVAILABLE": 40,
-    "bankinform:UNAVAILABLE": 40,
+    "bankinform:NOT_APPLICABLE": 40,
     "management:NOT_FOUND": 40,
-    "licences_sro:UNAVAILABLE": 25,
+    "licences_sro:NOT_APPLICABLE": 18,
+    "regulatory_inspections:NOT_FOUND": 39,
     "procurement_rnp:UNAVAILABLE": 40,
     "fssp:UNAVAILABLE": 24,
     "licences_sro:FOUND": 15,
     "tax_offence:FOUND": 11,
+    "licences_sro:UNAVAILABLE": 7,
     "finance:NOT_FOUND": 5,
     "tax_debt:NOT_FOUND": 11,
-    "bankruptcy:UNAVAILABLE": 21
+    "bankruptcy:UNAVAILABLE": 21,
+    "regulatory_inspections:FOUND": 1
   },
   "fssp_validation": {
     "NOT_IN_VALIDATION_MATRIX": 36,
@@ -60,10 +60,11 @@
     "MISMATCH": 1
   },
   "runtime": {
-    "fssp_direct": "UNAVAILABLE: no configured machine transport; runner returned terminal evidence for every company",
-    "efrsb_direct": "UNAVAILABLE: no configured public/machine transport; runner returned terminal evidence for every company",
-    "cbr_zsk": "UNAVAILABLE: interactive public flow not completed; runner returned terminal evidence for every company",
-    "bankinform": "UNAVAILABLE: no company-specific BIK supplied; arbitrary BIK is prohibited",
-    "checko": "ACCESS_PENDING when CHECKO_API_KEY is absent"
+    "fssp_direct": "UNAVAILABLE: official exact-INN flow returned CAPTCHA; no authorized machine transport is configured",
+    "efrsb_direct": "UNAVAILABLE: official public endpoint returned an anti-bot challenge; no bypass attempted",
+    "cbr_zsk": "UNAVAILABLE: official flow requires interactive SmartCaptcha; no bypass attempted",
+    "bankinform": "NOT_APPLICABLE without bank/account context and querying-bank BIK; a positive cached fact would still be retained",
+    "checko": "ACCESS_PENDING when CHECKO_API_KEY is absent",
+    "eis_rnp": "DEFERRED_EXTERNAL_ACCESS; no universal N/A is inferred from missing procurement context"
   }
 }

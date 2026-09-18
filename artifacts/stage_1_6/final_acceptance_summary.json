@@ -1,0 +1,61 @@
+{
+  "verified_at": "2026-09-18T06:40:00+03:00",
+  "code_checkpoint": "d92ef5a82bb42506d7b31f802f92ec64b8d8fa24",
+  "decision": "STAGE_1_6_AUDIT_CLOSED_PRODUCT_RECOVERY_NOT_ACCEPTED",
+  "tests": {
+    "passed": 655,
+    "warnings": 2,
+    "exit_code": 0
+  },
+  "migration_head": "b8c9d0e1f2a3",
+  "local_ci_parity": {
+    "diff_check": "passed",
+    "ruff_critical": "passed",
+    "compileall": "passed",
+    "secret_scan_tracked_files": 413,
+    "dependency_audit": "no known vulnerabilities",
+    "startup_smoke": "passed",
+    "remote_ci": "not_triggered: workflow runs only on main or pull_request; both were outside authorized scope"
+  },
+  "golden_40": {
+    "processed": 40,
+    "workflow_completion_percent_min": 100,
+    "workflow_completion_percent_max": 100,
+    "coverage_min": 51,
+    "coverage_max": 78,
+    "coverage_average": 63.5,
+    "positive_gate_overall": 0,
+    "positive_gate_low_risk_candidates": 0,
+    "persisted": 40,
+    "erknm_found": 1,
+    "erknm_not_found": 39,
+    "bankinform_not_applicable": 40,
+    "licences_sro_not_applicable": 18,
+    "licences_sro_found": 15,
+    "licences_sro_unavailable": 7
+  },
+  "public_read_profile": {
+    "queries_before_min": 75,
+    "queries_before_max": 78,
+    "queries_after_min": 62,
+    "queries_after_max": 69,
+    "p50_ms_before": 1098.022,
+    "p50_ms_after": 1012.274,
+    "p95_ms_before": 1676.589,
+    "p95_ms_after": 1578.178,
+    "external_network_calls": 0
+  },
+  "browser_smoke": {
+    "cards": 40,
+    "search_result": "1 из 40",
+    "low_risk_filter_result": "10 из 40",
+    "max_grouped_limitations_per_card": 4,
+    "internal_jargon_detected": false
+  },
+  "public_runtime": {
+    "external_network_calls_on_get": 0,
+    "database_writes_on_get": 0,
+    "anonymous_mutation_status": 401,
+    "anonymous_internal_status": 401
+  }
+}

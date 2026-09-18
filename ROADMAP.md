@@ -215,7 +215,7 @@ Does not block further development.
 
 Статус: ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED; дальнейшая source-specific нормализация остаётся частью соответствующих будущих источников
 
-Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт как deferred external-source exception: A/D/E/F подтверждены, B/C остаются `SOURCE_BLOCKED` и не переименовываются в Six Gates PASS. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 — CLOSED / ACCEPTED. Auto-update / Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages; scheduler deployment остаётся `NOT_CONFIGURED` до фактического развёртывания handler/supervisor. Текущий этап — PRODUCT RECOVERY V3 / IN PROGRESS; COMPANY CARD V2 заблокирован до его приёмки.
+Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт как deferred external-source exception: A/D/E/F подтверждены, B/C остаются `SOURCE_BLOCKED` и не переименовываются в Six Gates PASS. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5 — CLOSED / ACCEPTED. Auto-update / Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages; scheduler deployment остаётся `NOT_CONFIGURED` до фактического развёртывания handler/supervisor. Stage 1.6 audit — CLOSED / PRODUCT RECOVERY NOT ACCEPTED. Текущий этап — PRODUCT RECOVERY V3 / EXTERNAL RUNTIME BLOCKERS; COMPANY CARD V2 заблокирован до его приёмки.
 
 ## Цель
 
@@ -265,7 +265,7 @@ Wave 1 — CLOSED / ACCEPTED. W1-005 Роскомнадзор закрыт ка�
 
 # ФАЗА 5 — ПРОВЕРКИ И ЛОГИКА РИСКОВ
 
-Статус: 🟡 PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS; Risk Engine v1 и Summary Engine v1 сохраняют historical COMPLETE / ACCEPTED; COMPANY CARD V2 BLOCKED
+Статус: 🟡 PRODUCT RECOVERY V3 EXTERNALLY BLOCKED; STAGE 1.6 AUDIT CLOSED / PRODUCT NOT ACCEPTED; Risk Engine v1 и Summary Engine v1 сохраняют historical COMPLETE / ACCEPTED; COMPANY CARD V2 BLOCKED
 
 ## Цель
 
@@ -311,13 +311,13 @@ Canonical status: `STAGE_1_6_AUDIT_CLOSURE.md`.
 
 Порядок: `Product Recovery v3 → Stage 1.6 → Golden-40 Acceptance → Product Recovery ACCEPTED → Recovery PR/main → Company Card v2`.
 
-Текущий verified runtime: 40/40 processed, Workflow Completion 100–100%, Evidence Coverage 47–72/100 (average 57.8), positive gate 0/40. Поэтому Stage 1.6 и Product Recovery остаются **IN PROGRESS**, а не ACCEPTED.
+Финальный Stage 1.6 runtime: 40/40 processed, Workflow Completion 100–100%, Evidence Coverage 51–78/100 (average 63.5), positive gate 0/40. Audit closure завершён, но Product Recovery остаётся **NOT ACCEPTED** из-за внешних runtime-блокеров.
 
 ---
 
 # ФАЗА 6 — ПОЛНАЯ КАРТОЧКА КОМПАНИИ
 
-Статус: ⛔ COMPANY CARD V2 BLOCKED до Stage 1.6 и Product Recovery acceptance; исторический partial foundation не является началом v2
+Статус: ⛔ COMPANY CARD V2 BLOCKED до Product Recovery acceptance; исторический partial foundation не является началом v2
 
 ## Цель
 
@@ -666,8 +666,8 @@ SEO строится после того, как карточка действи
 Фаза 2 ✅
 Фаза 3 ✅ ЗАВЕРШЕНА В СОГЛАСОВАННОМ ОБЪЁМЕ
 Фаза 4 ✅ APPROVED FOUNDATION COMPLETE / ACCEPTED — Wave 1 и Stage 1.5 закрыты; Data Readiness принят и merged в PR #40; W1-005 B/C остаются deferred `SOURCE_BLOCKED`, W1-006 принят по Six Gates.
-Фаза 5 🟡 PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS; Risk/Summary v1 historical acceptance сохранён
-Фаза 6 ⛔ COMPANY CARD V2 BLOCKED до Stage 1.6 и Product Recovery acceptance
+Фаза 5 🟡 PRODUCT RECOVERY V3 EXTERNALLY BLOCKED; Stage 1.6 audit closed; Risk/Summary v1 historical acceptance сохранён
+Фаза 6 ⛔ COMPANY CARD V2 BLOCKED до Product Recovery acceptance
 Фаза 7 🔵
 Platform 2.0 ⛔ future required после Card v2/Report v1 и до 10k enrichment
 10k enrichment ⛔ blocked до Platform 2.0
@@ -681,10 +681,10 @@ Privacy & Person Gate 🔵 обязательный перед публичны�
 
 RISK ENGINE V1 ✅
 → SUMMARY ENGINE V1 ✅
-→ PRODUCT RECOVERY V3 → STAGE 1.6 → GOLDEN-40 (CURRENT; IN PROGRESS)
+→ STAGE 1.6 AUDIT CLOSED → PRODUCT RECOVERY V3 (CURRENT; EXTERNALLY BLOCKED)
 → КАРТОЧКА КОМПАНИИ V2 (BLOCKED)
 
-Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты. Текущий этап — PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS: Workflow Completion 100–100%, Evidence Coverage 47–72/100, average 57.8, positive gate 0/40. Company Card v2 заблокирован до Product Recovery acceptance.
+Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты. Stage 1.6 audit закрыт: Workflow Completion 100–100%, Evidence Coverage 51–78/100, average 63.5, positive gate 0/40. Product Recovery остаётся externally blocked; Company Card v2 заблокирован до Product Recovery acceptance.
 
 Security & Resilience Gate v2 не является текущей активной работой. Утверждённая последовательность: Risk Engine v1 → Summary Engine v1 → Product Recovery v3 → Stage 1.6 → Golden-40 → Product Recovery ACCEPTED → Recovery PR/main → Company Card v2 → Report v1 → Platform 2.0 → 10k enrichment → Data Quality Gate → Production Candidate → Security Gate v2 → Legal → Product Acceptance → SEO.
 

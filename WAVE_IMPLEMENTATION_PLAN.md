@@ -1,6 +1,6 @@
 # WAVE IMPLEMENTATION PLAN — Kontragent
 
-Status: ACTIVE — PRODUCT RECOVERY V3 / STAGE 1.6 IN PROGRESS; COMPANY CARD V2 BLOCKED
+Status: ACTIVE — STAGE 1.6 AUDIT CLOSED; PRODUCT RECOVERY V3 EXTERNALLY BLOCKED; COMPANY CARD V2 BLOCKED
 Date: 2026-09-18
 
 ## Wave 1 final state
@@ -26,7 +26,7 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 4. **Risk Engine — COMPLETE / ACCEPTED.** Explainable signals, applicability, immutable assessments and separate completeness accepted in merged PR #43.
 5. **Summary Engine — COMPLETE / ACCEPTED.** Deterministic traceable summaries, modes, persistence, cache, explainability and minimal acceptance UI accepted in PR #44; merge remains a separate owner command.
 6. **Product Recovery v3 — IN PROGRESS.**
-7. **Current required stage: Stage 1.6 — IN PROGRESS.** Runtime hardening is verified; Source Runtime Completion and Golden-40 positive acceptance remain open. See `STAGE_1_6_AUDIT_CLOSURE.md`.
+7. **Stage 1.6 audit — CLOSED / PRODUCT RECOVERY NOT ACCEPTED.** Runtime hardening and audit closure are verified; external Source Runtime Completion and Golden-40 positive acceptance remain open. See `STAGE_1_6_AUDIT_CLOSURE.md`.
 8. Pass Golden-40 Acceptance on the same cohort without weakening product rules.
 9. Record **Product Recovery ACCEPTED** only after that gate passes.
 10. Create and merge the separate Recovery PR to `main` only on explicit owner instruction.
@@ -50,16 +50,16 @@ The unresolved W1-005 B/C external-source blocker has been explicitly dispositio
 
 ## Current next stage
 
-Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness, Risk Engine v1 and Summary Engine v1 are **COMPLETE / ACCEPTED** historical stages. The current required stage is **PRODUCT RECOVERY V3 / STAGE 1.6 — IN PROGRESS**. Company Card v2 and all later stages remain **BLOCKED** until Product Recovery acceptance and their ordered prerequisites.
+Wave 1 is **CLOSED / ACCEPTED**. Stage 1.5 is **CLOSED / ACCEPTED**. Auto-update / Data Readiness, Risk Engine v1 and Summary Engine v1 are **COMPLETE / ACCEPTED** historical stages. Stage 1.6 audit is **CLOSED / PRODUCT RECOVERY NOT ACCEPTED**. Product Recovery v3 is externally blocked, and Company Card v2 and all later stages remain **BLOCKED** until Product Recovery acceptance and their ordered prerequisites.
 
 Current Product Recovery evidence: 40/40 unique companies processed; Workflow
-Completion 100%; Evidence Coverage 47–72/100, average 57.8/100; positive gate
-0/40 overall and 0/10 in the low-risk candidate bucket. Remaining work includes
-Arbitration 40/40, General Courts 40/40, CBR ZSK 40/40, Bankinform 40/40,
-Procurement/RNP 40/40 and regulatory inspections 40/40, plus FSSP 24/40,
-EFRSB 21/40 and licences/SRO 25/40 unresolved. Existing runner code is not
-treated as completed runtime coverage. Exact reasons and close conditions are
-recorded in `STAGE_1_6_AUDIT_CLOSURE.md`.
+Completion 100%; Evidence Coverage 51–78/100, average 63.5/100; positive gate
+0/40 overall and 0/10 in the low-risk candidate bucket. Remaining runtime gaps
+are Arbitration 40/40, General Courts 40/40, CBR ZSK 40/40, FSSP 24/40,
+EFRSB 21/40 and applicable licences/SRO 7/40. Bankinform is contextual N/A,
+RNP is separately deferred, and ERKNM is 40/40 terminal. Existing runner code
+is not treated as completed runtime coverage. Exact reasons and close
+conditions are recorded in `STAGE_1_6_AUDIT_CLOSURE.md`.
 
 Stage 1.5 and Data Readiness were not Wave 2. Their accepted foundations prevent the Risk Engine from being built on an incomplete, stale or semantically unsafe base.
 

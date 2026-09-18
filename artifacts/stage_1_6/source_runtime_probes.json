@@ -1,0 +1,53 @@
+{
+  "verified_at": "2026-09-18T06:40:00+03:00",
+  "policy": "No CAPTCHA bypass, credential guessing, or negative inference from an unavailable source.",
+  "probes": {
+    "fssp": {
+      "official_url": "https://is-go.fssp.gov.ru/ajax_search",
+      "request_shape": "exact INN, search variant 5, one bounded request",
+      "http_status": 200,
+      "observed": "CAPTCHA form returned",
+      "runtime_state": "AUTHORIZED_FLOW_NOT_AUTOMATED"
+    },
+    "efrsb": {
+      "official_url": "https://bankrot.fedresurs.ru/",
+      "http_status": 401,
+      "observed": "QRATOR anti-bot/CAPTCHA response",
+      "runtime_state": "AUTHORIZED_FLOW_NOT_AUTOMATED"
+    },
+    "cbr_zsk": {
+      "official_url": "https://www.cbr.ru/counteraction_m_ter/platform_zsk/proverka-po-inn/",
+      "observed": "Interactive SmartCaptcha remains in the public flow",
+      "runtime_state": "HUMAN_ACTION_REQUIRED"
+    },
+    "arbitration_kad": {
+      "official_url": "https://kad.arbitr.ru/",
+      "http_status": 200,
+      "observed": "Public search UI is reachable and includes a CAPTCHA template; no documented authorized machine search contract was established",
+      "runtime_state": "AUTHORIZED_MACHINE_PATH_UNCONFIRMED"
+    },
+    "general_courts": {
+      "official_urls": [
+        "https://mos-gorsud.ru/search",
+        "https://sudrf.ru/"
+      ],
+      "observed": "Official search endpoints timed out in the bounded verification; existing regional adapters remain fail-closed and targeted rather than nationwide",
+      "runtime_state": "PARTIAL_TARGETED_COVERAGE"
+    },
+    "bankinform": {
+      "official_url": "https://service.nalog.ru/bi.do",
+      "observed": "Current form is a bank-facing request requiring taxpayer INN and querying-bank BIK",
+      "runtime_state": "OPTIONAL_CONTEXT",
+      "policy_decision": "Without bank/account context and BIK, return NOT_APPLICABLE; retain any positive cached fact"
+    },
+    "checko": {
+      "observed": "CHECKO_API_KEY absent from the runtime environment",
+      "runtime_state": "ACCESS_PENDING"
+    },
+    "eis_rnp": {
+      "observed": "Official machine access is not connected",
+      "runtime_state": "DEFERRED_EXTERNAL_ACCESS",
+      "policy_decision": "Do not infer universal NOT_APPLICABLE from missing procurement context"
+    }
+  }
+}
