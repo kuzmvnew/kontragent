@@ -12,6 +12,7 @@ from app.contracts.source_architecture import (
     SourceClass,
 )
 from app.services.capability_applicability_service import apply_capability_applicability
+from app.services.company_check_orchestrator import _normalize_legacy_company
 from app.services.coverage_engine_service import build_coverage_v2
 from app.services.risk_engine_v3_service import build_risk_v3
 from app.services.source_capability_catalog import CATALOG
@@ -71,6 +72,95 @@ def test_firmoteka_registration_is_first_class_normalized_bridge_result():
     assert registration.result == NormalizedResultStatus.FOUND
     assert registration.source_class == SourceClass.AUTHORIZED_BRIDGE
     assert registration.coverage == 1
+
+
+def test_firmoteka_fssp_preserves_count_semantics_amounts_and_case_fields():
+    payload = {
+        "requested_inn": "0274101890", "rendered_inn": "0274101890",
+        "identity_match": True, "fetched_at": NOW.isoformat(),
+        "fssp_count": 74, "fssp_remaining_amount": 1_617_123_987.05,
+        "enforcements": {
+            "count": 74, "total_due": 1_973_646_613.86,
+            "total_rest": 1_617_123_987.05, "completed_count": 22,
+            "closed_count": 1, "snapshot": "2026-09-16",
+            "stats": [{"year": 2026, "count": 18}],
+            "as_collector": None,
+            "items": [{
+                "number": "451657/26/98002-ИП", "date": "2026-06-02",
+                "subject": "Налог", "amount_due": 100, "amount_rest": 80,
+            }],
+        },
+    }
+    result = next(
+        item for item in FirmotekaSourceAdapter().normalize(payload)
+        if item.check_code == "fssp"
+    )
+    evidence = result.evidence[0].value
+    assert evidence["count"] + evidence["completed_count"] == 96
+    assert evidence["closed_count"] == 1
+    assert evidence["total_due"] == 1_973_646_613.86
+    assert evidence["items"][0]["number"] == "451657/26/98002-ИП"
+    assert evidence["production_types"] == ["Налог"]
+
+
+def test_checko_is_classified_as_authorized_bridge_not_official_direct():
+    arbitration = CATALOG.get("arbitration")
+    checko = next(
+        path for path in arbitration.accepted_source_paths
+        if path.source_code == "checko_arbitration"
+    )
+    assert checko.source_class == SourceClass.AUTHORIZED_BRIDGE
+    company = {
+        "inn": "1215214540", "status": "ACTIVE",
+        "arbitration_court_check": {
+            "result": "found", "source": "checko_legal_cases",
+            "dataset_code": "checko_arbitration_cases", "cases": [{"id": "1"}],
+        },
+    }
+    normalized = _normalize_legacy_company(company, NOW)
+    result = next(item for item in normalized if item.check_code == "arbitration")
+    assert result.source_class == SourceClass.AUTHORIZED_BRIDGE
+
+
+@pytest.mark.parametrize(
+    ("field", "code", "raw_result", "expected"),
+    (
+        ("cbr_zsk_check", "cbr_zsk", "high_risk_information_found", NormalizedResultStatus.FOUND),
+        ("cbr_zsk_check", "cbr_zsk", "high_risk_information_not_found", NormalizedResultStatus.NOT_FOUND),
+        ("fns_bankinform_check", "bankinform", "active_suspensions_found", NormalizedResultStatus.FOUND),
+        ("fssp_check", "fssp", "enforcement_not_found", NormalizedResultStatus.NOT_FOUND),
+    ),
+)
+def test_completed_protected_source_vocabulary_enters_v3_normalization(
+    field, code, raw_result, expected,
+):
+    company = {
+        "inn": "6320002223", "status": "ACTIVE",
+        field: {
+            "status": "completed", "result": raw_result,
+            "source": code, "checked_at": NOW,
+            "evidence": {"exact_identifier_match": True},
+        },
+    }
+    normalized = _normalize_legacy_company(company, NOW)
+    result = next(item for item in normalized if item.check_code == code)
+    assert result.result == expected
+    assert result.coverage == 1
+
+
+def test_incomplete_protected_result_cannot_become_negative():
+    company = {
+        "inn": "6320002223", "status": "ACTIVE",
+        "cbr_zsk_check": {
+            "status": "result_ready",
+            "result": "high_risk_information_not_found",
+            "source": "cbr_zsk", "checked_at": NOW,
+        },
+    }
+    normalized = _normalize_legacy_company(company, NOW)
+    result = next(item for item in normalized if item.check_code == "cbr_zsk")
+    assert result.result == NormalizedResultStatus.UNAVAILABLE
+    assert result.coverage == 0
 
 
 def test_source_precedence_and_no_double_count_select_direct_fssp():

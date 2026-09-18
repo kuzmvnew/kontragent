@@ -165,9 +165,9 @@ def _profile(company: dict[str, Any]) -> RiskProfile:
 
 def _source_class(check: dict[str, Any]) -> SourceClass:
     source = str(check.get("source") or check.get("dataset_code") or "").casefold()
-    if "firmoteka" in source:
+    if any(token in source for token in ("firmoteka", "checko")):
         return SourceClass.AUTHORIZED_BRIDGE
-    if any(token in source for token in ("direct", "checko", "court", "fssp", "bankinform", "zsk")):
+    if any(token in source for token in ("direct", "court", "fssp", "bankinform", "zsk")):
         return SourceClass.OFFICIAL_DIRECT
     return SourceClass.OFFICIAL_DOWNLOADED_DATASET
 
@@ -266,14 +266,26 @@ def _normalize_legacy_company(company: dict[str, Any], now: datetime) -> tuple[N
     ))
     result_map = {
         "found": NormalizedResultStatus.FOUND, "not_found": NormalizedResultStatus.NOT_FOUND,
+        "high_risk_information_found": NormalizedResultStatus.FOUND,
+        "high_risk_information_not_found": NormalizedResultStatus.NOT_FOUND,
+        "active_suspensions_found": NormalizedResultStatus.FOUND,
+        "active_suspensions_not_found": NormalizedResultStatus.NOT_FOUND,
+        "enforcement_found": NormalizedResultStatus.FOUND,
+        "enforcement_not_found": NormalizedResultStatus.NOT_FOUND,
         "not_applicable": NormalizedResultStatus.NOT_APPLICABLE,
         "unavailable": NormalizedResultStatus.UNAVAILABLE,
     }
     for code, check in definitions:
         raw_result = check.get("result")
-        if raw_result is None and check.get("status") == "completed":
-            raw_result = "found" if str(check.get("result") or "").endswith("_found") else "not_found"
-        result = result_map.get(raw_result, NormalizedResultStatus.UNAVAILABLE)
+        protected_incomplete = (
+            code in {"cbr_zsk", "bankinform", "fssp"}
+            and check.get("status") not in {None, "completed"}
+        )
+        result = (
+            NormalizedResultStatus.UNAVAILABLE
+            if protected_incomplete
+            else result_map.get(raw_result, NormalizedResultStatus.UNAVAILABLE)
+        )
         partial = check.get("coverage_complete") is False or (
             code in {"arbitration", "general_courts"} and bool(check.get("coverage"))
         )

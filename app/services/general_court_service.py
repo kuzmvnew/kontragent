@@ -29,9 +29,15 @@ def _clean_inn(value):
 
 def _serialize(row: GeneralCourtCheck, *, cached=True):
     if row.result_status != "success":
-        return build_check_result(checked=False, applicable=True, result="unavailable", data_date=row.request_date, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=row.error_code or "source_error", message=row.error_message, cached=cached, cases=[], record_count=None, coverage=row.coverage or {}, source_url=row.source_url, checked_at=row.checked_at)
+        return build_check_result(checked=False, applicable=True, result="unavailable", data_date=row.request_date, dataset_code=DATASET_CODE, source=row.provider_code, reason=row.error_code or "source_error", message=row.error_message, cached=cached, cases=[], record_count=None, coverage=row.coverage or {}, source_url=row.source_url, checked_at=row.checked_at)
     cases = list(row.cases or [])
-    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.request_date, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=None, cached=cached, cases=cases, record_count=len(cases), coverage=dict(row.coverage or {}), source_url=row.source_url, checked_at=row.checked_at, interpretation_note="Совпадение подтверждено точным полным наименованием на официальном портале, но без ИНН в выдаче; это средняя, а не максимальная уверенность.")
+    if row.provider_code == "moscow_courts_official" and cases:
+        interpretation = "Совпадение подтверждено точным полным наименованием на официальном портале, но без ИНН в выдаче; это средняя, а не максимальная уверенность."
+    elif row.provider_code == "moscow_courts_official":
+        interpretation = "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+    else:
+        interpretation = "Выполнен целевой exact-identifier поиск по одному региональному порталу; результат не является nationwide-проверкой."
+    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.request_date, dataset_code=DATASET_CODE, source=row.provider_code, reason=None, cached=cached, cases=cases, record_count=len(cases), coverage=dict(row.coverage or {}), source_url=row.source_url, checked_at=row.checked_at, interpretation_note=interpretation)
 
 
 def get_cached_general_court_check(inn, request_date=None):
@@ -70,7 +76,12 @@ def refresh_general_court_check(inn, request_date=None, provider=None, *, force_
     route = None
     if provider is None:
         route, provider = GeneralCourtRouter().route(company.region_code)
-    source_url = route.portal_url if route else getattr(provider, "source_url", MOSCOW_SEARCH_URL)
+    source_url = (
+        route.portal_url if route
+        else getattr(provider, "source_url", None)
+        or getattr(provider, "base_url", None)
+        or MOSCOW_SEARCH_URL
+    )
     values = {"company_id": company.id, "dataset_id": dataset_id, "inn": inn, "request_date": request_date, "provider_code": provider.code, "source_url": source_url}
     try:
         if not hasattr(provider, "search_company"):

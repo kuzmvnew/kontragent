@@ -86,14 +86,27 @@ class FirmotekaSourceAdapter:
         fssp_count = payload.get("fssp_count")
         fssp_found = isinstance(fssp_count, int) and fssp_count > 0
         fssp_known = isinstance(fssp_count, int)
+        enforcements = payload.get("enforcements") if isinstance(payload.get("enforcements"), dict) else {}
+        enforcement_items = enforcements.get("items") if isinstance(enforcements.get("items"), list) else []
         results.append(NormalizedCheckResult(
             check_code="fssp",
             result=(NormalizedResultStatus.FOUND if fssp_found else NormalizedResultStatus.NOT_FOUND if fssp_known else NormalizedResultStatus.UNAVAILABLE),
             source_code="firmoteka_fssp", original_source="Банк данных исполнительных производств ФССП",
             coverage=1 if fssp_found else .75 if fssp_known else 0, confidence=.9 if fssp_known else 0,
             evidence=(_evidence("fssp", "Исполнительные производства", {
-                "count": fssp_count, "remaining_amount": payload.get("fssp_remaining_amount"),
-                "snapshot": (payload.get("enforcements") or {}).get("snapshot"),
+                "count": fssp_count,
+                "total_due": enforcements.get("total_due"),
+                "remaining_amount": payload.get("fssp_remaining_amount"),
+                "completed_count": enforcements.get("completed_count"),
+                "closed_count": enforcements.get("closed_count"),
+                "snapshot": enforcements.get("snapshot"),
+                "stats": enforcements.get("stats") or [],
+                "items": enforcement_items,
+                "production_types": sorted({
+                    str(item.get("subject")) for item in enforcement_items
+                    if isinstance(item, dict) and item.get("subject")
+                }),
+                "as_collector": enforcements.get("as_collector"),
             }, payload),) if fssp_known else (),
             limitation=None if fssp_found else "Отрицательный bridge-результат не эквивалентен прямой проверке ФССП." if fssp_known else "Раздел ФССП отсутствует.", **common,
         ))

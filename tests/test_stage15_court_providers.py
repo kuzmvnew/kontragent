@@ -4,7 +4,13 @@ import pytest
 
 from app.providers.arbitration_court_provider import ArbitrationCourtProviderError, CheckoArbitrationProvider, parse_checko_legal_cases
 from app.providers.general_court_provider import GeneralCourtRouter, MoscowCourtProvider, RegionalSudrfProvider, parse_moscow_court_search_html
-from app.services.arbitration_court_service import _serialize, calculate_arbitration_signals
+from app.services import arbitration_court_service
+from app.services import general_court_service
+from app.services.arbitration_court_service import (
+    _serialize,
+    calculate_arbitration_signals,
+    get_cached_arbitration_court_check,
+)
 
 
 MOSCOW_HTML = """
@@ -194,3 +200,84 @@ def test_arbitration_result_semantics_keep_not_found_and_unavailable_distinct():
     result = _serialize(Row())
     assert result["result"] == "unavailable"
     assert result["reason"] == "quota_exhausted"
+
+
+def test_recent_successful_arbitration_snapshot_is_reused_as_partial(monkeypatch):
+    class Row:
+        result_status = "success"
+        date_to = date(2026, 9, 17)
+        date_from = date(2025, 9, 17)
+        cases = [{"filing_date": "2026-09-10", "claimants": [], "defendants": []}]
+        loaded_pages = 1
+        total_pages = 1
+        total_count = 1
+        inn = "1215214540"
+        source_url = "https://api.checko.ru/v2/legal-cases"
+        checked_at = None
+        error_code = None
+        error_message = None
+
+    class Session:
+        def scalar(self, _statement): return Row()
+        def close(self): pass
+
+    session = Session()
+    monkeypatch.setattr(arbitration_court_service, "get_session", lambda: session)
+    result = get_cached_arbitration_court_check(
+        "1215214540", request_date=date(2026, 9, 18),
+    )
+    assert result["result"] == "found"
+    assert result["coverage_complete"] is False
+    assert 0.99 < result["normalized_coverage"] < 1
+    assert result["stored_period"]["to"] == "2026-09-17"
+    assert result["requested_period"]["to"] == "2026-09-18"
+    assert "bridge-snapshot" in result["coverage_note"]
+
+
+def test_explicit_regional_provider_error_persists_its_own_source_url(monkeypatch):
+    class Company:
+        id = 1
+        inn = "6320002223"
+        ogrn = "1026301983113"
+        name = "АО ТЕСТ"
+        full_name = "АКЦИОНЕРНОЕ ОБЩЕСТВО ТЕСТ"
+
+    class Provider:
+        code = "regional_sudrf_official"
+        base_url = "https://oblsud--svd.sudrf.ru/modules.php"
+        def search_company(self, **_kwargs):
+            raise general_court_service.GeneralCourtProviderError(
+                kind="timeout", message="timeout",
+            )
+
+    class ResultRow:
+        result_status = "error"
+        provider_code = Provider.code
+        request_date = date(2026, 9, 18)
+        cases = []
+        coverage = {"coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"}
+        source_url = Provider.base_url
+        error_code = "timeout"
+        error_message = "timeout"
+        checked_at = None
+
+    class Session:
+        def __init__(self, scalar_value): self.scalar_value = scalar_value
+        def scalar(self, _statement): return self.scalar_value
+        def execute(self, statement):
+            values = statement.compile().params
+            assert values["source_url"] == Provider.base_url
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+
+    sessions = iter((Session(Company()), Session(ResultRow())))
+    monkeypatch.setattr(general_court_service, "ensure_stage15_dataset", lambda _code: 1)
+    monkeypatch.setattr(general_court_service, "get_session", lambda: next(sessions))
+    result = general_court_service.refresh_general_court_check(
+        "6320002223", request_date=date(2026, 9, 18),
+        provider=Provider(), force_refresh=True,
+    )
+    assert result["source_url"] == Provider.base_url
+    assert result["source"] == Provider.code
+    assert result["result"] == "unavailable"

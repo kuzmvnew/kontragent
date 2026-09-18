@@ -56,11 +56,13 @@ def _efrsb_event(value: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "debtor": value.get("debtor") or value.get("debtor_name"),
+        "debtor_inn": value.get("debtor_inn"),
         "case": value.get("case") or value.get("case_number"),
         "procedure": value.get("procedure"),
         "status": value.get("status"),
         "publication": value.get("publication") or value.get("publication_number"),
-        "event_date": value.get("event_date") or value.get("publication_date"),
+        "publication_date": value.get("publication_date"),
+        "event_date": value.get("event_date"),
         "message_type": value.get("message_type"),
         "source_identifier": value.get("source_identifier") or value.get("id"),
         "url": value.get("url") or value.get("source_url"),
@@ -114,16 +116,21 @@ class FsspDirectRunner:
 
 
 class EfrsbDirectRunner:
-    source_url = "https://bankrot.fedresurs.ru/"
+    source_url = "https://bank-publications-prod.fedresurs.ru/v1/bankrupts"
 
     def __init__(self, transport: Transport | None = None, governor: SourceRateGovernor | None = None):
+        if transport is None:
+            from app.providers.efrsb_provider import EfrsbRestProvider
+
+            provider = EfrsbRestProvider()
+            transport = provider.search_company if provider.configured else None
         self.transport = transport
         self.governor = governor or _governor("efrsb_direct")
 
     def run(self, inn: str, *, checked_at: datetime | None = None) -> NormalizedCheckResult:
         checked_at = _now(checked_at)
         if self.transport is None:
-            return _unavailable("bankruptcy", "efrsb_direct", self.source_url, "Проверка ЕФРСБ не подключена в текущей среде.", checked_at)
+            return _unavailable("bankruptcy", "efrsb_direct", self.source_url, "Официальный REST маршрут документирован; в production не настроены EFRSB_API_LOGIN/EFRSB_API_PASSWORD.", checked_at)
         try:
             raw = self.governor.run("efrsb_direct", inn, lambda: self.transport(inn=inn))
         except Exception as error:
@@ -133,13 +140,27 @@ class EfrsbDirectRunner:
         if raw.get("exact_identifier_match") is not True:
             return _unavailable("bankruptcy", "efrsb_direct", self.source_url, "Официальный ответ не подтверждает точное совпадение по ИНН.", checked_at)
         events = [_efrsb_event(item) for item in (raw.get("events") or []) if isinstance(item, dict)]
+        debtors = raw.get("debtors") or ([raw.get("debtor")] if raw.get("debtor") else [])
+        status = (
+            NormalizedResultStatus.FOUND if events
+            else NormalizedResultStatus.PARTIAL if debtors
+            else NormalizedResultStatus.NOT_FOUND
+        )
+        complete = raw.get("coverage_complete") is not False
+        coverage = .5 if status == NormalizedResultStatus.PARTIAL else 1 if complete else .7
         return NormalizedCheckResult(
-            check_code="bankruptcy", result=NormalizedResultStatus.FOUND if events else NormalizedResultStatus.NOT_FOUND,
+            check_code="bankruptcy", result=status,
             source_class=SourceClass.OFFICIAL_DIRECT, source_code="efrsb_direct", original_source="ЕФРСБ/Fedresurs",
             exact_identifier_match=True, checked_at=checked_at, source_as_of=raw.get("source_as_of"),
-            freshness=FreshnessStatus.CURRENT, coverage=1, confidence=1,
-            evidence=_evidence("efrsb_direct", {"inn":inn,"debtor":raw.get("debtor"),"events":events,"checked_at":checked_at.isoformat()}),
+            freshness=FreshnessStatus.CURRENT, coverage=coverage, confidence=1 if complete else .7,
+            evidence=_evidence("efrsb_direct", {"inn":inn,"debtors":debtors,"events":events,"checked_at":checked_at.isoformat()}),
             source_url=raw.get("source_url") or self.source_url,
+            limitation=(
+                "Найдена карточка должника, но событие и статус процедуры не подтверждены."
+                if debtors and not events else
+                "Ответ официального API получен неполностью."
+                if not complete else None
+            ),
         )
 
 

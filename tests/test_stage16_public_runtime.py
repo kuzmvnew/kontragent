@@ -65,13 +65,15 @@ def test_existing_public_company_get_has_zero_database_writes(monkeypatch):
 
     event.listen(engine, "before_cursor_execute", observe)
     try:
-        response = client.get(f"/api/company/{inn}")
+        html_response = client.get(f"/company/{inn}")
+        api_response = client.get(f"/api/company/{inn}")
     finally:
         event.remove(engine, "before_cursor_execute", observe)
         with get_session() as session:
             session.execute(delete(Company).where(Company.inn == inn))
             session.commit()
-    assert response.status_code == 200
+    assert html_response.status_code == 200
+    assert api_response.status_code == 200
     assert writes == []
 
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import re
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
@@ -80,12 +80,32 @@ def _period(request_date: date):
     return _year_before(request_date), request_date
 
 
-def _serialize(row, *, cached=True):
+def _serialize(row, *, cached=True, requested_period: tuple[date, date] | None = None):
     if row.result_status != "success":
         return build_check_result(checked=False, applicable=True, result="unavailable", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=row.error_code or "source_error", message=row.error_message, cached=cached, cases=list(row.cases or []), loaded_pages=row.loaded_pages, total_pages=row.total_pages, total_count=row.total_count, is_full_period_loaded=False, source_url=row.source_url, checked_at=row.checked_at)
     cases = list(row.cases or [])
-    full_period_loaded = (row.total_pages or 0) <= row.loaded_pages
-    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=None, cached=cached, cases=cases, loaded_pages=row.loaded_pages, total_pages=row.total_pages, reported_total_cases=row.total_count, total_count=row.total_count, loaded_case_count=len(cases), loaded_count=len(cases), coverage_complete=full_period_loaded, is_full_period_loaded=full_period_loaded, signals=calculate_arbitration_signals(cases=cases, inn=row.inn, date_from=row.date_from, date_to=row.date_to, total_count=row.total_count, full_period_loaded=full_period_loaded), source_url=row.source_url, checked_at=row.checked_at, last_error=row.error_code, last_error_message=row.error_message, coverage_note="Показан загруженный sample; полный период подтверждён только когда загружены все страницы. Сумма иска не является подтверждённым долгом.")
+    all_pages_loaded = (row.total_pages or 0) <= row.loaded_pages
+    requested_from, requested_to = requested_period or (row.date_from, row.date_to)
+    exact_period = requested_from == row.date_from and requested_to == row.date_to
+    coverage_complete = all_pages_loaded and exact_period
+    requested_days = max(1, (requested_to - requested_from).days + 1)
+    overlap_from = max(requested_from, row.date_from)
+    overlap_to = min(requested_to, row.date_to)
+    overlap_days = max(0, (overlap_to - overlap_from).days + 1)
+    page_coverage = 1.0 if all_pages_loaded else min(
+        1.0, row.loaded_pages / max(1, row.total_pages or row.loaded_pages or 1)
+    )
+    normalized_coverage = min(1.0, overlap_days / requested_days) * page_coverage
+    note = (
+        "Показан загруженный sample; полный период подтверждён только когда загружены все страницы. "
+        "Сумма иска не является подтверждённым долгом."
+    )
+    if not exact_period:
+        note = (
+            f"Использован последний успешный bridge-snapshot за {row.date_from.isoformat()}–{row.date_to.isoformat()}; "
+            f"запрошен период {requested_from.isoformat()}–{requested_to.isoformat()}. " + note
+        )
+    return build_check_result(checked=True, applicable=True, result="found" if cases else "not_found", data_date=row.date_to, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason=None, cached=cached, cases=cases, loaded_pages=row.loaded_pages, total_pages=row.total_pages, reported_total_cases=row.total_count, total_count=row.total_count, loaded_case_count=len(cases), loaded_count=len(cases), coverage_complete=coverage_complete, normalized_coverage=normalized_coverage, is_full_period_loaded=all_pages_loaded, stored_period={"from": row.date_from.isoformat(), "to": row.date_to.isoformat()}, requested_period={"from": requested_from.isoformat(), "to": requested_to.isoformat()}, signals=calculate_arbitration_signals(cases=cases, inn=row.inn, date_from=row.date_from, date_to=row.date_to, total_count=row.total_count, full_period_loaded=all_pages_loaded), source_url=row.source_url, checked_at=row.checked_at, last_error=row.error_code, last_error_message=row.error_message, coverage_note=note)
 
 
 def get_cached_arbitration_court_check(inn, request_date=None):
@@ -94,10 +114,33 @@ def get_cached_arbitration_court_check(inn, request_date=None):
     date_from, date_to = _period(request_date)
     session = get_session()
     try:
-        row = session.scalar(select(ArbitrationCourtCheck).where(ArbitrationCourtCheck.inn == inn, ArbitrationCourtCheck.date_from == date_from, ArbitrationCourtCheck.date_to == date_to))
+        exact_period = and_(
+            ArbitrationCourtCheck.date_from == date_from,
+            ArbitrationCourtCheck.date_to == date_to,
+        )
+        recent_success = and_(
+            ArbitrationCourtCheck.result_status == "success",
+            ArbitrationCourtCheck.date_to < date_to,
+            ArbitrationCourtCheck.date_to >= date_to - timedelta(days=45),
+        )
+        row = session.scalar(
+            select(ArbitrationCourtCheck)
+            .where(
+                ArbitrationCourtCheck.inn == inn,
+                or_(exact_period, recent_success),
+            )
+            .order_by(
+                case((exact_period, 0), else_=1),
+                ArbitrationCourtCheck.date_to.desc(),
+                ArbitrationCourtCheck.checked_at.desc(),
+            )
+            .limit(1)
+        )
         if row is None:
             return build_check_result(checked=False, applicable=True, result="unavailable", data_date=None, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason="not_checked", cached=False, cases=[], loaded_pages=0, total_pages=None, total_count=None, is_full_period_loaded=False, source_url=CHECKO_URL, checked_at=None)
-        return _serialize(row, cached=True)
+        if row.date_from == date_from and row.date_to == date_to:
+            return _serialize(row, cached=True)
+        return _serialize(row, cached=True, requested_period=(date_from, date_to))
     finally:
         session.close()
 

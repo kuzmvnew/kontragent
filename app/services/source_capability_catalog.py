@@ -74,7 +74,9 @@ CAPABILITIES: tuple[SourceCapability, ...] = (
         _path("firmoteka_finance", SourceClass.AUTHORIZED_BRIDGE, 20),
     ), risk_weight=12, bridge_allowed=True, runner="fns_revenue_expenses"),
     _cap("arbitration", "courts", "Арбитражные дела", 8, (
-        _path("checko_arbitration", SourceClass.OFFICIAL_DIRECT, 10),
+        # Checko is an authorised data bridge to court records, not the
+        # official court publisher.  KAD remains the direct official path.
+        _path("checko_arbitration", SourceClass.AUTHORIZED_BRIDGE, 10),
         _path("kad_public", SourceClass.OFFICIAL_DIRECT, 20),
         _path("firmoteka_courts", SourceClass.AUTHORIZED_BRIDGE, 30),
     ), risk_weight=7, bridge_allowed=True, runner="arbitration_resolver"),

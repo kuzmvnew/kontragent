@@ -48,6 +48,105 @@ def evidence_result(code, source, status, value, *, as_of=None):
         evidence=(NormalizedEvidence(fact=code,value=value,evidence_id=f"{source}:{value.get('inn','unknown')}"),))
 
 
+def historical_fssp_result(row: dict, *, now: datetime):
+    """Normalize only an actually preserved official result, never a planned probe."""
+    if row.get("official_result") != "found" or not row.get("official_count"):
+        return None
+    checked_at = datetime.fromisoformat(row["official_checked_at"]).replace(tzinfo=timezone.utc)
+    value = {
+        "inn": row["inn"], "count": int(row["official_count"]),
+        "visible_amount_sum": float(row["official_amount_visible_rows"]),
+        "amount_coverage": row["official_amount_coverage"],
+        "count_scope": "all official result rows; active/completed split not exposed in preserved result",
+    }
+    return NormalizedCheckResult(
+        check_code="fssp", result=NormalizedResultStatus.FOUND,
+        source_class=SourceClass.OFFICIAL_DIRECT,
+        source_code="fssp_direct_historical_acceptance",
+        original_source="ФССП, сохранённый official exact-INN result",
+        exact_identifier_match=True, checked_at=checked_at, source_as_of=checked_at,
+        freshness=FreshnessStatus.CURRENT, coverage=.95, confidence=1,
+        evidence=(NormalizedEvidence(
+            fact="Исполнительные производства в сохранённом официальном ответе",
+            value=value, evidence_id=f"fssp:historical:{row['inn']}:{row['official_checked_at']}",
+            metadata={"evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE"},
+        ),),
+        source_url=row.get("official_url"),
+        limitation=(
+            "Сохранённый официальный ответ не является текущим live-recheck; сумма видна только для "
+            f"{row['official_amount_coverage']} строк и не подменяет remaining amount."
+        ),
+    )
+
+
+def build_fssp_comparison(root: Path, rows: list[dict], *, generated_at: datetime):
+    comparisons = []
+    final_by_inn = {}
+    for row in rows:
+        payload_path = root / "normalized" / f"{row['inn']}.json"
+        payload = json.loads(payload_path.read_text(encoding="utf-8")) if payload_path.exists() else {}
+        enforcement = payload.get("enforcements") if isinstance(payload.get("enforcements"), dict) else {}
+        current_count = enforcement.get("count")
+        completed_count = enforcement.get("completed_count")
+        official_count = int(row["official_count"]) if row.get("official_count") else None
+        count_reconciled = (
+            official_count is not None
+            and isinstance(current_count, int) and isinstance(completed_count, int)
+            and current_count + completed_count == official_count
+        )
+        classification = row.get("classification") or "UNVERIFIED"
+        resolution = "No completed official exact-INN result was preserved."
+        if count_reconciled:
+            classification = "COUNT_SEMANTICS_RECONCILED_AMOUNT_UNRESOLVED"
+            resolution = (
+                "Firmoteka current_count + completed_count equals the preserved official row count. "
+                "This explains the count difference, but row identity and amounts remain unverified."
+            )
+        final_by_inn[row["inn"]] = classification
+        comparisons.append({
+            "inn": row["inn"], "name": row.get("name"),
+            "source_a": {
+                "code": "firmoteka_fssp", "class": "AUTHORIZED_BRIDGE",
+                "as_of": row.get("firmoteka_date"), "result": row.get("firmoteka_result"),
+                "current_count": current_count, "completed_count": completed_count,
+                "closed_count": enforcement.get("closed_count"),
+                "total_due": enforcement.get("total_due"),
+                "remaining_amount": row.get("firmoteka_amount"),
+            },
+            "source_b": {
+                "code": "fssp_direct_historical_acceptance", "class": "OFFICIAL_DIRECT",
+                "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+                "as_of": row.get("official_checked_at"), "result": row.get("official_result"),
+                "count": official_count,
+                "visible_amount_sum": float(row["official_amount_visible_rows"]) if row.get("official_amount_visible_rows") else None,
+                "amount_coverage": row.get("official_amount_coverage"),
+                "url": row.get("official_url"),
+            },
+            "difference": {
+                "raw_count_delta": official_count - current_count if official_count is not None and isinstance(current_count, int) else None,
+                "current_plus_completed": current_count + completed_count if isinstance(current_count, int) and isinstance(completed_count, int) else None,
+                "count_reconciled": count_reconciled,
+                "amounts_comparable": False,
+            },
+            "raw_classification": row.get("classification"),
+            "classification": classification,
+            "classification_evidence_class": "INFERENCE" if count_reconciled else "UNVERIFIED",
+            "resolution": resolution,
+        })
+    artifact = {
+        "generated_at": generated_at.isoformat(),
+        "evidence_class": "VERIFIED_RUNTIME",
+        "policy": {"positive_bridge_allowed": True, "negative_bridge_allowed": False},
+        "limitations": [
+            "Only one row has a completed preserved official result.",
+            "Official amount covers 85/96 visible rows and is not comparable with Firmoteka remaining amount.",
+            "Count reconciliation is an inference from aggregate semantics, not row-level identity proof.",
+        ],
+        "comparisons": comparisons,
+    }
+    return artifact, final_by_inn
+
+
 def select_candidates(root: Path):
     cards=json.loads((root/"acceptance_40_candidates.json").read_text(encoding="utf-8"))
     used={c["inn"] for c in cards}; bad="7730709480"
@@ -68,7 +167,14 @@ def main():
     parser=argparse.ArgumentParser(); parser.add_argument("--pilot",type=Path,required=True); parser.add_argument("--output",type=Path,required=True); parser.add_argument("--persist",action="store_true"); args=parser.parse_args()
     root=args.pilot; args.output.mkdir(parents=True,exist_ok=True); now=datetime.now(timezone.utc)
     candidates=select_candidates(root); manifest={r["inn"]:r for r in read_csv(root/"manifest_500.csv")}
-    fssp_validation={r["inn"]:r for r in read_csv(root/"fssp_cross_validation.csv")}
+    fssp_rows=read_csv(root/"fssp_cross_validation.csv")
+    fssp_validation={r["inn"]:r for r in fssp_rows}
+    fssp_comparison, fssp_final_classification = build_fssp_comparison(
+        root, fssp_rows, generated_at=now,
+    )
+    (args.output/"fssp_direct_bridge_comparison.json").write_text(
+        json.dumps(fssp_comparison,ensure_ascii=False,indent=2),encoding="utf-8",
+    )
     adapter=FirmotekaSourceAdapter(); matrix=[]; persisted=0; reused=0
     for card in candidates:
         inn=card["inn"]; payload=json.loads((root/"normalized"/f"{inn}.json").read_text(encoding="utf-8")); local=manifest.get(inn,{})
@@ -87,6 +193,8 @@ def main():
         if revenue not in (None,""):
             inputs.append(evidence_result("finance","fns_revenue_expenses",NormalizedResultStatus.FOUND,
                 {"inn":inn,"revenue":revenue,"expenses":local.get("local_expenses"),"calculated_difference":local.get("local_profit_loss"),"year":local.get("local_finance_year")},as_of=now))
+        historical_fssp=historical_fssp_result(fssp_validation.get(inn,{}),now=now)
+        if historical_fssp is not None: inputs.append(historical_fssp)
         inputs.extend((FsspDirectRunner().run(inn,checked_at=now),EfrsbDirectRunner().run(inn,checked_at=now),
             CbrZskRunner().run(inn,purpose="Проверка контрагента",initiator="Kontragent",checked_at=now),
             FnsBankinformRunner().run(inn,bik=None,checked_at=now)))
@@ -97,10 +205,16 @@ def main():
         if args.persist:
             risk,summary,_,was_reused=persist_v3_assessment(inn,resolved,profile=profile,now=now); reused+=int(was_reused); persisted+=int(not was_reused)
         mismatch=fssp_validation.get(inn,{}).get("classification")
+        fssp_classification=fssp_final_classification.get(inn,mismatch or "NOT_IN_VALIDATION_MATRIX")
+        quality_flags=[]
+        if mismatch=="MISMATCH":
+            quality_flags.append("FSSP raw count discrepancy: official 96 vs bridge current 74")
+        if fssp_classification=="COUNT_SEMANTICS_RECONCILED_AMOUNT_UNRESOLVED":
+            quality_flags.append("FSSP count semantics: 74 current + 22 completed = 96; row/amount equivalence unresolved")
         matrix.append({"group":GROUPS[card["group"]],"company":card.get("name") or payload.get("name"),"inn":inn,"ogrn":card.get("ogrn") or payload.get("ogrn"),
             "status":payload.get("status_normalized"),"risk":risk.model_dump(mode="json"),"summary":summary.model_dump(mode="json"),
-            "sources":[x.model_dump(mode="json") for x in resolved.values()],"data_quality_flags":["FSSP direct/bridge mismatch: 96 vs 74"] if mismatch=="MISMATCH" else [],
-            "fssp_validation":mismatch or "NOT_IN_VALIDATION_MATRIX"})
+            "sources":[x.model_dump(mode="json") for x in resolved.values()],"data_quality_flags":quality_flags,
+            "fssp_validation":fssp_classification})
     (args.output/"product_recovery_v3_40.json").write_text(json.dumps(matrix,ensure_ascii=False,indent=2),encoding="utf-8")
     fields=("group","company","inn","risk_score","risk_label","overall","coverage_score","mandatory_score","workflow_completion_percent","positive_allowed","resolved","partial","unavailable_or_error","primary_sources","fallback_sources","top_factors","fssp_validation","data_quality_flags")
     with (args.output/"product_recovery_v3_40.csv").open("w",newline="",encoding="utf-8") as f:
@@ -115,7 +229,7 @@ def main():
     workflows=[x["risk"]["coverage"]["workflow_completion_percent"] for x in matrix]
     unresolved=Counter(code for x in matrix for code in x["risk"]["coverage"]["unresolved_capabilities"])
     runtime_states=Counter(f"{source['check_code']}:{source['result']}" for x in matrix for source in x["sources"])
-    report={"generated_at":now.isoformat(),"target":40,"actual":len(matrix),"buckets":buckets,"coverage":{"min":min(coverage),"max":max(coverage),"average":round(sum(coverage)/len(coverage),1)},"workflow_completion":{"min":min(workflows),"max":max(workflows),"target":100},"positive_gate_passed":accepted,"persisted":persisted,"reused":reused,"unresolved":unresolved,"terminal_states":runtime_states,"fssp_validation":Counter(x["fssp_validation"] for x in matrix),"runtime":{"fssp_direct":"UNAVAILABLE: official exact-INN flow returned CAPTCHA; no authorized machine transport is configured","efrsb_direct":"UNAVAILABLE: official public endpoint returned an anti-bot challenge; no bypass attempted","cbr_zsk":"UNAVAILABLE: official flow requires interactive SmartCaptcha; no bypass attempted","bankinform":"NOT_APPLICABLE without bank/account context and querying-bank BIK; a positive cached fact would still be retained","checko":"ACCESS_PENDING when CHECKO_API_KEY is absent","eis_rnp":"DEFERRED_EXTERNAL_ACCESS; no universal N/A is inferred from missing procurement context"}}
+    report={"generated_at":now.isoformat(),"target":40,"actual":len(matrix),"buckets":buckets,"coverage":{"min":min(coverage),"max":max(coverage),"average":round(sum(coverage)/len(coverage),1)},"workflow_completion":{"min":min(workflows),"max":max(workflows),"target":100},"positive_gate_passed":accepted,"persisted":persisted,"reused":reused,"unresolved":unresolved,"terminal_states":runtime_states,"fssp_validation":Counter(x["fssp_validation"] for x in matrix),"runtime":{"fssp_direct":"UNAVAILABLE for live rerun: official exact-INN flow returned CAPTCHA; one preserved official result is retained as EXTERNAL_HISTORICAL_EVIDENCE","efrsb_direct":"ACCESS_PENDING: official production REST route is implemented; EFRSB_API_LOGIN/EFRSB_API_PASSWORD are absent","cbr_zsk":"UNAVAILABLE: official flow requires interactive SmartCaptcha; no bypass attempted","bankinform":"NOT_APPLICABLE without bank/account context and querying-bank BIK; a positive cached fact would still be retained","checko":"ACCESS_PENDING when CHECKO_API_KEY is absent; Checko is classified as AUTHORIZED_BRIDGE","eis_rnp":"DEFERRED_EXTERNAL_ACCESS; no universal N/A is inferred from missing procurement context"}}
     (args.output/"product_recovery_v3_40_report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
     policy = [item.model_dump(mode="json") for item in CATALOG.all()]
     (args.output/"capability_applicability_policy.json").write_text(
