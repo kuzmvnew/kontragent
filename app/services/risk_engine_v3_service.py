@@ -14,7 +14,7 @@ SECTION_WEIGHTS = {
     "registration":12,"bankruptcy":18,"enforcement":12,"tax":14,"finance":12,
     "courts":10,"compliance":10,"management":5,"licences":3,"procurement":2,"inspections":2,
 }
-STRENGTH = {SourceClass.OFFICIAL_DIRECT:1.0,SourceClass.OFFICIAL_DOWNLOADED_DATASET:1.0,SourceClass.AUTHORIZED_BRIDGE:.9,SourceClass.DISCOVERY_ONLY:0.0}
+STRENGTH = {SourceClass.OFFICIAL_DIRECT:1.0,SourceClass.OFFICIAL_DOWNLOADED_DATASET:1.0,SourceClass.AUTHORIZED_BRIDGE:.9,SourceClass.DISCOVERY_ONLY:0.0,SourceClass.POLICY_RULE:0.0}
 REGISTRATION_LABELS = {"ACTIVE":"Действует","INACTIVE":"Не действует","LIQUIDATED":"Ликвидирована","EXCLUDED":"Исключена из реестра","TERMINATED":"Деятельность прекращена","REORGANIZATION":"Реорганизация","LIQUIDATING":"Ликвидация"}
 PROCEDURE_LABELS = {"competitive_proceedings":"конкурсное производство","observation":"наблюдение","external_management":"внешнее управление","declared_bankrupt":"признание банкротом","case_initiated":"возбуждено дело о банкротстве"}
 

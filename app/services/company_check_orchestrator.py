@@ -41,6 +41,7 @@ from app.contracts.source_architecture import (
 from app.services.risk_engine_v3_service import build_risk_v3
 from app.services.source_resolution_service import DEFAULT_RESOLVER
 from app.services.summary_engine_v3_service import build_summary_v3
+from app.services.capability_applicability_service import apply_capability_applicability
 from app.services.risk_v3_persistence_service import persist_v3_assessment
 
 
@@ -171,6 +172,63 @@ def _source_class(check: dict[str, Any]) -> SourceClass:
     return SourceClass.OFFICIAL_DOWNLOADED_DATASET
 
 
+def _licence_sro_check(company: dict[str, Any]) -> dict[str, Any]:
+    """Combine already-loaded official licence/SRO checks without new I/O."""
+
+    checks: list[tuple[str, dict[str, Any]]] = []
+    for code, check in (company.get("sro_checks") or {}).items():
+        if isinstance(check, dict) and check.get("result") != "not_applicable":
+            checks.append((code, check))
+    for code in (
+        "roszdrav_bulk_license_check",
+        "roszdrav_unified_license_check",
+        "roszdrav_clinical_org_check",
+    ):
+        check = company.get(code)
+        if isinstance(check, dict) and check.get("result") != "not_applicable":
+            checks.append((code, check))
+    if not checks:
+        return {}
+    completed = [(code, check) for code, check in checks if check.get("result") in {"found", "not_found"}]
+    found = [(code, check) for code, check in completed if check.get("result") == "found"]
+    evidence_checks = found or completed
+    if evidence_checks:
+        return {
+            "result": "found" if found else "not_found",
+            "source": "official_licence_registries",
+            "dataset_code": "official_licence_registries",
+            "data_date": next((check.get("data_date") for _, check in evidence_checks if check.get("data_date")), None),
+            "checks": {code: check for code, check in evidence_checks},
+            # These registries cover their own regulated scopes, not every
+            # licence/SRO obligation a company may have.
+            "normalized_coverage": .75 if found else .5,
+            "coverage_complete": False,
+            "coverage_note": "Проверены применимые подключённые реестры; иные разрешения могут требовать отдельной проверки.",
+        }
+    return {
+        "result": "unavailable",
+        "source": "official_licence_registries",
+        "dataset_code": "official_licence_registries",
+        "reason": "Подключённые профильные реестры не дали завершённого результата.",
+        "checks": {code: check for code, check in checks},
+    }
+
+
+def _erknm_check(company: dict[str, Any]) -> dict[str, Any]:
+    check = dict(company.get("erknm_check") or {})
+    if check.get("result") != "found":
+        return check
+    violation_tokens = ("нарушен", "выявлен", "предписан", "штраф")
+    texts = " ".join(
+        str(record.get(field) or "")
+        for record in check.get("records") or ()
+        if isinstance(record, dict)
+        for field in ("result_text", "warning_caption")
+    ).casefold()
+    check["violations_found"] = any(token in texts for token in violation_tokens)
+    return check
+
+
 def _normalize_legacy_company(company: dict[str, Any], now: datetime) -> tuple[NormalizedCheckResult, ...]:
     definitions = (
         ("tax_debt", company.get("tax_debt_check") or {}),
@@ -184,6 +242,8 @@ def _normalize_legacy_company(company: dict[str, Any], now: datetime) -> tuple[N
         ("cbr_zsk", company.get("cbr_zsk_check") or {}),
         ("bankinform", company.get("fns_bankinform_check") or {}),
         ("management", company.get("disqualified_check") or {}),
+        ("licences_sro", _licence_sro_check(company)),
+        ("regulatory_inspections", _erknm_check(company)),
     )
     output: list[NormalizedCheckResult] = []
     status = company.get("status")
@@ -214,12 +274,13 @@ def _normalize_legacy_company(company: dict[str, Any], now: datetime) -> tuple[N
         if raw_result is None and check.get("status") == "completed":
             raw_result = "found" if str(check.get("result") or "").endswith("_found") else "not_found"
         result = result_map.get(raw_result, NormalizedResultStatus.UNAVAILABLE)
-        partial = code in {"arbitration", "general_courts"} and (
-            check.get("coverage_complete") is False or bool(check.get("coverage"))
+        partial = check.get("coverage_complete") is False or (
+            code in {"arbitration", "general_courts"} and bool(check.get("coverage"))
         )
         if partial and result in {NormalizedResultStatus.FOUND, NormalizedResultStatus.NOT_FOUND}:
             result = NormalizedResultStatus.PARTIAL
-        coverage = 1 if result in {NormalizedResultStatus.FOUND, NormalizedResultStatus.NOT_FOUND, NormalizedResultStatus.NOT_APPLICABLE} else .35 if result == NormalizedResultStatus.PARTIAL else 0
+        default_coverage = 1 if result in {NormalizedResultStatus.FOUND, NormalizedResultStatus.NOT_FOUND, NormalizedResultStatus.NOT_APPLICABLE} else .35 if result == NormalizedResultStatus.PARTIAL else 0
+        coverage = float(check.get("normalized_coverage", default_coverage))
         source_code = str(check.get("dataset_code") or check.get("source") or code)
         evidence = tuple(
             [NormalizedEvidence(fact=code, value=check, evidence_id=f"{source_code}:{company.get('inn')}:{code}")]
@@ -320,7 +381,9 @@ def run_company_check(
         risk = build_risk_assessment(refreshed, datasets=get_dataset_states(), now=now)
         summary = build_summary(risk, now=now)
     normalized = (*_normalize_legacy_company(refreshed, now), *(source_results or ()))
-    resolved = DEFAULT_RESOLVER.resolve(normalized)
+    resolved = apply_capability_applicability(
+        DEFAULT_RESOLVER.resolve(normalized), company=refreshed, now=now,
+    )
     risk_v3 = build_risk_v3(resolved, profile=_profile(refreshed))
     summary_v3 = build_summary_v3(risk_v3, resolved)
     if persist:

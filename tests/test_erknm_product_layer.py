@@ -8,6 +8,9 @@ from app.services.erknm_service import (
     _clean_digits,
     _serialize_record,
 )
+from app.services.company_check_orchestrator import _normalize_legacy_company
+from app.contracts.source_architecture import NormalizedResultStatus
+from datetime import datetime, timezone
 
 
 def test_erknm_identifier_normalization():
@@ -158,6 +161,54 @@ def test_erknm_unavailable_not_added_to_sources(monkeypatch):
     )
 
     assert "erknm_inspections" not in result["sources_used"]
+
+
+def test_erknm_existing_product_check_enters_v3_normalization():
+    company = {
+        "inn": "7701364231",
+        "status": "ACTIVE",
+        "erknm_check": {
+            "result": "not_found",
+            "source": "erknm_inspections",
+            "dataset_code": "erknm_inspections",
+            "data_date": date(2026, 9, 15),
+            "record_count": 0,
+            "records": [],
+        },
+    }
+    normalized = _normalize_legacy_company(
+        company, datetime(2026, 9, 18, tzinfo=timezone.utc),
+    )
+    erknm = next(item for item in normalized if item.check_code == "regulatory_inspections")
+    assert erknm.result == NormalizedResultStatus.NOT_FOUND
+    assert erknm.coverage == 1
+
+
+def test_non_applicable_sector_sources_do_not_call_storage(monkeypatch):
+    ordinary = {"inn": "7700000000", "okved": "62.01", "sources_used": []}
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cached_cbr_finorg_check_for_inn",
+        lambda _inn: (_ for _ in ()).throw(AssertionError("CBR storage called")),
+    )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_roszdrav_bulk_license_check_for_inn",
+        lambda _inn: (_ for _ in ()).throw(AssertionError("Roszdrav storage called")),
+    )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cached_nostroy_check",
+        lambda _inn, *, applicable: {"result": "not_applicable"} if not applicable else (_ for _ in ()).throw(AssertionError("Nostroy storage called")),
+    )
+    monkeypatch.setattr(
+        company_product_aggregator,
+        "get_cached_nopriz_check",
+        lambda _inn, *, applicable: {"result": "not_applicable"} if not applicable else (_ for _ in ()).throw(AssertionError("Nopriz storage called")),
+    )
+    assert company_product_aggregator.enrich_company_with_cbr_finorg(ordinary)["cbr_finorg_check"]["result"] == "not_applicable"
+    assert company_product_aggregator.enrich_company_with_roszdrav(ordinary)["roszdrav_bulk_license_check"]["result"] == "not_applicable"
+    assert all(check["result"] == "not_applicable" for check in company_product_aggregator.enrich_company_with_sro(ordinary)["sro_checks"].values())
 
 
 def test_company_template_with_erknm_partial_compiles():

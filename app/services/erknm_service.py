@@ -146,13 +146,9 @@ def get_erknm_check_for_company(
                 matching_method="inn_exact_ogrn_fallback_exact",
             )
 
-        data_date = (
-            session.execute(
-                select(func.max(ErknmInspection.data_date))
-                .where(ErknmInspection.dataset_id == dataset.id)
-            )
-            .scalar_one_or_none()
-        )
+        # Registry ingestion owns the snapshot date.  Reusing it avoids a full
+        # aggregate over the inspection table on every public card read.
+        data_date = dataset.last_data_date
 
         if data_date is None:
             return build_check_result(
@@ -207,35 +203,38 @@ def get_erknm_check_for_company(
             .where(*common_filters)
         ).one()
 
-        rows = (
-            session.execute(
-                select(ErknmInspection)
-                .where(*common_filters)
-                .order_by(
-                    ErknmInspection.start_date.desc().nullslast(),
-                    ErknmInspection.id.desc(),
+        rows = []
+        summary_rows = []
+        if total_count:
+            rows = (
+                session.execute(
+                    select(ErknmInspection)
+                    .where(*common_filters)
+                    .order_by(
+                        ErknmInspection.start_date.desc().nullslast(),
+                        ErknmInspection.id.desc(),
+                    )
+                    .limit(limit)
                 )
-                .limit(limit)
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
 
-        summary_rows = (
-            session.execute(
-                select(
-                    ErknmInspection.status,
-                    ErknmInspection.kind_knm,
-                    func.count(),
+            summary_rows = (
+                session.execute(
+                    select(
+                        ErknmInspection.status,
+                        ErknmInspection.kind_knm,
+                        func.count(),
+                    )
+                    .where(*common_filters)
+                    .group_by(
+                        ErknmInspection.status,
+                        ErknmInspection.kind_knm,
+                    )
                 )
-                .where(*common_filters)
-                .group_by(
-                    ErknmInspection.status,
-                    ErknmInspection.kind_knm,
-                )
+                .all()
             )
-            .all()
-        )
 
         status_counts = {}
         kind_counts = {}

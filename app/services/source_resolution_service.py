@@ -18,6 +18,7 @@ SOURCE_RANK = {
     SourceClass.OFFICIAL_DOWNLOADED_DATASET: 1,
     SourceClass.AUTHORIZED_BRIDGE: 2,
     SourceClass.DISCOVERY_ONLY: 3,
+    SourceClass.POLICY_RULE: 4,
 }
 RESULT_RANK = {
     NormalizedResultStatus.FOUND: 0,

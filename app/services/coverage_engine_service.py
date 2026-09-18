@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 from app.contracts.risk import RiskProfile
 from app.contracts.source_architecture import (
+    ApplicabilityClass,
     CoverageAssessmentV2,
     CoverageBreakdown,
     NormalizedCheckResult,
@@ -35,10 +36,19 @@ def build_coverage_v2(
     )
     applicable = []
     not_applicable = []
+    deferred = []
     for capability in capabilities:
         result = resolved.get(capability.capability_id)
         if result and result.result == NormalizedResultStatus.NOT_APPLICABLE:
             not_applicable.append(capability.capability_id)
+        elif (
+            capability.applicability_class == ApplicabilityClass.DEFERRED_EXTERNAL_ACCESS
+            and (result is None or result.result in {
+                NormalizedResultStatus.UNAVAILABLE,
+                NormalizedResultStatus.ERROR,
+            })
+        ):
+            deferred.append(capability.capability_id)
         else:
             applicable.append(capability)
     denominator = sum(item.coverage_weight for item in applicable)
@@ -46,7 +56,7 @@ def build_coverage_v2(
     mandatory_denominator = 0.0
     mandatory_numerator = 0.0
     resolved_codes, unresolved, partial = [], [], []
-    breakdown = {"official_direct":0,"official_datasets":0,"authorized_bridge":0,"partial":0,"unresolved":0,"not_applicable":len(not_applicable)}
+    breakdown = {"official_direct":0,"official_datasets":0,"authorized_bridge":0,"partial":0,"unresolved":0,"not_applicable":len(not_applicable),"deferred":len(deferred)}
     for capability in applicable:
         item = resolved.get(capability.capability_id)
         mandatory = profile in capability.mandatory_for_profiles
@@ -93,6 +103,7 @@ def build_coverage_v2(
         workflow_unattempted_capabilities=workflow_unattempted,
         resolved_capabilities=tuple(resolved_codes), unresolved_capabilities=tuple(unresolved),
         partial_capabilities=tuple(partial), not_applicable_capabilities=tuple(not_applicable),
+        deferred_capabilities=tuple(deferred),
         breakdown=CoverageBreakdown(**breakdown),
         calculation=f"round(100 × {numerator:g} / {denominator:g}) = {coverage}",
     )

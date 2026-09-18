@@ -32,6 +32,14 @@ from app.services.roszdrav_service import (
 from app.services.roskomnadzor_service import get_roskomnadzor_checks
 from app.services.nopriz_service import get_cached_nopriz_check
 from app.services.nostroy_service import get_cached_nostroy_check
+from app.services.check_result import build_check_result
+from app.services.capability_applicability_service import (
+    FINANCIAL_ACTIVITY_PREFIXES,
+    ROSZDRAV_ACTIVITY_PREFIXES,
+    licence_sro_applicability,
+    okved_matches,
+    primary_okved,
+)
 
 
 def _append_source_once(
@@ -54,6 +62,18 @@ def _copy_company(company):
         or []
     )
     return result
+
+
+def _not_applicable_check(dataset_code, source, reason):
+    return build_check_result(
+        checked=True,
+        applicable=False,
+        result="not_applicable",
+        data_date=None,
+        dataset_code=dataset_code,
+        source=source,
+        reason=reason,
+    )
 
 
 def enrich_company_with_corporate_disclosure(company):
@@ -256,9 +276,12 @@ def enrich_company_with_cbr_finorg(
 
     result = _copy_company(company)
 
-    check = get_cached_cbr_finorg_check_for_inn(
-        result.get("inn")
-    )
+    if not primary_okved(result) or okved_matches(result, FINANCIAL_ACTIVITY_PREFIXES):
+        check = get_cached_cbr_finorg_check_for_inn(result.get("inn"))
+    else:
+        check = _not_applicable_check(
+            "cbr_finorg", "cbr_finorg", "primary_okved_not_financial_market",
+        )
 
     result["cbr_finorg_check"] = check
 
@@ -280,9 +303,21 @@ def enrich_company_with_roszdrav(company):
         return None
     result = _copy_company(company)
     inn = result.get("inn")
-    result["roszdrav_bulk_license_check"] = get_roszdrav_bulk_license_check_for_inn(inn)
-    result["roszdrav_unified_license_check"] = get_cached_roszdrav_unified_license_check(inn)
-    result["roszdrav_clinical_org_check"] = get_roszdrav_clinical_org_check_for_inn(inn)
+    applicable = not primary_okved(result) or okved_matches(result, ROSZDRAV_ACTIVITY_PREFIXES)
+    if applicable:
+        result["roszdrav_bulk_license_check"] = get_roszdrav_bulk_license_check_for_inn(inn)
+        result["roszdrav_unified_license_check"] = get_cached_roszdrav_unified_license_check(inn)
+        result["roszdrav_clinical_org_check"] = get_roszdrav_clinical_org_check_for_inn(inn)
+    else:
+        result["roszdrav_bulk_license_check"] = _not_applicable_check(
+            "roszdrav_bulk_licenses", "roszdravnadzor", "primary_okved_not_healthcare",
+        )
+        result["roszdrav_unified_license_check"] = _not_applicable_check(
+            "roszdrav_unified_licences", "roszdravnadzor", "primary_okved_not_healthcare",
+        )
+        result["roszdrav_clinical_org_check"] = _not_applicable_check(
+            "roszdrav_clinical_organizations", "roszdravnadzor", "primary_okved_not_healthcare",
+        )
     result["roszdrav_medical_device_check"] = get_roszdrav_medical_device_company_check()
     if any(
         check.get("result") in {"found", "not_found"}
@@ -312,9 +347,10 @@ def enrich_company_with_sro(company):
         return None
     result = _copy_company(company)
     inn = result.get("inn")
+    applicability = licence_sro_applicability(result)
     checks = {
-        "nostroy": get_cached_nostroy_check(inn, applicable=True),
-        "nopriz": get_cached_nopriz_check(inn, applicable=True),
+        "nostroy": get_cached_nostroy_check(inn, applicable=applicability["nostroy"]),
+        "nopriz": get_cached_nopriz_check(inn, applicable=applicability["nopriz"]),
     }
     result["sro_checks"] = checks
     if any(check.get("result") in {"found", "not_found"} for check in checks.values()):

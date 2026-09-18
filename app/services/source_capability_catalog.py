@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.contracts.risk import RiskProfile
 from app.contracts.source_architecture import (
+    ApplicabilityClass,
     CapabilityStatus,
     SourceCapability,
     SourceClass,
@@ -31,10 +32,14 @@ def _cap(
     bridge_allowed: bool = False, negative_bridge_allowed: bool = False,
     runner: str | None = None, fallback: str | None = None,
     status: CapabilityStatus = CapabilityStatus.ACTIVE,
+    applicability: ApplicabilityClass = ApplicabilityClass.MANDATORY_ALWAYS,
+    applicability_basis: str = "Applies to every supported company profile.",
 ) -> SourceCapability:
     return SourceCapability(
         capability_id=capability_id, domain=domain, human_name=human_name,
         profiles=profiles, mandatory_for_profiles=mandatory,
+        applicability_class=applicability,
+        applicability_basis=applicability_basis,
         risk_weight=risk_weight, coverage_weight=coverage_weight,
         freshness_policy={"max_age_days": 45}, accepted_source_paths=paths,
         source_precedence=PRECEDENCE, bridge_allowed=bridge_allowed,
@@ -85,7 +90,9 @@ CAPABILITIES: tuple[SourceCapability, ...] = (
     ), risk_weight=3, runner="cbr_warning_list"),
     _cap("bankinform", "compliance", "Приостановления операций ФНС", 4, (
         _path("fns_bankinform_direct", SourceClass.OFFICIAL_DIRECT, 10),
-    ), risk_weight=2, runner="fns_bankinform_direct"),
+    ), risk_weight=2, mandatory=(), runner="fns_bankinform_direct",
+        applicability=ApplicabilityClass.OPTIONAL_CONTEXT,
+        applicability_basis="Requires a bank/account verification context and the querying bank BIK."),
     _cap("management", "management", "Руководители и дисквалификация", 4, (
         _path("fns_disqualified", SourceClass.OFFICIAL_DOWNLOADED_DATASET, 10),
         _path("firmoteka_management", SourceClass.AUTHORIZED_BRIDGE, 20),
@@ -93,14 +100,20 @@ CAPABILITIES: tuple[SourceCapability, ...] = (
     _cap("licences_sro", "licences", "Лицензии и СРО", 4, (
         _path("official_licence_registries", SourceClass.OFFICIAL_DOWNLOADED_DATASET, 10),
         _path("firmoteka_licences_sro", SourceClass.AUTHORIZED_BRIDGE, 20),
-    ), risk_weight=3, bridge_allowed=True, mandatory=(), runner="licence_resolver"),
+    ), risk_weight=3, bridge_allowed=True, runner="licence_resolver",
+        applicability=ApplicabilityClass.MANDATORY_IF_APPLICABLE,
+        applicability_basis="Required for regulated activities identified by OKVED; SRO route depends on construction/design scope."),
     _cap("procurement_rnp", "procurement", "РНП", 2, (
         _path("eis_rnp", SourceClass.OFFICIAL_DIRECT, 10),
         _path("firmoteka_procurement", SourceClass.AUTHORIZED_BRIDGE, 20),
-    ), risk_weight=2, bridge_allowed=True, mandatory=(), runner="eis_rnp", status=CapabilityStatus.ACCESS_PENDING),
+    ), risk_weight=2, bridge_allowed=True, mandatory=(), runner="eis_rnp", status=CapabilityStatus.ACCESS_PENDING,
+        applicability=ApplicabilityClass.DEFERRED_EXTERNAL_ACCESS,
+        applicability_basis="Relevant to procurement due diligence, but official machine access is not yet connected."),
     _cap("regulatory_inspections", "inspections", "Контрольные мероприятия", 1, (
         _path("erknm_inspections", SourceClass.OFFICIAL_DOWNLOADED_DATASET, 10),
-    ), risk_weight=2, mandatory=(), runner="erknm"),
+    ), risk_weight=2, runner="erknm",
+        applicability=ApplicabilityClass.MANDATORY_ALWAYS,
+        applicability_basis="Official inspection history can exist for any registered business; absence is limited to loaded periods."),
 )
 
 

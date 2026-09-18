@@ -20,10 +20,12 @@ from app.aggregators.company_product_aggregator import get_company_for_web
 from app.contracts.risk import RiskProfile
 from app.contracts.source_architecture import FreshnessStatus, NormalizedCheckResult, NormalizedEvidence, NormalizedResultStatus, SourceClass
 from app.services.company_check_orchestrator import _normalize_legacy_company
+from app.services.capability_applicability_service import apply_capability_applicability
 from app.services.risk_engine_v3_service import build_risk_v3
 from app.services.risk_v3_persistence_service import persist_v3_assessment
 from app.services.source_resolution_service import DEFAULT_RESOLVER
 from app.services.summary_engine_v3_service import build_summary_v3
+from app.services.source_capability_catalog import CATALOG
 from app.sources.direct_runners import CbrZskRunner, EfrsbDirectRunner, FnsBankinformRunner, FsspDirectRunner
 from app.sources.firmoteka import FirmotekaSourceAdapter, concrete_bankruptcy_event
 
@@ -31,7 +33,7 @@ GROUPS = {
     "Банкротство — bridge-кандидат":"Банкротство",
     "Налоговая проблема":"Налоговые факторы",
     "Обычная действующая":"Действующие",
-    "Низкий наблюдаемый риск — кандидат":"Высокая полнота",
+    "Низкий наблюдаемый риск — кандидат":"Низкий наблюдаемый риск — кандидат",
 }
 
 
@@ -88,7 +90,9 @@ def main():
         inputs.extend((FsspDirectRunner().run(inn,checked_at=now),EfrsbDirectRunner().run(inn,checked_at=now),
             CbrZskRunner().run(inn,purpose="Проверка контрагента",initiator="Kontragent",checked_at=now),
             FnsBankinformRunner().run(inn,bik=None,checked_at=now)))
-        resolved=DEFAULT_RESOLVER.resolve(inputs); profile=RiskProfile.IP if company.get("entity_type")=="individual_entrepreneur" else RiskProfile.GENERAL_LE
+        resolved=apply_capability_applicability(
+            DEFAULT_RESOLVER.resolve(inputs), company=company, context={}, now=now,
+        ); profile=RiskProfile.IP if company.get("entity_type")=="individual_entrepreneur" else RiskProfile.GENERAL_LE
         risk=build_risk_v3(resolved,profile=profile); summary=build_summary_v3(risk,resolved)
         if args.persist:
             risk,summary,_,was_reused=persist_v3_assessment(inn,resolved,profile=profile,now=now); reused+=int(was_reused); persisted+=int(not was_reused)
@@ -100,7 +104,7 @@ def main():
     (args.output/"product_recovery_v3_40.json").write_text(json.dumps(matrix,ensure_ascii=False,indent=2),encoding="utf-8")
     fields=("group","company","inn","risk_score","risk_label","overall","coverage_score","mandatory_score","workflow_completion_percent","positive_allowed","resolved","partial","unavailable_or_error","primary_sources","fallback_sources","top_factors","fssp_validation","data_quality_flags")
     with (args.output/"product_recovery_v3_40.csv").open("w",newline="",encoding="utf-8") as f:
-        w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
+        w=csv.DictWriter(f,fieldnames=fields,lineterminator="\n"); w.writeheader()
         for x in matrix:
             sources=x["sources"]
             unavailable=[v["check_code"] for v in sources if v["result"] in {"UNAVAILABLE","ERROR"}]
@@ -111,8 +115,12 @@ def main():
     workflows=[x["risk"]["coverage"]["workflow_completion_percent"] for x in matrix]
     unresolved=Counter(code for x in matrix for code in x["risk"]["coverage"]["unresolved_capabilities"])
     runtime_states=Counter(f"{source['check_code']}:{source['result']}" for x in matrix for source in x["sources"])
-    report={"generated_at":now.isoformat(),"target":40,"actual":len(matrix),"buckets":buckets,"coverage":{"min":min(coverage),"max":max(coverage),"average":round(sum(coverage)/len(coverage),1)},"workflow_completion":{"min":min(workflows),"max":max(workflows),"target":100},"positive_gate_passed":accepted,"persisted":persisted,"reused":reused,"unresolved":unresolved,"terminal_states":runtime_states,"fssp_validation":Counter(x["fssp_validation"] for x in matrix),"runtime":{"fssp_direct":"UNAVAILABLE: no configured machine transport; runner returned terminal evidence for every company","efrsb_direct":"UNAVAILABLE: no configured public/machine transport; runner returned terminal evidence for every company","cbr_zsk":"UNAVAILABLE: interactive public flow not completed; runner returned terminal evidence for every company","bankinform":"UNAVAILABLE: no company-specific BIK supplied; arbitrary BIK is prohibited","checko":"ACCESS_PENDING when CHECKO_API_KEY is absent"}}
+    report={"generated_at":now.isoformat(),"target":40,"actual":len(matrix),"buckets":buckets,"coverage":{"min":min(coverage),"max":max(coverage),"average":round(sum(coverage)/len(coverage),1)},"workflow_completion":{"min":min(workflows),"max":max(workflows),"target":100},"positive_gate_passed":accepted,"persisted":persisted,"reused":reused,"unresolved":unresolved,"terminal_states":runtime_states,"fssp_validation":Counter(x["fssp_validation"] for x in matrix),"runtime":{"fssp_direct":"UNAVAILABLE: official exact-INN flow returned CAPTCHA; no authorized machine transport is configured","efrsb_direct":"UNAVAILABLE: official public endpoint returned an anti-bot challenge; no bypass attempted","cbr_zsk":"UNAVAILABLE: official flow requires interactive SmartCaptcha; no bypass attempted","bankinform":"NOT_APPLICABLE without bank/account context and querying-bank BIK; a positive cached fact would still be retained","checko":"ACCESS_PENDING when CHECKO_API_KEY is absent","eis_rnp":"DEFERRED_EXTERNAL_ACCESS; no universal N/A is inferred from missing procurement context"}}
     (args.output/"product_recovery_v3_40_report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
+    policy = [item.model_dump(mode="json") for item in CATALOG.all()]
+    (args.output/"capability_applicability_policy.json").write_text(
+        json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
     cards=[]
     for x in matrix:
         reasons="".join(f"<li>{html.escape(v)}</li>" for v in x["summary"]["main_reasons"]) or "<li>Подтверждённые риск-факторы не выделены</li>"

@@ -22,6 +22,16 @@ class SourceClass(StrEnum):
     OFFICIAL_DOWNLOADED_DATASET = "OFFICIAL_DOWNLOADED_DATASET"
     AUTHORIZED_BRIDGE = "AUTHORIZED_BRIDGE"
     DISCOVERY_ONLY = "DISCOVERY_ONLY"
+    POLICY_RULE = "POLICY_RULE"
+
+
+class ApplicabilityClass(StrEnum):
+    """How a capability enters a company-level coverage denominator."""
+
+    MANDATORY_ALWAYS = "MANDATORY_ALWAYS"
+    MANDATORY_IF_APPLICABLE = "MANDATORY_IF_APPLICABLE"
+    OPTIONAL_CONTEXT = "OPTIONAL_CONTEXT"
+    DEFERRED_EXTERNAL_ACCESS = "DEFERRED_EXTERNAL_ACCESS"
 
 
 class NormalizedResultStatus(StrEnum):
@@ -59,6 +69,8 @@ class SourceCapability(ContractModel):
     human_name: str
     profiles: tuple[RiskProfile, ...]
     mandatory_for_profiles: tuple[RiskProfile, ...] = ()
+    applicability_class: ApplicabilityClass
+    applicability_basis: str
     risk_weight: float = Field(ge=0)
     coverage_weight: float = Field(gt=0)
     freshness_policy: dict[str, Any]
@@ -133,6 +145,7 @@ class CoverageBreakdown(ContractModel):
     partial: int = 0
     unresolved: int = 0
     not_applicable: int = 0
+    deferred: int = 0
 
 
 class CoverageAssessmentV2(ContractModel):
@@ -149,5 +162,6 @@ class CoverageAssessmentV2(ContractModel):
     unresolved_capabilities: tuple[str, ...]
     partial_capabilities: tuple[str, ...]
     not_applicable_capabilities: tuple[str, ...]
+    deferred_capabilities: tuple[str, ...] = ()
     breakdown: CoverageBreakdown
     calculation: str

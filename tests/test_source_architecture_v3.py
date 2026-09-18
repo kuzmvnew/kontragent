@@ -4,12 +4,14 @@ import pytest
 
 from app.contracts.risk import RiskProfile
 from app.contracts.source_architecture import (
+    ApplicabilityClass,
     FreshnessStatus,
     NormalizedCheckResult,
     NormalizedEvidence,
     NormalizedResultStatus,
     SourceClass,
 )
+from app.services.capability_applicability_service import apply_capability_applicability
 from app.services.coverage_engine_service import build_coverage_v2
 from app.services.risk_engine_v3_service import build_risk_v3
 from app.services.source_capability_catalog import CATALOG
@@ -135,6 +137,59 @@ def test_bankinform_requires_explicit_bik_and_normalizes_decisions():
     assert found.evidence[0].value["decisions"]
 
 
+def test_catalog_has_explicit_applicability_policy_for_every_capability():
+    classes = {item.applicability_class for item in CATALOG.all()}
+    assert classes == {
+        ApplicabilityClass.MANDATORY_ALWAYS,
+        ApplicabilityClass.MANDATORY_IF_APPLICABLE,
+        ApplicabilityClass.OPTIONAL_CONTEXT,
+        ApplicabilityClass.DEFERRED_EXTERNAL_ACCESS,
+    }
+    assert all(item.applicability_basis for item in CATALOG.all())
+
+
+def test_bankinform_without_bank_context_is_not_applicable_not_unavailable():
+    unavailable = result(
+        "bankinform", NormalizedResultStatus.UNAVAILABLE,
+        SourceClass.OFFICIAL_DIRECT, "fns_bankinform_direct", coverage=0,
+    )
+    resolved = apply_capability_applicability(
+        {"bankinform": unavailable},
+        company={"inn": "7700000000", "okved": "62.01"},
+        now=NOW,
+    )
+    assert resolved["bankinform"].result == NormalizedResultStatus.NOT_APPLICABLE
+    assert resolved["bankinform"].source_class == SourceClass.POLICY_RULE
+
+
+def test_licence_sro_is_na_only_for_non_regulated_okved():
+    ordinary = apply_capability_applicability(
+        {}, company={"inn": "7700000000", "okved": "62.01"}, now=NOW,
+    )
+    regulated = apply_capability_applicability(
+        {}, company={"inn": "7700000001", "okved": "43.99"}, now=NOW,
+    )
+    assert ordinary["licences_sro"].result == NormalizedResultStatus.NOT_APPLICABLE
+    assert regulated["licences_sro"].result == NormalizedResultStatus.UNAVAILABLE
+    coverage = build_coverage_v2(regulated, profile=RiskProfile.GENERAL_LE)
+    assert "licences_sro" in coverage.unresolved_capabilities
+    assert coverage.mandatory_hard_checks_resolved is False
+
+
+def test_deferred_rnp_is_reported_but_does_not_reduce_current_coverage():
+    baseline = clean_mandatory()
+    before = build_coverage_v2(baseline, profile=RiskProfile.GENERAL_LE)
+    with_deferred = dict(baseline)
+    with_deferred["procurement_rnp"] = result(
+        "procurement_rnp", NormalizedResultStatus.UNAVAILABLE,
+        SourceClass.OFFICIAL_DIRECT, "eis_rnp", coverage=0,
+    )
+    after = build_coverage_v2(with_deferred, profile=RiskProfile.GENERAL_LE)
+    assert after.coverage_score == before.coverage_score
+    assert after.deferred_capabilities == ("procurement_rnp",)
+    assert "procurement_rnp" not in after.unresolved_capabilities
+
+
 def test_checko_40_runner_path_is_registered_and_cacheable():
     registry = SourceRunnerRegistry(); calls=[]
     registry.register("arbitration_resolver", lambda inn: calls.append(inn) or {"inn":inn})
@@ -185,6 +240,18 @@ def test_low_coverage_gate_and_positive_conclusion_gate():
     assert accepted.coverage.mandatory_score == 100
     assert summary.positive_conclusion_allowed is True
     assert "Существенных рисков" in summary.conclusion
+
+
+def test_positive_gate_rejects_even_low_scoring_confirmed_adverse_fact():
+    complete = clean_mandatory()
+    complete["cbr_warning"] = result(
+        "cbr_warning", NormalizedResultStatus.FOUND,
+        SourceClass.OFFICIAL_DOWNLOADED_DATASET, "cbr_warning_list",
+        value={"match": True},
+    )
+    risk = build_risk_v3(complete, profile=RiskProfile.GENERAL_LE)
+    assert 0 < risk.risk_score < 20
+    assert build_summary_v3(risk, complete).positive_conclusion_allowed is False
 
 
 def test_workflow_completion_is_separate_from_evidence_coverage():

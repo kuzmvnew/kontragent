@@ -29,6 +29,8 @@ def get_cached_nopriz_check(inn, request_date=None, *, applicable=True):
     inn, request_date = _company_inn(inn), request_date or date.today()
     if not inn or applicable is False:
         return build_check_result(checked=True, applicable=False, result="not_applicable", data_date=None, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason="design_sro_context_not_applicable", matching_method=None, records=[], record_count=0)
+    if applicable is not True:
+        return build_check_result(checked=False, applicable=None, result="unavailable", data_date=None, dataset_code=DATASET_CODE, source=SOURCE_CODE, reason="applicability_not_determined", matching_method=None, records=[], record_count=None)
     session = get_session()
     try:
         row = session.scalar(select(NoprizMemberCheck).where(NoprizMemberCheck.inn == inn, NoprizMemberCheck.request_date == request_date))
