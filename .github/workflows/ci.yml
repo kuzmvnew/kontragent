@@ -51,6 +51,9 @@ jobs:
       - name: Verify migrations
         run: uv run alembic upgrade head
 
+      - name: Schema completeness
+        run: uv run python scripts/check_schema_completeness.py
+
       - name: Check diff whitespace
         run: git diff --check
 

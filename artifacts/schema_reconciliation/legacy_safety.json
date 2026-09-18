@@ -1,0 +1,44 @@
+{
+  "evidence_class": "VERIFIED_RUNTIME",
+  "generated_at": "2026-09-18T08:47:08.858512+00:00",
+  "database": "kontragent",
+  "revision_before": "b8c9d0e1f2a3",
+  "revision_after": "c0c90245de4b",
+  "row_counts_before": {
+    "company_tax_regime_snapshots": 5673177,
+    "company_revenue_expense_snapshots": 1753134
+  },
+  "row_counts_after": {
+    "company_tax_regime_snapshots": 5673177,
+    "company_revenue_expense_snapshots": 1753134
+  },
+  "relation_oids_before": {
+    "company_tax_regime_snapshots": 21558,
+    "company_revenue_expense_snapshots": 20909
+  },
+  "relation_oids_after": {
+    "company_tax_regime_snapshots": 21558,
+    "company_revenue_expense_snapshots": 20909
+  },
+  "all_application_table_schema_unchanged": true,
+  "target_data_modified": false,
+  "alembic_version_modified": true,
+  "downgrade_on_historical_database": false,
+  "pytest_on_historical_database": false,
+  "semantic_observations": {
+    "server_default_matches_client_default": 14,
+    "additional_database_index": 4,
+    "unique_index_backed_by_unique_constraint": 5
+  },
+  "command": {
+    "command": [
+      ".venv/bin/alembic",
+      "upgrade",
+      "head"
+    ],
+    "database": "kontragent",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL.\nINFO  [alembic.runtime.migration] Running upgrade b8c9d0e1f2a3 -> c0c90245de4b, Reconcile missing domain snapshot tables without altering legacy tables.\n"
+  }
+}

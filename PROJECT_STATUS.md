@@ -155,6 +155,7 @@ No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readine
 
 ## Текущее техническое состояние
 
+- Database reproducibility repair, 18.09.2026: clean-install gap for `company_tax_regime_snapshots` / `company_revenue_expense_snapshots` fixed by new Alembic revision `c0c90245de4b`. Completely fresh isolated DB: 47/47 ORM tables, schema completeness PASS, round-trip PASS, **688 tests passed**. Historical `kontragent`: schema/OIDs/data unchanged; only `alembic_version` advanced. This supersedes the migration-completeness claim at `b8c9d0e1f2a3`, without changing source acceptance. Evidence: `docs/SCHEMA_RECONCILIATION_2026-09-18.md` (`VERIFIED_RUNTIME`).
 - Python / FastAPI: ✅
 - PostgreSQL: ✅
 - Git / GitHub main: ✅
