@@ -1,0 +1,735 @@
+{
+  "generated_at": "2026-09-18T06:00:31.170093+00:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "policy": {
+    "positive_bridge_allowed": true,
+    "negative_bridge_allowed": false
+  },
+  "limitations": [
+    "Only one row has a completed preserved official result.",
+    "Official amount covers 85/96 visible rows and is not comparable with Firmoteka remaining amount.",
+    "Count reconciliation is an inference from aggregate semantics, not row-level identity proof."
+  ],
+  "comparisons": [
+    {
+      "inn": "0274101890",
+      "name": "ООО \"ФИРМА СУ-10\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 74,
+        "completed_count": 22,
+        "closed_count": 1,
+        "total_due": 1973646613.86,
+        "remaining_amount": "1617123987.05"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "2026-09-17",
+        "result": "found",
+        "count": 96,
+        "visible_amount_sum": 1993729468.56,
+        "amount_coverage": "85/96 visible result rows",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": 22,
+        "current_plus_completed": 96,
+        "count_reconciled": true,
+        "amounts_comparable": false
+      },
+      "raw_classification": "MISMATCH",
+      "classification": "COUNT_SEMANTICS_RECONCILED_AMOUNT_UNRESOLVED",
+      "classification_evidence_class": "INFERENCE",
+      "resolution": "Firmoteka current_count + completed_count equals the preserved official row count. This explains the count difference, but row identity and amounts remain unverified."
+    },
+    {
+      "inn": "7743338473",
+      "name": "ООО СК \"ПЕТРАСТРОЙ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 58,
+        "completed_count": 32,
+        "closed_count": 0,
+        "total_due": 410722540.18,
+        "remaining_amount": "371440504.87"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 90,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "6320002223",
+      "name": "АО \"АВТОВАЗ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 47,
+        "completed_count": 0,
+        "closed_count": 113,
+        "total_due": 4914402.21,
+        "remaining_amount": "4894402.21"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 47,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "1215214540",
+      "name": "ООО \"СК \"ЭВЕРЕСТ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 36,
+        "completed_count": 13,
+        "closed_count": 1,
+        "total_due": 2692797802.49,
+        "remaining_amount": "2270019813.87"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 49,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "3662075500",
+      "name": "ООО \"СОКРАТ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 27,
+        "completed_count": 1,
+        "closed_count": 6,
+        "total_due": 764128768.51,
+        "remaining_amount": "630226674.2"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 28,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "2225179512",
+      "name": "ООО \"РА\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 19,
+        "completed_count": 2,
+        "closed_count": 0,
+        "total_due": 29855907.11,
+        "remaining_amount": "28977456.13"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 21,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "1800031793",
+      "name": "ООО \"СПЕЦАВТОМАРКЕТ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 16,
+        "completed_count": 0,
+        "closed_count": 0,
+        "total_due": 26250,
+        "remaining_amount": "26250"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 16,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "1701040660",
+      "name": "АО \"ТЫВАЭНЕРГОСБЫТ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 15,
+        "completed_count": 295,
+        "closed_count": 1,
+        "total_due": 104926486.2,
+        "remaining_amount": "104895986.2"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 310,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "4825093282",
+      "name": "ООО \"ВИТА-ТРАНС\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 15,
+        "completed_count": 0,
+        "closed_count": 17,
+        "total_due": 1427250,
+        "remaining_amount": "1408832.5"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 15,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "6212000229",
+      "name": "ОАО \"ПУТЯТИНСКИЙ МОЛОЧНЫЙ ЗАВОД\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "2026-09-16",
+        "result": "found",
+        "current_count": 13,
+        "completed_count": 0,
+        "closed_count": 2,
+        "total_due": 184114.66,
+        "remaining_amount": "46212.17"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 13,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0107036063",
+      "name": "ООО \"МИРАС\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0203951442",
+      "name": "ООО \"ИЛЦ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0224950256",
+      "name": "ООО \"АВТОЛИДЕР-ЮГ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": 0,
+        "completed_count": 0,
+        "closed_count": 0,
+        "total_due": 0,
+        "remaining_amount": "0"
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": 0,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0230004049",
+      "name": "ООО \"СЕЛЕНА\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0231009025",
+      "name": "ООО \"СМАЙЛ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0256999818",
+      "name": "СПОК \"ИДЕЛЬ\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0261055614",
+      "name": "ООО \"УК СТИЛЬ 1\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0261075554",
+      "name": "ООО \"УЦ УПК\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0263017710",
+      "name": "ООО \"ТРАНСАГРО\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    },
+    {
+      "inn": "0264068548",
+      "name": "ООО \"КАСКАД\"",
+      "source_a": {
+        "code": "firmoteka_fssp",
+        "class": "AUTHORIZED_BRIDGE",
+        "as_of": "",
+        "result": "not_found",
+        "current_count": null,
+        "completed_count": null,
+        "closed_count": null,
+        "total_due": null,
+        "remaining_amount": ""
+      },
+      "source_b": {
+        "code": "fssp_direct_historical_acceptance",
+        "class": "OFFICIAL_DIRECT",
+        "evidence_class": "EXTERNAL_HISTORICAL_EVIDENCE",
+        "as_of": "",
+        "result": "HUMAN_ACTION_REQUIRED",
+        "count": null,
+        "visible_amount_sum": null,
+        "amount_coverage": "",
+        "url": "https://fssp.gov.ru/iss/ip/"
+      },
+      "difference": {
+        "raw_count_delta": null,
+        "current_plus_completed": null,
+        "count_reconciled": false,
+        "amounts_comparable": false
+      },
+      "raw_classification": "UNVERIFIED",
+      "classification": "UNVERIFIED",
+      "classification_evidence_class": "UNVERIFIED",
+      "resolution": "No completed official exact-INN result was preserved."
+    }
+  ]
+}

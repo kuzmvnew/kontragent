@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-09-18T06:01:31.485064+00:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "checks": [
+    "extreme ratios",
+    "impossible dates",
+    "negative amounts",
+    "duplicate cases",
+    "duplicate proceedings",
+    "stale sources",
+    "entity mismatch",
+    "bridge/direct conflict",
+    "source-class mismatch"
+  ],
+  "finding_count": 1,
+  "findings": [
+    {
+      "kind": "BRIDGE_DIRECT_CONFLICT",
+      "inn": "0274101890",
+      "source_a": "firmoteka_fssp",
+      "source_b": "fssp_direct_historical_acceptance",
+      "classification": "COUNT_SEMANTICS_RECONCILED_AMOUNT_UNRESOLVED",
+      "resolution": "Firmoteka current_count + completed_count equals the preserved official row count. This explains the count difference, but row identity and amounts remain unverified."
+    }
+  ]
+}

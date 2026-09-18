@@ -71,7 +71,7 @@ ROADMAP.md становится продуктовым документом.
 | 14 | Полноценный B2B SaaS | 🔵 Далее | Регулярная работа команд, подписки и автоматизация |
 | 15 | Корпоративный уровень — Enterprise | 🔵 Позже | Интеграции, безопасность и договорные уровни сервиса |
 
-**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages. Stage 1.6 audit closure подтверждён: 655 tests, Alembic `b8c9d0e1f2a3`, PostgreSQL/browser и локальный CI-parity. Remote CI не запускался, потому что workflow срабатывает только на `main` или pull request, а оба действия вне текущего разрешённого scope. Product Recovery v3 externally blocked: 40/40 компаний обработаны, Workflow Completion 100%, Evidence Coverage 51–78/100 (average 63.5), positive gate 0/40 и 0/10 в low-risk bucket. Scheduler deployment остаётся `NOT_CONFIGURED`. Company Card v2 заблокирован до Product Recovery acceptance. Канонический протокол: [STAGE_1_6_AUDIT_CLOSURE.md](STAGE_1_6_AUDIT_CLOSURE.md). Структура инженерных фаз 0–15 и архитектура не меняются.
+**Сейчас по этому подробному разрезу:** Wave 1 — CLOSED / ACCEPTED; W1-005 Роскомнадзор закрыт как deferred external-source exception, B/C остаются `SOURCE_BLOCKED`; W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 — COMPLETE / ACCEPTED historical stages. Stage 1.6 audit closure подтверждён: 671 tests, Alembic `b8c9d0e1f2a3`, PostgreSQL/browser и локальный CI-parity. Remote CI не запускался, потому что workflow срабатывает только на `main` или pull request, а оба действия вне текущего разрешённого scope. Product Recovery v3 externally blocked: 40/40 компаний обработаны, Workflow Completion 100%, Evidence Coverage 53–88/100 (average 65.3), positive gate 0/40 и 0/10 в low-risk bucket. Scheduler deployment остаётся `NOT_CONFIGURED`. Company Card v2 заблокирован до Product Recovery acceptance. Канонический протокол: [STAGE_1_6_AUDIT_CLOSURE.md](STAGE_1_6_AUDIT_CLOSURE.md). Структура инженерных фаз 0–15 и архитектура не меняются.
 
 ## Фаза 0. Закрытие текущего блока TaxOffence
 
@@ -208,9 +208,9 @@ ROADMAP.md становится продуктовым документом.
 
 ## Обязательный Stage 1.6 — Product Recovery Audit Closure & Runtime Hardening
 
-Статус: **ACTIVE / REQUIRED — IN PROGRESS**.
+Статус: **AUDIT CLOSED / PRODUCT RECOVERY NOT ACCEPTED**.
 
-Stage 1.6 относится к подробной фазе 6 и не создаёт новую инженерную фазу 16. Audit/runtime hardening реализован и закрыт, но Product Recovery acceptance и Golden-40 positive gate не пройдены. 40/40 компаний получили терминальные состояния workflow, Evidence Coverage составляет 51–78/100 (average 63.5), positive gate — 0/40 и 0/10 в low-risk bucket. Точные причины, счётчики, evidence classes и артефакты ведутся в [STAGE_1_6_AUDIT_CLOSURE.md](STAGE_1_6_AUDIT_CLOSURE.md).
+Stage 1.6 относится к подробной фазе 6 и не создаёт новую инженерную фазу 16. Audit/runtime hardening реализован и закрыт, но Product Recovery acceptance и Golden-40 positive gate не пройдены. 40/40 компаний получили терминальные состояния workflow, Evidence Coverage составляет 53–88/100 (average 65.3), positive gate — 0/40 и 0/10 в low-risk bucket. Точные причины, счётчики, evidence classes и артефакты ведутся в [STAGE_1_6_AUDIT_CLOSURE.md](STAGE_1_6_AUDIT_CLOSURE.md).
 
 Обязательная последовательность: `Product Recovery v3 → Stage 1.6 → Golden-40 Acceptance → Product Recovery ACCEPTED → Recovery PR / main → Company Card v2 → Report v1 → Platform 2.0 → 10k enrichment → Data Quality Gate → Production Candidate → Security & Resilience Gate v2 → Legal Gate → Product Acceptance → SEO`.
 

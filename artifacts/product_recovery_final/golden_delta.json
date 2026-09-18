@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-09-18T06:01:31.485064+00:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "same_cohort": true,
+  "coverage": {
+    "before": {
+      "min": 51,
+      "max": 78,
+      "average": 63.5
+    },
+    "after": {
+      "min": 53,
+      "max": 88,
+      "average": 65.3
+    }
+  },
+  "positive_gate": {
+    "before": 0,
+    "after": 0
+  },
+  "unavailable_terminal_states": {
+    "before": 212,
+    "after": 186
+  },
+  "unresolved_mandatory_occurrences": {
+    "before": 172,
+    "after": 146
+  },
+  "low_risk_10": {
+    "actual": 10,
+    "coverage_min": 53,
+    "coverage_max": 54,
+    "coverage_average": 53.3,
+    "positive_gate_passed": 0
+  }
+}

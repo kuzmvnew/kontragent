@@ -1,0 +1,725 @@
+[
+  {
+    "capability_id": "registration",
+    "domain": "registration",
+    "human_name": "Регистрационный статус",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 12.0,
+    "coverage_weight": 15.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "fns_egrul_egrip",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_registration",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": true,
+    "runner": "master_registry",
+    "fallback_runner": "firmoteka",
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "bankruptcy",
+    "domain": "bankruptcy",
+    "human_name": "Банкротство и ликвидация",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 18.0,
+    "coverage_weight": 13.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "efrsb_direct",
+        "source_class": "OFFICIAL_DIRECT",
+        "priority": 10
+      },
+      {
+        "source_code": "egrul_events",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 20
+      },
+      {
+        "source_code": "firmoteka_bankruptcy",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 30
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "efrsb_direct",
+    "fallback_runner": "firmoteka",
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "fssp",
+    "domain": "enforcement",
+    "human_name": "Исполнительные производства ФССП",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 12.0,
+    "coverage_weight": 10.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "fssp_direct",
+        "source_class": "OFFICIAL_DIRECT",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_fssp",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "fssp_direct",
+    "fallback_runner": "firmoteka",
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "tax_debt",
+    "domain": "tax",
+    "human_name": "Налоговая задолженность",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 10.0,
+    "coverage_weight": 10.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "fns_tax_debt",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_tax",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "fns_tax_debt",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "tax_offence",
+    "domain": "tax",
+    "human_name": "Налоговые правонарушения",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 4.0,
+    "coverage_weight": 4.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "fns_tax_offence",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": false,
+    "negative_bridge_allowed": false,
+    "runner": "fns_tax_offence",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "finance",
+    "domain": "finance",
+    "human_name": "Финансовая отчётность",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 12.0,
+    "coverage_weight": 10.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "fns_revenue_expenses",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_finance",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "fns_revenue_expenses",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "arbitration",
+    "domain": "courts",
+    "human_name": "Арбитражные дела",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 7.0,
+    "coverage_weight": 8.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "checko_arbitration",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 10
+      },
+      {
+        "source_code": "kad_public",
+        "source_class": "OFFICIAL_DIRECT",
+        "priority": 20
+      },
+      {
+        "source_code": "firmoteka_courts",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 30
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "arbitration_resolver",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "general_courts",
+    "domain": "courts",
+    "human_name": "Суды общей юрисдикции",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 3.0,
+    "coverage_weight": 6.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "official_general_courts",
+        "source_class": "OFFICIAL_DIRECT",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_courts",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "general_court_resolver",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "cbr_zsk",
+    "domain": "compliance",
+    "human_name": "Высокая группа риска Банка России",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 5.0,
+    "coverage_weight": 5.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "cbr_zsk_direct",
+        "source_class": "OFFICIAL_DIRECT",
+        "priority": 10
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": false,
+    "negative_bridge_allowed": false,
+    "runner": "cbr_zsk_direct",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "cbr_warning",
+    "domain": "compliance",
+    "human_name": "Предупредительный список Банка России",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 3.0,
+    "coverage_weight": 4.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "cbr_warning_list",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": false,
+    "negative_bridge_allowed": false,
+    "runner": "cbr_warning_list",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "bankinform",
+    "domain": "compliance",
+    "human_name": "Приостановления операций ФНС",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [],
+    "applicability_class": "OPTIONAL_CONTEXT",
+    "applicability_basis": "Requires a bank/account verification context and the querying bank BIK.",
+    "risk_weight": 2.0,
+    "coverage_weight": 4.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "fns_bankinform_direct",
+        "source_class": "OFFICIAL_DIRECT",
+        "priority": 10
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": false,
+    "negative_bridge_allowed": false,
+    "runner": "fns_bankinform_direct",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "management",
+    "domain": "management",
+    "human_name": "Руководители и дисквалификация",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Applies to every supported company profile.",
+    "risk_weight": 5.0,
+    "coverage_weight": 4.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "fns_disqualified",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_management",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "fns_disqualified",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "licences_sro",
+    "domain": "licences",
+    "human_name": "Лицензии и СРО",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_IF_APPLICABLE",
+    "applicability_basis": "Required for regulated activities identified by OKVED; SRO route depends on construction/design scope.",
+    "risk_weight": 3.0,
+    "coverage_weight": 4.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "official_licence_registries",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_licences_sro",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "licence_resolver",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "procurement_rnp",
+    "domain": "procurement",
+    "human_name": "РНП",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [],
+    "applicability_class": "DEFERRED_EXTERNAL_ACCESS",
+    "applicability_basis": "Relevant to procurement due diligence, but official machine access is not yet connected.",
+    "risk_weight": 2.0,
+    "coverage_weight": 2.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "eis_rnp",
+        "source_class": "OFFICIAL_DIRECT",
+        "priority": 10
+      },
+      {
+        "source_code": "firmoteka_procurement",
+        "source_class": "AUTHORIZED_BRIDGE",
+        "priority": 20
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": true,
+    "negative_bridge_allowed": false,
+    "runner": "eis_rnp",
+    "fallback_runner": null,
+    "status": "ACCESS_PENDING",
+    "last_verified_at": null
+  },
+  {
+    "capability_id": "regulatory_inspections",
+    "domain": "inspections",
+    "human_name": "Контрольные мероприятия",
+    "profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "mandatory_for_profiles": [
+      "GENERAL_LE",
+      "IP",
+      "NEW_COMPANY",
+      "FINANCIAL_ORG",
+      "NON_PROFIT"
+    ],
+    "applicability_class": "MANDATORY_ALWAYS",
+    "applicability_basis": "Official inspection history can exist for any registered business; absence is limited to loaded periods.",
+    "risk_weight": 2.0,
+    "coverage_weight": 1.0,
+    "freshness_policy": {
+      "max_age_days": 45
+    },
+    "accepted_source_paths": [
+      {
+        "source_code": "erknm_inspections",
+        "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+        "priority": 10
+      }
+    ],
+    "source_precedence": [
+      "OFFICIAL_DIRECT",
+      "OFFICIAL_DOWNLOADED_DATASET",
+      "AUTHORIZED_BRIDGE",
+      "DISCOVERY_ONLY"
+    ],
+    "bridge_allowed": false,
+    "negative_bridge_allowed": false,
+    "runner": "erknm",
+    "fallback_runner": null,
+    "status": "ACTIVE",
+    "last_verified_at": null
+  }
+]

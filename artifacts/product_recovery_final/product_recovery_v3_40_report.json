@@ -1,0 +1,73 @@
+{
+  "generated_at": "2026-09-18T06:00:31.170093+00:00",
+  "target": 40,
+  "actual": 40,
+  "buckets": {
+    "Банкротство": 10,
+    "Налоговые факторы": 10,
+    "Действующие": 10,
+    "Низкий наблюдаемый риск — кандидат": 10
+  },
+  "coverage": {
+    "min": 53,
+    "max": 88,
+    "average": 65.3
+  },
+  "workflow_completion": {
+    "min": 100,
+    "max": 100,
+    "target": 100
+  },
+  "positive_gate_passed": 0,
+  "persisted": 40,
+  "reused": 0,
+  "unresolved": {
+    "arbitration": 39,
+    "cbr_zsk": 40,
+    "fssp": 24,
+    "general_courts": 21,
+    "bankruptcy": 21,
+    "licences_sro": 1
+  },
+  "terminal_states": {
+    "registration:FOUND": 40,
+    "tax_debt:FOUND": 29,
+    "tax_offence:NOT_FOUND": 29,
+    "finance:FOUND": 35,
+    "bankruptcy:FOUND": 19,
+    "fssp:FOUND": 16,
+    "arbitration:UNAVAILABLE": 39,
+    "general_courts:PARTIAL": 19,
+    "cbr_warning:NOT_FOUND": 40,
+    "cbr_zsk:UNAVAILABLE": 40,
+    "bankinform:NOT_APPLICABLE": 40,
+    "management:NOT_FOUND": 40,
+    "licences_sro:NOT_APPLICABLE": 18,
+    "regulatory_inspections:NOT_FOUND": 39,
+    "procurement_rnp:UNAVAILABLE": 40,
+    "fssp:UNAVAILABLE": 24,
+    "general_courts:UNAVAILABLE": 21,
+    "licences_sro:FOUND": 15,
+    "tax_offence:FOUND": 11,
+    "licences_sro:PARTIAL": 6,
+    "finance:NOT_FOUND": 5,
+    "tax_debt:NOT_FOUND": 11,
+    "bankruptcy:UNAVAILABLE": 21,
+    "arbitration:PARTIAL": 1,
+    "licences_sro:UNAVAILABLE": 1,
+    "regulatory_inspections:FOUND": 1
+  },
+  "fssp_validation": {
+    "NOT_IN_VALIDATION_MATRIX": 36,
+    "UNVERIFIED": 3,
+    "COUNT_SEMANTICS_RECONCILED_AMOUNT_UNRESOLVED": 1
+  },
+  "runtime": {
+    "fssp_direct": "UNAVAILABLE for live rerun: official exact-INN flow returned CAPTCHA; one preserved official result is retained as EXTERNAL_HISTORICAL_EVIDENCE",
+    "efrsb_direct": "ACCESS_PENDING: official production REST route is implemented; EFRSB_API_LOGIN/EFRSB_API_PASSWORD are absent",
+    "cbr_zsk": "UNAVAILABLE: official flow requires interactive SmartCaptcha; no bypass attempted",
+    "bankinform": "NOT_APPLICABLE without bank/account context and querying-bank BIK; a positive cached fact would still be retained",
+    "checko": "ACCESS_PENDING when CHECKO_API_KEY is absent; Checko is classified as AUTHORIZED_BRIDGE",
+    "eis_rnp": "DEFERRED_EXTERNAL_ACCESS; no universal N/A is inferred from missing procurement context"
+  }
+}

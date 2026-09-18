@@ -311,7 +311,7 @@ Canonical status: `STAGE_1_6_AUDIT_CLOSURE.md`.
 
 Порядок: `Product Recovery v3 → Stage 1.6 → Golden-40 Acceptance → Product Recovery ACCEPTED → Recovery PR/main → Company Card v2`.
 
-Финальный Stage 1.6 runtime: 40/40 processed, Workflow Completion 100–100%, Evidence Coverage 51–78/100 (average 63.5), positive gate 0/40. Audit closure завершён, но Product Recovery остаётся **NOT ACCEPTED** из-за внешних runtime-блокеров.
+Финальный Stage 1.6 runtime: 40/40 processed, Workflow Completion 100–100%, Evidence Coverage 53–88/100 (average 65.3), positive gate 0/40 и 0/10 в low-risk bucket. Audit closure завершён, но Product Recovery остаётся **NOT ACCEPTED** из-за обязательных source-runtime блокеров.
 
 ---
 
@@ -684,7 +684,7 @@ RISK ENGINE V1 ✅
 → STAGE 1.6 AUDIT CLOSED → PRODUCT RECOVERY V3 (CURRENT; EXTERNALLY BLOCKED)
 → КАРТОЧКА КОМПАНИИ V2 (BLOCKED)
 
-Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты. Stage 1.6 audit закрыт: Workflow Completion 100–100%, Evidence Coverage 51–78/100, average 63.5, positive gate 0/40. Product Recovery остаётся externally blocked; Company Card v2 заблокирован до Product Recovery acceptance.
+Person backlog сохранён, но не исполняется сейчас. Wave 1 — CLOSED / ACCEPTED. W1-005 B/C остаются deferred `SOURCE_BLOCKED`; person/IP-данные W1-005 изолированы и не публикуются. W1-006 НОСТРОЙ / НОПРИЗ / СРО — ACCEPTED / SIX GATES PASS. Stage 1.5, Data Readiness, Risk Engine v1 и Summary Engine v1 приняты. Stage 1.6 audit закрыт: 671 tests, Workflow Completion 100–100%, Evidence Coverage 53–88/100, average 65.3, positive gate 0/40. Product Recovery остаётся externally blocked; Company Card v2 заблокирован до Product Recovery acceptance.
 
 Security & Resilience Gate v2 не является текущей активной работой. Утверждённая последовательность: Risk Engine v1 → Summary Engine v1 → Product Recovery v3 → Stage 1.6 → Golden-40 → Product Recovery ACCEPTED → Recovery PR/main → Company Card v2 → Report v1 → Platform 2.0 → 10k enrichment → Data Quality Gate → Production Candidate → Security Gate v2 → Legal → Product Acceptance → SEO.
 

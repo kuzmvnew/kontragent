@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-09-18T06:01:31.485064+00:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "credential_presence_only": {
+    "EFRSB_API_LOGIN": false,
+    "EFRSB_API_PASSWORD": false,
+    "CHECKO_API_KEY": false,
+    "EIS_IP_TOKEN": false
+  },
+  "secrets_recorded": false,
+  "runtime": {
+    "fssp_direct": "UNAVAILABLE for live rerun: official exact-INN flow returned CAPTCHA; one preserved official result is retained as EXTERNAL_HISTORICAL_EVIDENCE",
+    "efrsb_direct": "ACCESS_PENDING: official production REST route is implemented; EFRSB_API_LOGIN/EFRSB_API_PASSWORD are absent",
+    "cbr_zsk": "UNAVAILABLE: official flow requires interactive SmartCaptcha; no bypass attempted",
+    "bankinform": "NOT_APPLICABLE without bank/account context and querying-bank BIK; a positive cached fact would still be retained",
+    "checko": "ACCESS_PENDING when CHECKO_API_KEY is absent; Checko is classified as AUTHORIZED_BRIDGE",
+    "eis_rnp": "DEFERRED_EXTERNAL_ACCESS; no universal N/A is inferred from missing procurement context"
+  },
+  "official_efrsb_specification": "https://fedresurs-demo.interfax.ru/helps/bankrupt/Service_rest_1.4.0.pdf",
+  "policy": "No CAPTCHA bypass, credential guessing, or negative inference from unavailable sources."
+}

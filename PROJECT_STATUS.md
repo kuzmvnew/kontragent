@@ -44,7 +44,7 @@ Current next stage: **COMPANY CARD V2 — BLOCKED** until Product Recovery accep
 | Intermediate Stage 1.5 | ✅ CLOSED / ACCEPTED | all workstreams dispositioned in `STAGE_1_5_ACCEPTANCE.md`; C1 live PASS; C2 accepted partial targeted coverage |
 | Auto-update / Data Readiness | ✅ COMPLETE / ACCEPTED | operational registry, freshness, run history, atomic bulk contract, locks/backoff, internal status panel; scheduler deployment remains honestly `NOT_CONFIGURED` per dataset until a handler/supervisor is installed |
 | 5. Проверки и риски | 🟡 PRODUCT RECOVERY V3 — EXTERNALLY BLOCKED | Historical Risk/Summary v1 acceptance remains valid. V3 audit/hardening is complete, but Product Recovery acceptance is blocked by mandatory runtime coverage and a 0/40 positive gate. |
-| Stage 1.6 | ✅ AUDIT CLOSED / PRODUCT NOT ACCEPTED | Applicability, existing-source wiring, read-path, Golden-40, browser and regression audits complete. Coverage 51–78/100, average 63.5; positive gate 0/40. Exact blockers: `STAGE_1_6_AUDIT_CLOSURE.md`. |
+| Stage 1.6 | ✅ AUDIT CLOSED / PRODUCT NOT ACCEPTED | Applicability, source recovery, read-path, Golden-40, browser and regression audits complete. Coverage 53–88/100, average 65.3; positive gate 0/40. Exact blockers: `STAGE_1_6_AUDIT_CLOSURE.md`. |
 | 6. Карточка компании | ⛔ BLOCKED / частично | Company Card v2 не начинается до Product Recovery acceptance |
 | 7. API и интерфейс | 🔵 далее | После ядра данных |
 | Platform 2.0 | ⛔ BLOCKED / future required | После Company Card v2 и Report v1; до 10k enrichment. Сейчас не реализуется. |
@@ -166,10 +166,12 @@ No approved release may be delayed by unrelated backlog. Stage 1.5, Data Readine
 - Data Readiness registry: **44 datasets**; internal HTML/JSON panel and PostgreSQL lock recovery accepted; PR #40 CI green and merged as `d6ba029bc2095acaa194a1fde0e207bd651c18f3`.
 - Risk Engine v1: **COMPLETE / ACCEPTED**; local regression **586 passed**, Alembic `e5f6a7b8c9d0 (head)`, five real-company assessments, PostgreSQL readback and Chromium acceptance are preserved as historical evidence in `RISK_ENGINE_ACCEPTANCE.md`. PR #43 merged as `510fa97792be43a4eb561288d2a2e78cd8764d79`.
 - Summary Engine v1: **COMPLETE / ACCEPTED** on branch `codex/summary-engine`; current-run Summary tests **23 passed**, full regression **609 passed**, Alembic `f6a7b8c9d0e1 (head)`, five real-company summaries, PostgreSQL save/readback/cache and Chromium acceptance. PR #44 CI is green and the PR remains open/unmerged.
-- Product Recovery v3 / Stage 1.6 code checkpoint: `d92ef5a82bb42506d7b31f802f92ec64b8d8fa24` on `codex/risk-summary-product-recovery`.
-- Stage 1.6 verification: **655 passed**, Alembic head `b8c9d0e1f2a3`; browser smoke passed with 40 cards, 1/40 search, 10/40 low-risk filter, ≤4 grouped limitations and no internal jargon.
-- Product Recovery v3 runtime: the locked 40/40 cohort was processed and persisted; Workflow Completion **100–100%**; Evidence Coverage **51–78/100**, average **63.5/100**; positive gate **0/40** and **0/10** low-risk candidates. ERKNM is now 40/40 terminal; Bankinform is contextual N/A; RNP is separately deferred.
-- Public read profile: **62–69 SQL queries**, p50 **1012.274 ms**, p95 **1578.178 ms**, **0 external network calls** across the same five representative companies. Previous profile was 75–78 queries, p50 1098.022 ms, p95 1676.589 ms.
+- Product Recovery v3 / Stage 1.6 code checkpoint: `d8b1d38` on `codex/risk-summary-product-recovery`.
+- Stage 1.6 final verification: **671 passed**, Alembic head `b8c9d0e1f2a3`; critical Ruff, compileall, secret scan, dependency audit and startup smoke passed locally. Remote CI was not triggered because no PR or `main` update was authorized.
+- Product Recovery v3 runtime: the locked 40/40 cohort was processed and persisted; Workflow Completion **100–100%**; Evidence Coverage **53–88/100**, average **65.3/100**; positive gate **0/40** and **0/10** low-risk candidates. Unavailable terminal states fell from 212 to 186 and unresolved mandatory occurrences from 172 to 146, but the gate still correctly fails.
+- Source closure: FSSP 16 found/24 unavailable; EFRSB 19 found/21 unavailable; ZSK 40 unavailable; arbitration 1 partial/39 unavailable; general courts 19 partial/21 unavailable; licences/SRO 1 unavailable. ERKNM is 40/40 terminal; Bankinform is contextual N/A; RNP is separately deferred.
+- Public read profile: **62–69 SQL queries**, p50 **1035.026 ms**, p95 **1909.876 ms**, **0 external network calls** across the same five representative companies. Query count remains at the accepted envelope; the p95 increase is recorded as a post-migration cold/outlier effect over a larger immutable local history.
+- Chromium 153 desktop/mobile acceptance passed: 40 cards, exact search 1/40, each group filter 10, full evidence tables, no horizontal overflow and zero console errors.
 - W1-006 full regression: **472 passed**.
 - PostgreSQL database: `kontragent`.
 - Alembic at Wave 1 closure: `e7a8b9c0d1e2`.

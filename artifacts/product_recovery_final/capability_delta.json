@@ -1,0 +1,96 @@
+{
+  "generated_at": "2026-09-18T06:01:31.485064+00:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "columns": [
+    "CAPABILITY",
+    "BEFORE",
+    "AFTER",
+    "OFFICIAL RESULT",
+    "BRIDGE RESULT",
+    "FINAL STATUS",
+    "GOLDEN RESOLVED",
+    "BLOCKER"
+  ],
+  "rows": [
+    {
+      "capability": "fssp",
+      "before": "FOUND=16, UNAVAILABLE=24",
+      "after": "FOUND=16, UNAVAILABLE=24",
+      "official_result": "FOUND=1, UNAVAILABLE=24",
+      "bridge_result": "FOUND=15",
+      "final_status": "BLOCKED",
+      "golden_resolved": 16,
+      "blocker": "Official live exact-INN flow returned CAPTCHA; negative bridge evidence is not accepted."
+    },
+    {
+      "capability": "bankruptcy",
+      "before": "FOUND=19, UNAVAILABLE=21",
+      "after": "FOUND=19, UNAVAILABLE=21",
+      "official_result": "UNAVAILABLE=21",
+      "bridge_result": "FOUND=19",
+      "final_status": "BLOCKED",
+      "golden_resolved": 19,
+      "blocker": "Official REST production credentials are not configured; bridge absence is not negative evidence."
+    },
+    {
+      "capability": "cbr_zsk",
+      "before": "UNAVAILABLE=40",
+      "after": "UNAVAILABLE=40",
+      "official_result": "UNAVAILABLE=40",
+      "bridge_result": "NO_RESULT",
+      "final_status": "BLOCKED",
+      "golden_resolved": 0,
+      "blocker": "Official public flow requires SmartCaptcha; no completed Golden-40 sessions."
+    },
+    {
+      "capability": "arbitration",
+      "before": "UNAVAILABLE=40",
+      "after": "PARTIAL=1, UNAVAILABLE=39",
+      "official_result": "NO_RESULT",
+      "bridge_result": "PARTIAL=1, UNAVAILABLE=39",
+      "final_status": "PARTIAL",
+      "golden_resolved": 1,
+      "blocker": "CHECKO_API_KEY is absent and no authorized KAD machine contract is confirmed."
+    },
+    {
+      "capability": "general_courts",
+      "before": "UNAVAILABLE=40",
+      "after": "PARTIAL=19, UNAVAILABLE=21",
+      "official_result": "PARTIAL=19, UNAVAILABLE=21",
+      "bridge_result": "NO_RESULT",
+      "final_status": "PARTIAL",
+      "golden_resolved": 19,
+      "blocker": "Coverage is targeted by region, not nationwide; 21 routes did not complete."
+    },
+    {
+      "capability": "licences_sro",
+      "before": "FOUND=15, NOT_APPLICABLE=18, UNAVAILABLE=7",
+      "after": "FOUND=15, NOT_APPLICABLE=18, PARTIAL=6, UNAVAILABLE=1",
+      "official_result": "PARTIAL=6, UNAVAILABLE=1",
+      "bridge_result": "FOUND=15",
+      "final_status": "PARTIAL",
+      "golden_resolved": 39,
+      "blocker": "Education-licence registry path is not connected for one applicable company."
+    },
+    {
+      "capability": "procurement_rnp",
+      "before": "UNAVAILABLE=40",
+      "after": "UNAVAILABLE=40",
+      "official_result": "NO_RESULT",
+      "bridge_result": "UNAVAILABLE=40",
+      "final_status": "CLOSED",
+      "golden_resolved": 40,
+      "blocker": "Official EIS recipient access remains external and deferred to procurement context."
+    },
+    {
+      "capability": "regulatory_inspections",
+      "before": "FOUND=1, NOT_FOUND=39",
+      "after": "FOUND=1, NOT_FOUND=39",
+      "official_result": "FOUND=1, NOT_FOUND=39",
+      "bridge_result": "NO_RESULT",
+      "final_status": "CLOSED",
+      "golden_resolved": 40,
+      "blocker": null
+    }
+  ]
+}

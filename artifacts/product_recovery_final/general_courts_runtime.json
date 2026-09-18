@@ -1,0 +1,1905 @@
+{
+  "generated_at": "2026-09-18T05:56:48.214638+00:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "target": 40,
+  "mode": "cached_reread_after_live_run",
+  "actual": 40,
+  "terminal_states": {
+    "not_found": 16,
+    "unavailable": 21,
+    "found": 3
+  },
+  "unavailable_reasons": {
+    "parser_unconfirmed": 8,
+    "access_pending": 13
+  },
+  "rows": [
+    {
+      "inn": "8602203965",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"СУРГУТТРАНС\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A1%D0%A3%D0%A0%D0%93%D0%A3%D0%A2%D0%A2%D0%A0%D0%90%D0%9D%D0%A1%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:24:58.878510+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "7838040910",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"АЛЬЯНС ХЕЛЗ ТЕХНОЛОДЖИ\"",
+      "region_code": "78",
+      "route": {
+        "region_code": "78",
+        "region_name": "Санкт-Петербург",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://sankt-peterburgsky--spb.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://sankt-peterburgsky--spb.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:24:59.368230+05:00"
+      }
+    },
+    {
+      "inn": "7802275725",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"СПЕЦМАШ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A1%D0%9F%D0%95%D0%A6%D0%9C%D0%90%D0%A8%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:03.109440+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "7743338473",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ СК \"ПЕТРАСТРОЙ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%D0%A1%D0%9A+%22%D0%9F%D0%95%D0%A2%D0%A0%D0%90%D0%A1%D0%A2%D0%A0%D0%9E%D0%99%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:09.198698+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "7730253021",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"МР-ТРАЙДИНГ\"",
+      "region_code": "50",
+      "route": {
+        "region_code": "50",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:25:09.208783+05:00"
+      }
+    },
+    {
+      "inn": "7726670030",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ГЛАВТОРГ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Хорошевский районный суд)",
+            "stage": "Вступило в силу, 28.04.2026",
+            "result": "Удовлетворено, 10.03.2026",
+            "parties": "Истец Акционерное общество «ТБанк» Ответчик ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ГЛАВТОРГ\", Сидоров А.П.",
+            "category": "213 - О взыскании сумм по договору займа, кредитному договору",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ГЛАВТОРГ\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-04-28",
+            "source_url": "https://mos-gorsud.ru/rs/horoshevskij/services/cases/civil/details/6c0b2a40-00f3-11f1-b90c-59460628f274?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%93%D0%9B%D0%90%D0%92%D0%A2%D0%9E%D0%A0%D0%93%22",
+            "case_number": "02-2080/2026",
+            "result_date": "2026-03-10",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Нагатинский районный суд)",
+            "stage": "Вынесено заочное решение, 02.02.2026",
+            "result": "Удовлетворено, 02.02.2026",
+            "parties": "Истец УПРАВЛЕНИЕ ФЕДЕРАЛЬНОЙ СЛУЖБЫ ПО НАДЗОРУ В СФЕРЕ ЗАЩИТЫ ПРАВ ПОТРЕБИТЕЛЕЙ И БЛАГОПОЛУЧИЯ ЧЕЛОВЕКА ПО ГОРОДУ МОСКВЕ Ответчик ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ГЛАВТОРГ\"",
+            "category": "179 - О защите прав потребителей - из договоров в сфере торговли, услуг, выполнения работ",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ГЛАВТОРГ\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-02-02",
+            "source_url": "https://mos-gorsud.ru/rs/nagatinskij/services/cases/civil/details/eec98af0-0417-11f0-8eec-cf170114c753?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%93%D0%9B%D0%90%D0%92%D0%A2%D0%9E%D0%A0%D0%93%22",
+            "case_number": "02-0559/2026",
+            "result_date": "2026-02-02",
+            "matching_method": "exact_full_legal_name"
+          }
+        ],
+        "record_count": 2,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "medium"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%93%D0%9B%D0%90%D0%92%D0%A2%D0%9E%D0%A0%D0%93%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:11.938497+05:00",
+        "interpretation_note": "Совпадение подтверждено точным полным наименованием на официальном портале, но без ИНН в выдаче; это средняя, а не максимальная уверенность."
+      }
+    },
+    {
+      "inn": "7721681824",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ТИЕРА\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A2%D0%98%D0%95%D0%A0%D0%90%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:15.892473+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "7720831611",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"САНАМ ПРО\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A1%D0%90%D0%9D%D0%90%D0%9C+%D0%9F%D0%A0%D0%9E%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:25.662230+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "7719616426",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ТК-ВИКТОРИЯ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A2%D0%9A-%D0%92%D0%98%D0%9A%D0%A2%D0%9E%D0%A0%D0%98%D0%AF%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:28.518818+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "1655423922",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"РЕАЛ ТРЕЙД\"",
+      "region_code": "16",
+      "route": {
+        "region_code": "16",
+        "region_name": "Республика Татарстан",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://vs--tat.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://vs--tat.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:25:28.824579+05:00"
+      }
+    },
+    {
+      "inn": "6612045859",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"УРАЛЬСКИЙ ЗАВОД ЦВЕТНОГО ЛИТЬЯ\"",
+      "region_code": "66",
+      "route": {
+        "region_code": "66",
+        "region_name": "Свердловская область",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://oblsud--svd.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://oblsud--svd.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:25:29.672039+05:00"
+      }
+    },
+    {
+      "inn": "6312208069",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"БРУСКО ФАКТОРИ\"",
+      "region_code": "63",
+      "route": {
+        "region_code": "63",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:25:29.686380+05:00"
+      }
+    },
+    {
+      "inn": "7327080600",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"АЛКОГОЛЬНАЯ ПРОИЗВОДСТВЕННАЯ КОМПАНИЯ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%90%D0%9B%D0%9A%D0%9E%D0%93%D0%9E%D0%9B%D0%AC%D0%9D%D0%90%D0%AF+%D0%9F%D0%A0%D0%9E%D0%98%D0%97%D0%92%D0%9E%D0%94%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%90%D0%AF+%D0%9A%D0%9E%D0%9C%D0%9F%D0%90%D0%9D%D0%98%D0%AF%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:33.721805+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "7329004869",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"АЛЬФА ЛЮКС\"",
+      "region_code": "73",
+      "route": {
+        "region_code": "73",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:25:33.767717+05:00"
+      }
+    },
+    {
+      "inn": "6658096951",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"УРАЛЬСКИЕ КОМПЛЕКСНЫЕ ТЕХНОЛОГИИ-99\"",
+      "region_code": "66",
+      "route": {
+        "region_code": "66",
+        "region_name": "Свердловская область",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://oblsud--svd.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://oblsud--svd.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:25:35.400486+05:00"
+      }
+    },
+    {
+      "inn": "1215214540",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"СК \"ЭВЕРЕСТ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A1%D0%9A+%22%D0%AD%D0%92%D0%95%D0%A0%D0%95%D0%A1%D0%A2%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:38.734539+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "0274101890",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ФИРМА СУ-10\"",
+      "region_code": "02",
+      "route": {
+        "region_code": "02",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:25:38.760597+05:00"
+      }
+    },
+    {
+      "inn": "7723741395",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"СМУ \"ФРОНТ ИНЖИНИРИНГ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A1%D0%9C%D0%A3+%22%D0%A4%D0%A0%D0%9E%D0%9D%D0%A2+%D0%98%D0%9D%D0%96%D0%98%D0%9D%D0%98%D0%A0%D0%98%D0%9D%D0%93%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:44.035396+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "3662075500",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"СОКРАТ\"",
+      "region_code": "36",
+      "route": {
+        "region_code": "36",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:25:44.065209+05:00"
+      }
+    },
+    {
+      "inn": "1635009350",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ТРАНСАГРО\"",
+      "region_code": "16",
+      "route": {
+        "region_code": "16",
+        "region_name": "Республика Татарстан",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://vs--tat.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://vs--tat.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:25:44.382794+05:00"
+      }
+    },
+    {
+      "inn": "9731123460",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"МАТРЕШКА ГРУПП\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Хорошевский районный суд)",
+            "stage": "Вступило в силу, 11.07.2026",
+            "result": "Удовлетворено, 20.05.2026",
+            "parties": "Истец Акционерное общество «ТБанк» Ответчик Лоншакова Д.Е., ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"МАТРЕШКА ГРУПП",
+            "category": "213 - О взыскании сумм по договору займа, кредитному договору",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"МАТРЕШКА ГРУПП\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-07-11",
+            "source_url": "https://mos-gorsud.ru/rs/horoshevskij/services/cases/civil/details/28ee7661-164f-11f1-baf9-effd0776cc2d?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%9C%D0%90%D0%A2%D0%A0%D0%95%D0%A8%D0%9A%D0%90+%D0%93%D0%A0%D0%A3%D0%9F%D0%9F%22",
+            "case_number": "02-2919/2026",
+            "result_date": "2026-05-20",
+            "matching_method": "exact_full_legal_name"
+          }
+        ],
+        "record_count": 1,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "medium"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%9C%D0%90%D0%A2%D0%A0%D0%95%D0%A8%D0%9A%D0%90+%D0%93%D0%A0%D0%A3%D0%9F%D0%9F%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:52.579061+05:00",
+        "interpretation_note": "Совпадение подтверждено точным полным наименованием на официальном портале, но без ИНН в выдаче; это средняя, а не максимальная уверенность."
+      }
+    },
+    {
+      "inn": "9729326374",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"КС-КРАН СТРОЙ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%9A%D0%A1-%D0%9A%D0%A0%D0%90%D0%9D+%D0%A1%D0%A2%D0%A0%D0%9E%D0%99%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:25:59.189185+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "9729263501",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"СТРОЙВЕСТ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A1%D0%A2%D0%A0%D0%9E%D0%99%D0%92%D0%95%D0%A1%D0%A2%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:26:00.922805+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "9729111450",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [
+          {
+            "role": "defendant",
+            "court": "Гражданские дела апелляционной инстанции (Московский городской суд)",
+            "stage": "Зарегистрировано, 09.09.2026",
+            "result": null,
+            "parties": "Истец Акционерное общество «Акционерный Банк «РОССИЯ» Ответчик Кожухов А.В., Монин Г.М., Общество с ограниченной ответственностью «Велес-Строй», Общество с ограниченной ответственностью «ПСК Строймонолит» Финансовый управляющий Власов К.С.",
+            "category": "219- Прочие исковые дела",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-09-09",
+            "source_url": "https://mos-gorsud.ru/mgs/services/cases/appeal-civil/details/cc6b70f0-ac3a-11f1-8e47-6dce5dddaaaa?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "Ж-58511/2026",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": null,
+            "court": "Пересмотр постановлений и решений по делам об административных правонарушениях, не вступивших в законную силу (Московский городской суд)",
+            "stage": "Назначено судебное заседание на 08.10.2026 15:10",
+            "result": null,
+            "parties": "Привлекаемое лицо Общество с ограниченной ответственностью «ВЕЛЕС ЭКСПРЕСС» Другие участники ГКУ \"АМПП\" Г. МОСКВЫ",
+            "category": null,
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-10-08",
+            "source_url": "https://mos-gorsud.ru/mgs/services/cases/review-not-yet/details/c719da10-a064-11f1-98a4-8908c9a96e65?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "7-11820/2026",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": null,
+            "court": "Пересмотр постановлений и решений по делам об административных правонарушениях, не вступивших в законную силу (Московский городской суд)",
+            "stage": "Завершено, 18.06.2026",
+            "result": null,
+            "parties": "Привлекаемое лицо Общество с ограниченной ответственностью «ВЕЛЕС ЭКСПРЕСС»",
+            "category": null,
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-06-18",
+            "source_url": "https://mos-gorsud.ru/mgs/services/cases/review-not-yet/details/f9e26bc0-52c0-11f1-a5f4-f107254bfd0e?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "7-5349/2026",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Перовский районный суд)",
+            "stage": "Обжаловано, 26.06.2026",
+            "result": "Удовлетворено, 18.05.2026",
+            "parties": "Истец Акционерное общество «Акционерный Банк «РОССИЯ» Ответчик Кожухов А.В., Монин Г.М., Общество с ограниченной ответственностью «Велес-Строй», Общество с ограниченной ответственностью «ПСК Строймонолит» Финансовый управляющий Власов К.С.",
+            "category": "219- Прочие исковые дела",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-06-26",
+            "source_url": "https://mos-gorsud.ru/rs/perovskij/services/cases/civil/details/b7412811-2381-11f1-b34d-b32816be372c?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-4301/2026",
+            "result_date": "2026-05-18",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": null,
+            "court": "Дела об административных нарушениях апелляционной инстанции (Симоновский районный суд)",
+            "stage": "Назначено судебное заседание на 14.10.2026 10:45",
+            "result": null,
+            "parties": "Привлекаемое лицо Общество с ограниченной ответственностью «ВЕЛЕС ЭКСПРЕСС» Другие участники ГКУ \"АМПП\"",
+            "category": null,
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-10-14",
+            "source_url": "https://mos-gorsud.ru/rs/simonovskij/services/cases/appeal-admin/details/add73520-9623-11f1-a0f1-310b67d12ff8?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "12-2938/2026",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Дорогомиловский районный суд)",
+            "stage": "Вступило в силу, 26.05.2026",
+            "result": "Удовлетворено, 24.02.2026",
+            "parties": "Истец ПАО СБЕРБАНК Ответчик ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\", САЛЬНИКОВ Д.Г.",
+            "category": "213 - О взыскании сумм по договору займа, кредитному договору",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-05-26",
+            "source_url": "https://mos-gorsud.ru/rs/dorogomilovskij/services/cases/civil/details/5db190d1-c3cf-11f0-9aca-cb6fbda19919?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-0984/2026",
+            "result_date": "2026-02-24",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": null,
+            "court": "Дела об административных нарушениях апелляционной инстанции (Преображенский районный суд)",
+            "stage": "Обжаловано, 05.03.2026",
+            "result": null,
+            "parties": "Привлекаемое лицо Общество с ограниченной ответственностью «ВЕЛЕС ЭКСПРЕСС» Другие участники ГКУ \"АМПП\" г. Москвы",
+            "category": null,
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-03-05",
+            "source_url": "https://mos-gorsud.ru/rs/preobrazhenskij/services/cases/appeal-admin/details/4ce39bc0-f798-11f0-9eff-cd7c058e45dc?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "12-0584/2026",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Первичные документы, гражданские дела (Хорошевский районный суд)",
+            "stage": "Вступило в силу, 07.11.2025",
+            "result": null,
+            "parties": "Истец Акционерное общество «ТБанк» Ответчик ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\", Слюнкова Т.В.",
+            "category": "213 - О взыскании сумм по договору займа, кредитному договору",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-11-07",
+            "source_url": "https://mos-gorsud.ru/rs/horoshevskij/services/cases/claim-civil/details/d2e30ee0-a8dd-11f0-aba5-b5bca7668ea6?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "М-9434/2025",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": null,
+            "court": "Дела об административных нарушениях апелляционной инстанции (Измайловский районный суд)",
+            "stage": "Вступило в силу, 07.03.2026",
+            "result": null,
+            "parties": "Привлекаемое лицо Общество с ограниченной ответственностью «ВЕЛЕС ЭКСПРЕСС»",
+            "category": null,
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2026-03-07",
+            "source_url": "https://mos-gorsud.ru/rs/izmajlovskij/services/cases/appeal-admin/details/a959b010-bbd9-11f0-9441-89666f0ea347?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "12-4398/2025",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 25.04.2025",
+            "result": "Удовлетворено, 24.03.2025",
+            "parties": "Истец Останкинский межрайонный прокурор г.Москвы Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-04-25",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/393860f1-c108-11ef-9be8-a1e106d5208e?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-1791/2025",
+            "result_date": "2025-03-24",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 25.03.2025",
+            "result": "Удовлетворено, 24.02.2025",
+            "parties": "Истец Останкинский межрайонный прокурор, Попова А.П. Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-03-25",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/45f454e1-b099-11ef-8d57-c312b3621273?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-1617/2025",
+            "result_date": "2025-02-24",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 01.03.2025",
+            "result": "Удовлетворено, 20.01.2025",
+            "parties": "Истец Останкинский межрайонный прокурор города Москвы Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-03-01",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/4b391511-ac09-11ef-9368-55efbc770d31?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-1572/2025",
+            "result_date": "2025-01-20",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 01.03.2025",
+            "result": "Удовлетворено, 17.01.2025",
+            "parties": "Истец Останкинский межрайонный прокурор, Савченко О.В. Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-03-01",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/1fb95ed1-a7eb-11ef-9958-0d8158da2043?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-1522/2025",
+            "result_date": "2025-01-17",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 22.05.2025",
+            "result": "Удовлетворено, 04.02.2025",
+            "parties": "Истец Останкинский межрайонный прокурор г. Москвы Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-05-22",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/d023ce81-9612-11ef-aabb-7f2cdab905a3?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-1282/2025",
+            "result_date": "2025-02-04",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Бутырский районный суд)",
+            "stage": "Вступило в силу, 18.03.2025",
+            "result": "Дело прекращено, 18.03.2025",
+            "parties": "Истец Пашедко А.А. Ответчик Общество с ограниченной ответственностью «Велес»",
+            "category": "160 - Иски о возмещении ущерба от ДТП (кроме увечий и смерти кормильца)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-03-18",
+            "source_url": "https://mos-gorsud.ru/rs/butyrskij/services/cases/civil/details/77bdb3c1-d7dd-11ef-89f1-892f206fbc05?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-1001/2025",
+            "result_date": "2025-03-18",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 07.03.2025",
+            "result": "Удовлетворено частично, 06.02.2025",
+            "parties": "Истец Матянкин А.И. Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-03-07",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/90c8f821-b965-11ef-bffa-f94389ca85cf?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-0421/2025",
+            "result_date": "2025-02-06",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 28.02.2025",
+            "result": "Удовлетворено, 17.01.2025",
+            "parties": "Истец Котов А.Г., Останкинский межрайонный прокурор г. Москвы Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-02-28",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/38def561-a574-11ef-978a-ebce384c4304?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-0210/2025",
+            "result_date": "2025-01-17",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Перовский районный суд)",
+            "stage": "Вступило в силу, 22.10.2024",
+            "result": "Удовлетворено, 19.09.2024",
+            "parties": "Истец ПАО Сбербанк в лице филиала Московского банка ПАО Сбербанк Ответчик МОРОЗОВ С.В., Общество с ограниченной ответственностью \"ВЕЛЕС\"",
+            "category": "213 - О взыскании сумм по договору займа, кредитному договору",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2024-10-22",
+            "source_url": "https://mos-gorsud.ru/rs/perovskij/services/cases/civil/details/04de4ae0-48cc-11ef-b24e-5f58d65cd7f8?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-6361/2024",
+            "result_date": "2024-09-19",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Останкинский районный суд)",
+            "stage": "Вступило в силу, 28.01.2025",
+            "result": "Удовлетворено частично, 09.12.2024",
+            "parties": "Истец Гуськова Д.А. Ответчик Общество с ограниченной ответственностью \"ВЕЛЕС-СТРОЙ\"",
+            "category": "54 - Трудовые споры о взыскании невыплаченной заработной платы, других выплат (и компенсации за задержку их выплаты)",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2025-01-28",
+            "source_url": "https://mos-gorsud.ru/rs/ostankinskij/services/cases/civil/details/33b83d71-8194-11ef-a4c1-bda848732768?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-6042/2024",
+            "result_date": "2024-12-09",
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела апелляционной инстанции (Московский городской суд)",
+            "stage": "Отменить судебное постановление частично, принять новое решение, 08.11.2018",
+            "result": null,
+            "parties": "Истец Бесшапошников А.Е. Ответчик Общество с ограниченной ответственностью \"Велес\"",
+            "category": "179 - О защите прав потребителей - из договоров в сфере торговли, услуг, выполнения работ",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2018-11-08",
+            "source_url": "https://mos-gorsud.ru/mgs/services/cases/appeal-civil/details/8ea4bdb5-b8f4-4d69-b765-72983b322d9d?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "33-48860/2018",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Никулинский районный суд)",
+            "stage": "Удовлетворено частично, 24.04.2018",
+            "result": null,
+            "parties": "Истец Заборский А.С. Ответчик Общество с ограниченной ответственностью \"Велес\"",
+            "category": "179 - О защите прав потребителей - из договоров в сфере торговли, услуг, выполнения работ",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2018-04-24",
+            "source_url": "https://mos-gorsud.ru/rs/nikulinskij/services/cases/civil/details/5219683b-f841-4257-9859-f1325a706deb?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-2271/2018",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Никулинский районный суд)",
+            "stage": "Удовлетворено частично, 01.06.2018",
+            "result": null,
+            "parties": "Истец Бесшапошников А.Е. Ответчик Общество с ограниченной ответственностью \"Велес\"",
+            "category": "179 - О защите прав потребителей - из договоров в сфере торговли, услуг, выполнения работ",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2018-06-01",
+            "source_url": "https://mos-gorsud.ru/rs/nikulinskij/services/cases/civil/details/7047d553-0fab-4a34-87f6-5c049ea7c3d1?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-1181/2018",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": null,
+            "court": "Дела об административных нарушениях апелляционной инстанции (Дорогомиловский районный суд)",
+            "stage": "Оставить постановление (решение) без изменения, а жалобу/протест без удовлетворения",
+            "result": null,
+            "parties": "Привлекаемое лицо Общество с ограниченной ответственностью \"Велес\"",
+            "category": null,
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": null,
+            "source_url": "https://mos-gorsud.ru/rs/dorogomilovskij/services/cases/appeal-admin/details/c4e5774b-f5d5-4965-a091-7a165a200cd2?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "12-0488/2018",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": null,
+            "court": "Дела об административных нарушениях апелляционной инстанции (Дорогомиловский районный суд)",
+            "stage": "Оставить постановление (решение) без изменения, а жалобу/протест без удовлетворения",
+            "result": null,
+            "parties": "Привлекаемое лицо Общество с ограниченной ответственностью \"Велес\"",
+            "category": null,
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": null,
+            "source_url": "https://mos-gorsud.ru/rs/dorogomilovskij/services/cases/appeal-admin/details/ab5c55ff-3f68-4e8f-9943-e2423c878ed0?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "12-0108/2018",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          },
+          {
+            "role": "defendant",
+            "court": "Гражданские дела первой инстанции (Зюзинский районный суд)",
+            "stage": "Удовлетворено частично, 19.07.2017",
+            "result": null,
+            "parties": "Истец Управление Федеральной службы по надзору в сфере защиты прав потребителей и благополучия человека по г.Москве(в лице территориального отдела в ЮЗАО) Ответчик Общество с ограниченной ответственностью \"Велес\"",
+            "category": "213 - О взыскании сумм по договору займа, кредитному договору",
+            "evidence": {
+              "matched_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕЛЕС\"",
+              "official_portal": true,
+              "identifier_in_result": false
+            },
+            "confidence": "medium",
+            "event_date": "2017-07-19",
+            "source_url": "https://mos-gorsud.ru/rs/zyuzinskij/services/cases/civil/details/136ccb03-1246-42b1-87c3-10ab87f12c8b?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22",
+            "case_number": "02-2497/2017",
+            "result_date": null,
+            "matching_method": "exact_full_legal_name"
+          }
+        ],
+        "record_count": 25,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "medium"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%95%D0%9B%D0%95%D0%A1%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:26:07.050793+05:00",
+        "interpretation_note": "Совпадение подтверждено точным полным наименованием на официальном портале, но без ИНН в выдаче; это средняя, а не максимальная уверенность."
+      }
+    },
+    {
+      "inn": "9723254500",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ПАРТИЯ\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%9F%D0%90%D0%A0%D0%A2%D0%98%D0%AF%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:26:10.468884+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "9719014457",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"СТУДИЯ 11\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A1%D0%A2%D0%A3%D0%94%D0%98%D0%AF+11%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:26:13.800067+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "9705169002",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"РУССКИЙ СЕВЕР\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%A0%D0%A3%D0%A1%D0%A1%D0%9A%D0%98%D0%99+%D0%A1%D0%95%D0%92%D0%95%D0%A0%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:26:19.921492+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "9705115769",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"АГНИ-КИНО\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%90%D0%93%D0%9D%D0%98-%D0%9A%D0%98%D0%9D%D0%9E%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:26:25.010600+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "9701291442",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВИРААС\"",
+      "region_code": "77",
+      "route": {
+        "region_code": "77",
+        "region_name": "Москва",
+        "provider_code": "moscow_courts_official",
+        "portal_url": "https://mos-gorsud.ru/search",
+        "coverage_status": "targeted_city_portal"
+      },
+      "result": {
+        "checked": true,
+        "applicable": true,
+        "result": "not_found",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "moscow_courts_official",
+        "reason": null,
+        "cached": true,
+        "cases": [],
+        "record_count": 0,
+        "coverage": {
+          "coverage_label": "MOSCOW TARGETED QUERY (FIRST 100) / OTHER REGIONS NOT CHECKED",
+          "coverage_source": "moscow_courts_official",
+          "portals_checked": [
+            "https://mos-gorsud.ru/search"
+          ],
+          "regions_checked": [
+            "Москва"
+          ],
+          "matching_confidence": "not_confirmed"
+        },
+        "source_url": "https://mos-gorsud.ru/search?participant=%D0%9E%D0%91%D0%A9%D0%95%D0%A1%D0%A2%D0%92%D0%9E+%D0%A1+%D0%9E%D0%93%D0%A0%D0%90%D0%9D%D0%98%D0%A7%D0%95%D0%9D%D0%9D%D0%9E%D0%99+%D0%9E%D0%A2%D0%92%D0%95%D0%A2%D0%A1%D0%A2%D0%92%D0%95%D0%9D%D0%9D%D0%9E%D0%A1%D0%A2%D0%AC%D0%AE+%22%D0%92%D0%98%D0%A0%D0%90%D0%90%D0%A1%22&limit=100&page=1",
+        "checked_at": "2026-09-18 09:26:28.996774+05:00",
+        "interpretation_note": "Выполнен целевой поиск по московскому порталу; это не подтверждает отсутствие дел в других регионах."
+      }
+    },
+    {
+      "inn": "9102309919",
+      "name": "АО \"КРЫМАВТОДОР\"",
+      "region_code": null,
+      "route": {
+        "region_code": "00",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:29.033260+05:00"
+      }
+    },
+    {
+      "inn": "2309153831",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"АЛЬБАДЕНТ\"",
+      "region_code": "23",
+      "route": {
+        "region_code": "23",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:29.041648+05:00"
+      }
+    },
+    {
+      "inn": "2016006918",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ПМК-703\"",
+      "region_code": "20",
+      "route": {
+        "region_code": "20",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:29.049959+05:00"
+      }
+    },
+    {
+      "inn": "1700009762",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"АЙТИ ЛОДЖИК\"",
+      "region_code": "17",
+      "route": {
+        "region_code": "17",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:29.058109+05:00"
+      }
+    },
+    {
+      "inn": "1683005927",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ФАЙДОР\"",
+      "region_code": "16",
+      "route": {
+        "region_code": "16",
+        "region_name": "Республика Татарстан",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://vs--tat.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://vs--tat.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:26:29.392133+05:00"
+      }
+    },
+    {
+      "inn": "1622005479",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ЮМАРТ\"",
+      "region_code": "16",
+      "route": {
+        "region_code": "16",
+        "region_name": "Республика Татарстан",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://vs--tat.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://vs--tat.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:26:34.304228+05:00"
+      }
+    },
+    {
+      "inn": "1616027467",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"УЮТ-ДОМ\"",
+      "region_code": "16",
+      "route": {
+        "region_code": "16",
+        "region_name": "Республика Татарстан",
+        "provider_code": "regional_sudrf_official",
+        "portal_url": "https://vs--tat.sudrf.ru/modules.php",
+        "coverage_status": "targeted_regional_portal"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "regional_sudrf_official",
+        "reason": "parser_unconfirmed",
+        "message": "Региональный ответ не доказывает ни наличие, ни отсутствие дел",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://vs--tat.sudrf.ru/modules.php",
+        "checked_at": "2026-09-18 09:26:39.816669+05:00"
+      }
+    },
+    {
+      "inn": "1435350130",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ОЛИМПСТРОЙ\"",
+      "region_code": "14",
+      "route": {
+        "region_code": "14",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:39.838199+05:00"
+      }
+    },
+    {
+      "inn": "1435295295",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"РЕГИОНАЛЬНОЕ ОХРАННОЕ АГЕНТСТВО ШЕРИФ\"",
+      "region_code": "14",
+      "route": {
+        "region_code": "14",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:39.848421+05:00"
+      }
+    },
+    {
+      "inn": "1215153707",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"РАНТЬЕ\"",
+      "region_code": "12",
+      "route": {
+        "region_code": "12",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:39.857129+05:00"
+      }
+    },
+    {
+      "inn": "0705007750",
+      "name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ВЕСНА\"",
+      "region_code": "07",
+      "route": {
+        "region_code": "07",
+        "region_name": "Регион не настроен",
+        "provider_code": "gas_pravosudie_official",
+        "portal_url": "https://bsr.sudrf.ru/bigs/portal.html",
+        "coverage_status": "central_access_unconfirmed"
+      },
+      "result": {
+        "checked": false,
+        "applicable": true,
+        "result": "unavailable",
+        "data_date": "2026-09-18",
+        "dataset_code": "moscow_general_court_cases",
+        "source": "gas_pravosudie_official",
+        "reason": "access_pending",
+        "message": "Для региона не настроен проверяемый official path",
+        "cached": true,
+        "cases": [],
+        "record_count": null,
+        "coverage": {
+          "coverage_label": "CHECK FAILED; NO NEGATIVE INFERENCE"
+        },
+        "source_url": "https://mos-gorsud.ru/search",
+        "checked_at": "2026-09-18 09:26:39.865535+05:00"
+      }
+    }
+  ]
+}

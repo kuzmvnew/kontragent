@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-09-18T05:54:32.847266+00:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "browser": "Chromium",
+  "browser_version": "153.0.8010.12",
+  "results": {
+    "desktop": {
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "cards": 40,
+      "search_result": "1 из 40",
+      "filter_counts": {
+        "Банкротство": 10,
+        "Налоговые факторы": 10,
+        "Действующие": 10,
+        "Низкий наблюдаемый риск — кандидат": 10
+      },
+      "risk_coverage_workflow_fields_per_card": 3,
+      "source_tables": 40,
+      "responsive_horizontal_overflow": false,
+      "console_errors": [],
+      "screenshot": "artifacts/product_recovery_final/browser/desktop.png"
+    },
+    "mobile": {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "cards": 40,
+      "search_result": "1 из 40",
+      "filter_counts": {
+        "Банкротство": 10,
+        "Налоговые факторы": 10,
+        "Действующие": 10,
+        "Низкий наблюдаемый риск — кандидат": 10
+      },
+      "risk_coverage_workflow_fields_per_card": 3,
+      "source_tables": 40,
+      "responsive_horizontal_overflow": false,
+      "console_errors": [],
+      "screenshot": "artifacts/product_recovery_final/browser/mobile.png"
+    }
+  }
+}

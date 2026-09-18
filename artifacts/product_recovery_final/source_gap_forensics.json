@@ -1,0 +1,147 @@
+{
+  "generated_at": "2026-09-18T07:07:59+03:00",
+  "evidence_class": "VERIFIED_RUNTIME",
+  "baseline_commit": "99e19101c6973007853c1e3ea9aa136020e9ab3e",
+  "cohort": "same Golden-40 from firmoteka_500_20260917",
+  "rules": [
+    "UNAVAILABLE is never converted to NOT_FOUND",
+    "OFFICIAL_DIRECT > OFFICIAL_DOWNLOADED_DATASET > AUTHORIZED_BRIDGE > DISCOVERY_ONLY",
+    "one underlying fact contributes risk once"
+  ],
+  "gaps": [
+    {
+      "capability": "fssp",
+      "golden_affected_count": 24,
+      "current_terminal_state": "16 FOUND through AUTHORIZED_BRIDGE; 24 UNAVAILABLE",
+      "current_source": "firmoteka_fssp plus an unconfigured fssp_direct runner",
+      "why_unresolved": "negative bridge results are intentionally not accepted as a completed absence check",
+      "existing_code_path": [
+        "app/sources/firmoteka.py::FirmotekaSourceAdapter.normalize",
+        "app/sources/direct_runners.py::FsspDirectRunner",
+        "app/services/source_resolution_service.py::SourceResolver"
+      ],
+      "existing_db_or_cache_evidence": "Golden payloads contain structured bridge counts/items. Preserved historical official evidence exists for INN 0274101890: 96 official rows on 2026-09-17 versus bridge snapshot 74 on 2026-09-16.",
+      "possible_official_path": "official exact-INN public flow at fssp.gov.ru/is-go.fssp.gov.ru",
+      "possible_bridge_path": "Firmoteka authorized low-load bridge; positive facts only under current policy",
+      "missing_credential_or_access": "non-interactive official transport; current exact-INN probe returns a CAPTCHA form",
+      "semantic_blocker": "bridge absence is not equivalent to an official dated negative result",
+      "technical_blocker": "human challenge in the official public flow",
+      "forensic_observation": "For INN 0274101890 the bridge reports 74 current rows and 22 completed rows; 74 + 22 = the historical official total 96. This is a strong count-semantics explanation, but amount and row-level equivalence remain unverified."
+    },
+    {
+      "capability": "bankruptcy",
+      "golden_affected_count": 21,
+      "current_terminal_state": "19 FOUND through AUTHORIZED_BRIDGE; 21 UNAVAILABLE",
+      "current_source": "concrete Firmoteka event phrases; efrsb_direct runner has no configured transport",
+      "why_unresolved": "bridge absence cannot prove no EFRSB events",
+      "existing_code_path": [
+        "app/sources/firmoteka.py::concrete_bankruptcy_event",
+        "app/sources/direct_runners.py::EfrsbDirectRunner"
+      ],
+      "existing_db_or_cache_evidence": "19 exact-INN bridge payloads contain concrete procedure language; no direct Golden-40 EFRSB cache rows were found",
+      "possible_official_path": "documented EFRSB REST service: v1/auth, v1/bankrupts, v1/messages and v1/reports",
+      "possible_bridge_path": "Firmoteka positive concrete events; no negative inference",
+      "missing_credential_or_access": "production EFRSB service login/password issued on connection are absent from the runtime environment",
+      "semantic_blocker": "active, completed, intent and liquidation events require separate event/status semantics",
+      "technical_blocker": "public UI returns QRATOR/HTTP 401; documented production REST is credentialed"
+    },
+    {
+      "capability": "cbr_zsk",
+      "golden_affected_count": 40,
+      "current_terminal_state": "40 UNAVAILABLE",
+      "current_source": "official public form only",
+      "why_unresolved": "no completed per-company Golden-40 sessions exist",
+      "existing_code_path": [
+        "app/services/protected_source_session_service.py",
+        "app/sources/direct_runners.py::CbrZskRunner"
+      ],
+      "existing_db_or_cache_evidence": "one completed historical AVTOVAZ result exists outside Golden-40; Golden-40 query found zero protected-source sessions",
+      "possible_official_path": "ordinary official browser form",
+      "possible_bridge_path": null,
+      "missing_credential_or_access": "SmartCaptcha completion in the same ordinary browser session",
+      "semantic_blocker": "only HIGH_RISK_INFORMATION_FOUND, HIGH_RISK_INFORMATION_NOT_FOUND or UNAVAILABLE are valid",
+      "technical_blocker": "mandatory Yandex SmartCaptcha; no documented public machine endpoint found"
+    },
+    {
+      "capability": "arbitration",
+      "golden_affected_count": 40,
+      "current_terminal_state": "40 UNAVAILABLE in the baseline report",
+      "current_source": "KAD official reference plus Checko bridge adapter",
+      "why_unresolved": "CHECKO_API_KEY is absent and exact-day cache lookup ignored a one-day-old accepted Golden record",
+      "existing_code_path": [
+        "app/services/arbitration_court_service.py",
+        "app/providers/arbitration_court_provider.py"
+      ],
+      "existing_db_or_cache_evidence": "INN 1215214540 has 7 exact-INN cases persisted for 2025-09-17..2026-09-17; the 2026-09-18 read requested a shifted period and returned not_checked",
+      "possible_official_path": "KAD public UI; no documented production machine API confirmed",
+      "possible_bridge_path": "Checko free/account bridge when credential and rights are available",
+      "missing_credential_or_access": "CHECKO_API_KEY absent",
+      "semantic_blocker": "Checko is a bridge, not OFFICIAL_DIRECT; claimant/defendant roles and claim-not-debt wording must be retained",
+      "technical_blocker": "KAD machine POST observed HTTP 451/CAPTCHA; current cache lookup is exact-period only"
+    },
+    {
+      "capability": "general_courts",
+      "golden_affected_count": 40,
+      "current_terminal_state": "40 UNAVAILABLE in the baseline report",
+      "current_source": "Moscow official search, selected regional sudrf forms and central BSR fallback",
+      "why_unresolved": "no Golden-40 cached checks existed before this closure run",
+      "existing_code_path": [
+        "app/services/general_court_service.py",
+        "app/providers/general_court_provider.py"
+      ],
+      "existing_db_or_cache_evidence": "zero GeneralCourtCheck rows for Golden-40 at forensic start",
+      "possible_official_path": "targeted Moscow name query; exact-INN/OGRN regional sudrf query for configured regions",
+      "possible_bridge_path": "none accepted",
+      "missing_credential_or_access": "no credentials; portal availability and regional routing are the constraints",
+      "semantic_blocker": "a targeted regional result is PARTIAL and never a nationwide clean result",
+      "technical_blocker": "central coverage unavailable; several regional targets are not configured and observed endpoints can time out/challenge"
+    },
+    {
+      "capability": "licences_sro",
+      "golden_affected_count": 7,
+      "current_terminal_state": "18 NOT_APPLICABLE; 15 FOUND/PARTIAL; 7 UNAVAILABLE at baseline",
+      "current_source": "Roszdrav datasets/search, NOSTROY/NOPRIZ exact-INN checks and Firmoteka bridge",
+      "why_unresolved": "six applicable construction companies had never been queried in NOSTROY; one driving-school company has no connected education-licence registry",
+      "existing_code_path": [
+        "app/services/capability_applicability_service.py",
+        "app/services/nostroy_service.py",
+        "app/services/nopriz_service.py",
+        "app/services/roszdrav_service.py"
+      ],
+      "existing_db_or_cache_evidence": "closure run persisted six NOSTROY exact-INN results: three found and three not_found; all dated 2026-09-18",
+      "possible_official_path": "the activity-specific official registry selected by OKVED and deal scope",
+      "possible_bridge_path": "Firmoteka positive licence facts",
+      "missing_credential_or_access": "none for NOSTROY; education-licence registry integration is absent",
+      "semantic_blocker": "primary OKVED is a conservative routing signal and does not prove that every contract requires SRO membership",
+      "technical_blocker": "one applicable driving-school registry path is not implemented"
+    },
+    {
+      "capability": "procurement_rnp",
+      "golden_affected_count": 40,
+      "current_terminal_state": "40 deferred UNAVAILABLE, excluded from the current denominator",
+      "current_source": "official EIS SOAP foundation",
+      "why_unresolved": "official machine access is not connected",
+      "existing_code_path": "app/providers/eis_rnp_provider.py",
+      "existing_db_or_cache_evidence": "no Golden-40 official RNP result",
+      "possible_official_path": "EIS getDocsLE/getDocsIP",
+      "possible_bridge_path": "not approved for this iteration",
+      "missing_credential_or_access": "EIS_IP_TOKEN absent; ESIA/qualified-certificate onboarding remains external",
+      "semantic_blocker": "procurement context is distinct from universal company-risk applicability; missing context is not a negative fact",
+      "technical_blocker": "official recipient access not completed"
+    },
+    {
+      "capability": "bankinform",
+      "golden_affected_count": 0,
+      "current_terminal_state": "40 NOT_APPLICABLE for this cohort",
+      "current_source": "official FNS bank-facing form",
+      "why_unresolved": "not a Golden gap because no bank/account context or querying-bank BIK was supplied",
+      "existing_code_path": "app/sources/direct_runners.py::FnsBankinformRunner",
+      "existing_db_or_cache_evidence": "one completed AVTOVAZ result exists outside Golden-40",
+      "possible_official_path": "FNS Bankinform",
+      "possible_bridge_path": null,
+      "missing_credential_or_access": "real querying-bank BIK/context when the check is relevant",
+      "semantic_blocker": "must remain OPTIONAL_CONTEXT",
+      "technical_blocker": null
+    }
+  ]
+}
