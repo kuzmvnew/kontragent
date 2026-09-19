@@ -1,7 +1,53 @@
 <h2>Краткий итог проверки</h2>
 
+{% set summary_v3 = company.summary_v3 %}
 {% set summary = company.summary %}
-{% if summary and company.risk_assessment and summary.risk_assessment_id == company.risk_assessment.assessment_id %}
+{% if summary_v3 %}
+    <div class="summary-engine" data-summary-version="{{ summary_v3.version }}">
+        <p class="summary-conclusion"><strong>{{ summary_v3.conclusion }}</strong></p>
+
+        {% if summary_v3.main_reasons %}
+            <h3>Основные факторы</h3>
+            <ol>
+                {% for reason in summary_v3.main_reasons %}
+                    <li>{{ reason }} <a href="#risk-details">Почему</a></li>
+                {% endfor %}
+            </ol>
+        {% endif %}
+
+        {% if summary_v3.positive_checks %}
+            <h3>Положительные результаты</h3>
+            <ul>
+                {% for check in summary_v3.positive_checks %}
+                    <li>{{ check }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        {% if summary_v3.limitations %}
+            <h3>Что не удалось проверить</h3>
+            <ul>
+                {% for limitation in summary_v3.limitations %}
+                    <li>{{ limitation }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        {% if summary_v3.recommendations %}
+            <h3>Следующие действия</h3>
+            <ul>
+                {% for recommendation in summary_v3.recommendations %}
+                    <li>{{ recommendation }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <details class="source-note">
+            <summary>Источник и методика</summary>
+            <p>Версия итогов: {{ summary_v3.version }}</p>
+        </details>
+    </div>
+{% elif summary and company.risk_assessment and summary.risk_assessment_id == company.risk_assessment.assessment_id %}
     <div class="summary-engine" data-summary-id="{{ summary.summary_id }}" data-risk-assessment-id="{{ summary.risk_assessment_id }}">
         <p class="summary-conclusion"><strong>{{ summary.text_blocks.short_conclusion.text }}</strong></p>
 
@@ -40,17 +86,20 @@
             <p>Версия итогов: {{ summary.summary_engine_version }} · версия оценки: {{ summary.risk_engine_version }} · набор правил: {{ summary.ruleset_version }}</p>
         </details>
     </div>
+{% elif summary %}
+    <div class="summary-stale">
+        <p>Сохранённый итог относится к предыдущей оценке и не показывается как актуальный.</p>
+    </div>
 {% else %}
     <div class="summary-placeholder">
         <p>Краткий итог ещё не сформирован для текущей оценки рисков.</p>
-        {% if summary %}<p>Сохранённый итог относится к предыдущей оценке и не показывается как актуальный.</p>{% endif %}
     </div>
 {% endif %}
 
-{% if company.risk_assessment %}
+{% if not company.risk_v3 and not summary_v3 and company.risk_assessment %}
     <form method="post" action="/company/{{ company.inn }}/summary">
         <button type="submit">{{ "Обновить краткий итог" if summary else "Сформировать краткий итог" }}</button>
     </form>
-{% else %}
+{% elif not company.risk_v3 and not summary_v3 %}
     <p>Сначала рассчитайте оценку рисков.</p>
 {% endif %}

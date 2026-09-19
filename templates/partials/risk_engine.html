@@ -1,7 +1,43 @@
 <h2>Оценка рисков</h2>
 
+{% set risk_v3 = company.risk_v3 %}
 {% set risk = company.risk_assessment %}
-{% if risk %}
+{% if risk_v3 %}
+    <div class="risk-engine-summary" data-risk-version="{{ risk_v3.version }}">
+        <div class="risk-engine-overall risk-engine-v3">
+            <strong>{{ risk_v3.label or risk_v3.overall }}</strong>
+        </div>
+        {% if risk_v3.label and risk_v3.overall and risk_v3.overall != risk_v3.label %}
+            <p>{{ risk_v3.overall }}</p>
+        {% endif %}
+
+        <div class="info-grid">
+            <div class="info-item"><div class="info-label">Индекс риска</div><div class="info-value">{{ risk_v3.risk_score }}/100</div></div>
+            <div class="info-item"><div class="info-label">Покрытие доказательствами (Evidence Coverage)</div><div class="info-value">{{ risk_v3.coverage.coverage_score }}/100</div></div>
+            {% if risk_v3.coverage.workflow_completion_percent is defined and risk_v3.coverage.workflow_completion_percent is not none %}
+                <div class="info-item"><div class="info-label">Завершённость проверок</div><div class="info-value">{{ risk_v3.coverage.workflow_completion_percent }}%</div></div>
+            {% endif %}
+        </div>
+
+        {% if risk_v3.points %}
+            <h3>Основные факторы</h3>
+            {% for point in risk_v3.points %}
+                <details class="risk-signal" data-capability-id="{{ point.capability_id }}">
+                    <summary>{{ point.fact }} · {{ point.points }} баллов</summary>
+                    <p>Раздел: {{ point.section | risk_section_label }}</p>
+                    <details>
+                        <summary>Источник и методика</summary>
+                        <p class="source-note">
+                            Источник: {{ point.source_code }} · дата данных: {{ point.source_as_of or "актуальная дата отсутствует" }}
+                        </p>
+                        <p>Правило: {{ point.rule }}</p>
+                        <p>Расчёт: {{ point.calculation }}</p>
+                    </details>
+                </details>
+            {% endfor %}
+        {% endif %}
+    </div>
+{% elif risk %}
     <div class="risk-engine-summary" data-assessment-id="{{ risk.assessment_id }}">
         <div class="risk-engine-overall risk-engine-{{ risk.overall_status|lower }}">
             <strong>{{ risk.overall_status | risk_label }}</strong>
@@ -43,13 +79,13 @@
             </details>
         {% endfor %}
     </div>
+
+    <form method="post" action="/company/{{ company.inn }}/risk-assessment">
+        <button type="submit">Пересчитать оценку</button>
+    </form>
 {% else %}
     <div class="risk-placeholder">
         <div class="risk-placeholder-title">Оценка ещё не рассчитана</div>
         <p>Расчёт выполняется только по запросу и использует сохранённые факты, полноту проверки и актуальность данных. Недоступный источник не считается чистым результатом.</p>
     </div>
 {% endif %}
-
-<form method="post" action="/company/{{ company.inn }}/risk-assessment">
-    <button type="submit">{{ "Пересчитать оценку" if risk else "Рассчитать оценку" }}</button>
-</form>

@@ -110,6 +110,168 @@ def test_public_company_projection_excludes_internal_and_raw_fields(monkeypatch)
         assert forbidden not in body
 
 
+def _company_card_payload(**overrides):
+    payload = {
+        "inn": "7700000000",
+        "ogrn": "1027700000000",
+        "name": "ООО ТЕСТОВАЯ КАРТОЧКА",
+        "status": "ACTIVE",
+        "employee_count": None,
+        "arbitration_court_check": {"checked": False, "reason": "not_checked"},
+        "general_court_check": {"checked": False, "reason": "not_checked"},
+        "fns_bankinform_check": {"status": "not_checked"},
+        "cbr_zsk_check": {"status": "not_checked"},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _v3_risk():
+    return {
+        "version": "risk-engine-3.1.0",
+        "risk_score": 41,
+        "label": "Требует внимания",
+        "overall": "Требует внимания",
+        "coverage": {
+            "coverage_score": 88,
+            "workflow_completion_percent": 100,
+        },
+        "points": [{
+            "capability_id": "tax_debt",
+            "section": "taxes",
+            "source_code": "fns_tax_debt",
+            "fact": "Найдена налоговая задолженность",
+            "rule": "TAX_DEBT_SCALE",
+            "points": 7,
+            "calculation": "debt/revenue",
+            "source_as_of": "2026-09-01",
+        }],
+    }
+
+
+def _v3_summary():
+    return {
+        "version": "summary-engine-3.1.1",
+        "conclusion": "Сохранённый итог v3 для тестовой компании.",
+        "main_reasons": ["Найдена налоговая задолженность — 7 баллов"],
+        "positive_checks": ["Регистрационный статус подтверждён"],
+        "limitations": ["Один источник временно недоступен"],
+        "recommendations": ["Запросить актуальную справку"],
+    }
+
+
+def _legacy_risk():
+    return {
+        "assessment_id": "legacy-risk-1",
+        "overall_status": "HIGH",
+        "completeness": {
+            "total_applicable_checks": 2,
+            "completed": 1,
+            "unavailable": 0,
+            "not_checked": 1,
+            "stale": 0,
+            "partial": 0,
+        },
+        "section_assessments": [],
+        "signals": [],
+    }
+
+
+def _legacy_summary():
+    return {
+        "summary_id": "legacy-summary-1",
+        "risk_assessment_id": "legacy-risk-1",
+        "summary_engine_version": "summary-engine-2.0.1",
+        "risk_engine_version": "risk-engine-2.0.1",
+        "ruleset_version": "rules-v1",
+        "text_blocks": {
+            "short_conclusion": {"text": "Legacy-краткий итог."},
+            "main_factors": [],
+            "limitations": [],
+            "recommendations": [],
+        },
+    }
+
+
+def test_company_card_renders_v3_only_without_legacy_placeholders_or_actions(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_company_read_model",
+        lambda _inn: _company_card_payload(risk_v3=_v3_risk(), summary_v3=_v3_summary()),
+    )
+
+    response = client.get("/company/7700000000")
+
+    assert response.status_code == 200
+    assert "41/100" in response.text
+    assert "Требует внимания" in response.text
+    assert "88/100" in response.text
+    assert "100%" in response.text
+    assert "Найдена налоговая задолженность · 7 баллов" in response.text
+    assert "Сохранённый итог v3 для тестовой компании." in response.text
+    assert "Найдена налоговая задолженность — 7 баллов" in response.text
+    assert "Регистрационный статус подтверждён" in response.text
+    assert "Один источник временно недоступен" in response.text
+    assert "Запросить актуальную справку" in response.text
+    assert "Оценка ещё не рассчитана" not in response.text
+    assert "Краткий итог ещё не сформирован" not in response.text
+    assert "/risk-assessment" not in response.text
+    assert 'action="/company/7700000000/summary"' not in response.text
+
+
+def test_company_card_preserves_legacy_risk_and_summary_rendering(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_company_read_model",
+        lambda _inn: _company_card_payload(
+            risk_assessment=_legacy_risk(), summary=_legacy_summary(),
+        ),
+    )
+
+    response = client.get("/company/7700000000")
+
+    assert response.status_code == 200
+    assert "Высокий риск" in response.text
+    assert "Legacy-краткий итог." in response.text
+    assert 'action="/company/7700000000/risk-assessment"' in response.text
+    assert 'action="/company/7700000000/summary"' in response.text
+    assert "Оценка ещё не рассчитана" not in response.text
+    assert "Краткий итог ещё не сформирован" not in response.text
+
+
+def test_company_card_prefers_v3_when_both_formats_are_present(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_company_read_model",
+        lambda _inn: _company_card_payload(
+            risk_v3=_v3_risk(),
+            summary_v3=_v3_summary(),
+            risk_assessment=_legacy_risk(),
+            summary=_legacy_summary(),
+        ),
+    )
+
+    response = client.get("/company/7700000000")
+
+    assert response.status_code == 200
+    assert "41/100" in response.text
+    assert "Сохранённый итог v3 для тестовой компании." in response.text
+    assert "Высокий риск" not in response.text
+    assert "Legacy-краткий итог." not in response.text
+    assert "/risk-assessment" not in response.text
+    assert 'action="/company/7700000000/summary"' not in response.text
+
+
+def test_company_card_preserves_empty_risk_and_summary_placeholders(monkeypatch):
+    monkeypatch.setattr(main, "load_company_read_model", lambda _inn: _company_card_payload())
+
+    response = client.get("/company/7700000000")
+
+    assert response.status_code == 200
+    assert "Оценка ещё не рассчитана" in response.text
+    assert "Краткий итог ещё не сформирован" in response.text
+
+
 def test_mutation_and_internal_routes_fail_closed(monkeypatch):
     monkeypatch.delenv("KONTRAGENT_INTERNAL_TOKEN", raising=False)
     assert client.post("/company/7700000000/risk-assessment").status_code == 503
