@@ -98,5 +98,5 @@ def downgrade():
     for table in reversed(snapshot_tables()):
         if inspector.has_table(table.name):
             comment = inspector.get_table_comment(table.name).get("text") or ""
-            if CREATED_MARKER in comment.splitlines():
+            if comment == CREATED_MARKER:
                 op.drop_table(table.name)

@@ -2,7 +2,8 @@
 
 Kept versioned with migrations: reconciliation revisions must not import live
 ORM definitions, whose schema can change after a revision has been deployed.
-Names are significant for declared indexes and named unique constraints.
+Index and named CHECK identities are significant. Equivalent full-table UNIQUE
+constraints and UNIQUE indexes are compared by their data-write semantics.
 """
 
 from __future__ import annotations
@@ -38,6 +39,93 @@ def _index_options(options):
         "nulls_not_distinct": bool(options.get("postgresql_nulls_not_distinct", False)),
     }
 
+
+def _strip_outer_parentheses(value):
+    value = value.strip()
+    while value.startswith("(") and value.endswith(")"):
+        depth = 0
+        encloses_all = True
+        for index, character in enumerate(value):
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0 and index != len(value) - 1:
+                    encloses_all = False
+                    break
+        if not encloses_all or depth != 0:
+            break
+        value = value[1:-1].strip()
+    return value
+
+
+def _lower_unquoted(value):
+    parts = re.split(r"('(?:''|[^'])*')", value)
+    return "".join(part if index % 2 else part.lower() for index, part in enumerate(parts))
+
+
+def _canonical_check(value):
+    """Normalize the PostgreSQL forms used by the project's ORM checks."""
+    value = _strip_outer_parentheses(str(value))
+    # PostgreSQL rewrites VARCHAR IN (...) as TEXT = ANY (ARRAY[...]). Remove
+    # representation-only scalar/array casts, then restore the declared IN form.
+    parts = re.split(r"('(?:''|[^'])*')", value)
+    cast_pattern = re.compile(
+        r"::\s*(?:character\s+varying|varchar|text|smallint|integer|bigint|"
+        r"numeric|boolean|date)(?:\s*\([^)]*\))?(?:\s*\[\s*\])?",
+        flags=re.IGNORECASE,
+    )
+    value = "".join(
+        part if index % 2 else cast_pattern.sub("", part)
+        for index, part in enumerate(parts)
+    )
+    value = re.sub(
+        r"\b([A-Za-z_][\w.]*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[(.*?)\]\s*\)",
+        r"\1 IN (\2)",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    value = re.sub(
+        r"\b([A-Za-z_][\w.]*)\s*<>\s*ALL\s*\(\s*ARRAY\s*\[(.*?)\]\s*\)",
+        r"\1 NOT IN (\2)",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    value = _lower_unquoted(value)
+    value = re.sub(r"\s+", " ", value).strip()
+    value = re.sub(r"\s*([(),])\s*", r"\1", value)
+    value = re.sub(r"\s*(>=|<=|<>|!=|=|>|<)\s*", r"\1", value)
+    return _strip_outer_parentheses(value)
+
+
+def _unique_signature(value):
+    return (
+        tuple(value["columns"]),
+        bool(value.get("nulls_not_distinct", False)),
+    )
+
+
+# This partial index is created intentionally by d4e5f6a7b8c9. It enforces
+# one active publication per dataset and has no equivalent ORM Index object.
+# Match its complete reflected shape so the exception cannot hide another
+# unique index or a changed predicate.
+KNOWN_DB_ONLY_INDEXES = {
+    "dataset_publications": {
+        "uq_dataset_publications_one_active": {
+            "columns": ["dataset_id"],
+            "unique": True,
+            "using": "btree",
+            "where": "is_active",
+            "ops": {},
+            "include": [],
+            "nulls_not_distinct": False,
+            "is_expression": False,
+            "duplicates_constraint": None,
+        },
+    },
+}
+
+
 def model_table_schema(table, dialect):
     columns = {}
     for column in table.columns:
@@ -62,12 +150,20 @@ def model_table_schema(table, dialect):
             for fk in table.foreign_key_constraints
         ], key=lambda value: value["columns"]),
         "unique_constraints": sorted([
-            {"name": constraint.name, "columns": list(constraint.columns.keys())}
+            {"name": constraint.name, "columns": list(constraint.columns.keys()),
+             "nulls_not_distinct": bool(dict(constraint.dialect_kwargs).get("postgresql_nulls_not_distinct", False))}
             for constraint in table.constraints if isinstance(constraint, sa.UniqueConstraint)
         ], key=lambda value: value["columns"]),
+        "check_constraints": sorted([
+            {"name": constraint.name,
+             "sqltext": _canonical_check(_sql(constraint.sqltext, dialect))}
+            for constraint in table.constraints if isinstance(constraint, sa.CheckConstraint)
+        ], key=lambda value: (value["name"] or "", value["sqltext"])),
         "indexes": {index.name: {
             "columns": [expression.name if isinstance(expression, sa.Column) else _sql(expression, dialect) for expression in index.expressions],
             "unique": bool(index.unique), **_index_options(dict(index.dialect_kwargs)),
+            "is_expression": any(not isinstance(expression, sa.Column) for expression in index.expressions),
+            "duplicates_constraint": None,
         } for index in sorted(table.indexes, key=lambda index: index.name)},
     }
 
@@ -92,19 +188,26 @@ def inspected_table_schema(inspector, name, schema=None):
             for fk in inspector.get_foreign_keys(name, schema=schema)
         ], key=lambda value: value["columns"]),
         "unique_constraints": sorted([
-            {"name": constraint["name"], "columns": constraint["column_names"]}
+            {"name": constraint["name"], "columns": constraint["column_names"],
+             "nulls_not_distinct": bool(constraint.get("dialect_options", {}).get("postgresql_nulls_not_distinct", False))}
             for constraint in inspector.get_unique_constraints(name, schema=schema)
         ], key=lambda value: value["columns"]),
         "indexes": {index["name"]: {
             "columns": [column if column is not None else index.get("expressions", [])[i] for i, column in enumerate(index["column_names"])],
             "unique": bool(index["unique"]), **_index_options(index.get("dialect_options", {})),
+            "is_expression": any(column is None for column in index["column_names"]),
+            "duplicates_constraint": index.get("duplicates_constraint"),
         } for index in inspector.get_indexes(name, schema=schema)},
-        "check_constraints": inspector.get_check_constraints(name, schema=schema),
+        "check_constraints": sorted([
+            {"name": constraint["name"],
+             "sqltext": _canonical_check(constraint["sqltext"])}
+            for constraint in inspector.get_check_constraints(name, schema=schema)
+        ], key=lambda value: (value["name"] or "", value["sqltext"])),
         "comment": inspector.get_table_comment(name, schema=schema).get("text"),
     }
 
 
-def compare_table_schema(expected, actual, *, strict=False):
+def compare_table_schema(expected, actual, *, strict=False, allowed_extra_indexes=None):
     """Return errors plus explicit, non-blocking representation differences."""
     errors, observations = [], []
 
@@ -137,12 +240,57 @@ def compare_table_schema(expected, actual, *, strict=False):
                 issue("default_mismatch", name, wanted["default"], observed["default"])
     if expected["primary_key"] != actual["primary_key"]:
         issue("primary_key_mismatch", "primary_key", expected["primary_key"], actual["primary_key"])
+
     for fk in expected["foreign_keys"]:
         if fk not in actual["foreign_keys"]:
             issue("missing_or_incompatible_foreign_key", ",".join(fk["columns"]), fk, actual["foreign_keys"])
+    for fk in actual["foreign_keys"]:
+        if fk not in expected["foreign_keys"]:
+            issue("unexpected_foreign_key", ",".join(fk["columns"]), expected["foreign_keys"], fk)
+
+    expected_unique_signatures = {
+        _unique_signature(constraint) for constraint in expected["unique_constraints"]
+    }
+    expected_unique_signatures.update(
+        _unique_signature(index) for index in expected["indexes"].values()
+        if index["unique"] and not index["where"] and not index["is_expression"]
+    )
+    actual_unique_signatures = {
+        _unique_signature(constraint) for constraint in actual["unique_constraints"]
+    }
+    actual_unique_signatures.update(
+        _unique_signature(index) for index in actual["indexes"].values()
+        if index["unique"] and not index["where"] and not index["is_expression"]
+    )
     for constraint in expected["unique_constraints"]:
-        if not any(constraint["columns"] == item["columns"] and (constraint["name"] is None or constraint["name"] == item["name"]) for item in actual["unique_constraints"]):
+        if _unique_signature(constraint) not in actual_unique_signatures:
             issue("missing_or_incompatible_unique_constraint", constraint["name"], constraint, actual["unique_constraints"])
+    for constraint in actual["unique_constraints"]:
+        if _unique_signature(constraint) not in expected_unique_signatures:
+            issue("unexpected_unique_constraint", constraint["name"], expected["unique_constraints"], constraint)
+
+    actual_checks = actual.get("check_constraints", [])
+    used_actual_checks = set()
+    for wanted in expected.get("check_constraints", []):
+        candidates = [
+            (index, observed) for index, observed in enumerate(actual_checks)
+            if wanted["name"] is None or observed["name"] == wanted["name"]
+        ]
+        match = next(
+            ((index, observed) for index, observed in candidates
+             if observed["sqltext"] == wanted["sqltext"]),
+            None,
+        )
+        if match is not None:
+            used_actual_checks.add(match[0])
+            continue
+        if candidates:
+            used_actual_checks.add(candidates[0][0])
+        issue("missing_or_incompatible_check_constraint", wanted["name"], wanted, [value for _, value in candidates])
+    for index, constraint in enumerate(actual_checks):
+        if index not in used_actual_checks:
+            issue("unexpected_check_constraint", constraint["name"], expected.get("check_constraints", []), constraint)
+
     for name, wanted in expected["indexes"].items():
         observed = actual["indexes"].get(name)
         if observed == wanted:
@@ -150,24 +298,23 @@ def compare_table_schema(expected, actual, *, strict=False):
         # Existing migrations express unique=True,index=True as a named plain
         # index plus a separate UNIQUE constraint. Together these enforce the
         # same contract; never accept a plain or partial index alone as unique.
-        if observed is not None and wanted["unique"] and observed == {**wanted, "unique": False} and any(c["columns"] == wanted["columns"] for c in actual["unique_constraints"]):
+        if observed is not None and wanted["unique"] and observed == {**wanted, "unique": False} and _unique_signature(wanted) in actual_unique_signatures:
             observations.append({"kind": "unique_index_backed_by_unique_constraint", "path": name})
         else:
             issue("missing_or_incompatible_index", name, wanted, observed)
+    allowed_extra_indexes = allowed_extra_indexes or {}
     for name in sorted(set(actual["indexes"]) - set(expected["indexes"])):
-        if any(c["name"] == name for c in actual["unique_constraints"]):
+        observed = actual["indexes"][name]
+        if observed.get("duplicates_constraint"):
             continue
-        if strict and actual["indexes"][name]["unique"]:
-            issue("unexpected_unique_index", name, None, actual["indexes"][name])
+        if allowed_extra_indexes.get(name) == observed:
+            observations.append({"kind": "intentional_database_index", "path": name, "actual": observed})
+        elif observed["unique"] and not observed["where"] and not observed["is_expression"] and _unique_signature(observed) in expected_unique_signatures:
+            observations.append({"kind": "equivalent_unique_index", "path": name, "actual": observed})
+        elif observed["unique"]:
+            issue("unexpected_unique_index", name, None, observed)
         else:
-            observations.append({"kind": "additional_database_index", "path": name, "actual": actual["indexes"][name]})
-    if strict:
-        for key in ("foreign_keys", "unique_constraints"):
-            for value in actual[key]:
-                if value not in expected[key]:
-                    issue("unexpected_" + key, key, expected[key], value)
-        if actual.get("check_constraints"):
-            issue("unexpected_check_constraints", "check_constraints", [], actual["check_constraints"])
+            observations.append({"kind": "additional_database_index", "path": name, "actual": observed})
     return errors, observations
 
 
@@ -180,7 +327,10 @@ def audit_metadata(connection, metadata, *, strict=False):
     observations, actual = [], {}
     for name in sorted(set(expected) & set(tables)):
         actual[name] = inspected_table_schema(inspector, name)
-        table_errors, table_observations = compare_table_schema(expected[name], actual[name], strict=strict)
+        table_errors, table_observations = compare_table_schema(
+            expected[name], actual[name], strict=strict,
+            allowed_extra_indexes=KNOWN_DB_ONLY_INDEXES.get(name),
+        )
         errors.extend({"table": name, **item} for item in table_errors)
         observations.extend({"table": name, **item} for item in table_observations)
     return {

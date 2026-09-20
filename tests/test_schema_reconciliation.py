@@ -43,6 +43,12 @@ def test_all_orm_tables_exist_after_alembic_clean_install():
         assert set(TABLES).issubset(sa.inspect(connection).get_table_names())
         report = audit_metadata(connection, Base.metadata)
         assert report["compatible"], report["errors"]
+        assert any(
+            item["table"] == "dataset_publications"
+            and item["kind"] == "intentional_database_index"
+            and item["path"] == "uq_dataset_publications_one_active"
+            for item in report["observations"]
+        )
 
 
 @pytest.fixture
@@ -74,6 +80,14 @@ def _assert_snapshot_schema(connection):
             inspected_table_schema(inspector, name), strict=True,
         )
         assert not errors, errors
+
+
+def _orm_table_errors(connection, name, *, strict=True):
+    return compare_table_schema(
+        model_table_schema(Base.metadata.tables[name], connection.dialect),
+        inspected_table_schema(sa.inspect(connection), name),
+        strict=strict,
+    )
 
 
 def _seed(connection):
@@ -111,8 +125,22 @@ def test_fresh_upgrade_downgrade_upgrade_recreates_owned_tables(migration_connec
     _assert_snapshot_schema(connection)
 
 
-@pytest.mark.parametrize("legacy_comment", [None, "legacy table", "created_by_alembic_reconciliation:another_revision"])
-def test_legacy_upgrade_and_downgrade_preserve_data_schema_and_oids(migration_connection, legacy_comment):
+@pytest.mark.parametrize(("legacy_comment", "owned"), [
+    (reconciliation.CREATED_MARKER, True),
+    ("prefix " + reconciliation.CREATED_MARKER, False),
+    (reconciliation.CREATED_MARKER + " trailing audit text", False),
+    (
+        "Legacy table; quoted audit example follows:\n"
+        + reconciliation.CREATED_MARKER
+        + "\nNot owned by this migration.",
+        False,
+    ),
+    ("legacy table", False),
+    (None, False),
+])
+def test_downgrade_requires_exact_ownership_comment(
+    migration_connection, legacy_comment, owned,
+):
     connection = migration_connection
     reconciliation.upgrade()
     _seed(connection)
@@ -123,7 +151,10 @@ def test_legacy_upgrade_and_downgrade_preserve_data_schema_and_oids(migration_co
     reconciliation.upgrade()
     assert _state(connection) == before
     reconciliation.downgrade()
-    assert _state(connection) == before
+    if owned:
+        assert not set(TABLES).intersection(sa.inspect(connection).get_table_names())
+    else:
+        assert _state(connection) == before
 
 
 def test_mixed_legacy_and_created_ownership_drops_only_new_table(migration_connection):
@@ -185,6 +216,151 @@ def test_unique_index_equivalence_requires_actual_uniqueness(migration_connectio
     errors, observations = compare_table_schema(expected, equivalent)
     assert not errors
     assert any(item["kind"] == "unique_index_backed_by_unique_constraint" for item in observations)
+
+
+def test_expected_orm_check_is_represented_and_compatible(migration_connection):
+    connection = migration_connection
+    Base.metadata.tables["company_public_facts"].create(connection)
+    expected = model_table_schema(
+        Base.metadata.tables["company_public_facts"], connection.dialect,
+    )
+    assert expected["check_constraints"] == [{
+        "name": "ck_company_public_fact_type",
+        "sqltext": (
+            "fact_type in('website','phone','email','registered_address',"
+            "'factual_address','postal_address','mass_address','mass_director',"
+            "'mass_founder','public_bank_details','related_company')"
+        ),
+    }]
+    errors, _ = _orm_table_errors(connection, "company_public_facts")
+    assert not errors, errors
+
+
+def test_missing_expected_orm_check_fails(migration_connection):
+    connection = migration_connection
+    Base.metadata.tables["company_public_facts"].create(connection)
+    connection.exec_driver_sql(
+        "ALTER TABLE company_public_facts "
+        "DROP CONSTRAINT ck_company_public_fact_type"
+    )
+    errors, _ = _orm_table_errors(connection, "company_public_facts")
+    assert any(
+        error["kind"] == "missing_or_incompatible_check_constraint"
+        and error["path"] == "ck_company_public_fact_type"
+        for error in errors
+    )
+
+
+def test_wrong_expected_orm_check_fails(migration_connection):
+    connection = migration_connection
+    Base.metadata.tables["company_public_facts"].create(connection)
+    connection.exec_driver_sql(
+        "ALTER TABLE company_public_facts "
+        "DROP CONSTRAINT ck_company_public_fact_type"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE company_public_facts ADD CONSTRAINT "
+        "ck_company_public_fact_type CHECK (fact_type <> '')"
+    )
+    errors, _ = _orm_table_errors(connection, "company_public_facts")
+    assert any(
+        error["kind"] == "missing_or_incompatible_check_constraint"
+        and error["path"] == "ck_company_public_fact_type"
+        for error in errors
+    )
+
+
+def test_extra_restrictive_check_fails(migration_connection):
+    connection = migration_connection
+    reconciliation.upgrade()
+    connection.exec_driver_sql(
+        "ALTER TABLE company_revenue_expense_snapshots ADD CONSTRAINT "
+        "ck_profit_loss_nonnegative CHECK (profit_loss >= 0)"
+    )
+    errors, _ = _orm_table_errors(
+        connection, "company_revenue_expense_snapshots"
+    )
+    assert any(
+        error["kind"] == "unexpected_check_constraint"
+        and error["path"] == "ck_profit_loss_nonnegative"
+        for error in errors
+    )
+
+
+def test_extra_restrictive_unique_fails(migration_connection):
+    connection = migration_connection
+    reconciliation.upgrade()
+    connection.exec_driver_sql(
+        "ALTER TABLE company_revenue_expense_snapshots ADD CONSTRAINT "
+        "uq_revexp_company_only UNIQUE (company_id)"
+    )
+    errors, _ = _orm_table_errors(
+        connection, "company_revenue_expense_snapshots"
+    )
+    assert any(
+        error["kind"] == "unexpected_unique_constraint"
+        and error["path"] == "uq_revexp_company_only"
+        for error in errors
+    )
+
+
+def test_missing_expected_unique_fails(migration_connection):
+    connection = migration_connection
+    reconciliation.upgrade()
+    connection.exec_driver_sql(
+        "ALTER TABLE company_revenue_expense_snapshots DROP CONSTRAINT "
+        "uq_company_revexp_company_dataset_date"
+    )
+    errors, _ = _orm_table_errors(
+        connection, "company_revenue_expense_snapshots"
+    )
+    assert any(
+        error["kind"] == "missing_or_incompatible_unique_constraint"
+        and error["path"] == "uq_company_revexp_company_dataset_date"
+        for error in errors
+    )
+
+
+def test_wrong_foreign_key_action_fails(migration_connection):
+    connection = migration_connection
+    reconciliation.upgrade()
+    connection.exec_driver_sql(
+        "ALTER TABLE company_revenue_expense_snapshots DROP CONSTRAINT "
+        "company_revenue_expense_snapshots_company_id_fkey"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE company_revenue_expense_snapshots ADD CONSTRAINT "
+        "company_revenue_expense_snapshots_company_id_fkey "
+        "FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE RESTRICT"
+    )
+    errors, _ = _orm_table_errors(
+        connection, "company_revenue_expense_snapshots"
+    )
+    kinds = {error["kind"] for error in errors}
+    assert "missing_or_incompatible_foreign_key" in kinds
+    assert "unexpected_foreign_key" in kinds
+
+
+def test_unique_constraint_and_unique_index_are_equivalent(migration_connection):
+    connection = migration_connection
+    reconciliation.upgrade()
+    connection.exec_driver_sql(
+        "ALTER TABLE company_tax_regime_snapshots DROP CONSTRAINT "
+        "uq_company_tax_regime_company_dataset_date"
+    )
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX uq_company_tax_regime_company_dataset_date "
+        "ON company_tax_regime_snapshots (company_id, dataset_id, data_date)"
+    )
+    errors, observations = _orm_table_errors(
+        connection, "company_tax_regime_snapshots"
+    )
+    assert not errors, errors
+    assert any(
+        item["kind"] == "equivalent_unique_index"
+        and item["path"] == "uq_company_tax_regime_company_dataset_date"
+        for item in observations
+    )
 
 
 def test_pytest_rejects_historical_database_before_collection():
