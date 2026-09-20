@@ -2,6 +2,7 @@ from copy import deepcopy
 import importlib
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from uuid import uuid4
@@ -17,6 +18,7 @@ from app.database.base import Base
 from app.database.postgres import engine
 import app.models  # noqa: F401
 from migrations.schema_validation_v1 import (
+    _canonical_check,
     audit_metadata,
     compare_table_schema,
     inspected_table_schema,
@@ -30,6 +32,171 @@ reconciliation = importlib.import_module(
 TABLES = (
     "company_tax_regime_snapshots", "company_revenue_expense_snapshots",
 )
+
+
+def _old_broken_canonical_check(value):
+    """Characterize the TASK-014 implementation without importing Git history."""
+    def strip_outer_parentheses(expression):
+        expression = expression.strip()
+        while expression.startswith("(") and expression.endswith(")"):
+            depth = 0
+            encloses_all = True
+            for index, character in enumerate(expression):
+                if character == "(":
+                    depth += 1
+                elif character == ")":
+                    depth -= 1
+                    if depth == 0 and index != len(expression) - 1:
+                        encloses_all = False
+                        break
+            if not encloses_all or depth != 0:
+                break
+            expression = expression[1:-1].strip()
+        return expression
+
+    value = strip_outer_parentheses(str(value))
+    parts = re.split(r"('(?:''|[^'])*')", value)
+    cast_pattern = re.compile(
+        r"::\s*(?:character\s+varying|varchar|text|smallint|integer|bigint|"
+        r"numeric|boolean|date)(?:\s*\([^)]*\))?(?:\s*\[\s*\])?",
+        flags=re.IGNORECASE,
+    )
+    value = "".join(
+        part if index % 2 else cast_pattern.sub("", part)
+        for index, part in enumerate(parts)
+    )
+    value = re.sub(
+        r"\b([A-Za-z_][\w.]*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[(.*?)\]\s*\)",
+        r"\1 IN (\2)", value, flags=re.IGNORECASE | re.DOTALL,
+    )
+    value = re.sub(
+        r"\b([A-Za-z_][\w.]*)\s*<>\s*ALL\s*\(\s*ARRAY\s*\[(.*?)\]\s*\)",
+        r"\1 NOT IN (\2)", value, flags=re.IGNORECASE | re.DOTALL,
+    )
+    parts = re.split(r"('(?:''|[^'])*')", value)
+    value = "".join(
+        part if index % 2 else part.lower()
+        for index, part in enumerate(parts)
+    )
+    value = re.sub(r"\s+", " ", value).strip()
+    value = re.sub(r"\s*([(),])\s*", r"\1", value)
+    value = re.sub(r"\s*(>=|<=|<>|!=|=|>|<)\s*", r"\1", value)
+    return strip_outer_parentheses(value)
+
+
+def _schema_with_check(sqltext):
+    return {
+        "columns": {},
+        "primary_key": [],
+        "foreign_keys": [],
+        "unique_constraints": [],
+        "check_constraints": [{
+            "name": "ck_task_014",
+            "sqltext": _canonical_check(sqltext),
+        }],
+        "indexes": {},
+    }
+
+
+QA_F02C_COUNTEREXAMPLES = (
+    ("literal repeated whitespace", "label = 'A  B'", "label = 'A B'"),
+    ("literal comma whitespace", "label = 'A , B'", "label = 'A,B'"),
+    ("literal parenthesis whitespace", "label = 'A ( B )'", "label = 'A(B)'"),
+    ("literal operator whitespace", "label = 'A = B'", "label = 'A=B'"),
+    ("scalar cast type", "code::text = '01'", "code::integer = '01'"),
+    (
+        "numeric cast typemod",
+        "amount::numeric(10, 2) >= 0",
+        "amount::numeric(12, 4) >= 0",
+    ),
+    (
+        "array and scalar cast types",
+        "code::text = ANY (ARRAY['01'::text])",
+        "code::integer = ANY (ARRAY['01'::integer])",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_sql", "actual_sql"),
+    QA_F02C_COUNTEREXAMPLES,
+    ids=[case[0] for case in QA_F02C_COUNTEREXAMPLES],
+)
+def test_task_014_counterexamples_fail_closed(case, expected_sql, actual_sql):
+    assert case
+    assert expected_sql != actual_sql
+    assert _old_broken_canonical_check(expected_sql) == _old_broken_canonical_check(actual_sql)
+    assert _canonical_check(expected_sql) != _canonical_check(actual_sql)
+    errors, _ = compare_table_schema(
+        _schema_with_check(expected_sql), _schema_with_check(actual_sql),
+    )
+    assert any(
+        error["kind"] == "missing_or_incompatible_check_constraint"
+        and error["path"] == "ck_task_014"
+        for error in errors
+    )
+
+
+@pytest.mark.parametrize(("expected_sql", "actual_sql"), (
+    ("status = 'active'", "status = 'inactive'"),
+    ("label = 'A  B'", "label = 'A B'"),
+    ("label = 'A'' B'", "label = 'A''B'"),
+    ("label = 'x::text'", "label = 'x'"),
+))
+def test_check_string_literals_are_preserved_exactly(expected_sql, actual_sql):
+    assert _canonical_check(expected_sql) != _canonical_check(actual_sql)
+    errors, _ = compare_table_schema(
+        _schema_with_check(expected_sql), _schema_with_check(actual_sql),
+    )
+    assert errors
+
+
+@pytest.mark.parametrize(("expected_sql", "actual_sql"), (
+    ("code::text = '01'", "code::integer = '01'"),
+    ("amount::numeric(10, 2) >= 0", "amount::numeric(12, 4) >= 0"),
+    ("happened_on::date >= DATE '2026-01-01'", "happened_on::text >= '2026-01-01'"),
+))
+def test_check_casts_are_significant_by_default(expected_sql, actual_sql):
+    assert _canonical_check(expected_sql) != _canonical_check(actual_sql)
+    errors, _ = compare_table_schema(
+        _schema_with_check(expected_sql), _schema_with_check(actual_sql),
+    )
+    assert errors
+
+
+@pytest.mark.parametrize(("orm_sql", "postgresql_sql"), (
+    (
+        "fact_type IN ('website', 'phone', 'A  B')",
+        "((fact_type)::text = ANY ((ARRAY['website'::character varying, "
+        "'phone'::character varying, 'A  B'::character varying])::text[]))",
+    ),
+    (
+        "code IN ('alpha', 'beta')",
+        "(code = ANY (ARRAY['alpha'::text, 'beta'::text]))",
+    ),
+    ("( AMOUNT >= 0 )", "amount>=0"),
+))
+def test_known_postgresql_check_representations_are_equivalent(
+    orm_sql, postgresql_sql,
+):
+    assert _canonical_check(orm_sql) == _canonical_check(postgresql_sql)
+    errors, _ = compare_table_schema(
+        _schema_with_check(orm_sql), _schema_with_check(postgresql_sql),
+    )
+    assert not errors
+
+
+@pytest.mark.parametrize(("expected_sql", "actual_sql"), (
+    ("amount BETWEEN 1 AND 2", "amount >= 1 AND amount <= 2"),
+    ("qty IN (1, NULL)", "qty = ANY (ARRAY[1, 2, NULL::integer])"),
+    ("payload @> '{\"active\": true}'", "payload->>'active' = 'true'"),
+))
+def test_unknown_check_equivalence_fails_closed(expected_sql, actual_sql):
+    assert _canonical_check(expected_sql) != _canonical_check(actual_sql)
+    errors, _ = compare_table_schema(
+        _schema_with_check(expected_sql), _schema_with_check(actual_sql),
+    )
+    assert errors
 
 
 def test_all_orm_tables_exist_after_alembic_clean_install():
@@ -226,10 +393,10 @@ def test_expected_orm_check_is_represented_and_compatible(migration_connection):
     )
     assert expected["check_constraints"] == [{
         "name": "ck_company_public_fact_type",
-        "sqltext": (
-            "fact_type in('website','phone','email','registered_address',"
-            "'factual_address','postal_address','mass_address','mass_director',"
-            "'mass_founder','public_bank_details','related_company')"
+        "sqltext": _canonical_check(
+            "fact_type IN ('website', 'phone', 'email', 'registered_address', "
+            "'factual_address', 'postal_address', 'mass_address', 'mass_director', "
+            "'mass_founder', 'public_bank_details', 'related_company')"
         ),
     }]
     errors, _ = _orm_table_errors(connection, "company_public_facts")

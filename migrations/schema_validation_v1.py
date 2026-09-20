@@ -40,62 +40,285 @@ def _index_options(options):
     }
 
 
-def _strip_outer_parentheses(value):
-    value = value.strip()
-    while value.startswith("(") and value.endswith(")"):
-        depth = 0
-        encloses_all = True
-        for index, character in enumerate(value):
-            if character == "(":
-                depth += 1
-            elif character == ")":
-                depth -= 1
-                if depth == 0 and index != len(value) - 1:
-                    encloses_all = False
+_CHECK_OPERATORS = tuple(sorted((
+    "!~~*", "->>", "#>>", "::", ">=", "<=", "<>", "!=", "||", "&&",
+    "@>", "<@", "->", "#>", "~~*", "!~~", "~~", "?|", "?&",
+), key=len, reverse=True))
+
+
+def _check_tokens(value):
+    """Lex the SQL subset emitted for CHECK constraints, or return ``None``.
+
+    Whitespace is discarded only after token boundaries are known. Quoted
+    literals and identifiers retain their exact spelling and contents.
+    """
+    value = str(value)
+    tokens = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character.isspace():
+            index += 1
+            continue
+        if value.startswith("--", index) or value.startswith("/*", index):
+            return None
+
+        prefix_length = 0
+        if character in "eEbBxX" and index + 1 < len(value) and value[index + 1] == "'":
+            prefix_length = 1
+        elif value[index:index + 2].lower() == "u&" and index + 2 < len(value) and value[index + 2] == "'":
+            prefix_length = 2
+        quote_index = index + prefix_length
+        if value[quote_index:quote_index + 1] == "'":
+            cursor = quote_index + 1
+            escaped_string = value[index:quote_index].lower() == "e"
+            while cursor < len(value):
+                if escaped_string and value[cursor] == "\\":
+                    cursor += 2
+                    continue
+                if value[cursor] == "'":
+                    if cursor + 1 < len(value) and value[cursor + 1] == "'":
+                        cursor += 2
+                        continue
+                    cursor += 1
+                    tokens.append(("string", value[index:cursor]))
+                    index = cursor
                     break
-        if not encloses_all or depth != 0:
+                cursor += 1
+            else:
+                return None
+            continue
+
+        if character == '"':
+            cursor = index + 1
+            while cursor < len(value):
+                if value[cursor] == '"':
+                    if cursor + 1 < len(value) and value[cursor + 1] == '"':
+                        cursor += 2
+                        continue
+                    cursor += 1
+                    tokens.append(("quoted_identifier", value[index:cursor]))
+                    index = cursor
+                    break
+                cursor += 1
+            else:
+                return None
+            continue
+
+        if character == "$":
+            return None
+        if character.isalpha() or character == "_":
+            cursor = index + 1
+            while cursor < len(value) and (
+                value[cursor].isalnum() or value[cursor] in "_$"
+            ):
+                cursor += 1
+            tokens.append(("word", value[index:cursor].lower()))
+            index = cursor
+            continue
+        if character.isdigit() or (
+            character == "." and index + 1 < len(value) and value[index + 1].isdigit()
+        ):
+            match = re.match(
+                r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?",
+                value[index:],
+            )
+            if match is None:
+                return None
+            token = match.group(0)
+            tokens.append(("number", token))
+            index += len(token)
+            continue
+
+        operator = next(
+            (candidate for candidate in _CHECK_OPERATORS
+             if value.startswith(candidate, index)),
+            None,
+        )
+        if operator is not None:
+            tokens.append(("operator", operator))
+            index += len(operator)
+            continue
+        if character in "()[],.+-*/%=><~!^|&?#:@":
+            token_kind = "punctuation" if character in "()[],." else "operator"
+            tokens.append((token_kind, character))
+            index += 1
+            continue
+        return None
+    return tuple(tokens)
+
+
+def _matching_group_end(tokens, start, opening="(", closing=")"):
+    if start >= len(tokens) or tokens[start] != ("punctuation", opening):
+        return None
+    depth = 0
+    for index in range(start, len(tokens)):
+        token = tokens[index]
+        if token == ("punctuation", opening):
+            depth += 1
+        elif token == ("punctuation", closing):
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _strip_outer_check_parentheses(tokens):
+    while tokens and tokens[0] == ("punctuation", "("):
+        end = _matching_group_end(tokens, 0)
+        if end != len(tokens) - 1:
             break
-        value = value[1:-1].strip()
-    return value
+        tokens = tokens[1:-1]
+    return tokens
 
 
-def _lower_unquoted(value):
-    parts = re.split(r"('(?:''|[^'])*')", value)
-    return "".join(part if index % 2 else part.lower() for index, part in enumerate(parts))
+def _split_check_list(tokens):
+    parts = []
+    start = 0
+    round_depth = square_depth = 0
+    for index, token in enumerate(tokens):
+        if token == ("punctuation", "("):
+            round_depth += 1
+        elif token == ("punctuation", ")"):
+            round_depth -= 1
+        elif token == ("punctuation", "["):
+            square_depth += 1
+        elif token == ("punctuation", "]"):
+            square_depth -= 1
+        elif token == ("punctuation", ",") and round_depth == square_depth == 0:
+            parts.append(tokens[start:index])
+            start = index + 1
+        if round_depth < 0 or square_depth < 0:
+            return None
+    if round_depth or square_depth:
+        return None
+    parts.append(tokens[start:])
+    return parts
+
+
+def _string_in_signature(tokens):
+    """Recognize one proven PostgreSQL IN/ANY deparse equivalence.
+
+    PostgreSQL 18 deparses this project's VARCHAR ``IN ('a', ...)`` checks as
+    ``(column)::text = ANY ((ARRAY['a'::character varying, ...])::text[])``.
+    TEXT columns use ``column = ANY (ARRAY['a'::text, ...])``. No other casts,
+    NULL elements, expressions, operators, or array forms are accepted here.
+    """
+    tokens = _strip_outer_check_parentheses(tokens)
+    if not tokens:
+        return None
+
+    # ORM form: simple_identifier IN (string_literal, ...)
+    if len(tokens) >= 4 and tokens[0][0] == "word" and tokens[1] == ("word", "in"):
+        end = _matching_group_end(tokens, 2)
+        if end == len(tokens) - 1:
+            parts = _split_check_list(tokens[3:end])
+            if parts and all(len(part) == 1 and part[0][0] == "string" for part in parts):
+                return ("string_in", tokens[0][1], tuple(part[0][1] for part in parts))
+
+    cursor = 0
+    lhs_cast = None
+    if tokens[0] == ("punctuation", "("):
+        end = _matching_group_end(tokens, 0)
+        if end == 2 and tokens[1][0] == "word":
+            cursor = end + 1
+            if tokens[cursor:cursor + 2] != (
+                ("operator", "::"), ("word", "text"),
+            ):
+                return None
+            lhs = tokens[1][1]
+            lhs_cast = "text"
+            cursor += 2
+        else:
+            return None
+    elif tokens[0][0] == "word":
+        lhs = tokens[0][1]
+        cursor = 1
+        if tokens[cursor:cursor + 2] == (
+            ("operator", "::"), ("word", "text"),
+        ):
+            lhs_cast = "text"
+            cursor += 2
+    else:
+        return None
+    if tokens[cursor:cursor + 2] != (("operator", "="), ("word", "any")):
+        return None
+    cursor += 2
+    any_end = _matching_group_end(tokens, cursor)
+    if any_end != len(tokens) - 1:
+        return None
+    array_tokens = tokens[cursor + 1:any_end]
+
+    array_cast = None
+    if array_tokens and array_tokens[0] == ("punctuation", "("):
+        array_end = _matching_group_end(array_tokens, 0)
+        if array_end is None:
+            return None
+        suffix = array_tokens[array_end + 1:]
+        if suffix != (
+            ("operator", "::"), ("word", "text"),
+            ("punctuation", "["), ("punctuation", "]"),
+        ):
+            return None
+        array_tokens = array_tokens[1:array_end]
+        array_cast = "text[]"
+
+    if len(array_tokens) < 3 or array_tokens[:2] != (
+        ("word", "array"), ("punctuation", "["),
+    ):
+        return None
+    bracket_end = _matching_group_end(array_tokens, 1, "[", "]")
+    if bracket_end is None:
+        return None
+    suffix = array_tokens[bracket_end + 1:]
+    if suffix:
+        if suffix != (
+            ("operator", "::"), ("word", "text"),
+            ("punctuation", "["), ("punctuation", "]"),
+        ) or array_cast is not None:
+            return None
+        array_cast = "text[]"
+    parts = _split_check_list(array_tokens[2:bracket_end])
+    if not parts:
+        return None
+
+    literal_casts = []
+    literals = []
+    for part in parts:
+        if len(part) == 3 and part[0][0] == "string" and part[1] == ("operator", "::") and part[2][0] == "word":
+            literals.append(part[0][1])
+            literal_casts.append(part[2][1])
+        elif len(part) == 4 and part[0][0] == "string" and part[1:] == (
+            ("operator", "::"), ("word", "character"), ("word", "varying"),
+        ):
+            literals.append(part[0][1])
+            literal_casts.append("character varying")
+        else:
+            return None
+
+    text_shape = lhs_cast is None and array_cast is None and set(literal_casts) == {"text"}
+    varchar_shape = (
+        lhs_cast == "text" and array_cast == "text[]"
+        and set(literal_casts) == {"character varying"}
+    )
+    if not (text_shape or varchar_shape):
+        return None
+    return ("string_in", lhs, tuple(literals))
 
 
 def _canonical_check(value):
-    """Normalize the PostgreSQL forms used by the project's ORM checks."""
-    value = _strip_outer_parentheses(str(value))
-    # PostgreSQL rewrites VARCHAR IN (...) as TEXT = ANY (ARRAY[...]). Remove
-    # representation-only scalar/array casts, then restore the declared IN form.
-    parts = re.split(r"('(?:''|[^'])*')", value)
-    cast_pattern = re.compile(
-        r"::\s*(?:character\s+varying|varchar|text|smallint|integer|bigint|"
-        r"numeric|boolean|date)(?:\s*\([^)]*\))?(?:\s*\[\s*\])?",
-        flags=re.IGNORECASE,
-    )
-    value = "".join(
-        part if index % 2 else cast_pattern.sub("", part)
-        for index, part in enumerate(parts)
-    )
-    value = re.sub(
-        r"\b([A-Za-z_][\w.]*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[(.*?)\]\s*\)",
-        r"\1 IN (\2)",
-        value,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    value = re.sub(
-        r"\b([A-Za-z_][\w.]*)\s*<>\s*ALL\s*\(\s*ARRAY\s*\[(.*?)\]\s*\)",
-        r"\1 NOT IN (\2)",
-        value,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    value = _lower_unquoted(value)
-    value = re.sub(r"\s+", " ", value).strip()
-    value = re.sub(r"\s*([(),])\s*", r"\1", value)
-    value = re.sub(r"\s*(>=|<=|<>|!=|=|>|<)\s*", r"\1", value)
-    return _strip_outer_parentheses(value)
+    """Return a conservative, literal-aware CHECK representation.
+
+    Casts and all unrecognized structures remain significant. Only lexical
+    whitespace, unquoted PostgreSQL case folding, redundant outer grouping,
+    and the narrow string-list IN/ANY rule above are normalized.
+    """
+    tokens = _check_tokens(value)
+    if tokens is None:
+        return ("opaque", str(value))
+    tokens = _strip_outer_check_parentheses(tokens)
+    string_in = _string_in_signature(tokens)
+    return string_in if string_in is not None else ("tokens", tokens)
 
 
 def _unique_signature(value):
