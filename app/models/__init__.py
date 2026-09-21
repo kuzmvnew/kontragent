@@ -55,6 +55,7 @@ from app.models.revenue_expense import (
     CompanyRevenueExpenseSnapshot,
 )
 from app.models.risk import CompanyRiskAssessment
+from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
 from app.models.summary import CompanySummary
 from app.models.source import (
     CompanySourceData,
@@ -104,7 +105,9 @@ __all__ = [
     "CompanyMspProfile",
     "CompanyRevenueExpenseSnapshot",
     "CompanyRiskAssessment",
+    "CompanyRiskAssessmentV3",
     "CompanySummary",
+    "CompanySummaryV3",
     "CompanySourceData",
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
