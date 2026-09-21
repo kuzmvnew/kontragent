@@ -84,9 +84,18 @@ def _old_broken_canonical_check(value):
     return strip_outer_parentheses(value)
 
 
-def _schema_with_check(sqltext):
+def _schema_with_check(sqltext, *, column_name=None, column_type=None):
+    columns = {}
+    if column_name is not None:
+        columns[column_name] = {
+            "type": column_type,
+            "nullable": True,
+            "default": None,
+            "client_default": None,
+            "identity": None,
+        }
     return {
-        "columns": {},
+        "columns": columns,
         "primary_key": [],
         "foreign_keys": [],
         "unique_constraints": [],
@@ -179,11 +188,148 @@ def test_check_casts_are_significant_by_default(expected_sql, actual_sql):
 def test_known_postgresql_check_representations_are_equivalent(
     orm_sql, postgresql_sql,
 ):
-    assert _canonical_check(orm_sql) == _canonical_check(postgresql_sql)
+    column_name = "fact_type" if "fact_type" in orm_sql.lower() else "code"
+    column_type = "VARCHAR(60)" if column_name == "fact_type" else "TEXT"
+    if "amount" in orm_sql.lower():
+        assert _canonical_check(orm_sql) == _canonical_check(postgresql_sql)
+        schemas = (_schema_with_check(orm_sql), _schema_with_check(postgresql_sql))
+    else:
+        assert _canonical_check(orm_sql) != _canonical_check(postgresql_sql)
+        schemas = (
+            _schema_with_check(
+                orm_sql, column_name=column_name, column_type=column_type,
+            ),
+            _schema_with_check(
+                postgresql_sql, column_name=column_name, column_type=column_type,
+            ),
+        )
     errors, _ = compare_table_schema(
-        _schema_with_check(orm_sql), _schema_with_check(postgresql_sql),
+        *schemas,
     )
     assert not errors
+
+
+@pytest.mark.parametrize(("expected_sql", "actual_sql"), (
+    ('U&"a" = 1', 'U & "a" = 1'),
+    ('u&"a" = 1', 'u & "a" = 1'),
+    ("label = U&'a'", "label = U & 'a'"),
+))
+def test_unicode_prefix_adjacency_is_semantically_significant(
+    expected_sql, actual_sql,
+):
+    assert _canonical_check(expected_sql) != _canonical_check(actual_sql)
+    errors, _ = compare_table_schema(
+        _schema_with_check(expected_sql), _schema_with_check(actual_sql),
+    )
+    assert any(
+        error["kind"] == "missing_or_incompatible_check_constraint"
+        for error in errors
+    )
+
+
+def test_unicode_prefix_case_and_ordinary_formatting_are_equivalent():
+    assert _canonical_check('U&"a" = \'x\'') == _canonical_check(
+        'u&"a"=\'x\'',
+    )
+
+
+def test_unicode_quoted_identifier_escaped_content_stays_one_token():
+    expected_sql = 'U&"a""b" = 1'
+    actual_sql = 'U & "a""b" = 1'
+    assert _canonical_check(expected_sql) != _canonical_check(actual_sql)
+
+
+def test_ordinary_quoted_identifier_formatting_remains_equivalent():
+    assert _canonical_check('( "a" = 1 )') == _canonical_check('"a"=1')
+
+
+def test_unicode_uescape_fails_closed_as_opaque():
+    expected_sql = 'U&"a!0062" UESCAPE \'!\' = 1'
+    actual_sql = 'u&"a!0062"   uescape \'!\'=1'
+    assert _canonical_check(expected_sql)[0] == "opaque"
+    assert _canonical_check(actual_sql)[0] == "opaque"
+    assert _canonical_check(expected_sql) != _canonical_check(actual_sql)
+
+
+@pytest.mark.parametrize("literal", (
+    "A  B",
+    "A , B",
+    "A ( B )",
+    "A = B",
+    "A::text",
+    "A IN B",
+    "A ANY B",
+    "A''quoted",
+))
+def test_sql_looking_string_contents_remain_opaque_to_lexer(literal):
+    left = f"label = '{literal}'"
+    right = f"label = '{literal.replace(' ', '')}'"
+    if left == right:
+        right = f"label = '{literal}x'"
+    assert _canonical_check(left) != _canonical_check(right)
+
+
+@pytest.mark.parametrize(("column_type", "actual_sql", "compatible"), (
+    ("TEXT", "code = ANY (ARRAY['01'::text])", True),
+    (
+        "VARCHAR(20)",
+        "(code)::text = ANY ((ARRAY['01'::character varying])::text[])",
+        True,
+    ),
+    ("INTEGER", "code = ANY (ARRAY['01'::text])", False),
+    ("NUMERIC(10, 2)", "code = ANY (ARRAY['01'::text])", False),
+    (None, "code = ANY (ARRAY['01'::text])", False),
+))
+def test_in_any_equivalence_requires_resolved_text_like_column_type(
+    column_type, actual_sql, compatible,
+):
+    column = {"column_name": "code", "column_type": column_type} if column_type else {}
+    expected = _schema_with_check("code IN ('01')", **column)
+    actual = _schema_with_check(actual_sql, **column)
+    errors, _ = compare_table_schema(expected, actual)
+    assert (not errors) is compatible
+
+
+def test_same_in_any_syntax_is_context_dependent_for_text_and_integer():
+    expression = "code IN ('01')"
+    deparse = "code = ANY (ARRAY['01'::text])"
+    text_errors, _ = compare_table_schema(
+        _schema_with_check(expression, column_name="code", column_type="TEXT"),
+        _schema_with_check(deparse, column_name="code", column_type="TEXT"),
+    )
+    integer_errors, _ = compare_table_schema(
+        _schema_with_check(expression, column_name="code", column_type="INTEGER"),
+        _schema_with_check(deparse, column_name="code", column_type="INTEGER"),
+    )
+    assert not text_errors
+    assert any(
+        error["kind"] == "missing_or_incompatible_check_constraint"
+        for error in integer_errors
+    )
+
+
+@pytest.mark.parametrize(("expected_sql", "actual_sql"), (
+    ("code IN ('01')", "code = ANY (ARRAY['01'::text, '02'::text])"),
+    ("code IN ('01')", "code = ANY (ARRAY['02'::text])"),
+    ("code IN ('01')", "code <> ANY (ARRAY['01'::text])"),
+    ("code IN ('01')", "code = ANY (ARRAY['01'::varchar])"),
+    ("code IN ('01')", "code = '01'"),
+    ("lower(code) IN ('01')", "code = ANY (ARRAY['01'::text])"),
+    ("code IN ('01', NULL)", "code = ANY (ARRAY['01'::text])"),
+))
+def test_in_any_equivalence_rejects_unproven_shapes(expected_sql, actual_sql):
+    errors, _ = compare_table_schema(
+        _schema_with_check(
+            expected_sql, column_name="code", column_type="TEXT",
+        ),
+        _schema_with_check(
+            actual_sql, column_name="code", column_type="TEXT",
+        ),
+    )
+    assert any(
+        error["kind"] == "missing_or_incompatible_check_constraint"
+        for error in errors
+    )
 
 
 @pytest.mark.parametrize(("expected_sql", "actual_sql"), (

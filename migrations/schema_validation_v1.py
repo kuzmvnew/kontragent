@@ -63,6 +63,29 @@ def _check_tokens(value):
         if value.startswith("--", index) or value.startswith("/*", index):
             return None
 
+        if (
+            value[index:index + 2].lower() == "u&"
+            and index + 2 < len(value)
+            and value[index + 2] == '"'
+        ):
+            cursor = index + 3
+            while cursor < len(value):
+                if value[cursor] == '"':
+                    if cursor + 1 < len(value) and value[cursor + 1] == '"':
+                        cursor += 2
+                        continue
+                    cursor += 1
+                    tokens.append((
+                        "unicode_quoted_identifier",
+                        "u&" + value[index + 2:cursor],
+                    ))
+                    index = cursor
+                    break
+                cursor += 1
+            else:
+                return None
+            continue
+
         prefix_length = 0
         if character in "eEbBxX" and index + 1 < len(value) and value[index + 1] == "'":
             prefix_length = 1
@@ -81,7 +104,10 @@ def _check_tokens(value):
                         cursor += 2
                         continue
                     cursor += 1
-                    tokens.append(("string", value[index:cursor]))
+                    token = value[index:cursor]
+                    if prefix_length == 2:
+                        token = "u&" + value[index + 2:cursor]
+                    tokens.append(("string", token))
                     index = cursor
                     break
                 cursor += 1
@@ -196,13 +222,15 @@ def _split_check_list(tokens):
     return parts
 
 
-def _string_in_signature(tokens):
-    """Recognize one proven PostgreSQL IN/ANY deparse equivalence.
+def _string_in_candidate(tokens):
+    """Parse one side of the narrow PostgreSQL IN/ANY equivalence.
 
     PostgreSQL 18 deparses this project's VARCHAR ``IN ('a', ...)`` checks as
     ``(column)::text = ANY ((ARRAY['a'::character varying, ...])::text[])``.
     TEXT columns use ``column = ANY (ARRAY['a'::text, ...])``. No other casts,
-    NULL elements, expressions, operators, or array forms are accepted here.
+    NULL elements, expressions, operators, prefixed strings, or array forms
+    are accepted here. Type-dependent equivalence is decided by the schema
+    comparator, never by lexical canonicalization.
     """
     tokens = _strip_outer_check_parentheses(tokens)
     if not tokens:
@@ -213,8 +241,13 @@ def _string_in_signature(tokens):
         end = _matching_group_end(tokens, 2)
         if end == len(tokens) - 1:
             parts = _split_check_list(tokens[3:end])
-            if parts and all(len(part) == 1 and part[0][0] == "string" for part in parts):
-                return ("string_in", tokens[0][1], tuple(part[0][1] for part in parts))
+            if parts and all(
+                len(part) == 1
+                and part[0][0] == "string"
+                and part[0][1].startswith("'")
+                for part in parts
+            ):
+                return ("declared_in", tokens[0][1], tuple(part[0][1] for part in parts))
 
     cursor = 0
     lhs_cast = None
@@ -303,22 +336,74 @@ def _string_in_signature(tokens):
     )
     if not (text_shape or varchar_shape):
         return None
-    return ("string_in", lhs, tuple(literals))
+    return ("postgres_any", lhs, tuple(literals), "text" if text_shape else "varchar")
+
+
+def _check_type_family(value):
+    if value is None:
+        return None
+    normalized = re.sub(r"\s+", " ", str(value).strip().upper())
+    if normalized == "TEXT":
+        return "text"
+    if re.fullmatch(r"(?:VARCHAR|CHARACTER VARYING)(?:\s*\(\s*\d+\s*\))?", normalized):
+        return "varchar"
+    return None
+
+
+def _check_column_family(column_name, expected_columns, actual_columns):
+    expected = expected_columns.get(column_name)
+    actual = actual_columns.get(column_name)
+    if expected is None or actual is None:
+        return None
+    expected_family = _check_type_family(expected.get("type"))
+    actual_family = _check_type_family(actual.get("type"))
+    return expected_family if expected_family == actual_family else None
+
+
+def _checks_equivalent(expected_sql, actual_sql, expected_columns, actual_columns):
+    """Prove the sole type-dependent CHECK representation equivalence."""
+    if expected_sql[0] != "tokens" or actual_sql[0] != "tokens":
+        return False
+    expected_candidate = _string_in_candidate(expected_sql[1])
+    actual_candidate = _string_in_candidate(actual_sql[1])
+    if expected_candidate is None or actual_candidate is None:
+        return False
+
+    candidates = {expected_candidate[0], actual_candidate[0]}
+    if candidates != {"declared_in", "postgres_any"}:
+        return False
+    declared = (
+        expected_candidate
+        if expected_candidate[0] == "declared_in"
+        else actual_candidate
+    )
+    deparsed = (
+        expected_candidate
+        if expected_candidate[0] == "postgres_any"
+        else actual_candidate
+    )
+    if declared[1:3] != deparsed[1:3]:
+        return False
+    family = _check_column_family(
+        declared[1], expected_columns, actual_columns,
+    )
+    return family is not None and family == deparsed[3]
 
 
 def _canonical_check(value):
     """Return a conservative, literal-aware CHECK representation.
 
     Casts and all unrecognized structures remain significant. Only lexical
-    whitespace, unquoted PostgreSQL case folding, redundant outer grouping,
-    and the narrow string-list IN/ANY rule above are normalized.
+    whitespace, unquoted PostgreSQL case folding, and redundant outer grouping
+    are normalized. Unsupported Unicode ``UESCAPE`` clauses remain opaque.
     """
     tokens = _check_tokens(value)
     if tokens is None:
         return ("opaque", str(value))
+    if ("word", "uescape") in tokens:
+        return ("opaque", str(value))
     tokens = _strip_outer_check_parentheses(tokens)
-    string_in = _string_in_signature(tokens)
-    return string_in if string_in is not None else ("tokens", tokens)
+    return ("tokens", tokens)
 
 
 def _unique_signature(value):
@@ -501,7 +586,10 @@ def compare_table_schema(expected, actual, *, strict=False, allowed_extra_indexe
         ]
         match = next(
             ((index, observed) for index, observed in candidates
-             if observed["sqltext"] == wanted["sqltext"]),
+             if observed["sqltext"] == wanted["sqltext"] or _checks_equivalent(
+                 wanted["sqltext"], observed["sqltext"],
+                 expected["columns"], actual["columns"],
+             )),
             None,
         )
         if match is not None:
