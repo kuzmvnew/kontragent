@@ -48,5 +48,11 @@ jobs:
       - name: Sync dependencies
         run: uv sync --group dev
 
+      - name: Verify migrations
+        run: uv run alembic upgrade head
+
+      - name: Verify schema completeness
+        run: uv run python scripts/check_schema_completeness.py
+
       - name: Run test suite
         run: uv run python -m pytest -q

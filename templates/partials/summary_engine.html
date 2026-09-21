@@ -1,0 +1,55 @@
+<h2>Краткий итог проверки</h2>
+
+{% set summary = company.summary %}
+{% if summary and company.risk_assessment and summary.risk_assessment_id == company.risk_assessment.assessment_id %}
+    <div class="summary-engine" data-summary-id="{{ summary.summary_id }}" data-risk-assessment-id="{{ summary.risk_assessment_id }}">
+        <p class="summary-conclusion"><strong>{{ summary.text_blocks.short_conclusion.text }}</strong></p>
+
+        {% if summary.text_blocks.main_factors %}
+            <h3>Основные факторы</h3>
+            <ol>
+                {% for statement in summary.text_blocks.main_factors %}
+                    <li data-statement-id="{{ statement.statement_id }}">
+                        {{ statement.text }}
+                        <a href="#risk-details">Почему</a>
+                    </li>
+                {% endfor %}
+            </ol>
+        {% endif %}
+
+        {% if summary.text_blocks.limitations %}
+            <h3>Что не удалось проверить</h3>
+            <ul>
+                {% for statement in summary.text_blocks.limitations %}
+                    <li data-statement-id="{{ statement.statement_id }}">{{ statement.text }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        {% if summary.text_blocks.recommendations %}
+            <h3>Следующие действия</h3>
+            <ul>
+                {% for statement in summary.text_blocks.recommendations %}
+                    <li data-statement-id="{{ statement.statement_id }}">{{ statement.text }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <p class="source-note">
+            Сформировано: {{ summary.generated_at }} · Summary {{ summary.summary_engine_version }} · Risk {{ summary.risk_engine_version }} · Rules {{ summary.ruleset_version }}
+        </p>
+    </div>
+{% else %}
+    <div class="summary-placeholder">
+        <p>Краткий итог ещё не сформирован для текущей оценки рисков.</p>
+        {% if summary %}<p>Сохранённый итог относится к предыдущей оценке и не показывается как актуальный.</p>{% endif %}
+    </div>
+{% endif %}
+
+{% if company.risk_assessment %}
+    <form method="post" action="/company/{{ company.inn }}/summary">
+        <button type="submit">{{ "Обновить краткий итог" if summary else "Сформировать краткий итог" }}</button>
+    </form>
+{% else %}
+    <p>Сначала рассчитайте оценку рисков.</p>
+{% endif %}

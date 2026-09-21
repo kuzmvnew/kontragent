@@ -36,6 +36,7 @@ from app.services.npd_service import (
 )
 from app.services.data_readiness_service import get_data_readiness
 from app.services.risk_engine_service import get_latest_company_risk, recalculate_company_risk
+from app.services.summary_engine_service import generate_company_summary, get_latest_company_summary
 
 
 # =========================================================
@@ -336,6 +337,8 @@ async def company_page(
     company["risk_assessment"] = (
         risk_assessment.model_dump(mode="json") if risk_assessment else None
     )
+    summary = get_latest_company_summary(clean_inn)
+    company["summary"] = summary.model_dump(mode="json") if summary else None
 
     company = prepare_company_for_template(
         company
@@ -356,6 +359,17 @@ async def company_risk_assessment(inn: str):
     clean_inn = validate_company_inn(inn)
     try:
         recalculate_company_risk(clean_inn)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)
+
+
+@app.post("/company/{inn}/summary")
+async def company_summary(inn: str):
+    """Explicit deterministic summary generation from the latest saved risk assessment."""
+    clean_inn = validate_company_inn(inn)
+    try:
+        generate_company_summary(clean_inn)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return RedirectResponse(url=f"/company/{clean_inn}", status_code=303)

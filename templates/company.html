@@ -130,10 +130,21 @@
 
 
             <!-- ======================================== -->
-            <!-- RISK ENGINE: signals and completeness, no magic score -->
+            <!-- SUMMARY ENGINE: minimal acceptance surface, not Company Card v2 -->
             <!-- ======================================== -->
 
             <section class="card">
+
+                {% include "partials/summary_engine.html" %}
+
+            </section>
+
+
+            <!-- ======================================== -->
+            <!-- RISK ENGINE: signals and completeness, no magic score -->
+            <!-- ======================================== -->
+
+            <section class="card" id="risk-details">
 
                 {% include "partials/risk_engine.html" %}
 
