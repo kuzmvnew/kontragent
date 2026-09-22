@@ -417,6 +417,10 @@ def _validate_applicability_candidate(
         failures.append("CAPABILITY_POLICY_DISALLOWS_NOT_APPLICABLE")
     if subject_scope is None or subject_scope != SubjectScope.LEGAL_ENTITY:
         failures.append("SUBJECT_SCOPE_NOT_CONFIRMED")
+    if item.fact_identity != policy.fact_identity:
+        failures.append("FACT_IDENTITY_MISMATCH")
+    if item.scope != policy.expected_scope:
+        failures.append("EXPECTED_SCOPE_NOT_MET")
     if policy.exact_identity_required and not item.exact_identity_match:
         failures.append("EXACT_IDENTITY_NOT_PROVEN")
     if decision is None:
@@ -458,11 +462,28 @@ def _validate_applicability_candidate(
         if decision is not None
         else item.evidence_refs
     )
+    failure_parameters: dict[str, Any] = {
+        "validation_failures": tuple(sorted(set(failures)))
+    }
+    if item.fact_identity != policy.fact_identity:
+        failure_parameters.update(
+            {
+                "candidate_fact_identity": item.fact_identity,
+                "policy_fact_identity": policy.fact_identity,
+            }
+        )
+    if item.scope != policy.expected_scope:
+        failure_parameters.update(
+            {
+                "candidate_scope": item.scope,
+                "expected_scope": policy.expected_scope,
+            }
+        )
     limitation = _limitation(
         BlockingReason.APPLICABILITY_UNKNOWN.value,
         item.candidate_ref,
         evidence_refs=evidence_refs,
-        parameters={"validation_failures": tuple(sorted(set(failures)))},
+        parameters=failure_parameters,
     )
     return item.model_copy(
         update={

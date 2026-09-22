@@ -121,6 +121,16 @@ def replace(values, code, replacement):
     return tuple(replacement if item.capability_code == code else item for item in values)
 
 
+def policy_with_capability(policy, code, **updates):
+    return dataclass_replace(
+        policy,
+        capabilities=tuple(
+            dataclass_replace(item, **updates) if item.code == code else item
+            for item in policy.capabilities
+        ),
+    )
+
+
 def check(result, code):
     return next(item for item in result.resolved_checks if item.capability_code == code)
 
@@ -133,12 +143,15 @@ def blocking(result, code):
     return item.reasons
 
 
-def assert_not_applicable_proof_fails_closed(value, code="finance"):
+def assert_not_applicable_proof_fails_closed(
+    value, code="finance", policy=None
+):
     result = calculate_risk_v3(
         replace(complete_legal_baseline(), code, value),
         company_id=COMPANY_ID,
         subject_scope=SubjectScope.LEGAL_ENTITY,
         calculated_at=NOW,
+        policy=policy,
     )
     resolved = check(result, code)
     assert resolved.applicability == Applicability.APPLICABILITY_UNKNOWN
@@ -252,14 +265,8 @@ def test_exact_identity_case_b_valid_identity_remains_not_applicable():
 
 def test_exact_identity_case_c_policy_without_requirement_does_not_invent_one():
     policy = load_risk_v3_policy()
-    synthetic_policy = dataclass_replace(
-        policy,
-        capabilities=tuple(
-            dataclass_replace(item, exact_identity_required=False)
-            if item.code == "finance"
-            else item
-            for item in policy.capabilities
-        ),
+    synthetic_policy = policy_with_capability(
+        policy, "finance", exact_identity_required=False
     )
     value = not_applicable("finance").model_copy(
         update={"exact_identity_match": False}
@@ -282,6 +289,75 @@ def test_exact_identity_case_f_false_identity_with_perfect_provenance_fails_clos
         update={"exact_identity_match": False}
     )
     assert_not_applicable_proof_fails_closed(value, code="licence_sro")
+
+
+def test_scope_case_a_partial_scope_fails_closed():
+    value = not_applicable("finance").model_copy(
+        update={"scope": ScopeCompleteness.PARTIAL}
+    )
+    assert_not_applicable_proof_fails_closed(value)
+
+
+def test_scope_case_b_unknown_scope_fails_closed():
+    value = not_applicable("finance").model_copy(
+        update={"scope": ScopeCompleteness.UNKNOWN}
+    )
+    assert_not_applicable_proof_fails_closed(value)
+
+
+def test_scope_fact_cases_c_e_i_valid_complete_proof_remains_resolved():
+    policy = load_risk_v3_policy().by_code["finance"]
+    value = not_applicable("finance")
+    assert value.scope == policy.expected_scope
+    assert value.fact_identity == policy.fact_identity
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), "finance", value),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    resolved = check(result, "finance")
+    assert resolved.applicability == Applicability.NOT_APPLICABLE
+    assert resolved.resolution_state == ResolutionState.RESOLVED
+    assert result.mandatory_gate.allowed is True
+
+
+def test_fact_identity_case_d_qa_reproduction_fails_closed():
+    value = not_applicable("finance").model_copy(
+        update={"fact_identity": "unrelated.fact"}
+    )
+    result = assert_not_applicable_proof_fails_closed(value)
+    limitation = next(
+        item
+        for item in check(result, "finance").limitations
+        if item.limitation_code == BlockingReason.APPLICABILITY_UNKNOWN
+    )
+    assert limitation.parameters["candidate_fact_identity"] == "unrelated.fact"
+    assert limitation.parameters["policy_fact_identity"] == "finance.period_result"
+
+
+def test_fact_identity_case_f_mismatch_with_perfect_provenance_fails_closed():
+    value = not_applicable("licence_sro").model_copy(
+        update={"fact_identity": "unrelated.fact"}
+    )
+    assert_not_applicable_proof_fails_closed(value, code="licence_sro")
+
+
+def test_scope_case_g_partial_scope_with_perfect_provenance_fails_closed():
+    value = not_applicable("licence_sro").model_copy(
+        update={"scope": ScopeCompleteness.PARTIAL}
+    )
+    assert_not_applicable_proof_fails_closed(value, code="licence_sro")
+
+
+def test_scope_fact_case_h_double_mismatch_fails_closed():
+    value = not_applicable("finance").model_copy(
+        update={
+            "fact_identity": "unrelated.fact",
+            "scope": ScopeCompleteness.PARTIAL,
+        }
+    )
+    assert_not_applicable_proof_fails_closed(value)
 
 
 def test_case_a_unsupported_non_discovery_source_fails_closed():
@@ -477,6 +553,99 @@ def test_not_applicable_requires_exact_rule_and_non_discovery_proof(
         Applicability.APPLICABILITY_UNKNOWN
     )
     assert result.mandatory_gate.allowed is False
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    (
+        "permission",
+        "subject",
+        "rule_id",
+        "rule_version",
+        "data_absence",
+        "fact_identity",
+        "expected_scope",
+        "exact_identity",
+        "candidate_source_allowlist",
+        "decision_source_allowlist",
+        "source_class_binding",
+        "evidence_binding",
+        "source_ref_binding",
+    ),
+)
+def test_not_applicable_systematic_trust_matrix_fails_closed(dimension):
+    policy = load_risk_v3_policy()
+    value = not_applicable("finance")
+    decision = value.applicability_decision
+
+    if dimension == "permission":
+        policy = policy_with_capability(
+            policy, "finance", not_applicable_allowed=False
+        )
+    elif dimension == "subject":
+        decision = decision.model_copy(
+            update={"subject_scope": SubjectScope.INDIVIDUAL_ENTREPRENEUR}
+        )
+    elif dimension == "rule_id":
+        decision = decision.model_copy(update={"rule_id": "UNAPPROVED_RULE"})
+    elif dimension == "rule_version":
+        decision = decision.model_copy(
+            update={"rule_version": "UNAPPROVED_VERSION"}
+        )
+    elif dimension == "data_absence":
+        decision = decision.model_copy(update={"based_on_data_absence": True})
+    elif dimension == "fact_identity":
+        value = value.model_copy(update={"fact_identity": "unrelated.fact"})
+    elif dimension == "expected_scope":
+        value = value.model_copy(update={"scope": ScopeCompleteness.PARTIAL})
+    elif dimension == "exact_identity":
+        value = value.model_copy(update={"exact_identity_match": False})
+    elif dimension == "candidate_source_allowlist":
+        source_class = SourceClass.OFFICIAL_DIRECT
+        source_code = f"source:finance:{source_class.value}"
+        decision = decision.model_copy(
+            update={
+                "source_classes": (source_class,),
+                "source_refs": (source_code,),
+            }
+        )
+        value = value.model_copy(
+            update={"source_class": source_class, "source_code": source_code}
+        )
+    elif dimension == "decision_source_allowlist":
+        decision = decision.model_copy(
+            update={
+                "source_classes": (
+                    SourceClass.OFFICIAL_DOWNLOADED_DATASET,
+                    SourceClass.OFFICIAL_DIRECT,
+                )
+            }
+        )
+    elif dimension == "source_class_binding":
+        policy = policy_with_capability(
+            policy,
+            "finance",
+            allowed_source_classes=frozenset(
+                {
+                    SourceClass.OFFICIAL_DOWNLOADED_DATASET,
+                    SourceClass.OFFICIAL_DIRECT,
+                }
+            ),
+        )
+        decision = decision.model_copy(
+            update={"source_classes": (SourceClass.OFFICIAL_DIRECT,)}
+        )
+    elif dimension == "evidence_binding":
+        decision = decision.model_copy(
+            update={"evidence_refs": ("evidence:foreign",)}
+        )
+    elif dimension == "source_ref_binding":
+        decision = decision.model_copy(
+            update={"source_refs": ("source:foreign",)}
+        )
+
+    value = value.model_copy(update={"applicability_decision": decision})
+    assert_not_applicable_proof_fails_closed(value, policy=policy)
 
 
 def test_not_applicable_requires_confirmed_subject_scope_at_resolution_boundary():
