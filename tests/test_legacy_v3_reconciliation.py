@@ -131,7 +131,7 @@ def transaction_connection():
         try:
             assert _database_name(connection) != reconciliation.PROTECTED_DATABASE
             assert reconciliation.current_revisions(connection) == [
-                reconciliation.CANONICAL_TARGET
+                reconciliation.CURRENT_SCHEMA_HEAD
             ]
             yield connection
         finally:
@@ -171,7 +171,7 @@ def test_blank_install_is_canonical_head_and_unchanged(transaction_connection):
     after = reconciliation.canonical_fingerprints(connection)
     assert state["state"] == "NO_OP_PASS"
     assert reconciliation.current_revisions(connection) == [
-        reconciliation.CANONICAL_TARGET
+        reconciliation.CURRENT_SCHEMA_HEAD
     ]
     assert before == after
 

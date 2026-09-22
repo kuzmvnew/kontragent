@@ -49,9 +49,16 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
+CURRENT_SCHEMA_HEAD = "3f7a9c2d5e61"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
+POST_CANONICAL_TARGET_TABLES = {
+    "mintrans_ted_raw_artifacts",
+    "mintrans_ted_entries",
+    "mintrans_ted_quarantine_rows",
+    "transport_forwarding_registry_listings",
+}
 V1_TABLES = ("company_risk_assessments", "company_summaries")
 PROTECTED_DATABASE = "kontragent"
 ROLLOUT_ENV = "LEGACY_V3_ROLLOUT_AUTHORIZATION"
@@ -155,7 +162,11 @@ def canonical_parent_metadata() -> sa.MetaData:
     """Freeze the current parent as every canonical table except c8's two."""
     metadata = sa.MetaData()
     for table in Base.metadata.sorted_tables:
-        if table.name not in {RISK_TABLE, SUMMARY_TABLE}:
+        if table.name not in {
+            RISK_TABLE,
+            SUMMARY_TABLE,
+            *POST_CANONICAL_TARGET_TABLES,
+        }:
             table.to_metadata(metadata)
     return metadata
 
@@ -716,10 +727,18 @@ def classify_state(connection: sa.Connection) -> dict[str, Any]:
     ):
         state = "ELIGIBLE_FOR_RECONCILIATION"
         blocker = None
-    elif revisions == [CANONICAL_TARGET] and canonical_exact and not archive_exists:
+    elif (
+        revisions in ([CANONICAL_TARGET], [CURRENT_SCHEMA_HEAD])
+        and canonical_exact
+        and not archive_exists
+    ):
         state = "NO_OP_PASS"
         blocker = None
-    elif revisions == [CANONICAL_TARGET] and canonical_exact and archive_exact:
+    elif (
+        revisions in ([CANONICAL_TARGET], [CURRENT_SCHEMA_HEAD])
+        and canonical_exact
+        and archive_exact
+    ):
         state = "NO_OP_VERIFY_PASS"
         blocker = None
     else:
@@ -735,7 +754,8 @@ def classify_state(connection: sa.Connection) -> dict[str, Any]:
             else "BLOCKED_UNRECOGNIZED_LEGACY_STATE"
         )
         blocker = {
-            "revision_match": revisions in ([LEGACY_REVISION], [CANONICAL_TARGET]),
+            "revision_match": revisions
+            in ([LEGACY_REVISION], [CANONICAL_TARGET], [CURRENT_SCHEMA_HEAD]),
             "legacy_exact": legacy_exact,
             "canonical_exact": canonical_exact,
             "parent_compatible": parent["compatible"],

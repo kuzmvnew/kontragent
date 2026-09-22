@@ -48,6 +48,12 @@ from app.models.legal_event import (
 from app.models.msp import (
     CompanyMspProfile,
 )
+from app.models.mintrans_ted import (
+    MintransTedEntry,
+    MintransTedQuarantineRow,
+    MintransTedRawArtifact,
+    TransportForwardingRegistryListing,
+)
 from app.models.npd import (
     NpdStatusCheck,
 )
@@ -123,6 +129,9 @@ __all__ = [
     "ErknmInspection",
     "FnsSmeSupportEntry",
     "IngestionRun",
+    "MintransTedEntry",
+    "MintransTedQuarantineRow",
+    "MintransTedRawArtifact",
     "NpdStatusCheck",
     "NoprizMemberCheck",
     "NostroyMemberCheck",
@@ -130,4 +139,5 @@ __all__ = [
     "RoskomnadzorPdOperatorCheck",
     "RoskomnadzorPrivatePersonRecord",
     "SroPersonRegistryRecord",
+    "TransportForwardingRegistryListing",
 ]
