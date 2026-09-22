@@ -90,6 +90,7 @@ class BlockingReason(StrEnum):
     SCOPE_UNKNOWN = "SCOPE_UNKNOWN"
     NEGATIVE_CLOSURE_NOT_PROVEN = "NEGATIVE_CLOSURE_NOT_PROVEN"
     CONFLICTING_EVIDENCE = "CONFLICTING_EVIDENCE"
+    EMPTY_MANDATORY_SET = "EMPTY_MANDATORY_SET"
 
 
 class RiskSeverity(StrEnum):
@@ -149,6 +150,33 @@ class Limitation(ContractModel):
         return self
 
 
+class ApplicabilityDecision(ContractModel):
+    """Provenance for a capability-specific applicability rule decision."""
+
+    rule_id: str = Field(min_length=1, max_length=160)
+    rule_version: str = Field(min_length=1, max_length=40)
+    subject_scope: SubjectScope
+    evidence_refs: tuple[str, ...] = Field(min_length=1)
+    source_refs: tuple[str, ...] = Field(min_length=1)
+    source_classes: tuple[SourceClass, ...] = Field(min_length=1)
+    based_on_data_absence: bool = False
+    decided_at: datetime
+
+    @field_validator("evidence_refs", "source_refs")
+    @classmethod
+    def require_provenance_refs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not item.strip() for item in value):
+            raise ValueError("Applicability provenance refs must be non-empty")
+        return value
+
+    @field_validator("decided_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Applicability decision timestamps must include a timezone")
+        return value
+
+
 class NormalizedEvidenceCandidate(ContractModel):
     candidate_ref: str = Field(min_length=1, max_length=200)
     capability_code: str = Field(min_length=1, max_length=120)
@@ -160,6 +188,7 @@ class NormalizedEvidenceCandidate(ContractModel):
     evidence_refs: tuple[str, ...]
     exact_identity_match: bool
     applicability: Applicability
+    applicability_decision: ApplicabilityDecision | None = None
     observation: Observation
     execution: Execution
     freshness: Freshness
@@ -235,6 +264,7 @@ class ResolvedCheckResult(ContractModel):
     fact_identity: str = Field(min_length=1, max_length=200)
     company_id: int = Field(gt=0)
     applicability: Applicability
+    applicability_decision: ApplicabilityDecision | None = None
     observation: Observation
     execution: Execution
     freshness: Freshness
@@ -275,6 +305,13 @@ class ResolvedCheckResult(ContractModel):
         if self.resolution_state == ResolutionState.RESOLVED:
             if self.applicability == Applicability.APPLICABILITY_UNKNOWN:
                 raise ValueError("Unknown applicability cannot be resolved")
+            if (
+                self.applicability == Applicability.NOT_APPLICABLE
+                and self.applicability_decision is None
+            ):
+                raise ValueError(
+                    "Resolved NOT_APPLICABLE requires a validated applicability decision"
+                )
             if self.applicability == Applicability.APPLICABLE:
                 if self.execution != Execution.CHECKED:
                     raise ValueError("Resolved applicable checks require CHECKED")
@@ -349,7 +386,7 @@ class CoverageSnapshot(ContractModel):
         if self.numerator != len(resolved) or self.denominator != len(applicable):
             raise ValueError("Coverage counts must match persisted code lists")
         expected = (
-            Decimal("100.00")
+            Decimal("0.00")
             if self.denominator == 0
             else (Decimal(self.numerator) * 100 / Decimal(self.denominator)).quantize(
                 Decimal("0.01")
@@ -395,7 +432,15 @@ class MandatoryGateResult(ContractModel):
             raise ValueError("Mandatory applicable codes must be unique and sorted")
         if tuple(sorted(set(self.resolved_codes))) != self.resolved_codes:
             raise ValueError("Resolved codes must be unique and sorted")
-        complete = set(self.resolved_codes) == set(self.mandatory_applicable_codes)
+        empty_guard = any(
+            BlockingReason.EMPTY_MANDATORY_SET in item.reasons
+            for item in self.blocking_checks
+        )
+        if not self.mandatory_applicable_codes and not empty_guard:
+            raise ValueError("An empty mandatory set must fail closed")
+        complete = bool(self.mandatory_applicable_codes) and (
+            set(self.resolved_codes) == set(self.mandatory_applicable_codes)
+        )
         if self.allowed != (complete and not self.blocking_checks):
             raise ValueError("allowed must reflect one canonical mandatory gate")
         return self

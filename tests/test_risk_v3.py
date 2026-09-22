@@ -6,6 +6,8 @@ from pydantic import ValidationError
 
 from app.contracts.risk_v3 import (
     Applicability,
+    ApplicabilityDecision,
+    AssessmentStatus,
     BlockingReason,
     Execution,
     Freshness,
@@ -44,6 +46,7 @@ def candidate(
     negative_closure=False,
     payload=None,
     effective_at=NOW,
+    applicability_decision=None,
 ):
     policy = load_risk_v3_policy().by_code[code]
     if source_class is None:
@@ -61,6 +64,7 @@ def candidate(
         evidence_refs=(f"evidence:{ref or code}",),
         exact_identity_match=True,
         applicability=applicability,
+        applicability_decision=applicability_decision,
         observation=observation,
         execution=execution,
         freshness=freshness,
@@ -76,13 +80,28 @@ def candidate(
 
 
 def not_applicable(code):
+    policy = load_risk_v3_policy().by_code[code]
+    source_class = sorted(
+        policy.allowed_source_classes, key=lambda item: item.value
+    )[0]
     return candidate(
         code,
         applicability=Applicability.NOT_APPLICABLE,
+        applicability_decision=ApplicabilityDecision(
+            rule_id=policy.applicability_rule_id or "",
+            rule_version=policy.applicability_rule_version or "",
+            subject_scope=SubjectScope.LEGAL_ENTITY,
+            evidence_refs=(f"applicability-evidence:{code}",),
+            source_refs=(f"applicability-source:{code}",),
+            source_classes=(source_class,),
+            based_on_data_absence=False,
+            decided_at=NOW,
+        ),
         observation=Observation.UNKNOWN,
         execution=Execution.CHECKED,
         freshness=Freshness.UNKNOWN,
         scope=ScopeCompleteness.COMPLETE,
+        source_class=source_class,
     )
 
 
@@ -149,6 +168,177 @@ def test_not_applicable_is_checked_and_excluded_from_denominator():
     assert result.coverage_snapshot.percentage == 100
     assert "finance" not in result.coverage_snapshot.applicable_codes
     assert result.mandatory_gate.allowed is True
+
+
+def test_case_a_discovery_only_not_applicable_fails_closed():
+    unproven = candidate(
+        "finance",
+        applicability=Applicability.NOT_APPLICABLE,
+        observation=Observation.UNKNOWN,
+        execution=Execution.CHECKED,
+        freshness=Freshness.UNKNOWN,
+        scope=ScopeCompleteness.COMPLETE,
+        source_class=SourceClass.DISCOVERY_ONLY,
+    )
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), "finance", unproven),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    resolved = check(result, "finance")
+    assert resolved.applicability == Applicability.APPLICABILITY_UNKNOWN
+    assert resolved.resolution_state == ResolutionState.UNRESOLVED
+    assert "finance" in result.coverage_snapshot.applicable_codes
+    assert "finance" in result.coverage_snapshot.unresolved_codes
+    assert result.coverage_snapshot.denominator == 10
+    assert blocking(result, "finance") == (
+        BlockingReason.APPLICABILITY_UNKNOWN,
+    )
+    assert result.mandatory_gate.allowed is False
+    assert (
+        result.overall_result
+        == OverallRiskResult.INCOMPLETE_NO_POSITIVE_CONCLUSION
+    )
+
+
+def test_case_b_empty_mandatory_set_fails_closed_without_zero_over_zero():
+    full_policy = load_risk_v3_policy()
+    finance_policy = full_policy.by_code["finance"]
+    empty_policy = dataclass_replace(
+        full_policy,
+        capabilities=(finance_policy,),
+    )
+    result = calculate_risk_v3(
+        (not_applicable("finance"),),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+        policy=empty_policy,
+    )
+    assert result.coverage_snapshot.denominator == 0
+    assert result.coverage_snapshot.numerator == 0
+    assert result.coverage_snapshot.percentage == 0
+    assert result.mandatory_gate.mandatory_applicable_codes == ()
+    assert result.mandatory_gate.allowed is False
+    assert result.mandatory_gate.blocking_checks[0].reasons == (
+        BlockingReason.EMPTY_MANDATORY_SET,
+    )
+    assert (
+        result.overall_result
+        == OverallRiskResult.INCOMPLETE_NO_POSITIVE_CONCLUSION
+    )
+
+
+def test_case_c_required_source_unavailable_blocks_positive_gate():
+    unavailable = candidate(
+        "registration",
+        observation=Observation.UNKNOWN,
+        execution=Execution.SOURCE_UNAVAILABLE,
+        freshness=Freshness.UNKNOWN,
+        scope=ScopeCompleteness.UNKNOWN,
+    )
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), "registration", unavailable),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    assert blocking(result, "registration") == (
+        BlockingReason.SOURCE_UNAVAILABLE,
+    )
+    assert result.mandatory_gate.allowed is False
+    assert (
+        result.overall_result
+        == OverallRiskResult.INCOMPLETE_NO_POSITIVE_CONCLUSION
+    )
+
+
+def test_case_d_policy_proven_not_applicable_is_excluded():
+    result = calculate_risk_v3(
+        complete_legal_baseline(),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    finance = check(result, "finance")
+    assert finance.applicability == Applicability.NOT_APPLICABLE
+    assert finance.resolution_state == ResolutionState.RESOLVED
+    assert finance.applicability_decision is not None
+    assert (
+        finance.applicability_decision.rule_id
+        == load_risk_v3_policy().by_code["finance"].applicability_rule_id
+    )
+    assert "finance" not in result.coverage_snapshot.applicable_codes
+    assert "finance" not in result.mandatory_gate.mandatory_applicable_codes
+    assert result.mandatory_gate.allowed is True
+
+
+@pytest.mark.parametrize(
+    "decision_update",
+    (
+        {"rule_id": "UNAPPROVED_RULE"},
+        {"based_on_data_absence": True},
+        {"source_classes": (SourceClass.DISCOVERY_ONLY,)},
+    ),
+)
+def test_not_applicable_requires_exact_rule_and_non_discovery_proof(
+    decision_update,
+):
+    value = not_applicable("finance")
+    invalid_decision = value.applicability_decision.model_copy(
+        update=decision_update
+    )
+    value = value.model_copy(
+        update={"applicability_decision": invalid_decision}
+    )
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), "finance", value),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    assert check(result, "finance").applicability == (
+        Applicability.APPLICABILITY_UNKNOWN
+    )
+    assert result.mandatory_gate.allowed is False
+
+
+def test_not_applicable_requires_confirmed_subject_scope_at_resolution_boundary():
+    resolved = resolve_evidence_candidates(
+        (not_applicable("finance"),),
+        company_id=COMPANY_ID,
+    )
+    finance = next(
+        item for item in resolved if item.capability_code == "finance"
+    )
+    assert finance.applicability == Applicability.APPLICABILITY_UNKNOWN
+    assert finance.resolution_state == ResolutionState.UNRESOLVED
+
+
+def test_always_mandatory_policy_cannot_be_removed_by_not_applicable_claim():
+    finance_rule = not_applicable("finance").applicability_decision
+    unproven = candidate(
+        "registration",
+        applicability=Applicability.NOT_APPLICABLE,
+        applicability_decision=finance_rule,
+        observation=Observation.UNKNOWN,
+        execution=Execution.CHECKED,
+        freshness=Freshness.UNKNOWN,
+        scope=ScopeCompleteness.COMPLETE,
+    )
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), "registration", unproven),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    assert check(result, "registration").applicability == (
+        Applicability.APPLICABILITY_UNKNOWN
+    )
+    assert "registration" in result.coverage_snapshot.applicable_codes
+    assert "registration" in result.mandatory_gate.mandatory_applicable_codes
+    assert result.mandatory_gate.allowed is False
 
 
 @pytest.mark.parametrize(
@@ -325,7 +515,9 @@ def test_conflicting_authoritative_observations_are_not_silently_ranked():
         "tax_debt", ref="tax-b", payload={"adverse": True, "total_debt": "200"}
     )
     result = resolve_evidence_candidates(
-        (first, second), company_id=COMPANY_ID
+        (first, second),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
     )
     resolved = next(item for item in result if item.capability_code == "tax_debt")
     assert resolved.resolution_state == ResolutionState.CONFLICTING_EVIDENCE
@@ -346,7 +538,11 @@ def test_older_superseded_fact_is_not_automatically_a_conflict():
         payload={"adverse": True, "total_debt": "200"},
         effective_at=NOW,
     )
-    result = resolve_evidence_candidates((older, current), company_id=COMPANY_ID)
+    result = resolve_evidence_candidates(
+        (older, current),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+    )
     resolved = next(item for item in result if item.capability_code == "tax_debt")
     assert resolved.resolution_state == ResolutionState.RESOLVED
     assert resolved.fact_payload["total_debt"] == "200"
@@ -363,7 +559,11 @@ def test_unapproved_negative_source_cannot_close_check(source_class):
         source_class=source_class,
         negative_closure=True,
     )
-    result = resolve_evidence_candidates((negative,), company_id=COMPANY_ID)
+    result = resolve_evidence_candidates(
+        (negative,),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+    )
     resolved = next(item for item in result if item.capability_code == "tax_debt")
     assert resolved.resolution_state == ResolutionState.UNRESOLVED
     assert resolved.observation == Observation.UNKNOWN
@@ -380,7 +580,11 @@ def test_allowed_negative_closing_source_resolves_not_found():
         source_class=SourceClass.OFFICIAL_DOWNLOADED_DATASET,
         negative_closure=True,
     )
-    result = resolve_evidence_candidates((negative,), company_id=COMPANY_ID)
+    result = resolve_evidence_candidates(
+        (negative,),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+    )
     resolved = next(item for item in result if item.capability_code == "tax_debt")
     assert resolved.resolution_state == ResolutionState.RESOLVED
     assert resolved.observation == Observation.NOT_FOUND
@@ -394,6 +598,8 @@ def test_unsupported_subject_never_receives_legal_denominator(scope):
         (), company_id=COMPANY_ID, subject_scope=scope, calculated_at=NOW
     )
     assert isinstance(result, UnsupportedSubjectOutcome)
+    assert result.status == AssessmentStatus.UNSUPPORTED_SUBJECT
+    assert result.reason_code == "SUBJECT_SCOPE_NOT_SUPPORTED"
     assert not hasattr(result, "coverage_snapshot")
 
 
@@ -434,7 +640,7 @@ def test_policy_change_creates_new_identity_without_mutating_old_result():
     )
     assert changed.input_hash != original.input_hash
     assert changed.assessment_id != original.assessment_id
-    assert original.coverage_policy_version == "coverage-v3.0.0"
+    assert original.coverage_policy_version == "coverage-v3.0.1"
 
 
 def test_calculation_makes_zero_provider_refresh_or_product_aggregator_calls(monkeypatch):

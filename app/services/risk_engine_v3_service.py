@@ -21,6 +21,7 @@ from uuid import NAMESPACE_URL, uuid5
 from app.contracts.risk_v3 import (
     Actionability,
     Applicability,
+    ApplicabilityDecision,
     AssessmentStatus,
     BlockingCheck,
     BlockingReason,
@@ -65,6 +66,9 @@ class CapabilityPolicy:
     fact_identity: str
     mandatory_mode: str
     default_applicability: Applicability
+    not_applicable_allowed: bool
+    applicability_rule_id: str | None
+    applicability_rule_version: str | None
     allowed_source_classes: frozenset[SourceClass]
     found_source_classes: frozenset[SourceClass]
     negative_closure_source_classes: frozenset[SourceClass]
@@ -111,6 +115,11 @@ def load_risk_v3_policy() -> RiskV3Policy:
             fact_identity=item["fact_identity"],
             mandatory_mode=item["mandatory_mode"],
             default_applicability=Applicability(item["default_applicability"]),
+            not_applicable_allowed=bool(
+                item.get("not_applicable_allowed", False)
+            ),
+            applicability_rule_id=item.get("applicability_rule_id"),
+            applicability_rule_version=item.get("applicability_rule_version"),
             allowed_source_classes=frozenset(
                 SourceClass(value) for value in item["allowed_source_classes"]
             ),
@@ -137,6 +146,20 @@ def load_risk_v3_policy() -> RiskV3Policy:
     codes = [item.code for item in capabilities]
     if len(codes) != len(set(codes)):
         raise ValueError("Risk v3 capability policy contains duplicate codes")
+    for item in capabilities:
+        if item.not_applicable_allowed:
+            if item.mandatory_mode != "IF_APPLICABLE":
+                raise ValueError(
+                    f"{item.code}: NOT_APPLICABLE is only valid for IF_APPLICABLE"
+                )
+            if not (item.applicability_rule_id and item.applicability_rule_version):
+                raise ValueError(
+                    f"{item.code}: NOT_APPLICABLE requires a versioned rule"
+                )
+        elif item.applicability_rule_id or item.applicability_rule_version:
+            raise ValueError(
+                f"{item.code}: applicability rule requires NOT_APPLICABLE permission"
+            )
     return RiskV3Policy(
         risk_model_version=raw["risk_model_version"],
         ruleset_version=raw["ruleset_version"],
@@ -378,6 +401,69 @@ def _unresolved_without_evidence(
     )
 
 
+def _validate_applicability_candidate(
+    item: NormalizedEvidenceCandidate,
+    policy: CapabilityPolicy,
+    subject_scope: SubjectScope | None,
+) -> NormalizedEvidenceCandidate:
+    """Fail closed before applicability can affect coverage or the gate."""
+
+    if item.applicability != Applicability.NOT_APPLICABLE:
+        return item
+
+    decision = item.applicability_decision
+    failures: list[str] = []
+    if not policy.not_applicable_allowed:
+        failures.append("CAPABILITY_POLICY_DISALLOWS_NOT_APPLICABLE")
+    if subject_scope is None or subject_scope != SubjectScope.LEGAL_ENTITY:
+        failures.append("SUBJECT_SCOPE_NOT_CONFIRMED")
+    if decision is None:
+        failures.append("APPLICABILITY_DECISION_MISSING")
+    else:
+        if decision.subject_scope != subject_scope:
+            failures.append("SUBJECT_SCOPE_MISMATCH")
+        if not (
+            policy.applicability_rule_id
+            and policy.applicability_rule_version
+            and decision.rule_id == policy.applicability_rule_id
+            and decision.rule_version == policy.applicability_rule_version
+        ):
+            failures.append("APPLICABILITY_RULE_NOT_PROVEN")
+        if decision.based_on_data_absence:
+            failures.append("DECISION_BASED_ON_DATA_ABSENCE")
+        if all(
+            source_class == SourceClass.DISCOVERY_ONLY
+            for source_class in decision.source_classes
+        ):
+            failures.append("DISCOVERY_ONLY_PROVENANCE")
+
+    if not failures:
+        return item
+
+    evidence_refs = (
+        (*item.evidence_refs, *decision.evidence_refs)
+        if decision is not None
+        else item.evidence_refs
+    )
+    limitation = _limitation(
+        BlockingReason.APPLICABILITY_UNKNOWN.value,
+        item.candidate_ref,
+        evidence_refs=evidence_refs,
+        parameters={"validation_failures": tuple(sorted(set(failures)))},
+    )
+    return item.model_copy(
+        update={
+            "applicability": Applicability.APPLICABILITY_UNKNOWN,
+            "applicability_decision": None,
+            "observation": Observation.UNKNOWN,
+            "freshness": Freshness.UNKNOWN,
+            "scope": ScopeCompleteness.UNKNOWN,
+            "fact_payload": {},
+            "limitations": (*item.limitations, limitation),
+        }
+    )
+
+
 def _resolve_capability(
     company_id: int,
     policy: CapabilityPolicy,
@@ -444,21 +530,61 @@ def _resolve_capability(
     ]
     if not applicable:
         if applicability_values == {Applicability.NOT_APPLICABLE}:
+            decisions = tuple(
+                item.applicability_decision
+                for item in ordered
+                if item.applicability_decision is not None
+            )
+            if len(decisions) != len(ordered):
+                raise ValueError(
+                    "Validated NOT_APPLICABLE candidates require provenance"
+                )
+            applicability_decision = ApplicabilityDecision(
+                rule_id=policy.applicability_rule_id or "",
+                rule_version=policy.applicability_rule_version or "",
+                subject_scope=decisions[0].subject_scope,
+                evidence_refs=_unique(
+                    ref for decision in decisions for ref in decision.evidence_refs
+                ),
+                source_refs=_unique(
+                    ref for decision in decisions for ref in decision.source_refs
+                ),
+                source_classes=tuple(
+                    sorted(
+                        {
+                            source_class
+                            for decision in decisions
+                            for source_class in decision.source_classes
+                        },
+                        key=lambda value: value.value,
+                    )
+                ),
+                based_on_data_absence=False,
+                decided_at=max(decision.decided_at for decision in decisions),
+            )
             return ResolvedCheckResult(
                 check_ref=check_ref,
                 capability_code=policy.code,
                 fact_identity=policy.fact_identity,
                 company_id=company_id,
                 applicability=Applicability.NOT_APPLICABLE,
+                applicability_decision=applicability_decision,
                 observation=Observation.UNKNOWN,
                 execution=Execution.CHECKED,
                 freshness=Freshness.UNKNOWN,
                 scope=ScopeCompleteness.COMPLETE,
                 temporal_kind=policy.temporal_kind,
                 resolution_state=ResolutionState.RESOLVED,
-                selected_evidence_refs=all_evidence_refs,
+                selected_evidence_refs=_unique(
+                    (*all_evidence_refs, *applicability_decision.evidence_refs)
+                ),
                 candidate_refs=candidate_refs,
-                source_refs=_unique(item.source_code for item in ordered),
+                source_refs=_unique(
+                    (
+                        *(item.source_code for item in ordered),
+                        *applicability_decision.source_refs,
+                    )
+                ),
                 checked_at=max(
                     (item.checked_at for item in ordered if item.checked_at),
                     default=None,
@@ -726,6 +852,7 @@ def resolve_evidence_candidates(
     *,
     company_id: int,
     policy: RiskV3Policy | None = None,
+    subject_scope: SubjectScope | None = None,
 ) -> tuple[ResolvedCheckResult, ...]:
     """Resolve evidence by capability semantics, never by rank alone."""
 
@@ -739,7 +866,7 @@ def resolve_evidence_candidates(
         raise ValueError("Unknown Risk v3 capabilities: " + ", ".join(unknown_codes))
     grouped = {
         item.code: tuple(
-            candidate
+            _validate_applicability_candidate(candidate, item, subject_scope)
             for candidate in candidates
             if candidate.capability_code == item.code
         )
@@ -761,10 +888,16 @@ def _coverage(
     policy: RiskV3Policy,
     calculated_at: datetime,
 ) -> CoverageSnapshot:
+    policies = policy.by_code
     applicable = _unique(
         item.capability_code
         for item in checks
         if item.applicability == Applicability.APPLICABLE
+        or policies[item.capability_code].mandatory_mode == "ALWAYS"
+        or (
+            item.applicability == Applicability.APPLICABILITY_UNKNOWN
+            and policies[item.capability_code].mandatory_mode == "IF_APPLICABLE"
+        )
     )
     resolved = _unique(
         item.capability_code
@@ -784,12 +917,15 @@ def _coverage(
         for item in checks
         if item.applicability == Applicability.APPLICABILITY_UNKNOWN
     )
-    policies = policy.by_code
     mandatory_applicable = _unique(
         item.capability_code
         for item in checks
-        if item.applicability == Applicability.APPLICABLE
-        and policies[item.capability_code].mandatory_mode in {"ALWAYS", "IF_APPLICABLE"}
+        if policies[item.capability_code].mandatory_mode == "ALWAYS"
+        or (
+            policies[item.capability_code].mandatory_mode == "IF_APPLICABLE"
+            and item.applicability
+            in {Applicability.APPLICABLE, Applicability.APPLICABILITY_UNKNOWN}
+        )
     )
     mandatory_resolved = tuple(
         code for code in mandatory_applicable if code in set(resolved)
@@ -797,7 +933,7 @@ def _coverage(
     numerator = len(resolved)
     denominator = len(applicable)
     percentage = (
-        Decimal("100.00")
+        Decimal("0.00")
         if denominator == 0
         else (Decimal(numerator) * 100 / Decimal(denominator)).quantize(
             Decimal("0.01")
@@ -896,7 +1032,6 @@ def _mandatory_gate(
     mandatory_applicable = _unique(
         item.capability_code
         for item in mandatory
-        if item.applicability == Applicability.APPLICABLE
     )
     resolved = _unique(
         item.capability_code
@@ -904,17 +1039,43 @@ def _mandatory_gate(
         if item.applicability == Applicability.APPLICABLE
         and item.resolution_state == ResolutionState.RESOLVED
     )
-    blocking = tuple(
-        BlockingCheck(
-            capability_code=item.capability_code,
-            reasons=reasons,
-            check_ref=item.check_ref,
+    blocking_values: list[BlockingCheck] = []
+    for item in sorted(mandatory, key=lambda value: value.capability_code):
+        reasons = _blocking_reasons(item)
+        if (
+            policies[item.capability_code].mandatory_mode == "ALWAYS"
+            and item.applicability == Applicability.NOT_APPLICABLE
+        ):
+            reasons = tuple(
+                sorted(
+                    {*reasons, BlockingReason.APPLICABILITY_UNKNOWN},
+                    key=list(BlockingReason).index,
+                )
+            )
+        if reasons:
+            blocking_values.append(
+                BlockingCheck(
+                    capability_code=item.capability_code,
+                    reasons=reasons,
+                    check_ref=item.check_ref,
+                )
+            )
+    if not mandatory_applicable:
+        company_id = checks[0].company_id if checks else "unknown"
+        blocking_values.append(
+            BlockingCheck(
+                capability_code="__mandatory_policy__",
+                reasons=(BlockingReason.EMPTY_MANDATORY_SET,),
+                check_ref=f"risk-v3:{company_id}:mandatory-policy",
+            )
         )
-        for item in sorted(mandatory, key=lambda value: value.capability_code)
-        if (reasons := _blocking_reasons(item))
-    )
+    blocking = tuple(blocking_values)
     return MandatoryGateResult(
-        allowed=(set(resolved) == set(mandatory_applicable) and not blocking),
+        allowed=(
+            bool(mandatory_applicable)
+            and set(resolved) == set(mandatory_applicable)
+            and not blocking
+        ),
         policy_version=policy.applicability_policy_version,
         mandatory_applicable_codes=mandatory_applicable,
         resolved_codes=resolved,
@@ -1038,7 +1199,10 @@ def calculate_risk_v3(
     input_hash = hashlib.sha256(_canonical(identity_payload).encode()).hexdigest()
     assessment_id = str(uuid5(NAMESPACE_URL, "next.company:risk-v3:" + input_hash))
     checks = resolve_evidence_candidates(
-        snapshot, company_id=company_id, policy=policy
+        snapshot,
+        company_id=company_id,
+        policy=policy,
+        subject_scope=subject_scope,
     )
     coverage = _coverage(checks, policy, calculated_at)
     gate = _mandatory_gate(checks, policy, calculated_at)
