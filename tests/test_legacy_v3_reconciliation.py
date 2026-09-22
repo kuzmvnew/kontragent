@@ -148,6 +148,22 @@ def legacy_connection(transaction_connection):
     return connection
 
 
+@pytest.fixture
+def protocol_postgres_major(transaction_connection, monkeypatch):
+    """Exercise the protocol on CI's disposable DB, independently of rollout support.
+
+    Only protocol tests opt in. PG18 executes the unchanged production guard;
+    other test servers temporarily use their actual major. Guard tests never
+    request this fixture, and monkeypatch restores the constant after each test.
+    """
+    assert reconciliation.EXPECTED_POSTGRES_MAJOR == 18
+    identity = reconciliation.database_identity(transaction_connection)
+    assert identity["database"] != reconciliation.PROTECTED_DATABASE
+    major = identity["postgresql_version_num"] // 10000
+    if major != 18:
+        monkeypatch.setattr(reconciliation, "EXPECTED_POSTGRES_MAJOR", major)
+
+
 def test_blank_install_is_canonical_head_and_unchanged(transaction_connection):
     connection = transaction_connection
     before = reconciliation.canonical_fingerprints(connection)
@@ -255,6 +271,7 @@ def test_partial_archive_state_is_blocked(transaction_connection):
     assert state["state"] == "BLOCKED_PARTIAL_RECONCILIATION_STATE"
 
 
+@pytest.mark.usefixtures("protocol_postgres_major")
 def test_archive_is_never_overwritten(transaction_connection):
     connection = transaction_connection
     _create_legacy(connection, schema=reconciliation.ARCHIVE_SCHEMA)
@@ -269,6 +286,7 @@ def test_archive_is_never_overwritten(transaction_connection):
     assert before == after
 
 
+@pytest.mark.usefixtures("protocol_postgres_major")
 def test_apply_preserves_legacy_v1_business_rows_and_installs_exact_canonical(
     legacy_connection,
 ):
@@ -322,6 +340,7 @@ def test_apply_preserves_legacy_v1_business_rows_and_installs_exact_canonical(
         )
 
 
+@pytest.mark.usefixtures("protocol_postgres_major")
 def test_historical_anomalies_are_preserved_and_recorded(legacy_connection):
     connection = legacy_connection
     company_id = connection.scalar(
@@ -362,15 +381,28 @@ def test_historical_anomalies_are_preserved_and_recorded(legacy_connection):
     ] == 1
 
 
+@pytest.mark.usefixtures("protocol_postgres_major")
 def test_parent_compatibility_failure_prevents_metadata_adoption(legacy_connection):
     connection = legacy_connection
+    assert reconciliation.classify_state(connection)["state"] == (
+        "ELIGIBLE_FOR_RECONCILIATION"
+    )
     connection.exec_driver_sql(
         "ALTER TABLE public.companies ADD CONSTRAINT "
         "ck_dev005_unexpected CHECK (id > 0)"
     )
     state = reconciliation.classify_state(connection)
     assert state["full_pre_v3_compatibility"]["compatible"] is False
-    with pytest.raises(reconciliation.ReconciliationBlocked):
+    assert any(
+        error["table"] == "companies"
+        and error["kind"] == "unexpected_check_constraint"
+        and error["path"] == "ck_dev005_unexpected"
+        for error in state["full_pre_v3_compatibility"]["errors"]
+    )
+    with pytest.raises(
+        reconciliation.ReconciliationBlocked,
+        match="^BLOCKED_UNRECOGNIZED_LEGACY_STATE$",
+    ):
         _apply(connection)
     assert reconciliation.current_revisions(connection) == [
         reconciliation.LEGACY_REVISION
@@ -380,7 +412,40 @@ def test_parent_compatibility_failure_prevents_metadata_adoption(legacy_connecti
     )
 
 
-def test_working_database_apply_guard_requires_two_explicit_authorizations():
+def test_production_apply_version_guard_on_live_eligible_legacy(legacy_connection):
+    # No protocol fixture: prove the real apply entry point still blocks PG17,
+    # and executes the supported production path on PG18.
+    assert reconciliation.EXPECTED_POSTGRES_MAJOR == 18
+    connection = legacy_connection
+    state = reconciliation.classify_state(connection)
+    assert state["state"] == "ELIGIBLE_FOR_RECONCILIATION"
+    major = state["database_identity"]["postgresql_version_num"] // 10000
+    if major == 18:
+        assert _apply(connection)["result"] == "RECONCILED_PASS"
+    else:
+        with pytest.raises(
+            reconciliation.ReconciliationBlocked,
+            match=f"^PostgreSQL major mismatch: expected 18, observed {major}\\.",
+        ):
+            _apply(connection)
+        assert reconciliation.current_revisions(connection) == [
+            reconciliation.LEGACY_REVISION
+        ]
+        assert not reconciliation._schema_exists(
+            connection, reconciliation.ARCHIVE_SCHEMA
+        )
+
+
+@pytest.mark.parametrize(("allow_protected_database", "rollout_authorization"), [
+    (False, None),
+    (True, None),
+    (False, reconciliation.PROTECTED_DATABASE),
+    (True, "wrong-database"),
+])
+def test_working_database_apply_guard_requires_two_explicit_authorizations(
+    allow_protected_database, rollout_authorization,
+):
+    assert reconciliation.EXPECTED_POSTGRES_MAJOR == 18
     identity = {
         "database": reconciliation.PROTECTED_DATABASE,
         "host": "127.0.0.1",
@@ -394,8 +459,8 @@ def test_working_database_apply_guard_requires_two_explicit_authorizations():
             confirm_database=reconciliation.PROTECTED_DATABASE,
             confirm_host="127.0.0.1",
             confirm_port=5432,
-            allow_protected_database=False,
-            rollout_authorization=None,
+            allow_protected_database=allow_protected_database,
+            rollout_authorization=rollout_authorization,
         )
     reconciliation.enforce_apply_guard(
         identity,
@@ -408,6 +473,7 @@ def test_working_database_apply_guard_requires_two_explicit_authorizations():
 
 
 def test_apply_guard_rejects_wrong_confirmation_and_postgresql_major():
+    assert reconciliation.EXPECTED_POSTGRES_MAJOR == 18
     identity = {
         "database": "clone",
         "host": "127.0.0.1",
@@ -415,7 +481,15 @@ def test_apply_guard_rejects_wrong_confirmation_and_postgresql_major():
         "postgresql_version": "18.6",
         "postgresql_version_num": 180006,
     }
-    with pytest.raises(reconciliation.ReconciliationBlocked, match="confirm"):
+    reconciliation.enforce_apply_guard(
+        identity,
+        confirm_database="clone",
+        confirm_host="127.0.0.1",
+        confirm_port=5432,
+        allow_protected_database=False,
+        rollout_authorization=None,
+    )
+    with pytest.raises(reconciliation.ReconciliationBlocked, match="confirm-database"):
         reconciliation.enforce_apply_guard(
             identity,
             confirm_database="other",
@@ -444,7 +518,10 @@ def test_apply_guard_rejects_wrong_confirmation_and_postgresql_major():
         )
     identity["postgresql_version_num"] = 170009
     identity["postgresql_version"] = "17.9"
-    with pytest.raises(reconciliation.ReconciliationBlocked, match="major"):
+    with pytest.raises(
+        reconciliation.ReconciliationBlocked,
+        match=r"^PostgreSQL major mismatch: expected 18, observed 17\.9$",
+    ):
         reconciliation.enforce_apply_guard(
             identity,
             confirm_database="clone",
