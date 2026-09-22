@@ -420,6 +420,7 @@ def _validate_applicability_candidate(
     if decision is None:
         failures.append("APPLICABILITY_DECISION_MISSING")
     else:
+        decision_source_classes = set(decision.source_classes)
         if decision.subject_scope != subject_scope:
             failures.append("SUBJECT_SCOPE_MISMATCH")
         if not (
@@ -431,11 +432,21 @@ def _validate_applicability_candidate(
             failures.append("APPLICABILITY_RULE_NOT_PROVEN")
         if decision.based_on_data_absence:
             failures.append("DECISION_BASED_ON_DATA_ABSENCE")
+        if item.source_class not in policy.allowed_source_classes:
+            failures.append("CANDIDATE_SOURCE_CLASS_NOT_ALLOWED")
+        if not decision_source_classes <= policy.allowed_source_classes:
+            failures.append("DECISION_SOURCE_CLASS_NOT_ALLOWED")
+        if decision_source_classes != {item.source_class}:
+            failures.append("CANDIDATE_DECISION_SOURCE_CLASS_MISMATCH")
         if all(
             source_class == SourceClass.DISCOVERY_ONLY
-            for source_class in decision.source_classes
+            for source_class in decision_source_classes
         ):
             failures.append("DISCOVERY_ONLY_PROVENANCE")
+        if not set(decision.evidence_refs) <= set(item.evidence_refs):
+            failures.append("APPLICABILITY_EVIDENCE_REF_MISMATCH")
+        if set(decision.source_refs) != {item.source_code}:
+            failures.append("APPLICABILITY_SOURCE_REF_MISMATCH")
 
     if not failures:
         return item

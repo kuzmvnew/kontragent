@@ -84,6 +84,8 @@ def not_applicable(code):
     source_class = sorted(
         policy.allowed_source_classes, key=lambda item: item.value
     )[0]
+    evidence_ref = f"evidence:{code}"
+    source_code = f"source:{code}:{source_class.value}"
     return candidate(
         code,
         applicability=Applicability.NOT_APPLICABLE,
@@ -91,8 +93,8 @@ def not_applicable(code):
             rule_id=policy.applicability_rule_id or "",
             rule_version=policy.applicability_rule_version or "",
             subject_scope=SubjectScope.LEGAL_ENTITY,
-            evidence_refs=(f"applicability-evidence:{code}",),
-            source_refs=(f"applicability-source:{code}",),
+            evidence_refs=(evidence_ref,),
+            source_refs=(source_code,),
             source_classes=(source_class,),
             based_on_data_absence=False,
             decided_at=NOW,
@@ -129,6 +131,27 @@ def blocking(result, code):
         if value.capability_code == code
     )
     return item.reasons
+
+
+def assert_not_applicable_proof_fails_closed(value, code="finance"):
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), code, value),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    resolved = check(result, code)
+    assert resolved.applicability == Applicability.APPLICABILITY_UNKNOWN
+    assert resolved.resolution_state == ResolutionState.UNRESOLVED
+    assert code in result.coverage_snapshot.applicable_codes
+    assert code in result.coverage_snapshot.unresolved_codes
+    assert blocking(result, code) == (BlockingReason.APPLICABILITY_UNKNOWN,)
+    assert result.mandatory_gate.allowed is False
+    assert (
+        result.overall_result
+        == OverallRiskResult.INCOMPLETE_NO_POSITIVE_CONCLUSION
+    )
+    return result
 
 
 def test_multi_axis_contract_allows_found_checked_stale_without_erasing_fact():
@@ -202,6 +225,87 @@ def test_case_a_discovery_only_not_applicable_fails_closed():
     )
 
 
+def test_case_a_unsupported_non_discovery_source_fails_closed():
+    value = not_applicable("finance")
+    source_class = SourceClass.OFFICIAL_DIRECT
+    source_code = f"source:finance:{source_class.value}"
+    decision = value.applicability_decision.model_copy(
+        update={
+            "source_classes": (source_class,),
+            "source_refs": (source_code,),
+        }
+    )
+    value = value.model_copy(
+        update={
+            "source_class": source_class,
+            "source_code": source_code,
+            "applicability_decision": decision,
+        }
+    )
+    result = assert_not_applicable_proof_fails_closed(value)
+    assert result.coverage_snapshot.denominator == 10
+
+
+def test_case_b_discovery_candidate_cannot_claim_official_provenance():
+    official_decision = not_applicable("finance").applicability_decision
+    disguised = candidate(
+        "finance",
+        applicability=Applicability.NOT_APPLICABLE,
+        applicability_decision=official_decision,
+        observation=Observation.UNKNOWN,
+        execution=Execution.CHECKED,
+        freshness=Freshness.UNKNOWN,
+        scope=ScopeCompleteness.COMPLETE,
+        source_class=SourceClass.DISCOVERY_ONLY,
+    )
+    assert_not_applicable_proof_fails_closed(disguised)
+
+
+def test_case_c_candidate_and_decision_source_class_mismatch_fails_closed():
+    value = not_applicable("licence_sro")
+    assert value.source_class == SourceClass.OFFICIAL_DIRECT
+    decision = value.applicability_decision.model_copy(
+        update={
+            "source_classes": (SourceClass.OFFICIAL_DOWNLOADED_DATASET,),
+            "source_refs": (value.source_code,),
+        }
+    )
+    value = value.model_copy(update={"applicability_decision": decision})
+    assert_not_applicable_proof_fails_closed(value, code="licence_sro")
+
+
+def test_case_d_mixed_decision_classes_with_unsupported_class_fails_closed():
+    value = not_applicable("finance")
+    decision = value.applicability_decision.model_copy(
+        update={
+            "source_classes": (
+                SourceClass.OFFICIAL_DOWNLOADED_DATASET,
+                SourceClass.OFFICIAL_DIRECT,
+            )
+        }
+    )
+    value = value.model_copy(update={"applicability_decision": decision})
+    assert_not_applicable_proof_fails_closed(value)
+
+
+def test_case_e_unbound_evidence_ref_fails_closed():
+    value = not_applicable("finance")
+    decision = value.applicability_decision.model_copy(
+        update={"evidence_refs": ("evidence:another-candidate",)}
+    )
+    value = value.model_copy(update={"applicability_decision": decision})
+    assert_not_applicable_proof_fails_closed(value)
+
+
+def test_case_f_unbound_source_ref_fails_closed():
+    value = not_applicable("finance")
+    decision = value.applicability_decision.model_copy(
+        update={"source_refs": ("source:another-candidate",)}
+    )
+    value = value.model_copy(update={"applicability_decision": decision})
+    assert_not_applicable_proof_fails_closed(value)
+
+
 def test_case_b_empty_mandatory_set_fails_closed_without_zero_over_zero():
     full_policy = load_risk_v3_policy()
     finance_policy = full_policy.by_code["finance"]
@@ -254,7 +358,7 @@ def test_case_c_required_source_unavailable_blocks_positive_gate():
     )
 
 
-def test_case_d_policy_proven_not_applicable_is_excluded():
+def test_case_g_policy_proven_not_applicable_is_excluded():
     result = calculate_risk_v3(
         complete_legal_baseline(),
         company_id=COMPANY_ID,
@@ -271,6 +375,14 @@ def test_case_d_policy_proven_not_applicable_is_excluded():
     )
     assert "finance" not in result.coverage_snapshot.applicable_codes
     assert "finance" not in result.mandatory_gate.mandatory_applicable_codes
+    assert set(finance.applicability_decision.evidence_refs) <= set(
+        next(
+            item
+            for item in result.evidence_snapshot
+            if item.capability_code == "finance"
+        ).evidence_refs
+    )
+    assert finance.applicability_decision.source_refs == finance.source_refs
     assert result.mandatory_gate.allowed is True
 
 
@@ -278,6 +390,8 @@ def test_case_d_policy_proven_not_applicable_is_excluded():
     "decision_update",
     (
         {"rule_id": "UNAPPROVED_RULE"},
+        {"rule_version": "UNAPPROVED_VERSION"},
+        {"subject_scope": SubjectScope.INDIVIDUAL_ENTREPRENEUR},
         {"based_on_data_absence": True},
         {"source_classes": (SourceClass.DISCOVERY_ONLY,)},
     ),

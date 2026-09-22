@@ -2,8 +2,8 @@
   "risk_model_version": "risk-v3.0.0",
   "ruleset_version": "risk-rules-v3.0.0",
   "coverage_policy_version": "coverage-v3.0.1",
-  "applicability_policy_version": "legal-entity-baseline-v3.0.1",
-  "source_resolution_policy_version": "source-resolution-v3.0.1",
+  "applicability_policy_version": "legal-entity-baseline-v3.0.2",
+  "source_resolution_policy_version": "source-resolution-v3.0.2",
   "freshness_policy_version": "freshness-v3.0.0",
   "subject_scope": "LEGAL_ENTITY",
   "capabilities": [
