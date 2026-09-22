@@ -326,6 +326,17 @@ def _string_in_candidate(tokens):
         ):
             literals.append(part[0][1])
             literal_casts.append("character varying")
+        elif len(part) == 6 and part[0][0] == "string" and part[1:] == (
+            ("operator", "::"), ("word", "character"), ("word", "varying"),
+            ("operator", "::"), ("word", "text"),
+        ):
+            # PostgreSQL 18 pg_dump/restore can persist a VARCHAR IN check as
+            # `column::text = ANY (ARRAY['x'::varchar::text, ...])` rather
+            # than putting one `::text[]` cast around the array.  Accept only
+            # this exact element-wise cast chain; arbitrary nested casts stay
+            # significant and fail closed.
+            literals.append(part[0][1])
+            literal_casts.append("character varying::text")
         else:
             return None
 
@@ -334,7 +345,11 @@ def _string_in_candidate(tokens):
         lhs_cast == "text" and array_cast == "text[]"
         and set(literal_casts) == {"character varying"}
     )
-    if not (text_shape or varchar_shape):
+    restored_varchar_shape = (
+        lhs_cast == "text" and array_cast is None
+        and set(literal_casts) == {"character varying::text"}
+    )
+    if not (text_shape or varchar_shape or restored_varchar_shape):
         return None
     return ("postgres_any", lhs, tuple(literals), "text" if text_shape else "varchar")
 
