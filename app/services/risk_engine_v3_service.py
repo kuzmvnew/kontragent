@@ -417,6 +417,8 @@ def _validate_applicability_candidate(
         failures.append("CAPABILITY_POLICY_DISALLOWS_NOT_APPLICABLE")
     if subject_scope is None or subject_scope != SubjectScope.LEGAL_ENTITY:
         failures.append("SUBJECT_SCOPE_NOT_CONFIRMED")
+    if policy.exact_identity_required and not item.exact_identity_match:
+        failures.append("EXACT_IDENTITY_NOT_PROVEN")
     if decision is None:
         failures.append("APPLICABILITY_DECISION_MISSING")
     else:

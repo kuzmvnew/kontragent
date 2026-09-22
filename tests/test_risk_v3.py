@@ -225,8 +225,68 @@ def test_case_a_discovery_only_not_applicable_fails_closed():
     )
 
 
+def test_exact_identity_case_a_qa_reproduction_fails_closed():
+    value = not_applicable("finance").model_copy(
+        update={"exact_identity_match": False}
+    )
+    result = assert_not_applicable_proof_fails_closed(value)
+    assert result.coverage_snapshot.numerator == 9
+    assert result.coverage_snapshot.denominator == 10
+    assert result.coverage_snapshot.percentage == 90
+
+
+def test_exact_identity_case_b_valid_identity_remains_not_applicable():
+    value = not_applicable("finance")
+    assert value.exact_identity_match is True
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), "finance", value),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+    )
+    resolved = check(result, "finance")
+    assert resolved.applicability == Applicability.NOT_APPLICABLE
+    assert resolved.resolution_state == ResolutionState.RESOLVED
+    assert result.mandatory_gate.allowed is True
+
+
+def test_exact_identity_case_c_policy_without_requirement_does_not_invent_one():
+    policy = load_risk_v3_policy()
+    synthetic_policy = dataclass_replace(
+        policy,
+        capabilities=tuple(
+            dataclass_replace(item, exact_identity_required=False)
+            if item.code == "finance"
+            else item
+            for item in policy.capabilities
+        ),
+    )
+    value = not_applicable("finance").model_copy(
+        update={"exact_identity_match": False}
+    )
+    result = calculate_risk_v3(
+        replace(complete_legal_baseline(), "finance", value),
+        company_id=COMPANY_ID,
+        subject_scope=SubjectScope.LEGAL_ENTITY,
+        calculated_at=NOW,
+        policy=synthetic_policy,
+    )
+    resolved = check(result, "finance")
+    assert resolved.applicability == Applicability.NOT_APPLICABLE
+    assert resolved.resolution_state == ResolutionState.RESOLVED
+    assert result.mandatory_gate.allowed is True
+
+
+def test_exact_identity_case_f_false_identity_with_perfect_provenance_fails_closed():
+    value = not_applicable("licence_sro").model_copy(
+        update={"exact_identity_match": False}
+    )
+    assert_not_applicable_proof_fails_closed(value, code="licence_sro")
+
+
 def test_case_a_unsupported_non_discovery_source_fails_closed():
     value = not_applicable("finance")
+    assert value.exact_identity_match is True
     source_class = SourceClass.OFFICIAL_DIRECT
     source_code = f"source:finance:{source_class.value}"
     decision = value.applicability_decision.model_copy(
@@ -263,6 +323,7 @@ def test_case_b_discovery_candidate_cannot_claim_official_provenance():
 
 def test_case_c_candidate_and_decision_source_class_mismatch_fails_closed():
     value = not_applicable("licence_sro")
+    assert value.exact_identity_match is True
     assert value.source_class == SourceClass.OFFICIAL_DIRECT
     decision = value.applicability_decision.model_copy(
         update={
