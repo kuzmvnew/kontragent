@@ -15,11 +15,22 @@ from app.contracts.card_v2 import (
     ActionViewModel,
     CardAction,
     CardActionKind,
+    CardV2ViewModel,
+    CompanyHeaderViewModel,
     CoverageItem,
+    CoverageViewModel,
+    EvidenceViewModel,
     PublicEvidenceReference,
     PublicUIState,
+    RiskViewModel,
+    SummaryViewModel,
 )
-from app.contracts.risk_v3 import ResolvedCheckResult
+from app.contracts.public_card_projection import (
+    PublicCardActionProjection,
+    PublicCardProjection,
+    PublicCoverageItemProjection,
+    PublicEvidenceProjection,
+)
 
 
 InternalState = Enum | str | None
@@ -33,6 +44,7 @@ INTERNAL_STATE_TO_PUBLIC_UI_STATE: Mapping[str, PublicUIState] = MappingProxyTyp
     {
         "FOUND": PublicUIState.FOUND,
         "NOT_FOUND": PublicUIState.NOT_FOUND,
+        "NOT_APPLICABLE": PublicUIState.NOT_APPLICABLE,
         "PARTIAL": PublicUIState.PARTIAL,
         "PARTIAL_COVERAGE": PublicUIState.PARTIAL,
         "SOURCE_UNAVAILABLE": PublicUIState.SOURCE_UNAVAILABLE,
@@ -41,7 +53,6 @@ INTERNAL_STATE_TO_PUBLIC_UI_STATE: Mapping[str, PublicUIState] = MappingProxyTyp
         "STALE": PublicUIState.STALE,
         "UNKNOWN": PublicUIState.UNKNOWN,
         "NOT_CHECKED": PublicUIState.UNKNOWN,
-        "NOT_APPLICABLE": PublicUIState.UNKNOWN,
         "APPLICABILITY_UNKNOWN": PublicUIState.UNKNOWN,
         "FRESHNESS_UNKNOWN": PublicUIState.UNKNOWN,
         "SCOPE_UNKNOWN": PublicUIState.UNKNOWN,
@@ -57,6 +68,7 @@ INTERNAL_STATE_TO_PUBLIC_UI_STATE: Mapping[str, PublicUIState] = MappingProxyTyp
 _PUBLIC_STATE_PRECEDENCE = (
     PublicUIState.CONFLICTING_EVIDENCE,
     PublicUIState.ERROR,
+    PublicUIState.NOT_APPLICABLE,
     PublicUIState.SOURCE_UNAVAILABLE,
     PublicUIState.STALE,
     PublicUIState.PARTIAL,
@@ -95,28 +107,16 @@ def translate_public_ui_state(*internal_states: InternalState) -> PublicUIState:
     )
 
 
-def translate_resolved_check_state(check: ResolvedCheckResult) -> PublicUIState:
-    """Translate Risk v3 check axes without modifying the internal check."""
-
-    return translate_public_ui_state(
-        check.resolution_state,
-        check.execution,
-        check.freshness,
-        check.scope,
-        check.observation,
-    )
-
-
 def project_public_evidence(
     *,
     source_name: str,
     date: Date | None,
     description: str,
     internal_states: Iterable[InternalState],
-) -> PublicEvidenceReference:
-    """Create the deliberately minimal evidence shape exposed to the UI."""
+) -> PublicEvidenceProjection:
+    """Create the deliberately minimal public evidence projection."""
 
-    return PublicEvidenceReference(
+    return PublicEvidenceProjection(
         source_name=source_name,
         date=date,
         description=description,
@@ -130,10 +130,10 @@ def project_coverage_item(
     title: str,
     internal_states: Iterable[InternalState],
     limitation: str | None = None,
-) -> CoverageItem:
+) -> PublicCoverageItemProjection:
     """Project capability coverage without deriving or labelling company risk."""
 
-    return CoverageItem(
+    return PublicCoverageItemProjection(
         capability=capability,
         title=title,
         state=translate_public_ui_state(*internal_states),
@@ -150,18 +150,18 @@ _ACTION_LABELS: Mapping[CardActionKind, str] = MappingProxyType(
 )
 
 
-def build_card_actions(
+def build_public_card_actions(
     *,
     disabled_reasons: Mapping[CardActionKind | str, str] | None = None,
-) -> ActionViewModel:
-    """Return the complete, stable Card v2 action set in display order."""
+) -> tuple[PublicCardActionProjection, ...]:
+    """Return the complete public action projection in display order."""
 
     reasons = {
         CardActionKind(key): reason
         for key, reason in (disabled_reasons or {}).items()
     }
-    actions = tuple(
-        CardAction(
+    return tuple(
+        PublicCardActionProjection(
             action=kind,
             label=label,
             enabled=kind not in reasons,
@@ -169,4 +169,66 @@ def build_card_actions(
         )
         for kind, label in _ACTION_LABELS.items()
     )
-    return ActionViewModel(actions=actions)
+
+
+def build_card_actions(
+    *,
+    disabled_reasons: Mapping[CardActionKind | str, str] | None = None,
+) -> ActionViewModel:
+    """Return the complete, stable Card v2 action set in display order."""
+
+    return ActionViewModel(
+        actions=tuple(
+            CardAction.model_validate(item.model_dump())
+            for item in build_public_card_actions(
+                disabled_reasons=disabled_reasons
+            )
+        )
+    )
+
+
+class CardV2ViewModelService:
+    """Adapt the approved public projection to Card v2 component models."""
+
+    @staticmethod
+    def build(projection: PublicCardProjection) -> CardV2ViewModel:
+        if not isinstance(projection, PublicCardProjection):
+            raise TypeError("CardV2ViewModelService accepts PublicCardProjection only")
+
+        header = CompanyHeaderViewModel.model_validate(
+            projection.company_header.model_dump()
+        )
+        summary = SummaryViewModel.model_validate(projection.summary.model_dump())
+        risk = RiskViewModel(
+            **projection.risk.model_dump(exclude={"evidence"}),
+            evidence=tuple(
+                PublicEvidenceReference.model_validate(item.model_dump())
+                for item in projection.risk.evidence
+            ),
+        )
+        coverage = CoverageViewModel(
+            items=tuple(
+                CoverageItem.model_validate(item.model_dump())
+                for item in projection.coverage_items
+            )
+        )
+        evidence = EvidenceViewModel(
+            items=tuple(
+                PublicEvidenceReference.model_validate(item.model_dump())
+                for item in projection.evidence
+            )
+        )
+        actions = ActionViewModel(
+            actions=tuple(
+                CardAction.model_validate(item.model_dump())
+                for item in projection.actions
+            )
+        )
+        return CardV2ViewModel(
+            company_header=header,
+            summary=summary,
+            risk=risk,
+            coverage=coverage,
+            evidence=evidence,
+            actions=actions,
+        )

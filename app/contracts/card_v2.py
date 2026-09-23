@@ -8,30 +8,11 @@ domain-engine inputs.
 from __future__ import annotations
 
 from datetime import date as Date
-from enum import StrEnum
 
 from pydantic import Field, model_validator
 
 from app.contracts.decision import ContractModel
-
-
-class PublicUIState(StrEnum):
-    """Closed state vocabulary understood by Card v2 components."""
-
-    FOUND = "FOUND"
-    NOT_FOUND = "NOT_FOUND"
-    PARTIAL = "PARTIAL"
-    SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
-    STALE = "STALE"
-    UNKNOWN = "UNKNOWN"
-    CONFLICTING_EVIDENCE = "CONFLICTING_EVIDENCE"
-    ERROR = "ERROR"
-
-
-class CardActionKind(StrEnum):
-    GET_REPORT = "GET_REPORT"
-    WATCH = "WATCH"
-    SAVE = "SAVE"
+from app.contracts.public_card_types import CardActionKind, PublicUIState
 
 
 class PublicEvidenceReference(ContractModel):
@@ -50,6 +31,12 @@ class CoverageItem(ContractModel):
     title: str = Field(min_length=1, max_length=240)
     state: PublicUIState
     limitation: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_not_applicable_reason(self) -> "CoverageItem":
+        if self.state == PublicUIState.NOT_APPLICABLE and self.limitation is None:
+            raise ValueError("NOT_APPLICABLE coverage requires a public reason")
+        return self
 
 
 class CardAction(ContractModel):

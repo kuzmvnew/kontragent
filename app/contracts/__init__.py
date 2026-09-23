@@ -33,6 +33,15 @@ from app.contracts.card_v2 import (
     RiskViewModel,
     SummaryViewModel,
 )
+from app.contracts.public_card_projection import (
+    PublicCardActionProjection,
+    PublicCardProjection,
+    PublicCompanyHeaderProjection,
+    PublicCoverageItemProjection,
+    PublicEvidenceProjection,
+    PublicRiskProjection,
+    PublicSummaryProjection,
+)
 
 
 __all__ = [
@@ -65,4 +74,11 @@ __all__ = [
     "PublicUIState",
     "RiskViewModel",
     "SummaryViewModel",
+    "PublicCardProjection",
+    "PublicCardActionProjection",
+    "PublicCompanyHeaderProjection",
+    "PublicCoverageItemProjection",
+    "PublicEvidenceProjection",
+    "PublicRiskProjection",
+    "PublicSummaryProjection",
 ]
