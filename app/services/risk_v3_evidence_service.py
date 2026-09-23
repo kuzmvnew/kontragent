@@ -34,11 +34,10 @@ from app.models.legal_event import CompanyLegalEvent
 from app.models.revenue_expense import CompanyRevenueExpenseSnapshot
 from app.models.source import DataSet
 from app.models.stage15_checks import ArbitrationCourtCheck
-from app.models.tax_debt import CompanyTaxDebtSnapshot
 from app.models.tax_offence import CompanyTaxOffence
-from app.services.tax_debt_freshness import (
-    evaluate_tax_debt_freshness,
-    resolve_tax_debt_publication,
+from app.services.s02_tax_debt_vertical_slice_service import (
+    load_s02_tax_debt_fact,
+    s02_tax_debt_fact_to_risk_candidate,
 )
 
 DATASET_CODES = (
@@ -325,96 +324,16 @@ def _tax_debt_candidate(
     dataset: DataSet | None,
     captured_at: datetime,
 ) -> NormalizedEvidenceCandidate:
-    if dataset is None:
-        return _unavailable(
-            company,
-            capability_code="tax_debt",
-            fact_identity="tax.current_debt",
-            source_code="fns_tax_debt",
-            source_class=SourceClass.OFFICIAL_DOWNLOADED_DATASET,
-            code="DATASET_NOT_AVAILABLE",
-            captured_at=captured_at,
-            execution=Execution.SOURCE_UNAVAILABLE,
-        )
-    publication = resolve_tax_debt_publication(
+    fact = load_s02_tax_debt_fact(
         session,
-        dataset=dataset,
+        company,
+        dataset,
+        captured_at=captured_at,
+    )
+    return s02_tax_debt_fact_to_risk_candidate(
+        fact,
         inn=str(company.inn or "").strip(),
-    )
-    if publication.data_as_of is None:
-        return _unavailable(
-            company,
-            capability_code="tax_debt",
-            fact_identity="tax.current_debt",
-            source_code="fns_tax_debt",
-            source_class=SourceClass.OFFICIAL_DOWNLOADED_DATASET,
-            code="DATASET_NOT_AVAILABLE",
-            captured_at=captured_at,
-            execution=Execution.SOURCE_UNAVAILABLE,
-        )
-    freshness = evaluate_tax_debt_freshness(
-        publication,
-        checked_at=captured_at,
-    )
-    row = session.scalar(
-        select(CompanyTaxDebtSnapshot)
-        .where(
-            CompanyTaxDebtSnapshot.company_id == company.id,
-            CompanyTaxDebtSnapshot.dataset_id == dataset.id,
-            CompanyTaxDebtSnapshot.data_date == publication.data_as_of,
-            CompanyTaxDebtSnapshot.publication_generation
-            == publication.publication_generation,
-        )
-        .order_by(CompanyTaxDebtSnapshot.id.desc())
-        .limit(1)
-    )
-    debt = row.total_debt if row else Decimal("0")
-    found = debt > 0
-    evidence_ref = (
-        f"company_tax_debt_snapshots:{row.id}"
-        if row
-        else f"data_sets:{dataset.id}:absence:{publication.data_as_of}"
-    )
-    candidate_ref = f"db:{company.id}:tax_debt:{publication.data_as_of}"
-    freshness_limitations = (
-        (
-            _limitation(
-                str(freshness.reason or "stale_data").upper(),
-                candidate_ref,
-                evidence_refs=(evidence_ref,),
-            ),
-        )
-        if not freshness.is_fresh
-        else ()
-    )
-    return _candidate(
-        company=company,
-        candidate_ref=candidate_ref,
-        capability_code="tax_debt",
-        fact_identity="tax.current_debt",
-        source_code=dataset.code,
-        source_class=SourceClass.OFFICIAL_DOWNLOADED_DATASET,
-        evidence_refs=(evidence_ref,),
-        observation=Observation.FOUND if found else Observation.NOT_FOUND,
-        freshness=(Freshness.CURRENT if freshness.is_fresh else Freshness.STALE),
-        scope=ScopeCompleteness.COMPLETE,
-        negative_closure_capable=not found,
-        fact_payload=(
-            {
-                "adverse": True,
-                "total_debt": str(debt),
-                "total_arrears": str(row.total_arrears),
-                "total_penalties": str(row.total_penalties),
-                "total_fines": str(row.total_fines),
-                "data_date": row.data_date.isoformat(),
-            }
-            if found and row
-            else {}
-        ),
-        source_as_of=publication.source_as_of,
-        retrieved_at=publication.retrieved_at,
-        checked_at=captured_at,
-        limitations=freshness_limitations,
+        ogrn=company.ogrn,
     )
 
 
