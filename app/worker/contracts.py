@@ -54,10 +54,43 @@ class StagingResult:
 
 
 @dataclass(frozen=True)
+class ExecutionCounters:
+    records_seen: int = 0
+    records_written: int = 0
+    records_rejected: int = 0
+    records_duplicated: int = 0
+    records_published: int = 0
+
+    def __post_init__(self) -> None:
+        values = (
+            self.records_seen,
+            self.records_written,
+            self.records_rejected,
+            self.records_duplicated,
+            self.records_published,
+        )
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in values
+        ):
+            raise ValueError("execution counters must be non-negative integers")
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "records_seen": self.records_seen,
+            "records_written": self.records_written,
+            "records_rejected": self.records_rejected,
+            "records_duplicated": self.records_duplicated,
+            "records_published": self.records_published,
+        }
+
+
+@dataclass(frozen=True)
 class HandlerResult:
     raw_artifacts: tuple[RawArtifactReference, ...] = ()
     staging_result: StagingResult | None = None
     checksum_metadata: dict[str, Any] = field(default_factory=dict)
+    counters: ExecutionCounters | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +102,7 @@ class HandlerContext:
     fencing_token: int
     deadline_at: datetime
     heartbeat: Callable[[], None]
+    report_counters: Callable[[ExecutionCounters], None]
     shutdown_requested: Callable[[], bool]
 
     def ensure_active(self, *, now: datetime) -> None:

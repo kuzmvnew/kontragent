@@ -3,11 +3,12 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from threading import Event
+import multiprocessing
+import time
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import Sequence, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -20,20 +21,30 @@ from app.models.worker import (
     WorkerRawManifest,
     WorkerRun,
 )
-from app.worker.contracts import HandlerContext, HandlerResult, StagingResult
+from app.worker.contracts import (
+    ExecutionCounters,
+    HandlerContext,
+    HandlerResult,
+    StagingResult,
+)
 from app.worker.errors import (
     HandlerNotRegisteredError,
     IdempotencyConflictError,
     InvalidDataError,
+    LegalBlockError,
     LeaseConflictError,
     LeaseLostError,
     PublicationValidationError,
+    SchemaMismatchError,
     TemporaryInfrastructureError,
     WorkerFoundationError,
     WorkerNetworkError,
     WorkerTimeoutError,
 )
 from app.worker.registry import HandlerRegistry, RegisteredHandler
+
+
+WORKER_FENCING_SEQUENCE = Sequence("worker_lease_fencing_token_seq")
 
 
 def utc_now() -> datetime:
@@ -68,6 +79,7 @@ class RunObservation:
     duration_ms: int | None
     stale: bool
     errors: tuple[dict[str, Any], ...]
+    counters: ExecutionCounters
 
 
 class RetryPolicy:
@@ -224,12 +236,15 @@ def _acquire_lease(
 ) -> int:
     if lease_ttl <= timedelta(0):
         raise ValueError("lease_ttl must be positive")
+    fencing_token = int(
+        session.scalar(select(WORKER_FENCING_SEQUENCE.next_value()))
+    )
     statement = (
         pg_insert(WorkerLease)
         .values(
             source_id=source_id,
             owner_worker_id=worker_id,
-            fencing_token=1,
+            fencing_token=fencing_token,
             acquired_at=now,
             heartbeat_at=now,
             expires_at=now + lease_ttl,
@@ -238,7 +253,7 @@ def _acquire_lease(
             index_elements=[WorkerLease.source_id],
             set_={
                 "owner_worker_id": worker_id,
-                "fencing_token": WorkerLease.fencing_token + 1,
+                "fencing_token": fencing_token,
                 "acquired_at": now,
                 "heartbeat_at": now,
                 "expires_at": now + lease_ttl,
@@ -247,10 +262,10 @@ def _acquire_lease(
         )
         .returning(WorkerLease.fencing_token)
     )
-    token = session.scalar(statement)
-    if token is None:
+    claimed_token = session.scalar(statement)
+    if claimed_token is None:
         raise LeaseConflictError(f"source lease is held: {source_id}")
-    return int(token)
+    return int(claimed_token)
 
 
 def claim_next_job(
@@ -315,6 +330,11 @@ def claim_next_job(
         errors=[],
         checksum_metadata={},
         heartbeat_at=now,
+        records_seen=0,
+        records_written=0,
+        records_rejected=0,
+        records_duplicated=0,
+        records_published=0,
         retryable=False,
     )
     session.add(run)
@@ -365,12 +385,44 @@ def heartbeat_run(
         .where(
             WorkerRun.id == claim.run_id,
             WorkerRun.worker_id == claim.worker_id,
+            WorkerRun.fencing_token == claim.fencing_token,
             WorkerRun.status == "running",
         )
         .values(**values)
     )
     if run_result.rowcount != 1:
         raise LeaseLostError(f"worker run is no longer active: {claim.run_id}")
+
+
+def update_run_counters(
+    session: Session,
+    claim: ClaimedExecution,
+    counters: ExecutionCounters,
+    *,
+    lease_ttl: timedelta,
+    now: datetime | None = None,
+) -> None:
+    """Persist in-flight progress under the current lease fencing token."""
+
+    now = now or utc_now()
+    heartbeat_run(
+        session,
+        claim,
+        lease_ttl=lease_ttl,
+        stage="handler",
+        now=now,
+    )
+    result = session.execute(
+        update(WorkerRun)
+        .where(
+            WorkerRun.id == claim.run_id,
+            WorkerRun.status == "running",
+            WorkerRun.fencing_token == claim.fencing_token,
+        )
+        .values(**counters.as_dict())
+    )
+    if result.rowcount != 1:
+        raise LeaseLostError(f"worker counters rejected: {claim.run_id}")
 
 
 def _assert_lease(
@@ -471,6 +523,9 @@ def complete_run_success(
     run.heartbeat_at = now
     run.duration_ms = max(0, int((now - run.started_at).total_seconds() * 1000))
     run.checksum_metadata = result.checksum_metadata
+    if result.counters is not None:
+        for name, value in result.counters.as_dict().items():
+            setattr(run, name, value)
     run.retryable = False
     job.status = "succeeded"
     job.next_attempt_at = None
@@ -548,6 +603,13 @@ def observe_run(
         duration_ms=run.duration_ms,
         stale=stale,
         errors=tuple(run.errors),
+        counters=ExecutionCounters(
+            records_seen=run.records_seen,
+            records_written=run.records_written,
+            records_rejected=run.records_rejected,
+            records_duplicated=run.records_duplicated,
+            records_published=run.records_published,
+        ),
     )
 
 
@@ -662,7 +724,62 @@ def _normalize_error(error: Exception) -> WorkerFoundationError:
         return WorkerNetworkError(str(error))
     if isinstance(error, OperationalError):
         return TemporaryInfrastructureError(str(error))
-    return InvalidDataError(str(error) or error.__class__.__name__)
+    return WorkerFoundationError(str(error) or error.__class__.__name__)
+
+
+def _error_from_envelope(kind: str, message: str) -> WorkerFoundationError:
+    error_types: dict[str, type[WorkerFoundationError]] = {
+        "timeout": WorkerTimeoutError,
+        "network_failure": WorkerNetworkError,
+        "temporary_infrastructure": TemporaryInfrastructureError,
+        "invalid_data": InvalidDataError,
+        "schema_mismatch": SchemaMismatchError,
+        "legal_block": LegalBlockError,
+        "handler_missing": HandlerNotRegisteredError,
+        "handler_failure": WorkerFoundationError,
+    }
+    return error_types.get(kind, WorkerFoundationError)(message)
+
+
+def _handler_child_main(
+    claim: ClaimedExecution,
+    deadline_at: datetime,
+    connection: Any,
+    shutdown_event: Any,
+) -> None:
+    """Execute one handler behind a process boundary and report over IPC."""
+
+    context = HandlerContext(
+        job_id=claim.job_id,
+        run_id=claim.run_id,
+        source_id=claim.source_id,
+        worker_id=claim.worker_id,
+        fencing_token=claim.fencing_token,
+        deadline_at=deadline_at,
+        heartbeat=lambda: connection.send(("heartbeat",)),
+        report_counters=lambda counters: connection.send(("counters", counters)),
+        shutdown_requested=shutdown_event.is_set,
+    )
+    try:
+        connection.send(("started",))
+        result = claim.handler.handler(context)
+        if not isinstance(result, HandlerResult):
+            raise InvalidDataError("handler must return HandlerResult")
+        connection.send(("result", result))
+    except BaseException as raw_error:
+        error = (
+            _normalize_error(raw_error)
+            if isinstance(raw_error, Exception)
+            else WorkerFoundationError(
+                str(raw_error) or raw_error.__class__.__name__
+            )
+        )
+        try:
+            connection.send(("error", error.kind.value, str(error)))
+        except Exception:
+            pass
+    finally:
+        connection.close()
 
 
 class WorkerExecutor:
@@ -677,14 +794,26 @@ class WorkerExecutor:
         lease_ttl: timedelta = timedelta(seconds=60),
         retry_policy: RetryPolicy | None = None,
         clock: Callable[[], datetime] = utc_now,
+        process_start_method: str = "spawn",
+        child_cleanup_seconds: float = 1.0,
     ) -> None:
+        if lease_ttl <= timedelta(0):
+            raise ValueError("lease_ttl must be positive")
+        if child_cleanup_seconds <= 0:
+            raise ValueError("child_cleanup_seconds must be positive")
+        if process_start_method not in multiprocessing.get_all_start_methods():
+            raise ValueError(
+                f"unsupported process start method: {process_start_method}"
+            )
         self.session_factory = session_factory
         self.registry = registry
         self.worker_id = worker_id
         self.lease_ttl = lease_ttl
         self.retry_policy = retry_policy or RetryPolicy()
         self.clock = clock
-        self._shutdown = Event()
+        self.child_cleanup_seconds = child_cleanup_seconds
+        self._process_context = multiprocessing.get_context(process_start_method)
+        self._shutdown = self._process_context.Event()
 
     @property
     def shutdown_requested(self) -> bool:
@@ -709,6 +838,125 @@ class WorkerExecutor:
             )
             session.commit()
 
+    def _report_counters(
+        self,
+        claim: ClaimedExecution,
+        deadline_at: datetime,
+        counters: ExecutionCounters,
+    ) -> None:
+        if not isinstance(counters, ExecutionCounters):
+            raise InvalidDataError("handler progress must use ExecutionCounters")
+        now = self.clock()
+        if now >= deadline_at:
+            raise WorkerTimeoutError("worker execution deadline exceeded")
+        with self.session_factory() as session:
+            update_run_counters(
+                session,
+                claim,
+                counters,
+                lease_ttl=self.lease_ttl,
+                now=now,
+            )
+            session.commit()
+
+    def _run_isolated(
+        self,
+        claim: ClaimedExecution,
+        *,
+        deadline_at: datetime,
+    ) -> HandlerResult:
+        parent_connection, child_connection = self._process_context.Pipe(
+            duplex=False
+        )
+        process = self._process_context.Process(
+            target=_handler_child_main,
+            args=(claim, deadline_at, child_connection, self._shutdown),
+            name=f"worker-handler-{claim.run_id}",
+            daemon=True,
+        )
+        started = False
+        outcome: HandlerResult | None = None
+        timeout_at = time.monotonic() + claim.timeout_seconds
+        heartbeat_period = max(
+            0.001,
+            min(1.0, self.lease_ttl.total_seconds() / 3),
+        )
+        next_heartbeat_at = time.monotonic() + heartbeat_period
+        try:
+            process.start()
+            started = True
+            child_connection.close()
+            self._heartbeat(claim, deadline_at)
+
+            while outcome is None:
+                monotonic_now = time.monotonic()
+                if monotonic_now >= timeout_at:
+                    raise WorkerTimeoutError(
+                        f"handler exceeded timeout_seconds={claim.timeout_seconds}"
+                    )
+
+                wait_seconds = min(
+                    0.05,
+                    timeout_at - monotonic_now,
+                    max(0.0, next_heartbeat_at - monotonic_now),
+                )
+                if parent_connection.poll(wait_seconds):
+                    try:
+                        message = parent_connection.recv()
+                    except EOFError:
+                        message = None
+                    if message is None:
+                        if not process.is_alive():
+                            raise WorkerFoundationError(
+                                f"handler child exited with code {process.exitcode}"
+                            )
+                        continue
+                    kind = message[0]
+                    if kind == "started":
+                        continue
+                    if kind == "heartbeat":
+                        self._heartbeat(claim, deadline_at)
+                        next_heartbeat_at = time.monotonic() + heartbeat_period
+                        continue
+                    if kind == "counters":
+                        self._report_counters(claim, deadline_at, message[1])
+                        next_heartbeat_at = time.monotonic() + heartbeat_period
+                        continue
+                    if kind == "error":
+                        raise _error_from_envelope(message[1], message[2])
+                    if kind == "result":
+                        outcome = message[1]
+                        continue
+                    raise WorkerFoundationError(
+                        f"unknown handler child message: {kind}"
+                    )
+
+                monotonic_now = time.monotonic()
+                if monotonic_now >= next_heartbeat_at:
+                    self._heartbeat(claim, deadline_at)
+                    next_heartbeat_at = monotonic_now + heartbeat_period
+                if not process.is_alive() and not parent_connection.poll():
+                    raise WorkerFoundationError(
+                        f"handler child exited with code {process.exitcode}"
+                    )
+        finally:
+            parent_connection.close()
+            if not started:
+                child_connection.close()
+            if started:
+                process.join(timeout=0.1)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=self.child_cleanup_seconds)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=self.child_cleanup_seconds)
+                process.close()
+
+        if outcome is None:
+            raise WorkerFoundationError("handler child returned no result")
+        return outcome
+
     def run_once(self) -> UUID | None:
         if self.shutdown_requested:
             return None
@@ -726,23 +974,8 @@ class WorkerExecutor:
             session.commit()
 
         deadline_at = self.clock() + timedelta(seconds=claim.timeout_seconds)
-        context = HandlerContext(
-            job_id=claim.job_id,
-            run_id=claim.run_id,
-            source_id=claim.source_id,
-            worker_id=claim.worker_id,
-            fencing_token=claim.fencing_token,
-            deadline_at=deadline_at,
-            heartbeat=lambda: self._heartbeat(claim, deadline_at),
-            shutdown_requested=lambda: self.shutdown_requested,
-        )
         try:
-            self._heartbeat(claim, deadline_at)
-            result = claim.handler.handler(context)
-            if not isinstance(result, HandlerResult):
-                raise InvalidDataError("handler must return HandlerResult")
-            if self.clock() >= deadline_at:
-                raise WorkerTimeoutError("worker execution deadline exceeded")
+            result = self._run_isolated(claim, deadline_at=deadline_at)
             with self.session_factory() as session:
                 try:
                     complete_run_success(session, claim, result, now=self.clock())

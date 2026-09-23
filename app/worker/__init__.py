@@ -5,6 +5,7 @@ it cannot enable live ingestion or background scheduling.
 """
 
 from app.worker.contracts import (
+    ExecutionCounters,
     HandlerContext,
     HandlerResult,
     RawArtifactReference,
@@ -18,6 +19,7 @@ __all__ = [
     "HandlerContext",
     "HandlerRegistry",
     "HandlerResult",
+    "ExecutionCounters",
     "RawArtifactReference",
     "RetryPolicy",
     "StagingResult",

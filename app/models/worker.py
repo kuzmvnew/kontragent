@@ -98,6 +98,12 @@ class WorkerRun(Base):
             "duration_ms IS NULL OR duration_ms >= 0",
             name="ck_worker_runs_duration",
         ),
+        CheckConstraint(
+            "records_seen >= 0 AND records_written >= 0 "
+            "AND records_rejected >= 0 AND records_duplicated >= 0 "
+            "AND records_published >= 0",
+            name="ck_worker_runs_counters",
+        ),
         Index("ix_worker_runs_stale", "status", "heartbeat_at"),
     )
 
@@ -137,6 +143,21 @@ class WorkerRun(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    records_seen: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    records_written: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    records_rejected: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    records_duplicated: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    records_published: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
     retryable: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )

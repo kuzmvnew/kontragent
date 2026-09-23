@@ -12,6 +12,10 @@ Summary, API or Card integration is enabled by DEV-008.
   both the process registry and the durable approval registry.
 - PostgreSQL leases are authoritative. A local mutex or process lock must
   never be used as the execution authority.
+- Fencing tokens come from `worker_lease_fencing_token_seq`; deleting or
+  completing a lease cannot reset or reuse a token.
+- Handlers run in spawned child processes. The parent owns database state,
+  heartbeat renewal, timeout enforcement and child termination/kill cleanup.
 - Publication changes only an isolated foundation pointer. It does not write
   facts or invoke Risk, Summary, Public Projection, API or Card code.
 
@@ -31,6 +35,20 @@ Acceptance points:
 - a retry is scheduled only under the explicit retry policy;
 - an expired owner cannot heartbeat or publish;
 - monitoring can distinguish stale, timed-out, failed and succeeded runs.
+- execution counters retain the last parent-persisted progress report even
+  when the child times out or fails.
+
+## Handler execution boundary
+
+- Registered handler callables must be serializable by Python's `spawn`
+  multiprocessing context.
+- Handler results, RAW references, validation results and execution counters
+  cross a narrow IPC pipe; handlers do not mutate worker database state.
+- The parent periodically renews the lease while supervising the child.
+- At `timeout_seconds`, the parent terminates the child, escalates to kill if
+  it does not exit within the cleanup window, and records `timed_out`.
+- Graceful shutdown stops new claims. An in-flight child may observe
+  `context.shutdown_requested()` and return cleanly before its timeout.
 
 ## Backup and restore placeholder
 
