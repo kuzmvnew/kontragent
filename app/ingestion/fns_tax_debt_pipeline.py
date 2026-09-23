@@ -341,11 +341,19 @@ def _normalize_document(
     ordinal: int,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     raw = _document_payload(document)
+    source_document_id = str(raw["document"].get("ИдДок") or "").strip()
+    raw_document_date = str(raw["document"].get("ДатаДок") or "").strip()
     taxpayer = raw["taxpayer"] or {}
     inn = str(taxpayer.get("ИННЮЛ") or taxpayer.get("ИНН") or "").strip()
     data_date = _parse_date(document.attrib.get("ДатаСост"))
-    document_date = _parse_date(document.attrib.get("ДатаДок"))
+    document_date = _parse_date(raw_document_date)
     reasons: list[str] = []
+    if not source_document_id:
+        reasons.append("missing_document_id")
+    if not raw_document_date:
+        reasons.append("missing_document_date")
+    elif document_date is None:
+        reasons.append("invalid_document_date")
     if not is_valid_legal_entity_inn(inn):
         reasons.append("invalid_inn")
     if data_date is None:
@@ -358,6 +366,9 @@ def _normalize_document(
         tax_name = str(raw_item.get("НаимНалог") or "Не указано").strip()
         if not tax_name:
             tax_name = "Не указано"
+        if not str(raw_item.get("ОбщСумНедоим") or "").strip():
+            reasons.append("missing_total_debt")
+            continue
         try:
             arrears = _parse_money(raw_item.get("СумНедНалог"))
             penalties = _parse_money(raw_item.get("СумПени"))
@@ -398,7 +409,7 @@ def _normalize_document(
         "source_ordinal": ordinal,
         "inn": inn,
         "company_name": taxpayer.get("НаимОрг"),
-        "source_document_id": document.attrib.get("ИдДок"),
+        "source_document_id": source_document_id,
         "document_date": document_date,
         "data_date": data_date,
         "total_arrears": sum((item["arrears"] for item in items), ZERO),
@@ -752,7 +763,14 @@ def publish_tax_debt_result(
     conflicts = 0
     database_duplicates = 0
     published = 0
-    data_dates: list[date] = []
+    # The active full-snapshot date belongs to the source artifact, not to the
+    # subset of records that happen to match entities in our database.  Derive
+    # it before matching so a valid snapshot with zero matches still advances
+    # dataset freshness and makes absent companies NOT_FOUND.
+    snapshot_data_date = max(
+        (values["data_date"] for values in entries),
+        default=None,
+    )
 
     for values in entries:
         match = resolve_inn_match(values["inn"], candidates)
@@ -807,7 +825,6 @@ def publish_tax_debt_result(
             conflicts += 1
             continue
         matched += 1
-        data_dates.append(values["data_date"])
         provenance = build_fact_provenance(
             values,
             artifact=artifact,
@@ -871,7 +888,7 @@ def publish_tax_debt_result(
         "database_duplicates": database_duplicates,
         "projected_facts": published,
     }
-    data_date = max(data_dates) if data_dates else None
+    data_date = snapshot_data_date
     dataset.last_attempt_at = artifact.retrieved_at
     dataset.last_success_at = artifact.retrieved_at
     dataset.source_as_of = artifact.source_as_of
@@ -884,9 +901,7 @@ def publish_tax_debt_result(
     dataset.last_error_at = None
     dataset.retry_count = 0
     if data_date is not None:
-        dataset.last_data_date = max(
-            value for value in (dataset.last_data_date, data_date) if value is not None
-        )
+        dataset.last_data_date = data_date
 
     original = result.counters or ExecutionCounters()
     counters = ExecutionCounters(

@@ -20,6 +20,7 @@ from app.models.tax_debt import (
     FnsTaxDebtRawArtifact,
 )
 from app.models.worker import WorkerJob, WorkerPublicationState, WorkerRawManifest
+from app.services import tax_debt_service
 from app.services.tax_debt_service import prepare_tax_debt_public_projection
 from app.sources.fns_tax_debt import (
     CONTROLLED_LIVE_PILOT_ENABLED,
@@ -151,6 +152,31 @@ def test_parser_failure_is_fail_closed_for_malformed_xml(tmp_path):
 
     with pytest.raises(pipeline.TaxDebtParseError, match="cannot parse XML"):
         pipeline.parse_tax_debt_zip(source)
+
+
+@pytest.mark.parametrize(
+    ("field", "attribute", "reason_code"),
+    [
+        ("ИдДок", ' ИдДок="DEBT-1"', "missing_document_id"),
+        ("ДатаДок", ' ДатаДок="25.08.2026"', "missing_document_date"),
+        ("ОбщСумНедоим", ' ОбщСумНедоим="125.00"', "missing_total_debt"),
+    ],
+)
+def test_missing_required_xml_field_is_quarantined_without_normalization(
+    tmp_path,
+    field,
+    attribute,
+    reason_code,
+):
+    document = _document().replace(attribute, "")
+    source = _zip(tmp_path / f"missing-{field}.zip", [document])
+
+    parsed = pipeline.parse_tax_debt_zip(source)
+
+    assert parsed.entries == ()
+    assert parsed.coverage["normalized_records"] == 0
+    assert parsed.coverage["quarantined_records"] == 1
+    assert reason_code in parsed.quarantine[0]["reason_codes"]
 
 
 @pytest.mark.parametrize(
@@ -474,12 +500,126 @@ def test_full_worker_pipeline_publishes_canonical_fact_and_is_idempotent(
         assert publication.validation_metadata["validation"]["fact_code"] == FACT_CODE
 
 
+def test_new_full_snapshot_without_previous_inn_advances_active_dataset(
+    pipeline_db,
+    tmp_path,
+    monkeypatch,
+):
+    previous_inn = _valid_inn(uuid4().int)
+    absent_inn = _valid_inn(uuid4().int)
+    while absent_inn == previous_inn:
+        absent_inn = _valid_inn(uuid4().int)
+    dataset_id, company_id = _ensure_dataset_and_company(
+        pipeline_db,
+        inn=previous_inn,
+    )
+    old_source = _zip(
+        tmp_path / "old-found.zip",
+        [_document(inn=previous_inn, data_date="01.08.2026")],
+    )
+    new_source = _zip(
+        tmp_path / "new-without-inn.zip",
+        [
+            _document(
+                inn=absent_inn,
+                document_id="DEBT-NEW-OTHER",
+                data_date="01.09.2026",
+            )
+        ],
+    )
+    new_source_as_of = SOURCE_AS_OF + timedelta(days=31)
+    new_retrieved_at = RETRIEVED_AT + timedelta(days=31)
+    registry = HandlerRegistry()
+
+    with pipeline_db() as session:
+        pipeline.register_fns_tax_debt_handler(session, registry)
+        pipeline.enqueue_fns_tax_debt_fixture_job(
+            session,
+            source_path=old_source,
+            artifact_store=tmp_path / "raw",
+            source_as_of=SOURCE_AS_OF,
+            retrieved_at=RETRIEVED_AT,
+        )
+        session.commit()
+    executor = WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="dev009-freshness-old",
+        process_start_method="fork",
+    )
+    executor.run_once()
+
+    with pipeline_db() as session:
+        pipeline.enqueue_fns_tax_debt_fixture_job(
+            session,
+            source_path=new_source,
+            artifact_store=tmp_path / "raw",
+            source_as_of=new_source_as_of,
+            retrieved_at=new_retrieved_at,
+        )
+        session.commit()
+    executor = WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="dev009-freshness-new",
+        process_start_method="fork",
+    )
+    executor.run_once()
+
+    with pipeline_db() as session:
+        dataset = session.get(DataSet, dataset_id)
+        assert dataset.last_data_date.isoformat() == "2026-09-01"
+        assert dataset.source_as_of == new_source_as_of
+        assert dataset.retrieved_at == new_retrieved_at
+        assert dataset.coverage["matched_records"] == 0
+        assert dataset.coverage["unmatched_records"] == 1
+        assert session.scalar(
+            select(func.count()).select_from(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.company_id == company_id,
+                CompanyTaxDebtSnapshot.dataset_id == dataset_id,
+            )
+        ) == 1
+
+    monkeypatch.setattr(tax_debt_service, "get_session", pipeline_db)
+    check = tax_debt_service.get_tax_debt_check_for_company(company_id)
+
+    assert check["result"] == "not_found"
+    assert check["data_date"].isoformat() == "2026-09-01"
+    assert check["total_debt"] == Decimal("0.00")
+
+
 def test_transient_publication_failure_rolls_back_domain_rows_and_schedules_retry(
     pipeline_db,
     tmp_path,
 ):
     inn = _valid_inn(uuid4().int)
     dataset_id, company_id = _ensure_dataset_and_company(pipeline_db, inn=inn)
+    previous_source_as_of = SOURCE_AS_OF - timedelta(days=31)
+    previous_retrieved_at = RETRIEVED_AT - timedelta(days=31)
+    previous_data_date = datetime(2026, 7, 1).date()
+    with pipeline_db() as session:
+        dataset = session.get(DataSet, dataset_id)
+        dataset.last_data_date = previous_data_date
+        dataset.source_as_of = previous_source_as_of
+        dataset.retrieved_at = previous_retrieved_at
+        previous_snapshot = CompanyTaxDebtSnapshot(
+            company_id=company_id,
+            dataset_id=dataset_id,
+            data_date=previous_data_date,
+            source_document_id="PREVIOUS-ACTIVE",
+            total_arrears=Decimal("40.00"),
+            total_penalties=Decimal("5.00"),
+            total_fines=Decimal("0.00"),
+            total_debt=Decimal("45.00"),
+            item_count=0,
+            source_reference="fixture://previous-active",
+            provenance={"artifact_sha256": "a" * 64},
+            limitation_states=list(pipeline.LIMITATION_STATES),
+            retrieved_at=previous_retrieved_at,
+        )
+        session.add(previous_snapshot)
+        session.commit()
+        previous_snapshot_id = previous_snapshot.id
     source = _zip(
         tmp_path / "rollback.zip",
         [_document(inn=inn, document_id="ROLLBACK-1", data_date="02.08.2026")],
@@ -531,7 +671,11 @@ def test_transient_publication_failure_rolls_back_domain_rows_and_schedules_retr
 
     with pipeline_db() as session:
         job = session.get(WorkerJob, creation.job.id)
+        dataset = session.get(DataSet, dataset_id)
         assert job.status == "retry_scheduled"
+        assert dataset.last_data_date == previous_data_date
+        assert dataset.source_as_of == previous_source_as_of
+        assert dataset.retrieved_at == previous_retrieved_at
         assert session.scalar(
             select(func.count()).select_from(FnsTaxDebtRawArtifact).where(
                 FnsTaxDebtRawArtifact.dataset_id == dataset_id,
@@ -548,4 +692,7 @@ def test_transient_publication_failure_rolls_back_domain_rows_and_schedules_retr
                 CompanyTaxDebtSnapshot.company_id == company_id,
                 CompanyTaxDebtSnapshot.dataset_id == dataset_id,
             )
-        ) == 0
+        ) == 1
+        preserved = session.get(CompanyTaxDebtSnapshot, previous_snapshot_id)
+        assert preserved.source_document_id == "PREVIOUS-ACTIVE"
+        assert preserved.total_debt == Decimal("45.00")
