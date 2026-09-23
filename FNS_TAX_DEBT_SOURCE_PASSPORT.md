@@ -12,6 +12,13 @@ official-format fixtures. The controlled live pilot remains gated until QA;
 mass ingestion and automatic scheduling remain disabled. See
 `docs/DEV_009_FNS_TAX_DEBT_PIPELINE.md`.
 
+DEV-010 integration update (2026-09-23): a separate, version-pinned
+`controlled_live` pilot handler is ready for QA with explicit durable registry
+approval, a maximum-100 legal-entity cohort, fail-closed publication isolation,
+official-page discovery, pinned-XSD validation, generation rollback and S02
+monitoring. It remains disabled by default; `MASS_INGESTION_ENABLED=False`.
+See `docs/DEV_010_FNS_TAX_DEBT_CONTROLLED_LIVE.md`.
+
 ## Source
 
 - Owner/operator: Federal Tax Service of Russia (ФНС России).

@@ -8,11 +8,14 @@ from dataclasses import asdict, dataclass
 SOURCE_ID = "S02"
 DATASET_CODE = "fns_tax_debt"
 HANDLER_VERSION = "fns-tax-debt-v1"
+CONTROLLED_LIVE_HANDLER_VERSION = "fns-tax-debt-controlled-live-v1"
 PARSER_VERSION = "fns-debtam-xml-v1"
 NORMALIZATION_VERSION = "tax-debt-normalization-v1"
 FACT_CODE = "tax.debt.amount_as_of_date"
 OFFICIAL_SOURCE_PAGE = "https://www.nalog.gov.ru/opendata/7707329152-debtam/"
 OFFICIAL_FILE_BASE = "https://file.nalog.ru/opendata/7707329152-debtam/"
+PILOT_ENVIRONMENT = "s02-controlled-live-pilot"
+PILOT_COHORT_LIMIT = 100
 CONTROLLED_LIVE_PILOT_ENABLED = False
 MASS_INGESTION_ENABLED = False
 
@@ -71,4 +74,3 @@ FNS_TAX_DEBT_SOURCE_CONTRACT = SourceContract(
     controlled_live_pilot_enabled=CONTROLLED_LIVE_PILOT_ENABLED,
     mass_ingestion_enabled=MASS_INGESTION_ENABLED,
 )
-

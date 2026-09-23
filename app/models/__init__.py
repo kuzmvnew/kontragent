@@ -80,6 +80,8 @@ from app.models.tax_debt import (
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
     FnsTaxDebtNormalizedRecord,
+    FnsTaxDebtPilotState,
+    FnsTaxDebtPublicationGeneration,
     FnsTaxDebtQuarantineRecord,
     FnsTaxDebtRawArtifact,
 )
@@ -129,6 +131,8 @@ __all__ = [
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
     "FnsTaxDebtNormalizedRecord",
+    "FnsTaxDebtPilotState",
+    "FnsTaxDebtPublicationGeneration",
     "FnsTaxDebtQuarantineRecord",
     "FnsTaxDebtRawArtifact",
     "CompanyTaxOffence",

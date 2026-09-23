@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 
 from app.database.postgres import get_session
 from app.models.company import Company
@@ -8,6 +8,7 @@ from app.models.source import DataSet
 from app.models.tax_debt import (
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
+    FnsTaxDebtPilotState,
     TAX_DEBT_FACT_CODE,
 )
 
@@ -22,6 +23,24 @@ DATASET_CODE = "fns_tax_debt"
 SOURCE_CODE = "fns_tax_debt"
 
 ZERO = Decimal("0.00")
+
+
+def _active_generation_condition():
+    pilot_exists = exists(
+        select(FnsTaxDebtPilotState.source_id).where(
+            FnsTaxDebtPilotState.source_id == "S02",
+            FnsTaxDebtPilotState.query_generation > 0,
+        )
+    )
+    active_generation = (
+        select(FnsTaxDebtPilotState.query_generation)
+        .where(FnsTaxDebtPilotState.source_id == "S02")
+        .scalar_subquery()
+    )
+    return or_(
+        ~pilot_exists,
+        CompanyTaxDebtSnapshot.publication_generation == active_generation,
+    )
 
 
 # =========================================================
@@ -489,6 +508,7 @@ def get_tax_debt_check_for_company(
                     == dataset.id,
                     CompanyTaxDebtSnapshot.data_date
                     == dataset_data_date,
+                    _active_generation_condition(),
                 )
                 .order_by(
                     CompanyTaxDebtSnapshot.id.desc()
@@ -636,7 +656,8 @@ def get_tax_debt_history(
                 )
                 .where(
                     CompanyTaxDebtSnapshot.company_id
-                    == company_id
+                    == company_id,
+                    _active_generation_condition(),
                 )
                 .order_by(
                     CompanyTaxDebtSnapshot.data_date.desc(),

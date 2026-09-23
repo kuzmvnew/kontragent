@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "d0e1f2a3b4c5"
+CURRENT_SCHEMA_HEAD = "e1f2a3b4c5d6"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -64,6 +64,8 @@ POST_CANONICAL_TARGET_TABLES = {
     "worker_handler_registry",
     "worker_raw_manifests",
     "worker_publication_state",
+    "fns_tax_debt_publication_generations",
+    "fns_tax_debt_pilot_state",
 }
 DEV009_EXTENSION_TABLES = {
     "fns_tax_debt_raw_artifacts",
@@ -81,6 +83,10 @@ DEV009_SNAPSHOT_EXTENSION_PATHS = {
     "ix_company_tax_debt_snapshots_normalized_record_id",
     "ix_company_tax_debt_snapshots_fact_code",
     "ix_company_tax_debt_snapshots_retrieved_at",
+    "publication_generation",
+    "ix_company_tax_debt_snapshots_publication_generation",
+    "uq_company_tax_debt_company_dataset_date_generation",
+    "uq_company_tax_debt_company_dataset_date",
 }
 V1_TABLES = ("company_risk_assessments", "company_summaries")
 PROTECTED_DATABASE = "kontragent"
@@ -454,7 +460,7 @@ def canonical_fingerprints(connection: sa.Connection) -> dict[str, dict[str, Any
 
 def full_parent_compatibility(connection: sa.Connection) -> dict[str, Any]:
     report = audit_metadata(connection, canonical_parent_metadata())
-    # DEV-009 is a forward-compatible extension relative to the historical
+    # DEV-009/DEV-010 are forward-compatible extensions relative to the historical
     # canonical-v3 parent checked by this utility.  A legacy database may not
     # have these later objects yet; a current database may have all of them.
     extension_differences = []
@@ -468,7 +474,10 @@ def full_parent_compatibility(connection: sa.Connection) -> dict[str, Any]:
         ) or (
             table == "company_tax_debt_snapshots"
             and path in DEV009_SNAPSHOT_EXTENSION_PATHS
-            and error.get("kind", "").startswith("missing")
+            and (
+                error.get("kind", "").startswith("missing")
+                or error.get("kind", "").startswith("unexpected")
+            )
         )
         if compatible_extension:
             extension_differences.append(error)

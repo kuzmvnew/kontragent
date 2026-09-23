@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    Index,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -60,6 +62,133 @@ class FnsTaxDebtRawArtifact(Base):
         DateTime(timezone=True), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class FnsTaxDebtPublicationGeneration(Base):
+    """Immutable S02 publication metadata used for exact generation rollback."""
+
+    __tablename__ = "fns_tax_debt_publication_generations"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_id",
+            "generation",
+            name="uq_fns_tax_debt_publication_generation",
+        ),
+        UniqueConstraint(
+            "dataset_id",
+            "artifact_id",
+            name="uq_fns_tax_debt_publication_artifact",
+        ),
+        CheckConstraint("generation > 0", name="ck_fns_tax_debt_generation_positive"),
+        CheckConstraint(
+            "status IN ('active', 'rollback', 'superseded')",
+            name="ck_fns_tax_debt_generation_status",
+        ),
+        Index(
+            "uq_fns_tax_debt_one_active_generation",
+            "dataset_id",
+            unique=True,
+            postgresql_where=text("((status)::text = 'active'::text)"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(
+        ForeignKey("data_sets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    artifact_id: Mapped[int] = mapped_column(
+        ForeignKey("fns_tax_debt_raw_artifacts.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    worker_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("worker_runs.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    staging_pointer: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_pointer: Mapped[str] = mapped_column(Text, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_as_of: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    retrieved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    official_actual_until: Mapped[date] = mapped_column(Date, nullable=False)
+    last_data_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    record_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    coverage: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    counters: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    validation_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class FnsTaxDebtPilotState(Base):
+    """Single operational state row for S02 discovery, freshness and generations."""
+
+    __tablename__ = "fns_tax_debt_pilot_state"
+    __table_args__ = (
+        CheckConstraint("generation >= 0", name="ck_fns_tax_debt_pilot_generation"),
+        CheckConstraint(
+            "fact_generation >= 0 AND query_generation >= 0",
+            name="ck_fns_tax_debt_pilot_fact_query_generation",
+        ),
+        CheckConstraint(
+            "freshness IN ('unknown', 'current', 'stale')",
+            name="ck_fns_tax_debt_pilot_freshness",
+        ),
+    )
+
+    source_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("data_sets.id", ondelete="CASCADE"), nullable=True, unique=True
+    )
+    pilot_environment: Mapped[str] = mapped_column(String(120), nullable=False)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    last_discovery_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    discovered_artifact_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovered_xsd_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovered_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    discovered_source_as_of: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    official_actual_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    active_raw_pointer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    fact_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    query_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    rollback_fact_generation: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    counters: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    freshness: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unknown", server_default=text("'unknown'")
+    )
+    errors: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
@@ -172,9 +301,10 @@ class CompanyTaxDebtSnapshot(Base):
             "company_id",
             "dataset_id",
             "data_date",
+            "publication_generation",
             name=(
                 "uq_company_tax_debt_"
-                "company_dataset_date"
+                "company_dataset_date_generation"
             ),
         ),
         CheckConstraint(
@@ -211,6 +341,14 @@ class CompanyTaxDebtSnapshot(Base):
         ForeignKey("fns_tax_debt_normalized_records.id", ondelete="SET NULL"),
         nullable=True,
         unique=True,
+        index=True,
+    )
+
+    publication_generation: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
         index=True,
     )
 

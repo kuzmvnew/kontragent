@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,20 +17,30 @@ from app.models.source import DataSet, DataSource
 from app.models.tax_debt import (
     CompanyTaxDebtSnapshot,
     FnsTaxDebtNormalizedRecord,
+    FnsTaxDebtPilotState,
+    FnsTaxDebtPublicationGeneration,
     FnsTaxDebtRawArtifact,
 )
 from app.models.worker import WorkerJob, WorkerPublicationState, WorkerRawManifest
 from app.services import tax_debt_service
 from app.services.tax_debt_service import prepare_tax_debt_public_projection
+from app.providers.fns_tax_debt_provider import (
+    TaxDebtDiscovery,
+    TaxDebtOfficialRelease,
+)
 from app.sources.fns_tax_debt import (
+    CONTROLLED_LIVE_HANDLER_VERSION,
     CONTROLLED_LIVE_PILOT_ENABLED,
     FACT_CODE,
     FNS_TAX_DEBT_SOURCE_CONTRACT,
     MASS_INGESTION_ENABLED,
+    OFFICIAL_SOURCE_PAGE,
+    PILOT_ENVIRONMENT,
     SOURCE_ID,
 )
 from app.worker.contracts import HandlerContext
 from app.worker.errors import (
+    HandlerNotRegisteredError,
     LegalBlockError,
     TemporaryInfrastructureError,
     WorkerTimeoutError,
@@ -296,10 +306,10 @@ def test_raw_and_normalized_replay_are_idempotent(tmp_path):
     assert (raw_path.stat().st_mtime_ns, staging_path.stat().st_mtime_ns) == mtimes
 
 
-def test_controlled_live_pilot_is_gated_until_qa(tmp_path):
+def test_controlled_live_pilot_is_disabled_by_default(tmp_path):
     source = _zip(tmp_path / "fixture.zip", [_document()])
 
-    with pytest.raises(LegalBlockError, match="QA approval"):
+    with pytest.raises(LegalBlockError, match="disabled"):
         pipeline.stage_tax_debt_artifact(
             source,
             artifact_store=tmp_path / "raw",
@@ -696,3 +706,336 @@ def test_transient_publication_failure_rolls_back_domain_rows_and_schedules_retr
         preserved = session.get(CompanyTaxDebtSnapshot, previous_snapshot_id)
         assert preserved.source_document_id == "PREVIOUS-ACTIVE"
         assert preserved.total_debt == Decimal("45.00")
+
+
+def _controlled_xsd(path: Path) -> Path:
+    path.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:element name="Файл">
+            <xs:complexType>
+              <xs:sequence>
+                <xs:element name="Документ" minOccurs="1" maxOccurs="unbounded">
+                  <xs:complexType>
+                    <xs:sequence>
+                      <xs:element name="СведНП">
+                        <xs:complexType>
+                          <xs:attribute name="ИННЮЛ" type="xs:string" use="required"/>
+                          <xs:attribute name="НаимОрг" type="xs:string"/>
+                        </xs:complexType>
+                      </xs:element>
+                      <xs:element name="СведНедоим" minOccurs="1" maxOccurs="unbounded">
+                        <xs:complexType>
+                          <xs:attribute name="НаимНалог" type="xs:string"/>
+                          <xs:attribute name="СумНедНалог" type="xs:decimal"/>
+                          <xs:attribute name="СумПени" type="xs:decimal"/>
+                          <xs:attribute name="СумШтраф" type="xs:decimal"/>
+                          <xs:attribute name="ОбщСумНедоим" type="xs:decimal" use="required"/>
+                        </xs:complexType>
+                      </xs:element>
+                    </xs:sequence>
+                    <xs:attribute name="ИдДок" type="xs:string" use="required"/>
+                    <xs:attribute name="ДатаДок" type="xs:string" use="required"/>
+                    <xs:attribute name="ДатаСост" type="xs:string" use="required"/>
+                  </xs:complexType>
+                </xs:element>
+              </xs:sequence>
+              <xs:attribute name="ВерсФорм" type="xs:string" use="required"/>
+              <xs:attribute name="ИдФайл" type="xs:string" use="required"/>
+              <xs:attribute name="ТипИнф" type="xs:string" use="required"/>
+              <xs:attribute name="КолДок" type="xs:integer" use="required"/>
+            </xs:complexType>
+          </xs:element>
+        </xs:schema>
+        """,
+        encoding="utf-8",
+    )
+    return path
+
+
+def _controlled_discovery(
+    *,
+    artifact_date: str,
+    data_as_of: date,
+    actual_until: date,
+    discovered_at: datetime,
+) -> TaxDebtDiscovery:
+    source_as_of = datetime.strptime(artifact_date, "%Y%m%d").replace(
+        tzinfo=timezone.utc
+    )
+    return TaxDebtDiscovery(
+        release=TaxDebtOfficialRelease(
+            discovery_page_url=OFFICIAL_SOURCE_PAGE,
+            artifact_url=(
+                "https://file.nalog.ru/opendata/7707329152-debtam/"
+                f"data-{artifact_date}-structure-20181201.zip"
+            ),
+            xsd_url=(
+                "https://file.nalog.ru/opendata/7707329152-debtam/"
+                "structure-20181201.xsd"
+            ),
+            source_as_of=source_as_of,
+            data_as_of=data_as_of,
+            official_actual_until=actual_until,
+            metadata={},
+        ),
+        changed=True,
+        discovered_at=discovered_at,
+    )
+
+
+def test_controlled_live_same_artifact_creates_one_job(
+    pipeline_db,
+    tmp_path,
+):
+    inn = _valid_inn(uuid4().int)
+    _ensure_dataset_and_company(pipeline_db, inn=inn)
+    source = _zip(tmp_path / "controlled-idempotent.zip", [_document(inn=inn)])
+    xsd = _controlled_xsd(tmp_path / "structure.xsd")
+    discovery = _controlled_discovery(
+        artifact_date="20260825",
+        data_as_of=date(2026, 8, 1),
+        actual_until=date(2026, 9, 25),
+        discovered_at=RETRIEVED_AT,
+    )
+    config = pipeline.ControlledLivePilotConfig(
+        enabled=True,
+        environment=PILOT_ENVIRONMENT,
+        cohort_inns=frozenset({inn}),
+        handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+    )
+    with pipeline_db() as session:
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session,
+            approved_by="DEV-010 test",
+            approved_at=RETRIEVED_AT,
+        )
+        first = pipeline.enqueue_fns_tax_debt_controlled_live_job(
+            session,
+            source_path=source,
+            xsd_path=xsd,
+            artifact_store=tmp_path / "raw",
+            discovery=discovery,
+            config=config,
+            retrieved_at=RETRIEVED_AT,
+        )
+        second = pipeline.enqueue_fns_tax_debt_controlled_live_job(
+            session,
+            source_path=source,
+            xsd_path=xsd,
+            artifact_store=tmp_path / "raw",
+            discovery=discovery,
+            config=config,
+            retrieved_at=RETRIEVED_AT,
+        )
+
+        assert first.created is True
+        assert second.created is False
+        assert second.job.id == first.job.id
+
+
+def test_controlled_live_handler_requires_explicit_durable_approval(pipeline_db):
+    registry = HandlerRegistry()
+
+    with pipeline_db() as session:
+        with pytest.raises(HandlerNotRegisteredError, match="explicit durable"):
+            pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
+
+
+def test_controlled_live_generation_rollback_restores_b_to_a(
+    pipeline_db,
+    tmp_path,
+    monkeypatch,
+):
+    inn = _valid_inn(uuid4().int)
+    dataset_id, company_id = _ensure_dataset_and_company(pipeline_db, inn=inn)
+    xsd = _controlled_xsd(tmp_path / "structure.xsd")
+    source_a = _zip(
+        tmp_path / "generation-a.zip",
+        [_document(inn=inn, document_id="GEN-A", data_date="01.08.2026")],
+    )
+    source_b = _zip(
+        tmp_path / "generation-b.zip",
+        [
+            _document(
+                inn=inn,
+                document_id="GEN-B",
+                data_date="01.09.2026",
+                arrears="200.00",
+                penalties="20.00",
+                fines="5.00",
+                total="225.00",
+            )
+        ],
+    )
+    discovery_a = _controlled_discovery(
+        artifact_date="20260825",
+        data_as_of=date(2026, 8, 1),
+        actual_until=date(2026, 9, 25),
+        discovered_at=RETRIEVED_AT,
+    )
+    retrieved_b = RETRIEVED_AT + timedelta(days=1)
+    discovery_b = _controlled_discovery(
+        artifact_date="20260920",
+        data_as_of=date(2026, 9, 1),
+        actual_until=date(2026, 10, 20),
+        discovered_at=retrieved_b,
+    )
+    config = pipeline.ControlledLivePilotConfig(
+        enabled=True,
+        environment=PILOT_ENVIRONMENT,
+        cohort_inns=frozenset({inn}),
+        handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+    )
+    registry = HandlerRegistry()
+    with pipeline_db() as session:
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session,
+            approved_by="DEV-010 rollback test",
+            approved_at=RETRIEVED_AT,
+        )
+        pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
+        pipeline.enqueue_fns_tax_debt_controlled_live_job(
+            session,
+            source_path=source_a,
+            xsd_path=xsd,
+            artifact_store=tmp_path / "raw",
+            discovery=discovery_a,
+            config=config,
+            retrieved_at=RETRIEVED_AT,
+        )
+        session.commit()
+
+    executor = WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="dev010-generation-a",
+        process_start_method="fork",
+    )
+    executor.run_once()
+    checksum_a, _ = pipeline.calculate_sha256(source_a)
+
+    with pipeline_db() as session:
+        pipeline.enqueue_fns_tax_debt_controlled_live_job(
+            session,
+            source_path=source_b,
+            xsd_path=xsd,
+            artifact_store=tmp_path / "raw",
+            discovery=discovery_b,
+            config=config,
+            retrieved_at=retrieved_b,
+        )
+        session.commit()
+    executor = WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="dev010-generation-b",
+        process_start_method="fork",
+    )
+    executor.run_once()
+
+    monkeypatch.setattr(tax_debt_service, "get_session", pipeline_db)
+    before = tax_debt_service.get_tax_debt_check_for_company(company_id)
+    assert before["data_date"] == date(2026, 9, 1)
+    assert before["total_debt"] == Decimal("225.00")
+
+    with pipeline_db() as session:
+        state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        assert state.generation == 2
+        pipeline.rollback_fns_tax_debt_generation(
+            session,
+            expected_generation=state.generation,
+            now=retrieved_b + timedelta(hours=1),
+        )
+        session.commit()
+
+    after = tax_debt_service.get_tax_debt_check_for_company(company_id)
+    assert after["data_date"] == date(2026, 8, 1)
+    assert after["total_debt"] == Decimal("125.00")
+
+    with pipeline_db() as session:
+        dataset = session.get(DataSet, dataset_id)
+        state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        generations = session.scalars(
+            select(FnsTaxDebtPublicationGeneration)
+            .where(FnsTaxDebtPublicationGeneration.dataset_id == dataset_id)
+            .order_by(FnsTaxDebtPublicationGeneration.generation)
+        ).all()
+        monitoring = pipeline.get_fns_tax_debt_pilot_monitoring(
+            session,
+            now=datetime(2026, 9, 26, tzinfo=timezone.utc),
+        )
+
+        assert dataset.source_as_of == discovery_a.release.source_as_of
+        assert dataset.retrieved_at == RETRIEVED_AT
+        assert dataset.last_data_date == date(2026, 8, 1)
+        assert state.active_checksum == checksum_a
+        assert state.generation == 3
+        assert state.fact_generation == 1
+        assert state.query_generation == 1
+        assert pointer.active_pointer == generations[0].staging_pointer
+        assert [row.status for row in generations] == ["active", "rollback"]
+        assert monitoring["last_discovery"] == discovery_b.discovered_at
+        assert monitoring["last_success"] is not None
+        assert monitoring["active_checksum"] == checksum_a
+        assert monitoring["generation"] == 3
+        assert monitoring["counters"]["records_published"] == 1
+        assert monitoring["freshness"] == "stale"
+        assert monitoring["errors"] == []
+
+
+def test_controlled_live_never_creates_company_outside_cohort(
+    pipeline_db,
+    tmp_path,
+):
+    cohort_inn = _valid_inn(uuid4().int)
+    outside_inn = _valid_inn(uuid4().int)
+    while outside_inn == cohort_inn:
+        outside_inn = _valid_inn(uuid4().int)
+    _ensure_dataset_and_company(pipeline_db, inn=cohort_inn)
+    source = _zip(
+        tmp_path / "outside-company.zip",
+        [_document(inn=outside_inn, document_id="OUTSIDE")],
+    )
+    xsd = _controlled_xsd(tmp_path / "structure.xsd")
+    discovery = _controlled_discovery(
+        artifact_date="20260825",
+        data_as_of=date(2026, 8, 1),
+        actual_until=date(2026, 9, 25),
+        discovered_at=RETRIEVED_AT,
+    )
+    config = pipeline.ControlledLivePilotConfig(
+        enabled=True,
+        cohort_inns=frozenset({cohort_inn}),
+    )
+    registry = HandlerRegistry()
+    with pipeline_db() as session:
+        before = session.scalar(select(func.count()).select_from(Company))
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session,
+            approved_by="DEV-010 isolation test",
+            approved_at=RETRIEVED_AT,
+        )
+        pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
+        pipeline.enqueue_fns_tax_debt_controlled_live_job(
+            session,
+            source_path=source,
+            xsd_path=xsd,
+            artifact_store=tmp_path / "raw",
+            discovery=discovery,
+            config=config,
+            retrieved_at=RETRIEVED_AT,
+        )
+        session.commit()
+    WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="dev010-isolation",
+        process_start_method="fork",
+    ).run_once()
+
+    with pipeline_db() as session:
+        assert session.scalar(select(func.count()).select_from(Company)) == before
+        state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        assert state.counters["records_published"] == 0
