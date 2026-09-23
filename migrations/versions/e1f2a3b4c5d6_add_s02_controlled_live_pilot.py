@@ -206,8 +206,35 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # The pilot scope never becomes the legacy shared dataset.  Restore the
-    # captured baseline metadata and remove scoped facts before collapsing the
-    # schema back to its pre-pilot unique key.
+    # captured baseline metadata and publication pointer before removing the
+    # pilot ledger and collapsing the schema back to its pre-pilot unique key.
+    op.execute(
+        sa.text(
+            """
+            UPDATE worker_publication_state AS publication
+            SET active_pointer = generation.staging_pointer,
+                rollback_pointer = NULL,
+                generation = publication.generation + 1,
+                published_by_run_id = generation.worker_run_id,
+                validation_metadata = jsonb_build_object(
+                    'checksum', generation.checksum,
+                    'validation', generation.validation_metadata,
+                    'staging', jsonb_build_object(
+                        'replayable', true,
+                        'source_id', pilot.source_id,
+                        'migration_restore', true
+                    )
+                ),
+                updated_at = generation.published_at
+            FROM fns_tax_debt_pilot_state AS pilot
+            JOIN fns_tax_debt_publication_generations AS generation
+              ON generation.dataset_id = pilot.dataset_id
+             AND generation.generation = pilot.baseline_generation
+             AND generation.publication_scope = 'baseline'
+            WHERE publication.source_id = pilot.source_id
+            """
+        )
+    )
     op.execute(
         sa.text(
             """

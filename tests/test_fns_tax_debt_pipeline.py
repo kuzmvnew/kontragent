@@ -1129,7 +1129,29 @@ def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
         assert outside_generations == [0]
 
 
-def test_pilot_migration_downgrade_handles_populated_same_date_generations(
+def test_pilot_migration_empty_upgrade_downgrade_upgrade_cycle(pipeline_db):
+    connection = pipeline_db.kw["bind"]
+    with Operations.context(MigrationContext.configure(connection)):
+        pilot_migration.downgrade()
+        inspector = sa.inspect(connection)
+        assert not inspector.has_table("fns_tax_debt_pilot_state")
+        assert not inspector.has_table("fns_tax_debt_publication_generations")
+        assert "publication_generation" not in {
+            column["name"]
+            for column in inspector.get_columns("company_tax_debt_snapshots")
+        }
+
+        pilot_migration.upgrade()
+        inspector = sa.inspect(connection)
+        assert inspector.has_table("fns_tax_debt_pilot_state")
+        assert inspector.has_table("fns_tax_debt_publication_generations")
+        assert "publication_generation" in {
+            column["name"]
+            for column in inspector.get_columns("company_tax_debt_snapshots")
+        }
+
+
+def test_pilot_migration_downgrade_restores_baseline_pointer_and_same_date_data(
     pipeline_db,
     tmp_path,
 ):
@@ -1228,6 +1250,30 @@ def test_pilot_migration_downgrade_handles_populated_same_date_generations(
                 CompanyTaxDebtSnapshot.data_date == date(2026, 9, 1),
             )
         ) == 2
+        baseline_generation = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.dataset_id == dataset_id,
+                FnsTaxDebtPublicationGeneration.generation == 0,
+            )
+        )
+        pointer_before = session.get(WorkerPublicationState, SOURCE_ID)
+        dataset_before = session.get(DataSet, dataset_id)
+        assert baseline_generation is not None
+        assert pointer_before.active_pointer != baseline_generation.staging_pointer
+        assert pointer_before.rollback_pointer != baseline_generation.staging_pointer
+        assert pointer_before.generation == 3
+        baseline_state = {
+            "staging_pointer": baseline_generation.staging_pointer,
+            "raw_pointer": baseline_generation.raw_pointer,
+            "checksum": baseline_generation.checksum,
+            "worker_run_id": baseline_generation.worker_run_id,
+            "source_as_of": baseline_generation.source_as_of,
+            "retrieved_at": baseline_generation.retrieved_at,
+            "data_date": baseline_generation.last_data_date,
+            "record_count": baseline_generation.record_count,
+            "coverage": baseline_generation.coverage,
+        }
+        assert dataset_before.last_data_date == baseline_state["data_date"]
 
     connection = pipeline_db.kw["bind"]
     with Operations.context(MigrationContext.configure(connection)):
@@ -1246,6 +1292,52 @@ def test_pilot_migration_downgrade_handles_populated_same_date_generations(
             ),
             {"company_id": company_id, "dataset_id": dataset_id},
         ) == 1
+        publication = connection.execute(
+            sa.text(
+                "SELECT active_pointer, rollback_pointer, generation, "
+                "published_by_run_id, validation_metadata "
+                "FROM worker_publication_state WHERE source_id = :source_id"
+            ),
+            {"source_id": SOURCE_ID},
+        ).mappings().one()
+        dataset = connection.execute(
+            sa.text(
+                "SELECT source_as_of, retrieved_at, last_data_date, "
+                "record_count, coverage FROM data_sets WHERE id = :dataset_id"
+            ),
+            {"dataset_id": dataset_id},
+        ).mappings().one()
+        assert publication["active_pointer"] == baseline_state["staging_pointer"]
+        assert publication["rollback_pointer"] is None
+        assert publication["generation"] == 4
+        assert publication["published_by_run_id"] == baseline_state["worker_run_id"]
+        assert publication["validation_metadata"]["checksum"] == baseline_state["checksum"]
+        assert (
+            publication["validation_metadata"]["validation"]["raw_pointer"]
+            == baseline_state["raw_pointer"]
+        )
+        assert publication["validation_metadata"]["validation"]["fact_generation"] == 0
+        assert publication["validation_metadata"]["validation"]["query_generation"] == 0
+        assert pipeline._file_uri_to_path(publication["active_pointer"]).is_file()
+        assert connection.scalar(
+            sa.text(
+                "SELECT count(*) FROM fns_tax_debt_raw_artifacts "
+                "WHERE dataset_id = :dataset_id AND artifact_reference = :raw_pointer"
+            ),
+            {
+                "dataset_id": dataset_id,
+                "raw_pointer": baseline_state["raw_pointer"],
+            },
+        ) == 1
+        assert connection.scalar(
+            sa.text("SELECT count(*) FROM worker_runs WHERE id = :worker_run_id"),
+            {"worker_run_id": baseline_state["worker_run_id"]},
+        ) == 1
+        assert dataset["source_as_of"] == baseline_state["source_as_of"]
+        assert dataset["retrieved_at"] == baseline_state["retrieved_at"]
+        assert dataset["last_data_date"] == baseline_state["data_date"]
+        assert dataset["record_count"] == baseline_state["record_count"]
+        assert dataset["coverage"] == baseline_state["coverage"]
 
         pilot_migration.upgrade()
         assert "publication_generation" in {
