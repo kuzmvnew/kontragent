@@ -946,6 +946,133 @@ def _restore_entry(value: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _dataset_metadata(dataset: DataSet) -> dict[str, Any]:
+    """Capture the exact shared dataset state that predates the pilot scope."""
+
+    return {
+        field: _json_safe(getattr(dataset, field))
+        for field in (
+            "last_attempt_at",
+            "last_success_at",
+            "last_data_date",
+            "source_as_of",
+            "retrieved_at",
+            "checked_at",
+            "published_at",
+            "record_count",
+            "coverage",
+            "operational_status",
+            "last_error",
+            "last_error_at",
+            "retry_count",
+            "next_retry_at",
+            "next_expected_update_at",
+            "auto_update_status",
+        )
+    }
+
+
+def _restore_dataset_metadata(dataset: DataSet, metadata: Mapping[str, Any]) -> None:
+    datetime_fields = {
+        "last_attempt_at",
+        "last_success_at",
+        "source_as_of",
+        "retrieved_at",
+        "checked_at",
+        "published_at",
+        "last_error_at",
+        "next_retry_at",
+        "next_expected_update_at",
+    }
+    for field, value in metadata.items():
+        if field == "last_data_date":
+            value = _parse_date(value)
+        elif field in datetime_fields and value is not None:
+            value = _parse_timestamp(value, field)
+        setattr(dataset, field, value)
+
+
+def _capture_baseline_generation(
+    session,
+    *,
+    dataset: DataSet,
+    pilot: FnsTaxDebtPilotState,
+) -> FnsTaxDebtPublicationGeneration:
+    baseline = session.scalar(
+        select(FnsTaxDebtPublicationGeneration).where(
+            FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+            FnsTaxDebtPublicationGeneration.generation == 0,
+        )
+    )
+    if baseline is not None:
+        return baseline
+
+    pointer = session.get(WorkerPublicationState, SOURCE_ID, with_for_update=True)
+    if pointer is None or pointer.active_pointer is None or pointer.published_by_run_id is None:
+        raise LegalBlockError("S02 controlled live pilot requires an existing baseline")
+    pointer_validation = dict(pointer.validation_metadata or {})
+    validation = dict(pointer_validation.get("validation") or {})
+    raw_pointer = str(validation.get("raw_pointer") or "")
+    checksum = str(pointer_validation.get("checksum") or "")
+    artifact = session.scalar(
+        select(FnsTaxDebtRawArtifact).where(
+            FnsTaxDebtRawArtifact.dataset_id == dataset.id,
+            (FnsTaxDebtRawArtifact.artifact_reference == raw_pointer)
+            if raw_pointer
+            else (FnsTaxDebtRawArtifact.sha256 == checksum),
+        )
+    )
+    if artifact is None:
+        raise LegalBlockError("S02 baseline RAW artifact is unavailable")
+    if dataset.source_as_of is None or dataset.retrieved_at is None:
+        raise LegalBlockError("S02 baseline dataset metadata is incomplete")
+    run = session.get(WorkerRun, pointer.published_by_run_id)
+    counters = (
+        {
+            "records_seen": run.records_seen,
+            "records_written": run.records_written,
+            "records_rejected": run.records_rejected,
+            "records_duplicated": run.records_duplicated,
+            "records_published": run.records_published,
+        }
+        if run is not None
+        else {}
+    )
+    baseline = FnsTaxDebtPublicationGeneration(
+        dataset_id=dataset.id,
+        artifact_id=artifact.id,
+        worker_run_id=pointer.published_by_run_id,
+        generation=0,
+        publication_scope="baseline",
+        status="baseline",
+        staging_pointer=pointer.active_pointer,
+        raw_pointer=artifact.artifact_reference,
+        checksum=artifact.sha256,
+        source_as_of=dataset.source_as_of,
+        retrieved_at=dataset.retrieved_at,
+        official_actual_until=None,
+        last_data_date=dataset.last_data_date,
+        record_count=int(dataset.record_count or 0),
+        coverage=dict(dataset.coverage or {}),
+        counters=counters,
+        validation_metadata=validation,
+        dataset_metadata=_dataset_metadata(dataset),
+        published_at=dataset.published_at or pointer.updated_at,
+    )
+    session.add(baseline)
+    session.flush()
+    pilot.baseline_generation = 0
+    pilot.baseline_data_date = dataset.last_data_date
+    pilot.normalized_generation = 0
+    pilot.fact_generation = 0
+    pilot.query_generation = 0
+    pilot.active_raw_pointer = artifact.artifact_reference
+    pilot.active_checksum = artifact.sha256
+    pilot.active_source_as_of = dataset.source_as_of
+    pilot.active_retrieved_at = dataset.retrieved_at
+    return baseline
+
+
 def _controlled_live_generation(
     session,
     *,
@@ -979,6 +1106,7 @@ def _controlled_live_generation(
         select(FnsTaxDebtPublicationGeneration).where(
             FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
             FnsTaxDebtPublicationGeneration.artifact_id == artifact.id,
+            FnsTaxDebtPublicationGeneration.publication_scope == "pilot",
         )
     )
     if existing is not None:
@@ -995,7 +1123,10 @@ def _controlled_live_generation(
             dataset_id=dataset.id,
             pilot_environment=PILOT_ENVIRONMENT,
             enabled=True,
+            cohort_inns=sorted(cohort),
             generation=0,
+            baseline_generation=0,
+            normalized_generation=0,
             fact_generation=0,
             query_generation=0,
             counters={},
@@ -1006,6 +1137,10 @@ def _controlled_live_generation(
         session.flush()
     elif not pilot.enabled or pilot.pilot_environment != PILOT_ENVIRONMENT:
         raise LegalBlockError("S02 controlled live pilot state is disabled")
+    elif frozenset(str(value) for value in (pilot.cohort_inns or ())) != cohort:
+        raise LegalBlockError("S02 controlled live cohort differs from approved pilot scope")
+
+    _capture_baseline_generation(session, dataset=dataset, pilot=pilot)
 
     current_generation = session.scalar(
         select(FnsTaxDebtPublicationGeneration)
@@ -1259,19 +1394,22 @@ def publish_tax_debt_result(
             }
         )
     data_date = snapshot_data_date
-    dataset.last_attempt_at = artifact.retrieved_at
-    dataset.last_success_at = artifact.retrieved_at
-    dataset.source_as_of = artifact.source_as_of
-    dataset.retrieved_at = artifact.retrieved_at
-    dataset.published_at = datetime.now(timezone.utc)
-    dataset.record_count = len(entries)
-    dataset.coverage = coverage
-    dataset.operational_status = "ready"
-    dataset.last_error = None
-    dataset.last_error_at = None
-    dataset.retry_count = 0
-    if data_date is not None:
-        dataset.last_data_date = data_date
+    # Controlled-live facts have their own publication scope.  The shared
+    # dataset row remains the baseline for every company outside the cohort.
+    if not controlled_live:
+        dataset.last_attempt_at = artifact.retrieved_at
+        dataset.last_success_at = artifact.retrieved_at
+        dataset.source_as_of = artifact.source_as_of
+        dataset.retrieved_at = artifact.retrieved_at
+        dataset.published_at = datetime.now(timezone.utc)
+        dataset.record_count = len(entries)
+        dataset.coverage = coverage
+        dataset.operational_status = "ready"
+        dataset.last_error = None
+        dataset.last_error_at = None
+        dataset.retry_count = 0
+        if data_date is not None:
+            dataset.last_data_date = data_date
 
     original = result.counters or ExecutionCounters()
     counters = ExecutionCounters(
@@ -1305,6 +1443,7 @@ def publish_tax_debt_result(
             artifact_id=artifact.id,
             worker_run_id=claim.run_id,
             generation=publication_generation,
+            publication_scope="pilot",
             status="active",
             staging_pointer=result.staging_result.staging_pointer,
             raw_pointer=raw.artifact_reference,
@@ -1317,6 +1456,20 @@ def publish_tax_debt_result(
             coverage=coverage,
             counters=counters.as_dict(),
             validation_metadata=validation.metadata,
+            dataset_metadata={
+                "last_attempt_at": artifact.retrieved_at.isoformat(),
+                "last_success_at": artifact.retrieved_at.isoformat(),
+                "last_data_date": data_date.isoformat() if data_date else None,
+                "source_as_of": artifact.source_as_of.isoformat(),
+                "retrieved_at": artifact.retrieved_at.isoformat(),
+                "published_at": published_at.isoformat(),
+                "record_count": len(entries),
+                "coverage": coverage,
+                "operational_status": "ready",
+                "last_error": None,
+                "last_error_at": None,
+                "retry_count": 0,
+            },
             published_at=published_at,
         )
         session.add(generation_row)
@@ -1324,13 +1477,16 @@ def publish_tax_debt_result(
         pilot_state.last_success_at = published_at
         pilot_state.active_raw_pointer = raw.artifact_reference
         pilot_state.active_checksum = raw.checksum
+        pilot_state.active_source_as_of = artifact.source_as_of
+        pilot_state.active_retrieved_at = artifact.retrieved_at
         worker_state = session.get(WorkerPublicationState, SOURCE_ID)
         pilot_state.generation = int(worker_state.generation if worker_state else 0) + 1
-        pilot_state.rollback_fact_generation = (
-            pilot_state.fact_generation or None
-        )
+        pilot_state.rollback_normalized_generation = pilot_state.normalized_generation
+        pilot_state.rollback_fact_generation = pilot_state.fact_generation
+        pilot_state.normalized_generation = publication_generation
         pilot_state.fact_generation = publication_generation
         pilot_state.query_generation = publication_generation
+        pilot_state.active_data_date = data_date
         pilot_state.counters = counters.as_dict()
         pilot_state.freshness = release_freshness(
             actual_until,
@@ -1552,7 +1708,10 @@ def record_tax_debt_discovery(
             dataset_id=dataset.id if dataset is not None else None,
             pilot_environment=PILOT_ENVIRONMENT,
             enabled=True,
+            cohort_inns=sorted(config.cohort_inns),
             generation=0,
+            baseline_generation=0,
+            normalized_generation=0,
             fact_generation=0,
             query_generation=0,
             counters={},
@@ -1560,6 +1719,10 @@ def record_tax_debt_discovery(
             errors=[],
         )
         session.add(state)
+    elif state.cohort_inns and frozenset(
+        str(value) for value in state.cohort_inns
+    ) != config.cohort_inns:
+        raise LegalBlockError("S02 discovery cohort differs from approved pilot scope")
     previous = (
         state.discovered_artifact_url,
         state.discovered_xsd_url,
@@ -1577,6 +1740,7 @@ def record_tax_debt_discovery(
     changed = previous != current
     state.dataset_id = dataset.id if dataset is not None else state.dataset_id
     state.enabled = True
+    state.cohort_inns = sorted(config.cohort_inns)
     state.last_discovery_at = discovery.discovered_at
     state.discovered_artifact_url = discovery.release.artifact_url
     state.discovered_xsd_url = discovery.release.xsd_url
@@ -1744,7 +1908,10 @@ def rollback_fns_tax_debt_generation(
         raise LookupError("S02 rollback generation is unavailable")
     if pointer.generation != expected_generation or pilot.generation != expected_generation:
         raise LeaseLostError("S02 publication generation changed before rollback")
-    if not pilot.rollback_fact_generation:
+    if (
+        pilot.rollback_fact_generation is None
+        or pilot.rollback_normalized_generation is None
+    ):
         raise LookupError("S02 rollback fact generation is unavailable")
     current = session.scalar(
         select(FnsTaxDebtPublicationGeneration)
@@ -1767,7 +1934,7 @@ def rollback_fns_tax_debt_generation(
         raise LookupError("S02 rollback generation metadata is unavailable")
     if (
         current.status != "active"
-        or target.status != "rollback"
+        or target.status not in {"baseline", "rollback"}
         or pointer.active_pointer != current.staging_pointer
         or pointer.rollback_pointer != target.staging_pointer
     ):
@@ -1802,28 +1969,23 @@ def rollback_fns_tax_debt_generation(
     current.status = "rollback"
     pilot.active_raw_pointer = target.raw_pointer
     pilot.active_checksum = target.checksum
+    pilot.active_source_as_of = target.source_as_of
+    pilot.active_retrieved_at = target.retrieved_at
     pilot.generation = pointer.generation
+    pilot.normalized_generation = target.generation
     pilot.fact_generation = target.generation
     pilot.query_generation = target.generation
+    pilot.rollback_normalized_generation = current.generation
     pilot.rollback_fact_generation = current.generation
+    pilot.active_data_date = target.last_data_date
     pilot.last_success_at = target.published_at
     pilot.official_actual_until = target.official_actual_until
     pilot.counters = target.counters
     pilot.freshness = release_freshness(target.official_actual_until, now=now)
     pilot.updated_at = now
 
-    dataset.last_attempt_at = target.retrieved_at
-    dataset.last_success_at = target.retrieved_at
-    dataset.source_as_of = target.source_as_of
-    dataset.retrieved_at = target.retrieved_at
-    dataset.published_at = target.published_at
-    dataset.last_data_date = target.last_data_date
-    dataset.record_count = target.record_count
-    dataset.coverage = target.coverage
-    dataset.operational_status = "ready"
-    dataset.last_error = None
-    dataset.last_error_at = None
-    dataset.retry_count = 0
+    if target.publication_scope == "baseline":
+        _restore_dataset_metadata(dataset, target.dataset_metadata)
     return pilot
 
 
@@ -1872,8 +2034,12 @@ def get_fns_tax_debt_pilot_monitoring(
             "active_checksum": None,
             "active_raw_pointer": None,
             "generation": 0,
+            "normalized_generation": 0,
             "fact_generation": 0,
             "query_generation": 0,
+            "data_date": None,
+            "source_as_of": None,
+            "retrieved_at": None,
             "counters": {},
             "freshness": "unknown",
             "errors": run_errors,
@@ -1887,8 +2053,12 @@ def get_fns_tax_debt_pilot_monitoring(
         "active_checksum": state.active_checksum,
         "active_raw_pointer": state.active_raw_pointer,
         "generation": state.generation,
+        "normalized_generation": state.normalized_generation,
         "fact_generation": state.fact_generation,
         "query_generation": state.query_generation,
+        "data_date": state.active_data_date,
+        "source_as_of": state.active_source_as_of,
+        "retrieved_at": state.active_retrieved_at,
         "counters": dict(state.counters or {}),
         "freshness": release_freshness(state.official_actual_until, now=now),
         "errors": [*list(state.errors or []), *run_errors],

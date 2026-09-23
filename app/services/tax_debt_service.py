@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import func, select
 
 from app.database.postgres import get_session
 from app.models.company import Company
@@ -11,6 +11,7 @@ from app.models.tax_debt import (
     FnsTaxDebtPilotState,
     TAX_DEBT_FACT_CODE,
 )
+from app.sources.fns_tax_debt import PILOT_ENVIRONMENT, SOURCE_ID
 
 
 # =========================================================
@@ -25,21 +26,27 @@ SOURCE_CODE = "fns_tax_debt"
 ZERO = Decimal("0.00")
 
 
-def _active_generation_condition():
-    pilot_exists = exists(
-        select(FnsTaxDebtPilotState.source_id).where(
-            FnsTaxDebtPilotState.source_id == "S02",
-            FnsTaxDebtPilotState.query_generation > 0,
-        )
-    )
-    active_generation = (
-        select(FnsTaxDebtPilotState.query_generation)
-        .where(FnsTaxDebtPilotState.source_id == "S02")
-        .scalar_subquery()
-    )
-    return or_(
-        ~pilot_exists,
-        CompanyTaxDebtSnapshot.publication_generation == active_generation,
+def _publication_scope(session, *, dataset, inn):
+    """Resolve one company's data date/generation without widening pilot scope."""
+
+    # Lightweight contract-test sessions intentionally expose execute() only;
+    # they represent the pre-pilot baseline and therefore remain generation 0.
+    get = getattr(session, "get", None)
+    state = get(FnsTaxDebtPilotState, SOURCE_ID) if get is not None else None
+    if (
+        state is None
+        or not state.enabled
+        or state.pilot_environment != PILOT_ENVIRONMENT
+        or state.dataset_id != dataset.id
+    ):
+        return dataset.last_data_date, 0
+
+    cohort = frozenset(str(value) for value in (state.cohort_inns or ()))
+    if inn in cohort:
+        return state.active_data_date, int(state.query_generation)
+    return (
+        state.baseline_data_date or dataset.last_data_date,
+        int(state.baseline_generation),
     )
 
 
@@ -51,6 +58,8 @@ def _active_generation_condition():
 def _get_dataset_data_date(
     session,
     dataset,
+    *,
+    publication_generation=0,
 ):
     """
     Определяет дату актуального загруженного
@@ -83,7 +92,9 @@ def _get_dataset_data_date(
             )
             .where(
                 CompanyTaxDebtSnapshot.dataset_id
-                == dataset.id
+                == dataset.id,
+                CompanyTaxDebtSnapshot.publication_generation
+                == publication_generation,
             )
         )
         .scalar_one_or_none()
@@ -475,12 +486,17 @@ def get_tax_debt_check_for_company(
                 reason="dataset_not_registered",
             )
 
-        dataset_data_date = (
-            _get_dataset_data_date(
+        dataset_data_date, publication_generation = _publication_scope(
+            session,
+            dataset=dataset,
+            inn=inn,
+        )
+        if dataset_data_date is None:
+            dataset_data_date = _get_dataset_data_date(
                 session=session,
                 dataset=dataset,
+                publication_generation=publication_generation,
             )
-        )
 
         if dataset_data_date is None:
 
@@ -508,7 +524,8 @@ def get_tax_debt_check_for_company(
                     == dataset.id,
                     CompanyTaxDebtSnapshot.data_date
                     == dataset_data_date,
-                    _active_generation_condition(),
+                    CompanyTaxDebtSnapshot.publication_generation
+                    == publication_generation,
                 )
                 .order_by(
                     CompanyTaxDebtSnapshot.id.desc()
@@ -649,6 +666,18 @@ def get_tax_debt_history(
 
     try:
 
+        company = session.get(Company, company_id)
+        dataset = session.execute(
+            select(DataSet).where(DataSet.code == DATASET_CODE)
+        ).scalar_one_or_none()
+        if company is None or dataset is None:
+            return []
+        _, publication_generation = _publication_scope(
+            session,
+            dataset=dataset,
+            inn=str(company.inn or "").strip(),
+        )
+
         rows = (
             session.execute(
                 select(
@@ -657,7 +686,9 @@ def get_tax_debt_history(
                 .where(
                     CompanyTaxDebtSnapshot.company_id
                     == company_id,
-                    _active_generation_condition(),
+                    CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                    CompanyTaxDebtSnapshot.publication_generation
+                    == publication_generation,
                 )
                 .order_by(
                     CompanyTaxDebtSnapshot.data_date.desc(),

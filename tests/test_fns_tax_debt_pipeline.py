@@ -1,10 +1,13 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 from zipfile import ZipFile
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import func, select
@@ -48,6 +51,11 @@ from app.worker.errors import (
 from app.worker.execution import RetryPolicy
 from app.worker.execution import WorkerExecutor, create_job, register_handler
 from app.worker.registry import HandlerRegistry
+
+
+pilot_migration = importlib.import_module(
+    "migrations.versions.e1f2a3b4c5d6_add_s02_controlled_live_pilot"
+)
 
 
 SOURCE_AS_OF = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
@@ -842,7 +850,7 @@ def test_controlled_live_handler_requires_explicit_durable_approval(pipeline_db)
             pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
 
 
-def test_controlled_live_generation_rollback_restores_b_to_a(
+def test_controlled_live_first_transition_rollback_restores_baseline_a(
     pipeline_db,
     tmp_path,
     monkeypatch,
@@ -868,12 +876,6 @@ def test_controlled_live_generation_rollback_restores_b_to_a(
             )
         ],
     )
-    discovery_a = _controlled_discovery(
-        artifact_date="20260825",
-        data_as_of=date(2026, 8, 1),
-        actual_until=date(2026, 9, 25),
-        discovered_at=RETRIEVED_AT,
-    )
     retrieved_b = RETRIEVED_AT + timedelta(days=1)
     discovery_b = _controlled_discovery(
         artifact_date="20260920",
@@ -889,19 +891,18 @@ def test_controlled_live_generation_rollback_restores_b_to_a(
     )
     registry = HandlerRegistry()
     with pipeline_db() as session:
+        pipeline.register_fns_tax_debt_handler(session, registry)
         pipeline.approve_fns_tax_debt_controlled_live_handler(
             session,
             approved_by="DEV-010 rollback test",
             approved_at=RETRIEVED_AT,
         )
         pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
-        pipeline.enqueue_fns_tax_debt_controlled_live_job(
+        pipeline.enqueue_fns_tax_debt_fixture_job(
             session,
             source_path=source_a,
-            xsd_path=xsd,
             artifact_store=tmp_path / "raw",
-            discovery=discovery_a,
-            config=config,
+            source_as_of=SOURCE_AS_OF,
             retrieved_at=RETRIEVED_AT,
         )
         session.commit()
@@ -909,7 +910,7 @@ def test_controlled_live_generation_rollback_restores_b_to_a(
     executor = WorkerExecutor(
         session_factory=pipeline_db,
         registry=registry,
-        worker_id="dev010-generation-a",
+        worker_id="dev010-baseline-a",
         process_start_method="fork",
     )
     executor.run_once()
@@ -941,7 +942,16 @@ def test_controlled_live_generation_rollback_restores_b_to_a(
 
     with pipeline_db() as session:
         state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        dataset = session.get(DataSet, dataset_id)
         assert state.generation == 2
+        assert state.baseline_data_date == date(2026, 8, 1)
+        assert state.active_data_date == date(2026, 9, 1)
+        assert state.normalized_generation == 1
+        assert state.fact_generation == 1
+        assert state.query_generation == 1
+        assert dataset.source_as_of == SOURCE_AS_OF
+        assert dataset.retrieved_at == RETRIEVED_AT
+        assert dataset.last_data_date == date(2026, 8, 1)
         pipeline.rollback_fns_tax_debt_generation(
             session,
             expected_generation=state.generation,
@@ -967,42 +977,82 @@ def test_controlled_live_generation_rollback_restores_b_to_a(
             now=datetime(2026, 9, 26, tzinfo=timezone.utc),
         )
 
-        assert dataset.source_as_of == discovery_a.release.source_as_of
+        assert dataset.source_as_of == SOURCE_AS_OF
         assert dataset.retrieved_at == RETRIEVED_AT
         assert dataset.last_data_date == date(2026, 8, 1)
         assert state.active_checksum == checksum_a
         assert state.generation == 3
-        assert state.fact_generation == 1
-        assert state.query_generation == 1
+        assert state.normalized_generation == 0
+        assert state.fact_generation == 0
+        assert state.query_generation == 0
+        assert state.active_source_as_of == SOURCE_AS_OF
+        assert state.active_retrieved_at == RETRIEVED_AT
         assert pointer.active_pointer == generations[0].staging_pointer
+        assert pointer.rollback_pointer == generations[1].staging_pointer
+        assert state.active_raw_pointer == generations[0].raw_pointer
         assert [row.status for row in generations] == ["active", "rollback"]
+        assert [row.publication_scope for row in generations] == ["baseline", "pilot"]
         assert monitoring["last_discovery"] == discovery_b.discovered_at
         assert monitoring["last_success"] is not None
         assert monitoring["active_checksum"] == checksum_a
         assert monitoring["generation"] == 3
+        assert monitoring["normalized_generation"] == 0
+        assert monitoring["fact_generation"] == 0
+        assert monitoring["query_generation"] == 0
+        assert monitoring["data_date"] == date(2026, 8, 1)
+        assert monitoring["source_as_of"] == SOURCE_AS_OF
+        assert monitoring["retrieved_at"] == RETRIEVED_AT
         assert monitoring["counters"]["records_published"] == 1
-        assert monitoring["freshness"] == "stale"
+        assert monitoring["freshness"] == "unknown"
         assert monitoring["errors"] == []
 
 
-def test_controlled_live_never_creates_company_outside_cohort(
+def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
     pipeline_db,
     tmp_path,
+    monkeypatch,
 ):
     cohort_inn = _valid_inn(uuid4().int)
     outside_inn = _valid_inn(uuid4().int)
     while outside_inn == cohort_inn:
         outside_inn = _valid_inn(uuid4().int)
-    _ensure_dataset_and_company(pipeline_db, inn=cohort_inn)
-    source = _zip(
-        tmp_path / "outside-company.zip",
-        [_document(inn=outside_inn, document_id="OUTSIDE")],
+    dataset_id, cohort_company_id = _ensure_dataset_and_company(
+        pipeline_db, inn=cohort_inn
+    )
+    _, outside_company_id = _ensure_dataset_and_company(pipeline_db, inn=outside_inn)
+    baseline = _zip(
+        tmp_path / "isolation-baseline.zip",
+        [
+            _document(inn=cohort_inn, document_id="COHORT-A"),
+            _document(
+                inn=outside_inn,
+                document_id="OUTSIDE-A",
+                arrears="40.00",
+                penalties="0.00",
+                fines="0.00",
+                total="40.00",
+            ),
+        ],
+    )
+    pilot = _zip(
+        tmp_path / "isolation-pilot.zip",
+        [
+            _document(
+                inn=cohort_inn,
+                document_id="COHORT-B",
+                data_date="01.09.2026",
+                arrears="200.00",
+                penalties="20.00",
+                fines="5.00",
+                total="225.00",
+            )
+        ],
     )
     xsd = _controlled_xsd(tmp_path / "structure.xsd")
     discovery = _controlled_discovery(
-        artifact_date="20260825",
-        data_as_of=date(2026, 8, 1),
-        actual_until=date(2026, 9, 25),
+        artifact_date="20260920",
+        data_as_of=date(2026, 9, 1),
+        actual_until=date(2026, 10, 20),
         discovered_at=RETRIEVED_AT,
     )
     config = pipeline.ControlledLivePilotConfig(
@@ -1012,15 +1062,32 @@ def test_controlled_live_never_creates_company_outside_cohort(
     registry = HandlerRegistry()
     with pipeline_db() as session:
         before = session.scalar(select(func.count()).select_from(Company))
+        pipeline.register_fns_tax_debt_handler(session, registry)
         pipeline.approve_fns_tax_debt_controlled_live_handler(
             session,
             approved_by="DEV-010 isolation test",
             approved_at=RETRIEVED_AT,
         )
         pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
+        pipeline.enqueue_fns_tax_debt_fixture_job(
+            session,
+            source_path=baseline,
+            artifact_store=tmp_path / "raw",
+            source_as_of=SOURCE_AS_OF,
+            retrieved_at=RETRIEVED_AT,
+        )
+        session.commit()
+    WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="dev010-isolation-baseline",
+        process_start_method="fork",
+    ).run_once()
+
+    with pipeline_db() as session:
         pipeline.enqueue_fns_tax_debt_controlled_live_job(
             session,
-            source_path=source,
+            source_path=pilot,
             xsd_path=xsd,
             artifact_store=tmp_path / "raw",
             discovery=discovery,
@@ -1035,7 +1102,157 @@ def test_controlled_live_never_creates_company_outside_cohort(
         process_start_method="fork",
     ).run_once()
 
+    monkeypatch.setattr(tax_debt_service, "get_session", pipeline_db)
+    inside = tax_debt_service.get_tax_debt_check_for_company(cohort_company_id)
+    outside = tax_debt_service.get_tax_debt_check_for_company(outside_company_id)
+    inside_history = tax_debt_service.get_tax_debt_history(cohort_company_id)
+    outside_history = tax_debt_service.get_tax_debt_history(outside_company_id)
+    assert inside["data_date"] == date(2026, 9, 1)
+    assert inside["total_debt"] == Decimal("225.00")
+    assert outside["data_date"] == date(2026, 8, 1)
+    assert outside["total_debt"] == Decimal("40.00")
+    assert [row["total_debt"] for row in inside_history] == [Decimal("225.00")]
+    assert [row["total_debt"] for row in outside_history] == [Decimal("40.00")]
+
     with pipeline_db() as session:
         assert session.scalar(select(func.count()).select_from(Company)) == before
         state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
-        assert state.counters["records_published"] == 0
+        dataset = session.get(DataSet, dataset_id)
+        outside_generations = session.scalars(
+            select(CompanyTaxDebtSnapshot.publication_generation).where(
+                CompanyTaxDebtSnapshot.company_id == outside_company_id
+            )
+        ).all()
+        assert state.cohort_inns == [cohort_inn]
+        assert state.counters["records_published"] == 1
+        assert dataset.last_data_date == date(2026, 8, 1)
+        assert outside_generations == [0]
+
+
+def test_pilot_migration_downgrade_handles_populated_same_date_generations(
+    pipeline_db,
+    tmp_path,
+):
+    inn = _valid_inn(uuid4().int)
+    dataset_id, company_id = _ensure_dataset_and_company(pipeline_db, inn=inn)
+    baseline = _zip(
+        tmp_path / "migration-baseline.zip",
+        [_document(inn=inn, document_id="MIGRATION-A")],
+    )
+    pilot_b = _zip(
+        tmp_path / "migration-pilot-b.zip",
+        [
+            _document(
+                inn=inn,
+                document_id="MIGRATION-B",
+                data_date="01.09.2026",
+                total="210.00",
+                arrears="210.00",
+                penalties="0.00",
+                fines="0.00",
+            )
+        ],
+    )
+    pilot_c = _zip(
+        tmp_path / "migration-pilot-c.zip",
+        [
+            _document(
+                inn=inn,
+                document_id="MIGRATION-C",
+                data_date="01.09.2026",
+                total="220.00",
+                arrears="220.00",
+                penalties="0.00",
+                fines="0.00",
+            )
+        ],
+    )
+    xsd = _controlled_xsd(tmp_path / "migration-structure.xsd")
+    discovery = _controlled_discovery(
+        artifact_date="20260920",
+        data_as_of=date(2026, 9, 1),
+        actual_until=date(2026, 10, 20),
+        discovered_at=RETRIEVED_AT,
+    )
+    config = pipeline.ControlledLivePilotConfig(
+        enabled=True,
+        cohort_inns=frozenset({inn}),
+    )
+    registry = HandlerRegistry()
+    with pipeline_db() as session:
+        pipeline.register_fns_tax_debt_handler(session, registry)
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session,
+            approved_by="DEV-010 migration test",
+            approved_at=RETRIEVED_AT,
+        )
+        pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
+        pipeline.enqueue_fns_tax_debt_fixture_job(
+            session,
+            source_path=baseline,
+            artifact_store=tmp_path / "raw",
+            source_as_of=SOURCE_AS_OF,
+            retrieved_at=RETRIEVED_AT,
+        )
+        session.commit()
+    WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="dev010-migration-baseline",
+        process_start_method="fork",
+    ).run_once()
+
+    for ordinal, source in enumerate((pilot_b, pilot_c), start=1):
+        with pipeline_db() as session:
+            pipeline.enqueue_fns_tax_debt_controlled_live_job(
+                session,
+                source_path=source,
+                xsd_path=xsd,
+                artifact_store=tmp_path / "raw",
+                discovery=discovery,
+                config=config,
+                retrieved_at=RETRIEVED_AT + timedelta(hours=ordinal),
+            )
+            session.commit()
+        WorkerExecutor(
+            session_factory=pipeline_db,
+            registry=registry,
+            worker_id=f"dev010-migration-pilot-{ordinal}",
+            process_start_method="fork",
+        ).run_once()
+
+    with pipeline_db() as session:
+        assert session.scalar(
+            select(func.count()).select_from(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.company_id == company_id,
+                CompanyTaxDebtSnapshot.data_date == date(2026, 9, 1),
+            )
+        ) == 2
+
+    connection = pipeline_db.kw["bind"]
+    with Operations.context(MigrationContext.configure(connection)):
+        pilot_migration.downgrade()
+        columns = {
+            column["name"]
+            for column in sa.inspect(connection).get_columns(
+                "company_tax_debt_snapshots"
+            )
+        }
+        assert "publication_generation" not in columns
+        assert connection.scalar(
+            sa.text(
+                "SELECT count(*) FROM company_tax_debt_snapshots "
+                "WHERE company_id = :company_id AND dataset_id = :dataset_id"
+            ),
+            {"company_id": company_id, "dataset_id": dataset_id},
+        ) == 1
+
+        pilot_migration.upgrade()
+        assert "publication_generation" in {
+            column["name"]
+            for column in sa.inspect(connection).get_columns(
+                "company_tax_debt_snapshots"
+            )
+        }
+        pilot_migration.downgrade()
+        pilot_migration.upgrade()

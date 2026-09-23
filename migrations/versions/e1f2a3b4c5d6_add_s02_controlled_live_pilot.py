@@ -50,13 +50,14 @@ def upgrade() -> None:
         sa.Column("artifact_id", sa.BigInteger(), nullable=False),
         sa.Column("worker_run_id", sa.Uuid(), nullable=False),
         sa.Column("generation", sa.BigInteger(), nullable=False),
+        sa.Column("publication_scope", sa.String(length=30), nullable=False),
         sa.Column("status", sa.String(length=30), nullable=False),
         sa.Column("staging_pointer", sa.Text(), nullable=False),
         sa.Column("raw_pointer", sa.Text(), nullable=False),
         sa.Column("checksum", sa.String(length=64), nullable=False),
         sa.Column("source_as_of", sa.DateTime(timezone=True), nullable=False),
         sa.Column("retrieved_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("official_actual_until", sa.Date(), nullable=False),
+        sa.Column("official_actual_until", sa.Date(), nullable=True),
         sa.Column("last_data_date", sa.Date(), nullable=True),
         sa.Column("record_count", sa.BigInteger(), nullable=False),
         sa.Column(
@@ -70,12 +71,21 @@ def upgrade() -> None:
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
         ),
+        sa.Column(
+            "dataset_metadata",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+        ),
         sa.Column("published_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
-            "generation > 0", name="ck_fns_tax_debt_generation_positive"
+            "generation >= 0", name="ck_fns_tax_debt_generation_nonnegative"
         ),
         sa.CheckConstraint(
-            "status IN ('active', 'rollback', 'superseded')",
+            "publication_scope IN ('baseline', 'pilot')",
+            name="ck_fns_tax_debt_publication_scope",
+        ),
+        sa.CheckConstraint(
+            "status IN ('baseline', 'active', 'rollback', 'superseded')",
             name="ck_fns_tax_debt_generation_status",
         ),
         sa.ForeignKeyConstraint(
@@ -91,6 +101,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "dataset_id",
             "artifact_id",
+            "publication_scope",
             name="uq_fns_tax_debt_publication_artifact",
         ),
         sa.UniqueConstraint(
@@ -126,6 +137,12 @@ def upgrade() -> None:
         sa.Column("dataset_id", sa.BigInteger(), nullable=True),
         sa.Column("pilot_environment", sa.String(length=120), nullable=False),
         sa.Column("enabled", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column(
+            "cohort_inns",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'[]'::jsonb"),
+            nullable=False,
+        ),
         sa.Column("last_discovery_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("discovered_artifact_url", sa.Text(), nullable=True),
         sa.Column("discovered_xsd_url", sa.Text(), nullable=True),
@@ -135,10 +152,17 @@ def upgrade() -> None:
         sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("active_raw_pointer", sa.Text(), nullable=True),
         sa.Column("active_checksum", sa.String(length=64), nullable=True),
+        sa.Column("active_source_as_of", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("active_retrieved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("generation", sa.BigInteger(), server_default="0", nullable=False),
+        sa.Column("baseline_generation", sa.BigInteger(), server_default="0", nullable=False),
+        sa.Column("normalized_generation", sa.BigInteger(), server_default="0", nullable=False),
         sa.Column("fact_generation", sa.BigInteger(), server_default="0", nullable=False),
         sa.Column("query_generation", sa.BigInteger(), server_default="0", nullable=False),
         sa.Column("rollback_fact_generation", sa.BigInteger(), nullable=True),
+        sa.Column("rollback_normalized_generation", sa.BigInteger(), nullable=True),
+        sa.Column("active_data_date", sa.Date(), nullable=True),
+        sa.Column("baseline_data_date", sa.Date(), nullable=True),
         sa.Column(
             "counters",
             postgresql.JSONB(astext_type=sa.Text()),
@@ -161,7 +185,8 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.CheckConstraint(
-            "fact_generation >= 0 AND query_generation >= 0",
+            "normalized_generation >= 0 AND fact_generation >= 0 "
+            "AND query_generation >= 0 AND baseline_generation >= 0",
             name="ck_fns_tax_debt_pilot_fact_query_generation",
         ),
         sa.CheckConstraint(
@@ -180,6 +205,58 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The pilot scope never becomes the legacy shared dataset.  Restore the
+    # captured baseline metadata and remove scoped facts before collapsing the
+    # schema back to its pre-pilot unique key.
+    op.execute(
+        sa.text(
+            """
+            UPDATE data_sets AS d
+            SET last_attempt_at = (g.dataset_metadata ->> 'last_attempt_at')::timestamptz,
+                last_success_at = (g.dataset_metadata ->> 'last_success_at')::timestamptz,
+                last_data_date = (g.dataset_metadata ->> 'last_data_date')::date,
+                source_as_of = (g.dataset_metadata ->> 'source_as_of')::timestamptz,
+                retrieved_at = (g.dataset_metadata ->> 'retrieved_at')::timestamptz,
+                checked_at = (g.dataset_metadata ->> 'checked_at')::timestamptz,
+                published_at = (g.dataset_metadata ->> 'published_at')::timestamptz,
+                record_count = (g.dataset_metadata ->> 'record_count')::bigint,
+                coverage = NULLIF(g.dataset_metadata -> 'coverage', 'null'::jsonb),
+                operational_status = COALESCE(
+                    g.dataset_metadata ->> 'operational_status',
+                    d.operational_status
+                ),
+                last_error = g.dataset_metadata ->> 'last_error',
+                last_error_at = (g.dataset_metadata ->> 'last_error_at')::timestamptz,
+                retry_count = COALESCE(
+                    (g.dataset_metadata ->> 'retry_count')::integer,
+                    0
+                ),
+                next_retry_at = (g.dataset_metadata ->> 'next_retry_at')::timestamptz,
+                next_expected_update_at =
+                    (g.dataset_metadata ->> 'next_expected_update_at')::timestamptz,
+                auto_update_status = COALESCE(
+                    g.dataset_metadata ->> 'auto_update_status',
+                    d.auto_update_status
+                )
+            FROM fns_tax_debt_pilot_state AS p
+            JOIN fns_tax_debt_publication_generations AS g
+              ON g.dataset_id = p.dataset_id
+             AND g.generation = p.baseline_generation
+             AND g.publication_scope = 'baseline'
+            WHERE d.id = p.dataset_id
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            DELETE FROM company_tax_debt_snapshots AS snapshot
+            USING fns_tax_debt_pilot_state AS pilot
+            WHERE snapshot.dataset_id = pilot.dataset_id
+              AND snapshot.publication_generation <> pilot.baseline_generation
+            """
+        )
+    )
     op.drop_table("fns_tax_debt_pilot_state")
     op.drop_index(
         "uq_fns_tax_debt_one_active_generation",
@@ -202,6 +279,24 @@ def downgrade() -> None:
         "uq_company_tax_debt_company_dataset_date_generation",
         "company_tax_debt_snapshots",
         type_="unique",
+    )
+    op.execute(
+        sa.text(
+            """
+            WITH ranked AS (
+                SELECT id,
+                       row_number() OVER (
+                           PARTITION BY company_id, dataset_id, data_date
+                           ORDER BY publication_generation, id DESC
+                       ) AS duplicate_rank
+                FROM company_tax_debt_snapshots
+            )
+            DELETE FROM company_tax_debt_snapshots AS snapshot
+            USING ranked
+            WHERE snapshot.id = ranked.id
+              AND ranked.duplicate_rank > 1
+            """
+        )
     )
     op.create_unique_constraint(
         "uq_company_tax_debt_company_dataset_date",
