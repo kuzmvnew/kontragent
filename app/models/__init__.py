@@ -79,6 +79,9 @@ from app.models.stage15_checks import (
 from app.models.tax_debt import (
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
+    FnsTaxDebtNormalizedRecord,
+    FnsTaxDebtQuarantineRecord,
+    FnsTaxDebtRawArtifact,
 )
 from app.models.tax_offence import (
     CompanyTaxOffence,
@@ -125,6 +128,9 @@ __all__ = [
     "CompanySourceData",
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
+    "FnsTaxDebtNormalizedRecord",
+    "FnsTaxDebtQuarantineRecord",
+    "FnsTaxDebtRawArtifact",
     "CompanyTaxOffence",
     "CompanyTaxRegimeSnapshot",
     "CompanyTaxPaymentItem",

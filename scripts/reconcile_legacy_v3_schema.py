@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "c9d0e1f2a3b4"
+CURRENT_SCHEMA_HEAD = "d0e1f2a3b4c5"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -64,6 +64,23 @@ POST_CANONICAL_TARGET_TABLES = {
     "worker_handler_registry",
     "worker_raw_manifests",
     "worker_publication_state",
+}
+DEV009_EXTENSION_TABLES = {
+    "fns_tax_debt_raw_artifacts",
+    "fns_tax_debt_normalized_records",
+    "fns_tax_debt_quarantine_records",
+}
+DEV009_SNAPSHOT_EXTENSION_PATHS = {
+    "normalized_record_id",
+    "fact_code",
+    "source_reference",
+    "provenance",
+    "limitation_states",
+    "retrieved_at",
+    "ck_company_tax_debt_fact_code",
+    "ix_company_tax_debt_snapshots_normalized_record_id",
+    "ix_company_tax_debt_snapshots_fact_code",
+    "ix_company_tax_debt_snapshots_retrieved_at",
 }
 V1_TABLES = ("company_risk_assessments", "company_summaries")
 PROTECTED_DATABASE = "kontragent"
@@ -437,6 +454,37 @@ def canonical_fingerprints(connection: sa.Connection) -> dict[str, dict[str, Any
 
 def full_parent_compatibility(connection: sa.Connection) -> dict[str, Any]:
     report = audit_metadata(connection, canonical_parent_metadata())
+    # DEV-009 is a forward-compatible extension relative to the historical
+    # canonical-v3 parent checked by this utility.  A legacy database may not
+    # have these later objects yet; a current database may have all of them.
+    extension_differences = []
+    blocking_differences = []
+    for error in report["errors"]:
+        table = error.get("table")
+        path = error.get("path")
+        compatible_extension = (
+            table in DEV009_EXTENSION_TABLES
+            and error.get("kind") == "missing_table"
+        ) or (
+            table == "company_tax_debt_snapshots"
+            and path in DEV009_SNAPSHOT_EXTENSION_PATHS
+            and error.get("kind", "").startswith("missing")
+        )
+        if compatible_extension:
+            extension_differences.append(error)
+        else:
+            blocking_differences.append(error)
+    if extension_differences:
+        report["observations"].extend(
+            {
+                "kind": "compatible_post_parent_extension_absent",
+                "table": item.get("table"),
+                "path": item.get("path"),
+            }
+            for item in extension_differences
+        )
+    report["errors"] = blocking_differences
+    report["compatible"] = not blocking_differences
     ignored = {RISK_TABLE, SUMMARY_TABLE}
     report["ignored_semantic_family_tables"] = sorted(
         ignored.intersection(report["extra_tables"])

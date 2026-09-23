@@ -19,6 +19,12 @@ Summary, API or Card integration is enabled by DEV-008.
 - Publication changes only an isolated foundation pointer. It does not write
   facts or invoke Risk, Summary, Public Projection, API or Card code.
 
+DEV-009 extends this foundation with an optional registry-bound transactional
+publisher. Handlers without a publisher retain the DEV-008 behavior above.
+When present, the parent invokes the publisher in the same transaction as RAW
+manifest persistence and pointer movement; any publisher failure rolls the
+transaction back and is recorded through the existing failure/retry path.
+
 ## Stale-run recovery placeholder
 
 1. Detect `running` rows whose heartbeat is stale.

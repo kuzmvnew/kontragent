@@ -101,6 +101,7 @@ class HandlerContext:
     worker_id: str
     fencing_token: int
     deadline_at: datetime
+    schedule_metadata: dict[str, Any]
     heartbeat: Callable[[], None]
     report_counters: Callable[[ExecutionCounters], None]
     shutdown_requested: Callable[[], bool]
@@ -114,6 +115,12 @@ class HandlerContext:
 
 class WorkerHandler(Protocol):
     def __call__(self, context: HandlerContext) -> HandlerResult: ...
+
+
+class WorkerPublisher(Protocol):
+    """Publish a prepared handler result inside the worker success transaction."""
+
+    def __call__(self, session: Any, claim: Any, result: HandlerResult) -> HandlerResult: ...
 
 
 class RawStorage(Protocol):

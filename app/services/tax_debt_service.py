@@ -8,6 +8,7 @@ from app.models.source import DataSet
 from app.models.tax_debt import (
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
+    TAX_DEBT_FACT_CODE,
 )
 
 
@@ -108,6 +109,16 @@ def _empty_debt_result(
         "source": (
             SOURCE_CODE
         ),
+
+        "fact_code": TAX_DEBT_FACT_CODE,
+
+        "source_reference": None,
+
+        "provenance": {},
+
+        "limitation_states": [],
+
+        "retrieved_at": None,
 
         "reason": reason,
 
@@ -229,6 +240,34 @@ def _snapshot_to_result(
 
         "source": (
             SOURCE_CODE
+        ),
+
+        "fact_code": getattr(
+            snapshot,
+            "fact_code",
+            TAX_DEBT_FACT_CODE,
+        ),
+
+        "source_reference": getattr(
+            snapshot,
+            "source_reference",
+            None,
+        ),
+
+        "provenance": dict(
+            getattr(snapshot, "provenance", None)
+            or {}
+        ),
+
+        "limitation_states": list(
+            getattr(snapshot, "limitation_states", None)
+            or []
+        ),
+
+        "retrieved_at": getattr(
+            snapshot,
+            "retrieved_at",
+            None,
         ),
 
         "reason": None,
@@ -548,6 +587,24 @@ def get_latest_tax_debt_for_company(
         return None
 
     return result
+
+
+def prepare_tax_debt_public_projection(check: dict) -> dict:
+    """Prepare public-card input without changing routes, templates, or wording."""
+
+    return {
+        "fact_code": check.get("fact_code") or TAX_DEBT_FACT_CODE,
+        "result": check.get("result"),
+        "applicable": check.get("applicable"),
+        "has_debt": bool(check.get("has_debt")),
+        "amount": check.get("total_debt"),
+        "amount_as_of_date": check.get("data_date"),
+        "source": check.get("source") or SOURCE_CODE,
+        "source_reference": check.get("source_reference"),
+        "provenance": dict(check.get("provenance") or {}),
+        "limitation_states": list(check.get("limitation_states") or []),
+        "retrieved_at": check.get("retrieved_at"),
+    }
 
 
 # =========================================================

@@ -67,6 +67,7 @@ class ClaimedExecution:
     fencing_token: int
     attempt_no: int
     timeout_seconds: int
+    schedule_metadata: dict[str, Any]
     handler: RegisteredHandler
 
 
@@ -191,6 +192,9 @@ def register_handler(
     version: str,
     handler: Callable[[HandlerContext], HandlerResult],
     approved: bool,
+    publisher: Callable[
+        [Session, ClaimedExecution, HandlerResult], HandlerResult
+    ] | None = None,
     live: bool = False,
     fixture: bool = False,
     metadata: dict[str, Any] | None = None,
@@ -208,6 +212,7 @@ def register_handler(
         source_id=source_id,
         version=version,
         handler=handler,
+        publisher=publisher,
         approved=approved,
         live=live,
         fixture=fixture,
@@ -350,6 +355,7 @@ def claim_next_job(
         fencing_token=fencing_token,
         attempt_no=attempt_no,
         timeout_seconds=job.timeout_seconds,
+        schedule_metadata=dict(job.schedule_metadata),
         handler=handler,
     )
 
@@ -669,10 +675,12 @@ def recover_stale_runs(
             fencing_token=run.fencing_token,
             attempt_no=run.attempt_no,
             timeout_seconds=job.timeout_seconds,
+            schedule_metadata=dict(job.schedule_metadata),
             handler=RegisteredHandler(
                 source_id=job.source_id,
                 version=run.handler_version,
                 handler=lambda _context: HandlerResult(),
+                publisher=None,
                 fixture=True,
             ),
         )
@@ -756,6 +764,7 @@ def _handler_child_main(
         worker_id=claim.worker_id,
         fencing_token=claim.fencing_token,
         deadline_at=deadline_at,
+        schedule_metadata=dict(claim.schedule_metadata),
         heartbeat=lambda: connection.send(("heartbeat",)),
         report_counters=lambda counters: connection.send(("counters", counters)),
         shutdown_requested=shutdown_event.is_set,
@@ -978,6 +987,12 @@ class WorkerExecutor:
             result = self._run_isolated(claim, deadline_at=deadline_at)
             with self.session_factory() as session:
                 try:
+                    if claim.handler.publisher is not None:
+                        result = claim.handler.publisher(session, claim, result)
+                        if not isinstance(result, HandlerResult):
+                            raise InvalidDataError(
+                                "publisher must return HandlerResult"
+                            )
                     complete_run_success(session, claim, result, now=self.clock())
                     session.commit()
                 except Exception:
