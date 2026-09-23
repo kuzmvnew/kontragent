@@ -392,6 +392,23 @@ def pipeline_db():
         connection.close()
 
 
+def _set_baseline_actual_until(
+    session_factory,
+    *,
+    dataset_id: int,
+    actual_until: date,
+) -> None:
+    """Attach official validity metadata to the already published baseline."""
+
+    with session_factory() as session:
+        dataset = session.get(DataSet, dataset_id)
+        dataset.coverage = {
+            **dict(dataset.coverage or {}),
+            "official_actual_until": actual_until.isoformat(),
+        }
+        session.commit()
+
+
 def _valid_inn(seed: int) -> str:
     base = f"{seed % 1_000_000_000:09d}"
     digits = [int(char) for char in base]
@@ -920,6 +937,11 @@ def test_controlled_live_first_transition_rollback_restores_baseline_a(
     )
     executor.run_once()
     checksum_a, _ = pipeline.calculate_sha256(source_a)
+    _set_baseline_actual_until(
+        pipeline_db,
+        dataset_id=dataset_id,
+        actual_until=date(2026, 10, 20),
+    )
 
     with pipeline_db() as session:
         pipeline.enqueue_fns_tax_debt_controlled_live_job(
@@ -954,6 +976,12 @@ def test_controlled_live_first_transition_rollback_restores_baseline_a(
     with pipeline_db() as session:
         state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
         dataset = session.get(DataSet, dataset_id)
+        baseline_generation = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.dataset_id == dataset_id,
+                FnsTaxDebtPublicationGeneration.generation == 0,
+            )
+        )
         assert state.generation == 2
         assert state.baseline_data_date == date(2026, 8, 1)
         assert state.active_data_date == date(2026, 9, 1)
@@ -963,6 +991,10 @@ def test_controlled_live_first_transition_rollback_restores_baseline_a(
         assert dataset.source_as_of == SOURCE_AS_OF
         assert dataset.retrieved_at == RETRIEVED_AT
         assert dataset.last_data_date == date(2026, 8, 1)
+        assert baseline_generation.official_actual_until == date(2026, 10, 20)
+        assert baseline_generation.source_as_of == SOURCE_AS_OF
+        assert baseline_generation.last_data_date == date(2026, 8, 1)
+        assert baseline_generation.retrieved_at == RETRIEVED_AT
         pipeline.rollback_fns_tax_debt_generation(
             session,
             expected_generation=state.generation,
@@ -972,9 +1004,10 @@ def test_controlled_live_first_transition_rollback_restores_baseline_a(
 
     after = tax_debt_service.get_tax_debt_check_for_company(company_id)
     assert after["data_date"] == date(2026, 8, 1)
-    assert after["state"] == "STALE_DATA"
-    assert after["reason"] == "freshness_metadata_missing"
-    assert after["total_debt"] == Decimal("0.00")
+    assert after["state"] == "FOUND"
+    assert after["freshness"] == "fresh"
+    assert after["official_actual_until"] == date(2026, 10, 20)
+    assert after["total_debt"] == Decimal("125.00")
 
     with pipeline_db() as session:
         dataset = session.get(DataSet, dataset_id)
@@ -1016,7 +1049,7 @@ def test_controlled_live_first_transition_rollback_restores_baseline_a(
         assert monitoring["source_as_of"] == SOURCE_AS_OF
         assert monitoring["retrieved_at"] == RETRIEVED_AT
         assert monitoring["counters"]["records_published"] == 1
-        assert monitoring["freshness"] == "unknown"
+        assert monitoring["freshness"] == "current"
         assert monitoring["errors"] == []
 
 
@@ -1029,10 +1062,14 @@ def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
     outside_inn = _valid_inn(uuid4().int)
     while outside_inn == cohort_inn:
         outside_inn = _valid_inn(uuid4().int)
+    absent_inn = _valid_inn(uuid4().int)
+    while absent_inn in {cohort_inn, outside_inn}:
+        absent_inn = _valid_inn(uuid4().int)
     dataset_id, cohort_company_id = _ensure_dataset_and_company(
         pipeline_db, inn=cohort_inn
     )
     _, outside_company_id = _ensure_dataset_and_company(pipeline_db, inn=outside_inn)
+    _, absent_company_id = _ensure_dataset_and_company(pipeline_db, inn=absent_inn)
     baseline = _zip(
         tmp_path / "isolation-baseline.zip",
         [
@@ -1096,6 +1133,11 @@ def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
         worker_id="dev010-isolation-baseline",
         process_start_method="fork",
     ).run_once()
+    _set_baseline_actual_until(
+        pipeline_db,
+        dataset_id=dataset_id,
+        actual_until=date(2026, 10, 20),
+    )
 
     with pipeline_db() as session:
         pipeline.enqueue_fns_tax_debt_controlled_live_job(
@@ -1123,15 +1165,20 @@ def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
     )
     inside = tax_debt_service.get_tax_debt_check_for_company(cohort_company_id)
     outside = tax_debt_service.get_tax_debt_check_for_company(outside_company_id)
+    outside_absent = tax_debt_service.get_tax_debt_check_for_company(absent_company_id)
     inside_history = tax_debt_service.get_tax_debt_history(cohort_company_id)
     outside_history = tax_debt_service.get_tax_debt_history(outside_company_id)
     assert inside["data_date"] == date(2026, 9, 1)
     assert inside["state"] == "FOUND"
     assert inside["total_debt"] == Decimal("225.00")
     assert outside["data_date"] == date(2026, 8, 1)
-    assert outside["state"] == "STALE_DATA"
-    assert outside["reason"] == "freshness_metadata_missing"
-    assert outside["total_debt"] == Decimal("0.00")
+    assert outside["state"] == "FOUND"
+    assert outside["freshness"] == "fresh"
+    assert outside["official_actual_until"] == date(2026, 10, 20)
+    assert outside["total_debt"] == Decimal("40.00")
+    assert outside_absent["state"] == "NOT_FOUND"
+    assert outside_absent["freshness"] == "fresh"
+    assert outside_absent["data_date"] == date(2026, 8, 1)
     assert [row["total_debt"] for row in inside_history] == [Decimal("225.00")]
     assert [row["total_debt"] for row in outside_history] == [Decimal("40.00")]
 
@@ -1139,6 +1186,19 @@ def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
         assert session.scalar(select(func.count()).select_from(Company)) == before
         state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
         dataset = session.get(DataSet, dataset_id)
+        pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        baseline_generation = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.dataset_id == dataset_id,
+                FnsTaxDebtPublicationGeneration.generation == 0,
+            )
+        )
+        active_generation = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.dataset_id == dataset_id,
+                FnsTaxDebtPublicationGeneration.status == "active",
+            )
+        )
         outside_generations = session.scalars(
             select(CompanyTaxDebtSnapshot.publication_generation).where(
                 CompanyTaxDebtSnapshot.company_id == outside_company_id
@@ -1148,6 +1208,12 @@ def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
         assert state.counters["records_published"] == 1
         assert dataset.last_data_date == date(2026, 8, 1)
         assert outside_generations == [0]
+        assert baseline_generation.official_actual_until == date(2026, 10, 20)
+        assert baseline_generation.source_as_of == SOURCE_AS_OF
+        assert baseline_generation.last_data_date == date(2026, 8, 1)
+        assert baseline_generation.retrieved_at == RETRIEVED_AT
+        assert pointer.active_pointer == active_generation.staging_pointer
+        assert pointer.rollback_pointer == baseline_generation.staging_pointer
 
 
 def test_pilot_migration_empty_upgrade_downgrade_upgrade_cycle(pipeline_db):
@@ -1244,6 +1310,11 @@ def test_pilot_migration_downgrade_restores_baseline_pointer_and_same_date_data(
         worker_id="dev010-migration-baseline",
         process_start_method="fork",
     ).run_once()
+    _set_baseline_actual_until(
+        pipeline_db,
+        dataset_id=dataset_id,
+        actual_until=date(2026, 10, 20),
+    )
 
     for ordinal, source in enumerate((pilot_b, pilot_c), start=1):
         with pipeline_db() as session:

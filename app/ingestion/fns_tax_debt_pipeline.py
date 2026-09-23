@@ -1024,8 +1024,16 @@ def _capture_baseline_generation(
     )
     if artifact is None:
         raise LegalBlockError("S02 baseline RAW artifact is unavailable")
-    if dataset.source_as_of is None or dataset.retrieved_at is None:
-        raise LegalBlockError("S02 baseline dataset metadata is incomplete")
+    baseline_actual_until = _parse_date(
+        dict(dataset.coverage or {}).get("official_actual_until")
+    )
+    if (
+        dataset.source_as_of is None
+        or dataset.last_data_date is None
+        or dataset.retrieved_at is None
+        or baseline_actual_until is None
+    ):
+        raise LegalBlockError("S02 baseline freshness metadata is incomplete")
     run = session.get(WorkerRun, pointer.published_by_run_id)
     counters = (
         {
@@ -1050,7 +1058,7 @@ def _capture_baseline_generation(
         checksum=artifact.sha256,
         source_as_of=dataset.source_as_of,
         retrieved_at=dataset.retrieved_at,
-        official_actual_until=None,
+        official_actual_until=baseline_actual_until,
         last_data_date=dataset.last_data_date,
         record_count=int(dataset.record_count or 0),
         coverage=dict(dataset.coverage or {}),
