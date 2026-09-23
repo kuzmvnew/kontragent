@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -6,13 +7,18 @@ from app.database.postgres import get_session
 from app.models.company import Company
 from app.models.source import DataSet
 from app.models.tax_debt import (
+    TAX_DEBT_FACT_CODE,
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
-    FnsTaxDebtPilotState,
-    TAX_DEBT_FACT_CODE,
 )
-from app.sources.fns_tax_debt import PILOT_ENVIRONMENT, SOURCE_ID
-
+from app.services.tax_debt_freshness import (
+    STALE_DATA,
+    TaxDebtFreshness,
+    TaxDebtPublicationContext,
+    evaluate_tax_debt_freshness,
+    resolve_tax_debt_publication,
+    utc_now,
+)
 
 # =========================================================
 # SETTINGS
@@ -29,25 +35,57 @@ ZERO = Decimal("0.00")
 def _publication_scope(session, *, dataset, inn):
     """Resolve one company's data date/generation without widening pilot scope."""
 
-    # Lightweight contract-test sessions intentionally expose execute() only;
-    # they represent the pre-pilot baseline and therefore remain generation 0.
-    get = getattr(session, "get", None)
-    state = get(FnsTaxDebtPilotState, SOURCE_ID) if get is not None else None
-    if (
-        state is None
-        or not state.enabled
-        or state.pilot_environment != PILOT_ENVIRONMENT
-        or state.dataset_id != dataset.id
-    ):
-        return dataset.last_data_date, 0
-
-    cohort = frozenset(str(value) for value in (state.cohort_inns or ()))
-    if inn in cohort:
-        return state.active_data_date, int(state.query_generation)
-    return (
-        state.baseline_data_date or dataset.last_data_date,
-        int(state.baseline_generation),
+    context = resolve_tax_debt_publication(
+        session,
+        dataset=dataset,
+        inn=inn,
     )
+    return context.data_as_of, context.publication_generation
+
+
+def _freshness_fields(
+    context: TaxDebtPublicationContext,
+    freshness: TaxDebtFreshness,
+    *,
+    state: str,
+) -> dict:
+    return {
+        "state": state,
+        "freshness": "fresh" if freshness.is_fresh else "stale",
+        "source_as_of": context.source_as_of,
+        "data_as_of": context.data_as_of,
+        "retrieved_at": context.retrieved_at,
+        "official_actual_until": context.official_actual_until,
+        "checked_at": freshness.checked_at,
+        "freshness_reason": freshness.reason,
+        "freshness_missing_fields": list(freshness.missing_fields),
+    }
+
+
+def _stale_debt_result(
+    context: TaxDebtPublicationContext,
+    freshness: TaxDebtFreshness,
+) -> dict:
+    """Keep the existing check contract while exposing authoritative stale state."""
+
+    result = _empty_debt_result(
+        checked=False,
+        applicable=True,
+        result="unavailable",
+        data_date=context.data_as_of,
+        reason=freshness.reason,
+    )
+    result["limitation_states"] = list(
+        dict.fromkeys(("stale_data", freshness.reason))
+    )
+    result.update(
+        _freshness_fields(
+            context,
+            freshness,
+            state=STALE_DATA,
+        )
+    )
+    return result
 
 
 # =========================================================
@@ -383,6 +421,18 @@ def get_tax_debt_check_for_company(
         Проверку нельзя корректно
         выполнить.
 
+    Read-side state:
+
+    FOUND / NOT_FOUND
+        Возвращаются только для свежего и полностью
+        подтверждённого publication snapshot.
+
+    STALE_DATA
+        Истёкший, неполный или несогласованный snapshot.
+        Для обратной совместимости result остаётся
+        unavailable, поэтому публичный API-контракт
+        found/not_found/not_applicable/unavailable не меняется.
+
     ВАЖНО:
 
     not_found НЕ означает автоматически:
@@ -486,16 +536,22 @@ def get_tax_debt_check_for_company(
                 reason="dataset_not_registered",
             )
 
-        dataset_data_date, publication_generation = _publication_scope(
+        publication = resolve_tax_debt_publication(
             session,
             dataset=dataset,
             inn=inn,
         )
+        dataset_data_date = publication.data_as_of
+        publication_generation = publication.publication_generation
         if dataset_data_date is None:
             dataset_data_date = _get_dataset_data_date(
                 session=session,
                 dataset=dataset,
                 publication_generation=publication_generation,
+            )
+            publication = replace(
+                publication,
+                data_as_of=dataset_data_date,
             )
 
         if dataset_data_date is None:
@@ -506,6 +562,16 @@ def get_tax_debt_check_for_company(
                 result="unavailable",
                 data_date=None,
                 reason="dataset_not_loaded",
+            )
+
+        freshness = evaluate_tax_debt_freshness(
+            publication,
+            checked_at=utc_now(),
+        )
+        if not freshness.is_fresh:
+            return _stale_debt_result(
+                publication,
+                freshness,
             )
 
         # =================================================
@@ -541,13 +607,21 @@ def get_tax_debt_check_for_company(
 
         if snapshot is None:
 
-            return _empty_debt_result(
+            result = _empty_debt_result(
                 checked=True,
                 applicable=True,
                 result="not_found",
                 data_date=dataset_data_date,
                 reason=None,
             )
+            result.update(
+                _freshness_fields(
+                    publication,
+                    freshness,
+                    state="NOT_FOUND",
+                )
+            )
+            return result
 
         # =================================================
         # 6. FOUND
@@ -566,10 +640,18 @@ def get_tax_debt_check_for_company(
                 )
             )
 
-        return _snapshot_to_result(
+        result = _snapshot_to_result(
             snapshot=snapshot,
             items=items,
         )
+        result.update(
+            _freshness_fields(
+                publication,
+                freshness,
+                state="FOUND",
+            )
+        )
+        return result
 
     finally:
 

@@ -1,15 +1,15 @@
+import importlib
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-import importlib
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 from zipfile import ZipFile
 
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 import pytest
 import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
@@ -25,12 +25,12 @@ from app.models.tax_debt import (
     FnsTaxDebtRawArtifact,
 )
 from app.models.worker import WorkerJob, WorkerPublicationState, WorkerRawManifest
-from app.services import tax_debt_service
-from app.services.tax_debt_service import prepare_tax_debt_public_projection
 from app.providers.fns_tax_debt_provider import (
     TaxDebtDiscovery,
     TaxDebtOfficialRelease,
 )
+from app.services import tax_debt_service
+from app.services.tax_debt_service import prepare_tax_debt_public_projection
 from app.sources.fns_tax_debt import (
     CONTROLLED_LIVE_HANDLER_VERSION,
     CONTROLLED_LIVE_PILOT_ENABLED,
@@ -48,10 +48,13 @@ from app.worker.errors import (
     TemporaryInfrastructureError,
     WorkerTimeoutError,
 )
-from app.worker.execution import RetryPolicy
-from app.worker.execution import WorkerExecutor, create_job, register_handler
+from app.worker.execution import (
+    RetryPolicy,
+    WorkerExecutor,
+    create_job,
+    register_handler,
+)
 from app.worker.registry import HandlerRegistry
-
 
 pilot_migration = importlib.import_module(
     "migrations.versions.e1f2a3b4c5d6_add_s02_controlled_live_pilot"
@@ -601,7 +604,9 @@ def test_new_full_snapshot_without_previous_inn_advances_active_dataset(
     monkeypatch.setattr(tax_debt_service, "get_session", pipeline_db)
     check = tax_debt_service.get_tax_debt_check_for_company(company_id)
 
-    assert check["result"] == "not_found"
+    assert check["state"] == "STALE_DATA"
+    assert check["result"] == "unavailable"
+    assert check["reason"] == "freshness_metadata_missing"
     assert check["data_date"].isoformat() == "2026-09-01"
     assert check["total_debt"] == Decimal("0.00")
 
@@ -936,8 +941,14 @@ def test_controlled_live_first_transition_rollback_restores_baseline_a(
     executor.run_once()
 
     monkeypatch.setattr(tax_debt_service, "get_session", pipeline_db)
+    monkeypatch.setattr(
+        tax_debt_service,
+        "utc_now",
+        lambda: datetime(2026, 9, 25, tzinfo=timezone.utc),
+    )
     before = tax_debt_service.get_tax_debt_check_for_company(company_id)
     assert before["data_date"] == date(2026, 9, 1)
+    assert before["state"] == "FOUND"
     assert before["total_debt"] == Decimal("225.00")
 
     with pipeline_db() as session:
@@ -961,7 +972,9 @@ def test_controlled_live_first_transition_rollback_restores_baseline_a(
 
     after = tax_debt_service.get_tax_debt_check_for_company(company_id)
     assert after["data_date"] == date(2026, 8, 1)
-    assert after["total_debt"] == Decimal("125.00")
+    assert after["state"] == "STALE_DATA"
+    assert after["reason"] == "freshness_metadata_missing"
+    assert after["total_debt"] == Decimal("0.00")
 
     with pipeline_db() as session:
         dataset = session.get(DataSet, dataset_id)
@@ -1103,14 +1116,22 @@ def test_controlled_live_is_visible_inside_cohort_and_isolated_outside(
     ).run_once()
 
     monkeypatch.setattr(tax_debt_service, "get_session", pipeline_db)
+    monkeypatch.setattr(
+        tax_debt_service,
+        "utc_now",
+        lambda: datetime(2026, 9, 24, tzinfo=timezone.utc),
+    )
     inside = tax_debt_service.get_tax_debt_check_for_company(cohort_company_id)
     outside = tax_debt_service.get_tax_debt_check_for_company(outside_company_id)
     inside_history = tax_debt_service.get_tax_debt_history(cohort_company_id)
     outside_history = tax_debt_service.get_tax_debt_history(outside_company_id)
     assert inside["data_date"] == date(2026, 9, 1)
+    assert inside["state"] == "FOUND"
     assert inside["total_debt"] == Decimal("225.00")
     assert outside["data_date"] == date(2026, 8, 1)
-    assert outside["total_debt"] == Decimal("40.00")
+    assert outside["state"] == "STALE_DATA"
+    assert outside["reason"] == "freshness_metadata_missing"
+    assert outside["total_debt"] == Decimal("0.00")
     assert [row["total_debt"] for row in inside_history] == [Decimal("225.00")]
     assert [row["total_debt"] for row in outside_history] == [Decimal("40.00")]
 
