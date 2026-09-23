@@ -19,6 +19,20 @@ from app.contracts.assessment import (
     SignalSeverity,
     build_section_assessment,
 )
+from app.contracts.card_v2 import (
+    ActionViewModel,
+    CardAction,
+    CardActionKind,
+    CardV2ViewModel,
+    CompanyHeaderViewModel,
+    CoverageItem,
+    CoverageViewModel,
+    EvidenceViewModel,
+    PublicEvidenceReference,
+    PublicUIState,
+    RiskViewModel,
+    SummaryViewModel,
+)
 
 
 __all__ = [
@@ -39,4 +53,16 @@ __all__ = [
     "build_coverage",
     "build_section_assessment",
     "evidence_from_check_result",
+    "ActionViewModel",
+    "CardAction",
+    "CardActionKind",
+    "CardV2ViewModel",
+    "CompanyHeaderViewModel",
+    "CoverageItem",
+    "CoverageViewModel",
+    "EvidenceViewModel",
+    "PublicEvidenceReference",
+    "PublicUIState",
+    "RiskViewModel",
+    "SummaryViewModel",
 ]
