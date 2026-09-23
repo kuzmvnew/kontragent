@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "3f7a9c2d5e61"
+CURRENT_SCHEMA_HEAD = "b7c8d9e0f1a2"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -58,6 +58,12 @@ POST_CANONICAL_TARGET_TABLES = {
     "mintrans_ted_entries",
     "mintrans_ted_quarantine_rows",
     "transport_forwarding_registry_listings",
+    "worker_jobs",
+    "worker_runs",
+    "worker_leases",
+    "worker_handler_registry",
+    "worker_raw_manifests",
+    "worker_publication_state",
 }
 V1_TABLES = ("company_risk_assessments", "company_summaries")
 PROTECTED_DATABASE = "kontragent"

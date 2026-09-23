@@ -90,6 +90,14 @@ from app.models.tax_payment import (
     CompanyTaxPaymentItem,
     CompanyTaxPaymentSnapshot,
 )
+from app.models.worker import (
+    WorkerHandlerRegistration,
+    WorkerJob,
+    WorkerLease,
+    WorkerPublicationState,
+    WorkerRawManifest,
+    WorkerRun,
+)
 
 
 __all__ = [
@@ -140,4 +148,10 @@ __all__ = [
     "RoskomnadzorPrivatePersonRecord",
     "SroPersonRegistryRecord",
     "TransportForwardingRegistryListing",
+    "WorkerHandlerRegistration",
+    "WorkerJob",
+    "WorkerLease",
+    "WorkerPublicationState",
+    "WorkerRawManifest",
+    "WorkerRun",
 ]
