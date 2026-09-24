@@ -6,6 +6,7 @@ import json
 from app.database.postgres import SessionLocal
 from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
 from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
+from app.ingestion.fns_tax_payment import register_fns_tax_payment_worker
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
     configure_fns_bulk_schedules,
@@ -21,10 +22,12 @@ from app.worker.registry import HandlerRegistry
 def build_registry() -> HandlerRegistry:
     registry = HandlerRegistry()
     with SessionLocal() as session:
-        # S04 is deliberately registered first, then S03.  They retain
-        # independent source ids, leases, jobs and publication generations.
+        # Sources are deliberately registered in scheduler priority order.
+        # Each retains an independent source id, lease, job namespace and
+        # publication generation.
         register_fns_tax_offence_worker(session, registry)
         register_fns_revenue_expense_worker(session, registry)
+        register_fns_tax_payment_worker(session, registry)
         session.commit()
     return registry
 
@@ -82,7 +85,10 @@ def main() -> None:
         parser.error("--activate-s03-s04 cannot be combined with source-scoped gates")
     registry = build_registry()
     if args.activate_s03_s04:
-        configure_fns_bulk_schedules(enabled=True)
+        configure_fns_bulk_schedules(
+            enabled=True,
+            dataset_codes=("fns_tax_offence", "fns_revenue_expenses"),
+        )
     if args.activate:
         configure_fns_bulk_schedules(enabled=True, dataset_codes=args.activate)
     if args.deactivate:

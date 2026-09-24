@@ -1,9 +1,9 @@
 """Shared Worker Foundation adapter for official FNS bulk XML releases.
 
 This module does not introduce a second job system.  It adapts the existing
-``app.worker`` lease/job/run/publisher contracts to the two legacy FNS
-importers.  Tax offences and revenue/expenses keep separate source ids,
-registrations, jobs, publication generations and readiness state.
+``app.worker`` lease/job/run/publisher contracts to the legacy FNS bulk
+importers.  Every dataset keeps a separate source id, registration, job
+namespace, publication generation and readiness state.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from app.models.company import Company
 from app.models.revenue_expense import CompanyRevenueExpenseSnapshot
 from app.models.source import DataSet
 from app.models.tax_offence import CompanyTaxOffence
+from app.models.tax_payment import CompanyTaxPaymentItem, CompanyTaxPaymentSnapshot
 from app.models.worker import WorkerHandlerRegistration, WorkerPublicationState
 from app.worker.contracts import (
     ExecutionCounters,
@@ -67,9 +68,11 @@ class FnsBulkSourceSpec:
     kind: str
     api_projection: str
     card_projection: str
+    check_interval: timedelta = CHECK_INTERVAL
+    check_frequency: str = "daily"
 
     def __post_init__(self) -> None:
-        if self.kind not in {"tax_offence", "revenue_expense"}:
+        if self.kind not in {"tax_offence", "revenue_expense", "tax_payment"}:
             raise ValueError(f"unsupported FNS bulk source kind: {self.kind}")
         if not all(
             value.strip()
@@ -82,6 +85,8 @@ class FnsBulkSourceSpec:
             )
         ):
             raise ValueError("FNS bulk source specification contains an empty field")
+        if self.check_interval <= timedelta(0) or not self.check_frequency.strip():
+            raise ValueError("FNS bulk source check frequency is invalid")
 
 
 @dataclass(frozen=True)
@@ -590,17 +595,26 @@ def _apply_successful_check(
     *,
     actual_until: date | None,
     now: datetime,
+    check_interval: timedelta,
 ) -> OperationalStatus:
     status = release_operational_status(actual_until, now=now)
     dataset.checked_at = now
     dataset.official_actual_until = actual_until
     dataset.operational_status = status
-    dataset.next_expected_update_at = now + CHECK_INTERVAL
+    dataset.next_expected_update_at = now + check_interval
     dataset.last_error = None
     dataset.last_error_at = None
     dataset.retry_count = 0
     dataset.next_retry_at = None
     return status
+
+
+def _fact_model(spec: FnsBulkSourceSpec) -> type[Any]:
+    if spec.kind == "tax_offence":
+        return CompanyTaxOffence
+    if spec.kind == "revenue_expense":
+        return CompanyRevenueExpenseSnapshot
+    return CompanyTaxPaymentSnapshot
 
 
 def _project_normalized_snapshot(
@@ -620,7 +634,7 @@ def _project_normalized_snapshot(
 
     matched = unmatched = changed = 0
     matched_companies: set[int] = set()
-    model = CompanyTaxOffence if spec.kind == "tax_offence" else CompanyRevenueExpenseSnapshot
+    model = _fact_model(spec)
     if replace_existing:
         session.execute(delete(model).where(model.dataset_id == dataset.id))
     for batch in _iter_jsonl(staging_path):
@@ -631,6 +645,7 @@ def _project_normalized_snapshot(
             ).all()
         )
         values: list[dict[str, Any]] = []
+        payment_items: dict[tuple[int, date], list[dict[str, Any]]] = {}
         for row in batch:
             company_id = company_ids.get(str(row["inn"]))
             if company_id is None:
@@ -647,7 +662,7 @@ def _project_normalized_snapshot(
                     "source_document_id": row["document_id"],
                     "fine_amount": Decimal(row["fine_amount"]),
                 })
-            else:
+            elif spec.kind == "revenue_expense":
                 values.append({
                     "company_id": company_id,
                     "dataset_id": dataset.id,
@@ -660,6 +675,34 @@ def _project_normalized_snapshot(
                     "expenses": Decimal(row["expenses"]),
                     "profit_loss": Decimal(row["profit_loss"]),
                 })
+            else:
+                data_date = date.fromisoformat(row["data_date"])
+                key = (int(company_id), data_date)
+                values.append({
+                    "company_id": company_id,
+                    "dataset_id": dataset.id,
+                    "data_date": data_date,
+                    "data_year": int(row["data_year"]),
+                    "document_date": date.fromisoformat(row["document_date"]) if row.get("document_date") else None,
+                    "source_document_id": row["document_id"],
+                    "source_company_name": row.get("company_name"),
+                    "total_amount": Decimal(row["total_amount"]),
+                    "tax_amount": Decimal(row["tax_amount"]),
+                    "insurance_amount": Decimal(row["insurance_amount"]),
+                    "penalty_amount": Decimal(row["penalty_amount"]),
+                    "non_tax_amount": Decimal(row["non_tax_amount"]),
+                    "other_amount": Decimal(row["other_amount"]),
+                    "source_item_count": int(row["source_item_count"]),
+                    "stored_item_count": int(row["stored_item_count"]),
+                })
+                payment_items[key] = [
+                    {
+                        "tax_name": str(item["tax_name"]),
+                        "payment_type": str(item["payment_type"]),
+                        "amount": Decimal(item["amount"]),
+                    }
+                    for item in row.get("items", ())
+                ]
         if not values:
             continue
         if spec.kind == "tax_offence":
@@ -680,7 +723,7 @@ def _project_normalized_snapshot(
                 statement = statement.on_conflict_do_nothing(
                     constraint="uq_company_tax_offence_dataset_document"
                 )
-        else:
+        elif spec.kind == "revenue_expense":
             values = list({
                 (int(value["company_id"]), value["data_date"]): value for value in values
             }.values())
@@ -703,6 +746,65 @@ def _project_normalized_snapshot(
                 statement = statement.on_conflict_do_nothing(
                     constraint="uq_company_revexp_company_dataset_date"
                 )
+        else:
+            values = list({
+                (int(value["company_id"]), value["data_date"]): value
+                for value in values
+            }.values())
+            statement = pg_insert(CompanyTaxPaymentSnapshot).values(values)
+            if replace_existing:
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_company_tax_payment_company_dataset_date",
+                    set_={
+                        "data_year": statement.excluded.data_year,
+                        "document_date": statement.excluded.document_date,
+                        "source_document_id": statement.excluded.source_document_id,
+                        "source_company_name": statement.excluded.source_company_name,
+                        "total_amount": statement.excluded.total_amount,
+                        "tax_amount": statement.excluded.tax_amount,
+                        "insurance_amount": statement.excluded.insurance_amount,
+                        "penalty_amount": statement.excluded.penalty_amount,
+                        "non_tax_amount": statement.excluded.non_tax_amount,
+                        "other_amount": statement.excluded.other_amount,
+                        "source_item_count": statement.excluded.source_item_count,
+                        "stored_item_count": statement.excluded.stored_item_count,
+                        "updated_at": func.now(),
+                    },
+                )
+            else:
+                statement = statement.on_conflict_do_nothing(
+                    constraint="uq_company_tax_payment_company_dataset_date"
+                )
+            snapshot_rows = session.execute(
+                statement.returning(
+                    CompanyTaxPaymentSnapshot.id,
+                    CompanyTaxPaymentSnapshot.company_id,
+                    CompanyTaxPaymentSnapshot.data_date,
+                )
+            ).all()
+            changed += len(snapshot_rows)
+            item_values = [
+                {"snapshot_id": snapshot_id, **item}
+                for snapshot_id, company_id, data_date in snapshot_rows
+                for item in payment_items.get((int(company_id), data_date), ())
+            ]
+            if item_values:
+                item_statement = pg_insert(CompanyTaxPaymentItem).values(item_values)
+                if replace_existing:
+                    item_statement = item_statement.on_conflict_do_update(
+                        constraint="uq_company_tax_payment_snapshot_tax_name",
+                        set_={
+                            "payment_type": item_statement.excluded.payment_type,
+                            "amount": item_statement.excluded.amount,
+                            "updated_at": func.now(),
+                        },
+                    )
+                else:
+                    item_statement = item_statement.on_conflict_do_nothing(
+                        constraint="uq_company_tax_payment_snapshot_tax_name"
+                    )
+                session.execute(item_statement)
+            continue
         changed += len(session.scalars(statement.returning(model.id)).all())
     return matched, unmatched, matched_companies, changed
 
@@ -761,7 +863,7 @@ def publish_bulk_result(
                 staging_path=replay_path,
                 replace_existing=False,
             )
-            model = CompanyTaxOffence if spec.kind == "tax_offence" else CompanyRevenueExpenseSnapshot
+            model = _fact_model(spec)
             dataset.record_count = int(
                 session.scalar(
                     select(func.count()).select_from(model).where(model.dataset_id == dataset.id)
@@ -782,6 +884,7 @@ def publish_bulk_result(
             dataset,
             actual_until=actual_until,
             now=now,
+            check_interval=spec.check_interval,
         )
         return replace(
             result,
@@ -800,7 +903,7 @@ def publish_bulk_result(
     if result.staging_result is None:
         raise InvalidDataError("FNS publisher requires normalized staging")
     staging_path = _file_path(result.staging_result.staging_pointer)
-    model = CompanyTaxOffence if spec.kind == "tax_offence" else CompanyRevenueExpenseSnapshot
+    model = _fact_model(spec)
     # A release is a complete official snapshot.  Delete + rebuild occurs in
     # this same publisher transaction; on any failure SQLAlchemy rollback keeps
     # the previous successful facts and WorkerPublicationState pointer intact.
@@ -843,6 +946,7 @@ def publish_bulk_result(
         dataset,
         actual_until=actual_until,
         now=now,
+        check_interval=spec.check_interval,
     )
     validation = replace(
         result.staging_result.validation,
@@ -930,7 +1034,7 @@ def enqueue_bulk_release(
             "replay_snapshot": bool(replay_pointer),
             "replay_pointer": replay_pointer,
             "replay_checksum": replay_checksum,
-            "check_frequency": "daily",
+            "check_frequency": spec.check_frequency,
             "publication_frequency": "official_release",
         },
         max_attempts=max_attempts,

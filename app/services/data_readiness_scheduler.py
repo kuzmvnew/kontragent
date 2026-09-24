@@ -50,11 +50,23 @@ def _enqueue_revenue_expense() -> object:
         return creation
 
 
+def _enqueue_tax_payment() -> object:
+    from app.ingestion.fns_tax_payment import schedule_fns_tax_payment_check
+
+    with SessionLocal() as session:
+        creation = schedule_fns_tax_payment_check(session, raw_root=_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"PAYTAX release job is terminal: {creation.job.id}")
+        return creation
+
+
 # Production handlers are explicit and non-empty.  They only discover and
 # enqueue into Worker Foundation; execution remains lease/fencing controlled.
 HANDLERS: dict[str, UpdateHandler] = {
     "fns_tax_offence": _enqueue_tax_offence,
     "fns_revenue_expenses": _enqueue_revenue_expense,
+    "fns_tax_paid": _enqueue_tax_payment,
 }
 FNS_BULK_DATASET_CODES = frozenset(HANDLERS)
 
@@ -176,7 +188,11 @@ def sync_worker_failure_signals() -> int:
 def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]:
     results: dict[str, str] = {}
     codes = list(due_codes if due_codes is not None else due_dataset_codes())
-    priority = {"fns_tax_offence": 0, "fns_revenue_expenses": 1}
+    priority = {
+        "fns_tax_offence": 0,
+        "fns_revenue_expenses": 1,
+        "fns_tax_paid": 2,
+    }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:
         handler = HANDLERS.get(dataset_code)
