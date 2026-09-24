@@ -166,6 +166,38 @@ def test_raw_checksum_rejects_tampered_expectation(tmp_path):
         )
 
 
+def test_same_checksum_reuses_first_immutable_raw_manifest_observation(tmp_path):
+    source = _zip(tmp_path / "fixture.zip", [_document()])
+    artifact_store = tmp_path / "raw"
+
+    first = pipeline.stage_tax_debt_artifact(
+        source,
+        artifact_store=artifact_store,
+        source_as_of=SOURCE_AS_OF,
+        retrieved_at=RETRIEVED_AT,
+    )
+    manifest_bytes = first.manifest_path.read_bytes()
+    replay = pipeline.stage_tax_debt_artifact(
+        source,
+        artifact_store=artifact_store,
+        source_as_of=SOURCE_AS_OF,
+        retrieved_at=RETRIEVED_AT + timedelta(minutes=5),
+    )
+
+    assert replay.manifest_path.read_bytes() == manifest_bytes
+    assert replay.manifest["retrieved_at"] == RETRIEVED_AT.isoformat()
+    with pytest.raises(
+        pipeline.RawArtifactImmutabilityError,
+        match="immutable artifact member differs",
+    ):
+        pipeline.stage_tax_debt_artifact(
+            source,
+            artifact_store=artifact_store,
+            source_as_of=SOURCE_AS_OF + timedelta(days=1),
+            retrieved_at=RETRIEVED_AT + timedelta(minutes=10),
+        )
+
+
 def test_parser_failure_is_fail_closed_for_malformed_xml(tmp_path):
     source = tmp_path / "malformed.zip"
     with ZipFile(source, "w") as archive:
