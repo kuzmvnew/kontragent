@@ -440,13 +440,17 @@ def test_newer_successful_check_suppresses_failure_without_moving_last_success(
     last_success = NOW - timedelta(days=30)
     failed_at = NOW - timedelta(minutes=5)
     checked_at = NOW
+    next_check = NOW + timedelta(days=7)
     dataset = SimpleNamespace(
         last_success_at=last_success,
-        last_error_at=None,
-        last_error=None,
-        retry_count=0,
-        next_retry_at=None,
-        operational_status="current",
+        last_error_at=failed_at,
+        last_error="superseded check failure",
+        retry_count=1,
+        next_retry_at=NOW + timedelta(minutes=10),
+        operational_status="error",
+        official_actual_until=date.max,
+        checked_at=checked_at,
+        next_expected_update_at=next_check,
     )
     failed_run = SimpleNamespace(
         status="failed",
@@ -481,12 +485,59 @@ def test_newer_successful_check_suppresses_failure_without_moving_last_success(
 
     monkeypatch.setattr(scheduler, "SessionLocal", FakeSession)
 
-    assert scheduler.sync_worker_failure_signals() == 0
+    assert scheduler.sync_worker_failure_signals() == 1
     assert dataset.last_success_at == last_success
     assert dataset.last_error is None
     assert dataset.last_error_at is None
     assert dataset.retry_count == 0
+    assert dataset.next_retry_at is None
     assert dataset.operational_status == "current"
+    assert dataset.checked_at == checked_at
+    assert dataset.next_expected_update_at == next_check
+
+
+def test_newer_successful_check_recovers_stale_when_release_expired(monkeypatch):
+    failed_at = NOW - timedelta(minutes=5)
+    dataset = SimpleNamespace(
+        last_success_at=NOW - timedelta(days=30),
+        last_error_at=failed_at,
+        last_error="superseded check failure",
+        retry_count=1,
+        next_retry_at=NOW + timedelta(minutes=10),
+        operational_status="error",
+        official_actual_until=date.min,
+    )
+    successful_check = SimpleNamespace(status="succeeded", finished_at=NOW)
+    successful_job = SimpleNamespace(source_id="fns_tax_paid")
+
+    class Result:
+        def all(self):
+            return [(successful_check, successful_job)]
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, _statement):
+            return Result()
+
+        def scalar(self, _statement):
+            return dataset
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(scheduler, "SessionLocal", FakeSession)
+
+    assert scheduler.sync_worker_failure_signals() == 1
+    assert dataset.last_error is None
+    assert dataset.last_error_at is None
+    assert dataset.retry_count == 0
+    assert dataset.next_retry_at is None
+    assert dataset.operational_status == "stale"
 
 
 def test_latest_worker_failure_is_projected_after_older_success(monkeypatch):
