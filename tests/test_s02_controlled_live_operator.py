@@ -18,6 +18,8 @@ from app.ingestion import fns_tax_debt_pipeline as pipeline
 from app.models.company import Company
 from app.models.source import DataSet, DataSource
 from app.models.tax_debt import (
+    CompanyTaxDebtSnapshot,
+    FnsTaxDebtNormalizedRecord,
     FnsTaxDebtPilotState,
     FnsTaxDebtPublicationGeneration,
     FnsTaxDebtRawArtifact,
@@ -30,6 +32,7 @@ from app.models.worker import (
 )
 from app.providers.fns_tax_debt_provider import TaxDebtDiscovery, TaxDebtOfficialRelease
 from app.sources.fns_tax_debt import (
+    BASELINE_HANDLER_VERSION,
     CONTROLLED_LIVE_HANDLER_VERSION,
     CONTROLLED_LIVE_PILOT_ENABLED,
     MASS_INGESTION_ENABLED,
@@ -66,10 +69,14 @@ class _FrozenDateTime(datetime):
 def _valid_inn(seed: int) -> str:
     base = f"{seed % 1_000_000_000:09d}"
     digits = [int(char) for char in base]
-    check = sum(
-        value * weight
-        for value, weight in zip(digits, (2, 4, 10, 3, 5, 9, 4, 6, 8))
-    ) % 11 % 10
+    check = (
+        sum(
+            value * weight
+            for value, weight in zip(digits, (2, 4, 10, 3, 5, 9, 4, 6, 8))
+        )
+        % 11
+        % 10
+    )
     return base + str(check)
 
 
@@ -85,6 +92,27 @@ def _zip(path: Path, inn: str, *, amount: str = "125.00") -> Path:
         '<Файл ВерсФорм="4.01" ИдФайл="fixture" ТипИнф="ОТКРДАННЫЕ6" КолДок="1">'
         + document
         + "</Файл>"
+    )
+    with ZipFile(path, "w") as archive:
+        archive.writestr("data-1.xml", xml.encode("utf-8"))
+    return path
+
+
+def _zip_many(path: Path, records: list[tuple[str, str]]) -> Path:
+    documents = "".join(
+        f"""
+        <Документ ИдДок="DEBT-{ordinal}" ДатаДок="25.08.2026"
+          ДатаСост="01.08.2026">
+          <СведНП ИННЮЛ="{inn}" НаимОрг="ООО {ordinal}" />
+          <СведНедоим НаимНалог="Налог на прибыль" СумНедНалог="{amount}"
+            СумПени="0.00" СумШтраф="0.00" ОбщСумНедоим="{amount}" />
+        </Документ>
+        """
+        for ordinal, (inn, amount) in enumerate(records, start=1)
+    )
+    xml = (
+        '<Файл ВерсФорм="4.01" ИдФайл="fixture" ТипИнф="ОТКРДАННЫЕ6" '
+        f'КолДок="{len(records)}">{documents}</Файл>'
     )
     with ZipFile(path, "w") as archive:
         archive.writestr("data-1.xml", xml.encode("utf-8"))
@@ -218,7 +246,9 @@ def committed_operator_db():
     assert engine.url.database != "kontragent"
     with engine.begin() as connection:
         connection.execute(sa.text(f"CREATE SCHEMA {quoted_schema}"))
-    isolated_engine = sa.create_engine(engine.url, pool_pre_ping=True).execution_options(
+    isolated_engine = sa.create_engine(
+        engine.url, pool_pre_ping=True
+    ).execution_options(
         schema_translate_map={None: schema},
     )
     try:
@@ -349,6 +379,50 @@ def _seed_baseline(factory, tmp_path: Path, inn: str) -> int:
         )
         session.commit()
     return company_id
+
+
+def _seed_baseline_prerequisites(factory, *inns: str) -> dict[str, int]:
+    with factory() as session:
+        source = session.scalar(select(DataSource).where(DataSource.code == "fns"))
+        if source is None:
+            source = DataSource(
+                code="fns",
+                name="ФНС России",
+                source_type="official",
+                priority=10,
+                enabled=True,
+            )
+            session.add(source)
+            session.flush()
+        if (
+            session.scalar(select(DataSet).where(DataSet.code == "fns_tax_debt"))
+            is None
+        ):
+            session.add(
+                DataSet(
+                    source_id=source.id,
+                    code="fns_tax_debt",
+                    name="ФНС: Налоговая задолженность",
+                    domain="tax_debt",
+                    update_mode="bulk",
+                    data_format="xml",
+                    priority=10,
+                    enabled=False,
+                )
+            )
+        result = {}
+        for inn in inns:
+            company = Company(
+                inn=inn,
+                name=f"Official Master {inn}",
+                entity_type="legal",
+                source="fns_egrul",
+            )
+            session.add(company)
+            session.flush()
+            result[inn] = company.id
+        session.commit()
+        return result
 
 
 def _preflight_args(files, tmp_path, **changes):
@@ -867,7 +941,9 @@ def test_missing_and_malformed_manifest_errors_are_secret_safe(
         operator, "session_factory", lambda _database_url: lambda: _FailingSession()
     )
     missing = "/tmp/qa-super-secret-password/missing-manifest.json"
-    assert operator.main(_preflight_cli_args(source_files, source_package=missing)) == 33
+    assert (
+        operator.main(_preflight_cli_args(source_files, source_package=missing)) == 33
+    )
     _assert_secret_safe_cli(capsys, "MANIFEST_INVALID")
 
     secret_dir = tmp_path / "qa-super-secret-password"
@@ -875,9 +951,7 @@ def test_missing_and_malformed_manifest_errors_are_secret_safe(
     malformed = secret_dir / "manifest.json"
     malformed.write_text(SECRET_CANARIES[1], encoding="utf-8")
     assert (
-        operator.main(
-            _preflight_cli_args(source_files, source_package=str(malformed))
-        )
+        operator.main(_preflight_cli_args(source_files, source_package=str(malformed)))
         == 33
     )
     _assert_secret_safe_cli(capsys, "MANIFEST_INVALID")
@@ -912,7 +986,9 @@ def test_missing_artifact_and_xsd_errors_are_secret_safe(
     monkeypatch.setattr(
         operator, "session_factory", lambda _database_url: lambda: _FailingSession()
     )
-    assert operator.main(_preflight_cli_args(source_files, **{kind: missing_path})) == 22
+    assert (
+        operator.main(_preflight_cli_args(source_files, **{kind: missing_path})) == 22
+    )
     _assert_secret_safe_cli(capsys, "CHECKSUM_MISMATCH")
 
 
@@ -954,7 +1030,9 @@ def test_hash_rediscovery_and_provider_failures_are_secret_safe(
 def test_cli_boundary_removes_raw_database_status_and_arbitrary_error_material(
     monkeypatch, capsys
 ):
-    args = SimpleNamespace(command="status", database_url=SECRET_CANARIES[1], job_id=None)
+    args = SimpleNamespace(
+        command="status", database_url=SECRET_CANARIES[1], job_id=None
+    )
     monkeypatch.setattr(operator, "parse_arguments", lambda _argv=None: args)
     monkeypatch.setattr(operator, "session_factory", lambda _database_url: object())
 
@@ -970,6 +1048,7 @@ def test_cli_boundary_removes_raw_database_status_and_arbitrary_error_material(
             },
         ),
     ):
+
         def fail(_args, _factory, error=raw_error):
             raise error
 
@@ -1085,10 +1164,14 @@ def test_queue_guard_blocks_wrong_job_and_earlier_runnable_job(
         ).job
         session.commit()
         with pytest.raises(operator.OperatorError) as blocked:
-            operator.queue_guard(session, expected_job_id=expected.id, now=NOW + timedelta(seconds=2))
+            operator.queue_guard(
+                session, expected_job_id=expected.id, now=NOW + timedelta(seconds=2)
+            )
         assert blocked.value.code == "QUEUE_NOT_EXCLUSIVE"
         with pytest.raises(operator.OperatorError) as wrong:
-            operator.queue_guard(session, expected_job_id=earlier.id, now=NOW + timedelta(seconds=2))
+            operator.queue_guard(
+                session, expected_job_id=earlier.id, now=NOW + timedelta(seconds=2)
+            )
         assert wrong.value.code == "JOB_MISMATCH"
 
 
@@ -1159,11 +1242,169 @@ def test_enqueue_timeout_override_is_bounded(source_files, timeout):
     assert caught.value.code == "OPERATOR_ERROR"
 
 
+def test_prepare_baseline_is_bounded_idempotent_and_supports_same_release_run_a(
+    committed_operator_db, source_files, tmp_path, monkeypatch
+):
+    outside_inn = _valid_inn(uuid4().int)
+    _zip_many(
+        source_files.artifact,
+        [(source_files.inn, "225.00"), (outside_inn, "900.00")],
+    )
+    _write_manifest(source_files.manifest, source_files.artifact, source_files.xsd)
+    company_ids = _seed_baseline_prerequisites(
+        committed_operator_db,
+        source_files.inn,
+        outside_inn,
+    )
+    monkeypatch.setattr(
+        operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient()
+    )
+    monkeypatch.setattr(operator, "_utc_now", lambda: NOW)
+    monkeypatch.setattr(worker_execution, "utc_now", lambda: NOW)
+    monkeypatch.setattr(pipeline, "datetime", _FrozenDateTime)
+    real_executor = operator.WorkerExecutor
+    monkeypatch.setattr(
+        operator,
+        "WorkerExecutor",
+        lambda **kwargs: real_executor(process_start_method="fork", **kwargs),
+    )
+    base = _preflight_args(source_files, tmp_path)
+    prepare_args = SimpleNamespace(
+        **vars(base),
+        artifact_store=tmp_path / "official-raw",
+        worker_id="s02-baseline-test",
+        timeout_seconds=3600,
+        confirm_prepare_baseline=operator.BASELINE_PREPARE_TOKEN,
+    )
+
+    with pytest.raises(operator.OperatorError) as missing_approval:
+        operator.command_prepare_baseline(prepare_args, committed_operator_db)
+    assert missing_approval.value.code == "DURABLE_APPROVAL_MISSING"
+
+    approval = operator.command_approve_baseline(
+        SimpleNamespace(
+            **vars(base),
+            approved_by="S02 baseline integration",
+            approved_at=NOW.isoformat(),
+            confirm_baseline_approval=operator.BASELINE_APPROVE_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    assert approval["handler_version"] == BASELINE_HANDLER_VERSION
+    with committed_operator_db() as session:
+        assert session.scalar(select(func.count()).select_from(WorkerJob)) == 0
+
+    prepared = operator.command_prepare_baseline(prepare_args, committed_operator_db)
+    repeated = operator.command_prepare_baseline(prepare_args, committed_operator_db)
+    assert prepared["status"] == "BASELINE_READY"
+    assert prepared["created"] is True
+    assert prepared["baseline_generation"] == 0
+    assert prepared["outside_cohort_facts"] == 0
+    assert repeated["created"] is False
+    assert repeated["job_id"] == prepared["job_id"]
+    assert repeated["run_id"] == prepared["run_id"]
+
+    with committed_operator_db() as session:
+        baseline_job = session.get(WorkerJob, prepared["job_id"])
+        baseline_run = session.get(WorkerRun, prepared["run_id"])
+        generation = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.generation == 0
+            )
+        )
+        facts = session.scalars(
+            select(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.publication_generation == 0
+            )
+        ).all()
+        assert baseline_job.job_type == "fns_tax_debt_baseline"
+        assert baseline_job.status == "succeeded"
+        assert baseline_run.status == "succeeded"
+        assert generation.publication_scope == "baseline"
+        assert generation.coverage["cohort_inns"] == [source_files.inn]
+        assert {row.company_id for row in facts} == {company_ids[source_files.inn]}
+
+    preflight = operator.command_preflight(base, committed_operator_db)
+    assert preflight["status"] == "READY"
+    operator.command_approve(
+        SimpleNamespace(
+            **vars(base),
+            approved_by="S02 Run A integration",
+            approved_at=NOW.isoformat(),
+            confirm_controlled_live=operator.APPROVE_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    enqueued = operator.command_enqueue(
+        SimpleNamespace(
+            **vars(base),
+            artifact_store=tmp_path / "official-raw",
+            retrieved_at=NOW.isoformat(),
+            timeout_seconds=3600,
+            confirm_enqueue=operator.ENQUEUE_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    run = operator.command_run_once(
+        SimpleNamespace(
+            job_id=str(enqueued["job_id"]),
+            worker_id="s02-run-a-test",
+            expected_main_sha=operator.resolve_runtime_sha(),
+            confirm_run=operator.RUN_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    assert run["status"] == "succeeded"
+
+    with committed_operator_db() as session:
+        snapshots = session.scalars(
+            select(CompanyTaxDebtSnapshot)
+            .where(CompanyTaxDebtSnapshot.company_id == company_ids[source_files.inn])
+            .order_by(CompanyTaxDebtSnapshot.publication_generation)
+        ).all()
+        assert [row.publication_generation for row in snapshots] == [0, 1]
+        assert snapshots[0].normalized_record_id is not None
+        assert snapshots[1].normalized_record_id is None
+        assert (
+            session.scalar(select(func.count()).select_from(FnsTaxDebtNormalizedRecord))
+            == 1
+        )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(CompanyTaxDebtSnapshot)
+                .where(CompanyTaxDebtSnapshot.company_id == company_ids[outside_inn])
+            )
+            == 0
+        )
+
+
+def test_baseline_cohort_is_capped_at_40(source_files, tmp_path):
+    cohort = tmp_path / "baseline-41.json"
+    cohort.write_text(
+        json.dumps({"inns": [_valid_inn(index) for index in range(1, 42)]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(operator.OperatorError) as caught:
+        operator.build_baseline_preparation_report(
+            None,
+            source_package=source_files.manifest,
+            artifact=source_files.artifact,
+            xsd=source_files.xsd,
+            cohort_path=cohort,
+            expected_main_sha=operator.resolve_runtime_sha(),
+            now=NOW,
+        )
+    assert caught.value.code == "COHORT_INVALID"
+
+
 def test_disposable_postgres_operator_flow(
     committed_operator_db, source_files, tmp_path, monkeypatch
 ):
     company_id = _seed_baseline(committed_operator_db, tmp_path, source_files.inn)
-    monkeypatch.setattr(operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient())
+    monkeypatch.setattr(
+        operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient()
+    )
     monkeypatch.setattr(operator, "_utc_now", lambda: NOW)
     monkeypatch.setattr(worker_execution, "utc_now", lambda: NOW)
     monkeypatch.setattr(pipeline, "datetime", _FrozenDateTime)
@@ -1183,7 +1424,9 @@ def test_disposable_postgres_operator_flow(
     approval = operator.command_approve(approve_args, committed_operator_db)
     assert approval["handler_version"] == CONTROLLED_LIVE_HANDLER_VERSION
     with committed_operator_db() as session:
-        assert session.scalar(select(func.count()).select_from(WorkerJob)) == jobs_before
+        assert (
+            session.scalar(select(func.count()).select_from(WorkerJob)) == jobs_before
+        )
         durable = session.get(
             WorkerHandlerRegistration, (SOURCE_ID, CONTROLLED_LIVE_HANDLER_VERSION)
         )
@@ -1202,11 +1445,14 @@ def test_disposable_postgres_operator_flow(
     assert second["created"] is False
     assert first["job_id"] == second["job_id"]
     with committed_operator_db() as session:
-        assert session.scalar(
-            select(func.count()).select_from(WorkerRun).where(
-                WorkerRun.job_id == first["job_id"]
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(WorkerRun)
+                .where(WorkerRun.job_id == first["job_id"])
             )
-        ) == 0
+            == 0
+        )
 
     real_executor = operator.WorkerExecutor
     monkeypatch.setattr(

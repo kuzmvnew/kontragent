@@ -25,11 +25,15 @@ from sqlalchemy import create_engine, func, inspect, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ingestion.fns_tax_debt_pipeline import (
+    BaselinePreparationConfig,
     ControlledLivePilotConfig,
+    approve_fns_tax_debt_baseline_handler,
     approve_fns_tax_debt_controlled_live_handler,
     calculate_sha256,
+    enqueue_fns_tax_debt_baseline_job,
     enqueue_fns_tax_debt_controlled_live_job,
     get_fns_tax_debt_pilot_monitoring,
+    register_fns_tax_debt_baseline_handler,
     register_fns_tax_debt_controlled_live_handler,
     release_freshness,
     rollback_fns_tax_debt_generation,
@@ -38,6 +42,7 @@ from app.models.company import Company
 from app.models.source import DataSet
 from app.models.tax_debt import (
     CompanyTaxDebtSnapshot,
+    FnsTaxDebtNormalizedRecord,
     FnsTaxDebtPilotState,
     FnsTaxDebtPublicationGeneration,
     FnsTaxDebtRawArtifact,
@@ -59,6 +64,7 @@ from app.services.s02_tax_debt_vertical_slice_service import (
     calculate_s02_vertical_slice_from_persisted,
 )
 from app.sources.fns_tax_debt import (
+    BASELINE_HANDLER_VERSION,
     CONTROLLED_LIVE_HANDLER_VERSION,
     CONTROLLED_LIVE_PILOT_ENABLED,
     DATASET_CODE,
@@ -77,6 +83,8 @@ from app.worker.registry import HandlerRegistry
 EXPECTED_XML_VERSION = "4.01"
 EXPECTED_INFORMATION_TYPE = "ОТКРДАННЫЕ6"
 APPROVE_TOKEN = "S02_CONTROLLED_LIVE_APPROVE"
+BASELINE_APPROVE_TOKEN = "S02_BASELINE_APPROVE"
+BASELINE_PREPARE_TOKEN = "S02_BASELINE_PREPARE"
 ENQUEUE_TOKEN = "S02_CONTROLLED_LIVE_ENQUEUE"
 RUN_TOKEN = "S02_CONTROLLED_LIVE_RUN"
 ROLLBACK_TOKEN = "S02_CONTROLLED_LIVE_ROLLBACK"
@@ -298,7 +306,9 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, Decimal):
         return format(value, "f")
     if isinstance(value, (date, datetime, UUID, Path)):
-        return str(value) if not isinstance(value, (date, datetime)) else value.isoformat()
+        return (
+            str(value) if not isinstance(value, (date, datetime)) else value.isoformat()
+        )
     if hasattr(value, "model_dump"):
         return _json_safe(value.model_dump(mode="json"))
     if is_dataclass(value):
@@ -325,7 +335,9 @@ def _parse_date(value: Any, field: str) -> date:
     try:
         return date.fromisoformat(str(value))
     except (TypeError, ValueError) as error:
-        raise OperatorError("MANIFEST_INVALID", f"{field} must be an ISO date") from error
+        raise OperatorError(
+            "MANIFEST_INVALID", f"{field} must be an ISO date"
+        ) from error
 
 
 def _parse_timestamp(value: Any, field: str) -> datetime:
@@ -352,7 +364,9 @@ def _download_url(value: Any, field: str, filename: str) -> str:
     try:
         port = parsed.port
     except ValueError as error:
-        raise OperatorError("MANIFEST_INVALID", f"{field} has an invalid port") from error
+        raise OperatorError(
+            "MANIFEST_INVALID", f"{field} has an invalid port"
+        ) from error
     if (
         parsed.scheme != "https"
         or parsed.hostname != DOWNLOAD_HOST
@@ -374,7 +388,9 @@ def load_source_package(path: str | Path) -> dict[str, Any]:
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise OperatorError("MANIFEST_INVALID", "source package could not be read") from error
+        raise OperatorError(
+            "MANIFEST_INVALID", "source package could not be read"
+        ) from error
     if not isinstance(raw, dict):
         raise OperatorError("MANIFEST_INVALID", "source package must be a JSON object")
     missing = sorted(MANIFEST_FIELDS - raw.keys())
@@ -385,7 +401,9 @@ def load_source_package(path: str | Path) -> dict[str, Any]:
             "source package fields do not match the strict contract",
         )
     if raw["dataset_id"] != DATASET_ID:
-        raise OperatorError("MANIFEST_INVALID", "dataset_id is not the accepted S02 dataset")
+        raise OperatorError(
+            "MANIFEST_INVALID", "dataset_id is not the accepted S02 dataset"
+        )
     if raw["official_page"] != OFFICIAL_SOURCE_PAGE:
         raise OperatorError("MANIFEST_INVALID", "official_page is not pinned")
     for prefix in ("artifact", "xsd"):
@@ -407,7 +425,9 @@ def load_source_package(path: str | Path) -> dict[str, Any]:
     if raw["information_type"] != EXPECTED_INFORMATION_TYPE:
         raise OperatorError("MANIFEST_INVALID", "information_type is unsupported")
     if not _validation_passed(raw["validation_result"]):
-        raise OperatorError("MANIFEST_INVALID", "source package validation did not PASS")
+        raise OperatorError(
+            "MANIFEST_INVALID", "source package validation did not PASS"
+        )
     if SHA_RE.fullmatch(str(raw["main_sha"] or "").lower()) is None:
         raise OperatorError("MANIFEST_INVALID", "main_sha is not a full Git SHA")
     raw["main_sha"] = str(raw["main_sha"]).lower()
@@ -449,8 +469,12 @@ def load_cohort(path: str | Path) -> tuple[tuple[str, ...], str]:
     except (OSError, json.JSONDecodeError) as error:
         raise OperatorError("COHORT_INVALID", "cohort could not be read") from error
     values = raw.get("inns") if isinstance(raw, dict) else raw
-    if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
-        raise OperatorError("COHORT_INVALID", "cohort must be a JSON list or {\"inns\": [...]} object")
+    if not isinstance(values, list) or any(
+        not isinstance(item, str) for item in values
+    ):
+        raise OperatorError(
+            "COHORT_INVALID", 'cohort must be a JSON list or {"inns": [...]} object'
+        )
     normalized = [item.strip() for item in values]
     if not normalized or len(normalized) > 100:
         raise OperatorError("COHORT_INVALID", "cohort must contain 1 to 100 INNs")
@@ -480,7 +504,7 @@ def resolve_runtime_sha() -> str | None:
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     value = result.stdout.strip().lower()
     return value if SHA_RE.fullmatch(value) else None
@@ -489,14 +513,19 @@ def resolve_runtime_sha() -> str | None:
 def check_main_sha(*, expected: str, package_sha: str | None = None) -> str:
     expected = expected.strip().lower()
     if SHA_RE.fullmatch(expected) is None:
-        raise OperatorError("MAIN_SHA_MISMATCH", "expected main SHA must be a full Git SHA")
+        raise OperatorError(
+            "MAIN_SHA_MISMATCH", "expected main SHA must be a full Git SHA"
+        )
     if package_sha is not None and expected != package_sha:
         raise OperatorError(
-            "MAIN_SHA_MISMATCH", "operator expected SHA differs from source package main_sha"
+            "MAIN_SHA_MISMATCH",
+            "operator expected SHA differs from source package main_sha",
         )
     actual = resolve_runtime_sha()
     if actual is None:
-        raise OperatorError("MAIN_SHA_NOT_VERIFIED", "runtime Git revision is NOT_VERIFIED")
+        raise OperatorError(
+            "MAIN_SHA_NOT_VERIFIED", "runtime Git revision is NOT_VERIFIED"
+        )
     if actual != expected:
         raise OperatorError(
             "MAIN_SHA_MISMATCH",
@@ -519,7 +548,9 @@ def _release_from_package(package: Mapping[str, Any]) -> TaxDebtOfficialRelease:
     try:
         validate_tax_debt_release(release)
     except Exception as error:
-        raise OperatorError("MANIFEST_INVALID", "source release metadata is invalid") from error
+        raise OperatorError(
+            "MANIFEST_INVALID", "source release metadata is invalid"
+        ) from error
     return release
 
 
@@ -557,7 +588,9 @@ def discover_exact_release(
         release.official_actual_until,
     )
     if discovery.changed or actual != expected:
-        raise OperatorError("SOURCE_PACKAGE_CHANGED", "official S02 release differs from frozen package")
+        raise OperatorError(
+            "SOURCE_PACKAGE_CHANGED", "official S02 release differs from frozen package"
+        )
     return discovery
 
 
@@ -567,7 +600,9 @@ def verify_local_files(
     artifact_path = Path(artifact)
     xsd_path = Path(xsd)
     if artifact_path.name != package["artifact_filename"]:
-        raise OperatorError("CHECKSUM_MISMATCH", "artifact filename differs from manifest")
+        raise OperatorError(
+            "CHECKSUM_MISMATCH", "artifact filename differs from manifest"
+        )
     if xsd_path.name != package["xsd_filename"]:
         raise OperatorError("CHECKSUM_MISMATCH", "XSD filename differs from manifest")
     for kind, path in (("artifact", artifact_path), ("xsd", xsd_path)):
@@ -637,32 +672,71 @@ def require_durable_approval(session: Session) -> WorkerHandlerRegistration:
         or metadata.get("handler_version_pin") != CONTROLLED_LIVE_HANDLER_VERSION
         or metadata.get("mass_ingestion_enabled") is not False
     ):
-        raise OperatorError("DURABLE_APPROVAL_MISSING", "exact durable S02 approval is missing")
+        raise OperatorError(
+            "DURABLE_APPROVAL_MISSING", "exact durable S02 approval is missing"
+        )
+    return approval
+
+
+def require_baseline_approval(
+    session: Session,
+    *,
+    cohort_sha256: str,
+    artifact_sha256: str,
+    xsd_sha256: str,
+) -> WorkerHandlerRegistration:
+    approval = session.get(
+        WorkerHandlerRegistration,
+        (SOURCE_ID, BASELINE_HANDLER_VERSION),
+    )
+    metadata = dict(approval.metadata_json or {}) if approval is not None else {}
+    if (
+        approval is None
+        or not approval.approved
+        or not approval.enabled
+        or approval.live_mode
+        or metadata.get("mode") != "official_baseline"
+        or metadata.get("publication_scope") != "baseline"
+        or metadata.get("handler_version_pin") != BASELINE_HANDLER_VERSION
+        or metadata.get("cohort_sha256") != cohort_sha256
+        or metadata.get("artifact_sha256") != artifact_sha256
+        or metadata.get("xsd_sha256") != xsd_sha256
+        or metadata.get("mass_ingestion_enabled") is not False
+    ):
+        raise OperatorError(
+            "DURABLE_APPROVAL_MISSING",
+            "exact durable S02 baseline approval is missing",
+        )
     return approval
 
 
 def _dataset_metadata_snapshot(dataset: DataSet) -> dict[str, Any]:
-    return {
-        field: _json_safe(getattr(dataset, field))
-        for field in (
-            "last_attempt_at",
-            "last_success_at",
-            "last_data_date",
-            "source_as_of",
-            "retrieved_at",
-            "checked_at",
-            "published_at",
-            "record_count",
-            "coverage",
-            "operational_status",
-            "last_error",
-            "last_error_at",
-            "retry_count",
-            "next_retry_at",
-            "next_expected_update_at",
-            "auto_update_status",
+    result: dict[str, Any] = {}
+    for field in (
+        "last_attempt_at",
+        "last_success_at",
+        "last_data_date",
+        "source_as_of",
+        "retrieved_at",
+        "checked_at",
+        "published_at",
+        "record_count",
+        "coverage",
+        "operational_status",
+        "last_error",
+        "last_error_at",
+        "retry_count",
+        "next_retry_at",
+        "next_expected_update_at",
+        "auto_update_status",
+    ):
+        value = getattr(dataset, field)
+        result[field] = (
+            value.astimezone(timezone.utc).isoformat()
+            if isinstance(value, datetime) and value.tzinfo is not None
+            else _json_safe(value)
         )
-    }
+    return result
 
 
 def _worker_run_counters(run: WorkerRun) -> dict[str, int]:
@@ -683,9 +757,7 @@ def _mapping_dict(value: Any) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, Mapping) else None
 
 
-def database_readiness(
-    session: Session, *, cohort: tuple[str, ...]
-) -> dict[str, Any]:
+def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str, Any]:
     table_names = set(inspect(session.get_bind()).get_table_names())
     required_tables = {
         "companies",
@@ -755,15 +827,17 @@ def database_readiness(
         )
         raw_count = int(
             session.scalar(
-                select(func.count()).select_from(FnsTaxDebtRawArtifact).where(
-                    FnsTaxDebtRawArtifact.dataset_id == dataset.id
-                )
+                select(func.count())
+                .select_from(FnsTaxDebtRawArtifact)
+                .where(FnsTaxDebtRawArtifact.dataset_id == dataset.id)
             )
             or 0
         )
         fact_count = int(
             session.scalar(
-                select(func.count()).select_from(CompanyTaxDebtSnapshot).where(
+                select(func.count())
+                .select_from(CompanyTaxDebtSnapshot)
+                .where(
                     CompanyTaxDebtSnapshot.dataset_id == dataset.id,
                     CompanyTaxDebtSnapshot.publication_generation == 0,
                 )
@@ -853,7 +927,12 @@ def database_readiness(
     if job is not None and run is not None:
         require(job.source_id == SOURCE_ID, "publication_job_source")
         require(
-            job.job_type in {"fns_tax_debt_fixture", "fns_tax_debt_controlled_live"},
+            job.job_type
+            in {
+                "fns_tax_debt_baseline",
+                "fns_tax_debt_fixture",
+                "fns_tax_debt_controlled_live",
+            },
             "publication_job_type",
         )
         require(job.handler_version == run.handler_version, "publication_job_handler")
@@ -931,7 +1010,9 @@ def database_readiness(
             == _dataset_metadata_snapshot(dataset),
             "baseline_dataset_metadata",
         )
-        require(baseline_row.published_at == dataset.published_at, "baseline_published_at")
+        require(
+            baseline_row.published_at == dataset.published_at, "baseline_published_at"
+        )
 
     if pilot is not None and dataset is not None and artifact is not None:
         require(pilot.dataset_id == dataset.id, "pilot_dataset")
@@ -991,9 +1072,13 @@ def build_preflight_report(
     now = now or _utc_now()
     package = load_source_package(source_package)
     cohort, cohort_sha = load_cohort(cohort_path)
-    main_sha = check_main_sha(expected=expected_main_sha, package_sha=package["main_sha"])
+    main_sha = check_main_sha(
+        expected=expected_main_sha, package_sha=package["main_sha"]
+    )
     if release_freshness(package["official_actual_until"], now=now) == "stale":
-        raise OperatorError("SOURCE_PACKAGE_STALE", "official S02 source package is stale")
+        raise OperatorError(
+            "SOURCE_PACKAGE_STALE", "official S02 source package is stale"
+        )
     artifact_sha, xsd_sha = verify_local_files(package, artifact, xsd)
     discovery = discover_exact_release(package, now=now, client=discovery_client)
     readiness = database_readiness(session, cohort=cohort)
@@ -1016,15 +1101,230 @@ def build_preflight_report(
         "blockers": [],
     }
     if MASS_INGESTION_ENABLED or CONTROLLED_LIVE_PILOT_ENABLED:
-        raise OperatorError("OPERATOR_ERROR", "S02 default safety flags are not disabled")
+        raise OperatorError(
+            "OPERATOR_ERROR", "S02 default safety flags are not disabled"
+        )
     return report, package, cohort, discovery
+
+
+def baseline_preparation_readiness(
+    session: Session,
+    *,
+    cohort: tuple[str, ...],
+    artifact_sha256: str,
+) -> dict[str, Any]:
+    """Prove that generation 0 is absent or is the exact completed baseline."""
+
+    required_tables = {
+        "companies",
+        "data_sets",
+        "worker_jobs",
+        "worker_runs",
+        "worker_handler_registry",
+        "worker_raw_manifests",
+        "worker_publication_state",
+        "fns_tax_debt_raw_artifacts",
+        "fns_tax_debt_normalized_records",
+        "fns_tax_debt_publication_generations",
+        "company_tax_debt_snapshots",
+    }
+    table_names = set(inspect(session.get_bind()).get_table_names())
+    missing_tables = sorted(required_tables - table_names)
+    if missing_tables:
+        raise OperatorError(
+            "BASELINE_NOT_READY",
+            "required S02 baseline tables are missing",
+            details={"missing_table_count": len(missing_tables)},
+        )
+
+    companies = session.scalars(select(Company).where(Company.inn.in_(cohort))).all()
+    by_inn: dict[str, list[Company]] = {}
+    for company in companies:
+        by_inn.setdefault(company.inn, []).append(company)
+    if any(
+        len(by_inn.get(inn, ())) != 1 or by_inn[inn][0].entity_type != "legal"
+        for inn in cohort
+    ):
+        raise OperatorError(
+            "COHORT_INVALID",
+            "baseline cohort must resolve to exact Master legal entities",
+        )
+
+    dataset = session.scalar(select(DataSet).where(DataSet.code == DATASET_CODE))
+    if dataset is None:
+        raise OperatorError("BASELINE_NOT_READY", "S02 DataSet is not registered")
+    generation = session.scalar(
+        select(FnsTaxDebtPublicationGeneration).where(
+            FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+            FnsTaxDebtPublicationGeneration.generation == 0,
+        )
+    )
+    if generation is not None:
+        run = session.get(WorkerRun, generation.worker_run_id)
+        job = session.get(WorkerJob, run.job_id) if run is not None else None
+        expected_cohort = list(cohort)
+        if (
+            generation.publication_scope != "baseline"
+            or generation.status != "baseline"
+            or generation.checksum != artifact_sha256
+            or list(dict(generation.coverage or {}).get("cohort_inns") or ())
+            != expected_cohort
+            or run is None
+            or run.status != "succeeded"
+            or job is None
+            or job.job_type != "fns_tax_debt_baseline"
+            or job.handler_version != BASELINE_HANDLER_VERSION
+            or job.status != "succeeded"
+        ):
+            raise OperatorError(
+                "BASELINE_NOT_READY",
+                "an incompatible generation-0 baseline already exists",
+            )
+        exact = database_readiness(session, cohort=cohort)
+        outside_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(CompanyTaxDebtSnapshot)
+                .join(Company, Company.id == CompanyTaxDebtSnapshot.company_id)
+                .where(
+                    CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                    CompanyTaxDebtSnapshot.publication_generation == 0,
+                    Company.inn.not_in(cohort),
+                )
+            )
+            or 0
+        )
+        if outside_count:
+            raise OperatorError(
+                "BASELINE_NOT_READY",
+                "generation-0 facts exist outside the approved cohort",
+                details={"baseline_fact_count": outside_count},
+            )
+        return {
+            "state": "existing",
+            "dataset_id": dataset.id,
+            "job_id": job.id,
+            "run_id": run.id,
+            "baseline_generation": 0,
+            "worker_generation": exact["worker_generation"],
+            "outside_cohort_facts": 0,
+        }
+
+    pointer = session.get(WorkerPublicationState, SOURCE_ID)
+    fact_count = int(
+        session.scalar(
+            select(func.count())
+            .select_from(CompanyTaxDebtSnapshot)
+            .where(CompanyTaxDebtSnapshot.dataset_id == dataset.id)
+        )
+        or 0
+    )
+    raw_count = int(
+        session.scalar(
+            select(func.count())
+            .select_from(FnsTaxDebtRawArtifact)
+            .where(FnsTaxDebtRawArtifact.dataset_id == dataset.id)
+        )
+        or 0
+    )
+    normalized_count = int(
+        session.scalar(
+            select(func.count())
+            .select_from(FnsTaxDebtNormalizedRecord)
+            .where(FnsTaxDebtNormalizedRecord.dataset_id == dataset.id)
+        )
+        or 0
+    )
+    if pointer is not None or fact_count or raw_count or normalized_count:
+        raise OperatorError(
+            "BASELINE_NOT_READY",
+            "S02 state is not empty and has no exact generation-0 ledger",
+            details={
+                "baseline_fact_count": fact_count,
+                "raw_artifact_count": raw_count,
+            },
+        )
+    if any(
+        value is not None
+        for value in (
+            dataset.last_success_at,
+            dataset.last_data_date,
+            dataset.source_as_of,
+            dataset.retrieved_at,
+            dataset.published_at,
+        )
+    ):
+        raise OperatorError(
+            "BASELINE_NOT_READY",
+            "S02 DataSet has unledgered publication coordinates",
+        )
+    return {"state": "empty", "dataset_id": dataset.id}
+
+
+def build_baseline_preparation_report(
+    session: Session,
+    *,
+    source_package: str | Path,
+    artifact: str | Path,
+    xsd: str | Path,
+    cohort_path: str | Path,
+    expected_main_sha: str,
+    now: datetime | None = None,
+    discovery_client: FnsTaxDebtOfficialClient | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], tuple[str, ...], TaxDebtDiscovery]:
+    now = now or _utc_now()
+    package = load_source_package(source_package)
+    cohort, cohort_sha = load_cohort(cohort_path)
+    try:
+        BaselinePreparationConfig(cohort_inns=frozenset(cohort)).validate()
+    except Exception as error:
+        raise OperatorError(
+            "COHORT_INVALID", "baseline cohort must contain at most 40 legal entities"
+        ) from error
+    main_sha = check_main_sha(
+        expected=expected_main_sha, package_sha=package["main_sha"]
+    )
+    if release_freshness(package["official_actual_until"], now=now) == "stale":
+        raise OperatorError(
+            "SOURCE_PACKAGE_STALE", "official S02 source package is stale"
+        )
+    artifact_sha, xsd_sha = verify_local_files(package, artifact, xsd)
+    discovery = discover_exact_release(package, now=now, client=discovery_client)
+    readiness = baseline_preparation_readiness(
+        session,
+        cohort=cohort,
+        artifact_sha256=artifact_sha,
+    )
+    return (
+        {
+            "status": "BASELINE_READY"
+            if readiness["state"] == "existing"
+            else "READY_FOR_BASELINE",
+            "main_sha": main_sha,
+            "dataset": package["dataset_id"],
+            "source_package_fingerprint": source_package_fingerprint(package),
+            "artifact_sha256": artifact_sha,
+            "xsd_sha256": xsd_sha,
+            "release_freshness": "current",
+            "cohort_count": len(cohort),
+            "cohort_sha256": cohort_sha,
+            **readiness,
+        },
+        package,
+        cohort,
+        discovery,
+    )
 
 
 def queue_guard(session: Session, *, expected_job_id: UUID, now: datetime) -> WorkerJob:
     job = session.get(WorkerJob, expected_job_id)
     if job is None:
         raise OperatorError("JOB_MISMATCH", "expected worker job does not exist")
-    expected = (SOURCE_ID, "fns_tax_debt_controlled_live", CONTROLLED_LIVE_HANDLER_VERSION)
+    expected = (
+        SOURCE_ID,
+        "fns_tax_debt_controlled_live",
+        CONTROLLED_LIVE_HANDLER_VERSION,
+    )
     actual = (job.source_id, job.job_type, job.handler_version)
     if actual != expected or job.status not in {"queued", "retry_scheduled"}:
         raise OperatorError(
@@ -1052,7 +1352,9 @@ def _generation_state(session: Session) -> dict[str, Any]:
         if pointer.active_pointer:
             active_identity = sha256(pointer.active_pointer.encode("utf-8")).hexdigest()
         if pointer.rollback_pointer:
-            rollback_identity = sha256(pointer.rollback_pointer.encode("utf-8")).hexdigest()
+            rollback_identity = sha256(
+                pointer.rollback_pointer.encode("utf-8")
+            ).hexdigest()
     return {
         "worker_generation": pointer.generation if pointer else None,
         "active_pointer_identity": active_identity,
@@ -1148,6 +1450,47 @@ def command_approve(args: argparse.Namespace, factory) -> dict[str, Any]:
             raise
 
 
+def command_approve_baseline(args: argparse.Namespace, factory) -> dict[str, Any]:
+    _require_token(args.confirm_baseline_approval, BASELINE_APPROVE_TOKEN)
+    with factory() as session:
+        try:
+            report, package, cohort, _ = build_baseline_preparation_report(
+                session,
+                source_package=args.source_package,
+                artifact=args.artifact,
+                xsd=args.xsd,
+                cohort_path=args.cohort,
+                expected_main_sha=args.expected_main_sha,
+            )
+        finally:
+            session.rollback()
+    approved_at = _argument_timestamp(args.approved_at)
+    with factory() as session:
+        try:
+            record = approve_fns_tax_debt_baseline_handler(
+                session,
+                approved_by=args.approved_by,
+                approved_at=approved_at,
+                config=BaselinePreparationConfig(cohort_inns=frozenset(cohort)),
+                artifact_sha256=package["artifact_sha256"],
+                xsd_sha256=package["xsd_sha256"],
+            )
+            session.commit()
+            metadata = dict(record.metadata_json or {})
+            return {
+                "status": "BASELINE_APPROVED",
+                "source_id": record.source_id,
+                "handler_version": record.handler_version,
+                "approved_by": metadata.get("approved_by"),
+                "approved_at": metadata.get("approved_at"),
+                "cohort_sha256": report["cohort_sha256"],
+                "source_package_fingerprint": report["source_package_fingerprint"],
+            }
+        except Exception:
+            session.rollback()
+            raise
+
+
 def command_enqueue(args: argparse.Namespace, factory) -> dict[str, Any]:
     _require_token(args.confirm_enqueue, ENQUEUE_TOKEN)
     if not MIN_TIMEOUT_SECONDS <= args.timeout_seconds <= MAX_TIMEOUT_SECONDS:
@@ -1233,9 +1576,7 @@ def _start_repeatable_queue_guard(factory) -> Session:
         # one immutable runnable-queue snapshot. A concurrent insert/update
         # is therefore invisible or causes serialization failure; it cannot
         # make a different job appear between proof and claim.
-        session.connection(
-            execution_options={"isolation_level": "REPEATABLE READ"}
-        )
+        session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
     except Exception as error:
         session.close()
         raise OperatorError(
@@ -1244,6 +1585,194 @@ def _start_repeatable_queue_guard(factory) -> Session:
             details={"exception_type": error.__class__.__name__},
         ) from error
     return session
+
+
+def baseline_queue_guard(
+    session: Session,
+    *,
+    expected_job_id: UUID,
+    now: datetime,
+    cohort_sha256: str,
+    artifact_sha256: str,
+    xsd_sha256: str,
+) -> WorkerJob:
+    job = session.get(WorkerJob, expected_job_id)
+    expected = (SOURCE_ID, "fns_tax_debt_baseline", BASELINE_HANDLER_VERSION)
+    metadata = dict(job.schedule_metadata or {}) if job is not None else {}
+    scheduled_cohort = tuple(
+        sorted(str(value) for value in metadata.get("cohort_inns") or ())
+    )
+    scheduled_cohort_sha = sha256(
+        ("".join(f"{inn}\n" for inn in scheduled_cohort)).encode("ascii")
+    ).hexdigest()
+    if (
+        job is None
+        or (job.source_id, job.job_type, job.handler_version) != expected
+        or job.status not in {"queued", "retry_scheduled"}
+        or metadata.get("mode") != "controlled_live"
+        or metadata.get("job_mode") != "official_baseline"
+        or metadata.get("expected_sha256") != artifact_sha256
+        or metadata.get("expected_xsd_sha256") != xsd_sha256
+        or scheduled_cohort_sha != cohort_sha256
+    ):
+        raise OperatorError(
+            "JOB_MISMATCH", "expected generation-0 worker job is not runnable"
+        )
+    require_baseline_approval(
+        session,
+        cohort_sha256=cohort_sha256,
+        artifact_sha256=artifact_sha256,
+        xsd_sha256=xsd_sha256,
+    )
+    ordered = session.scalars(_runnable_query(now)).all()
+    if not ordered or ordered[0].id != expected_job_id:
+        raise OperatorError(
+            "QUEUE_NOT_EXCLUSIVE",
+            "expected S02 baseline job is not the exact next WorkerExecutor claim",
+            details={"next_job_id": str(ordered[0].id) if ordered else None},
+        )
+    return job
+
+
+def command_prepare_baseline(args: argparse.Namespace, factory) -> dict[str, Any]:
+    _require_token(args.confirm_prepare_baseline, BASELINE_PREPARE_TOKEN)
+    if not MIN_TIMEOUT_SECONDS <= args.timeout_seconds <= MAX_TIMEOUT_SECONDS:
+        raise OperatorError(
+            "OPERATOR_ERROR",
+            f"timeout-seconds must be within {MIN_TIMEOUT_SECONDS}..{MAX_TIMEOUT_SECONDS}",
+        )
+    with factory() as session:
+        try:
+            report, package, cohort, discovery = build_baseline_preparation_report(
+                session,
+                source_package=args.source_package,
+                artifact=args.artifact,
+                xsd=args.xsd,
+                cohort_path=args.cohort,
+                expected_main_sha=args.expected_main_sha,
+            )
+        finally:
+            session.rollback()
+
+    with factory() as session:
+        require_baseline_approval(
+            session,
+            cohort_sha256=report["cohort_sha256"],
+            artifact_sha256=report["artifact_sha256"],
+            xsd_sha256=report["xsd_sha256"],
+        )
+        if report["state"] == "existing":
+            session.rollback()
+            return {
+                **report,
+                "status": "BASELINE_READY",
+                "created": False,
+                "outside_cohort_facts": 0,
+            }
+        try:
+            creation = enqueue_fns_tax_debt_baseline_job(
+                session,
+                source_path=args.artifact,
+                xsd_path=args.xsd,
+                artifact_store=args.artifact_store,
+                discovery=discovery,
+                config=BaselinePreparationConfig(cohort_inns=frozenset(cohort)),
+                # Reuse the frozen acquisition coordinate so Run A stages the
+                # same checksum-addressed official manifest.
+                retrieved_at=package["retrieved_at"],
+                expected_sha256=package["artifact_sha256"],
+                expected_xsd_sha256=package["xsd_sha256"],
+                timeout_seconds=args.timeout_seconds,
+            )
+            if creation.job.status not in {"queued", "retry_scheduled"}:
+                raise OperatorError(
+                    "JOB_MISMATCH",
+                    "idempotent baseline job is not runnable or succeeded",
+                    details={"status": creation.job.status},
+                )
+            baseline_queue_guard(
+                session,
+                expected_job_id=creation.job.id,
+                now=_utc_now(),
+                cohort_sha256=report["cohort_sha256"],
+                artifact_sha256=report["artifact_sha256"],
+                xsd_sha256=report["xsd_sha256"],
+            )
+            session.commit()
+            job_id = creation.job.id
+            created = creation.created
+        except Exception:
+            session.rollback()
+            raise
+
+    guard_at = _utc_now()
+    registry = HandlerRegistry()
+    guard_session = _start_repeatable_queue_guard(factory)
+    try:
+        baseline_queue_guard(
+            guard_session,
+            expected_job_id=job_id,
+            now=guard_at,
+            cohort_sha256=report["cohort_sha256"],
+            artifact_sha256=report["artifact_sha256"],
+            xsd_sha256=report["xsd_sha256"],
+        )
+        register_fns_tax_debt_baseline_handler(guard_session, registry)
+    except Exception:
+        guard_session.rollback()
+        guard_session.close()
+        raise
+    executor = WorkerExecutor(
+        session_factory=_GuardedSessionFactory(guard_session, factory),
+        registry=registry,
+        worker_id=args.worker_id,
+        clock=_ClaimClock(guard_at),
+    )
+    try:
+        run_id = executor.run_once()
+    except Exception as error:
+        raise OperatorError(
+            "RUN_FAILED",
+            "S02 generation-0 Worker execution failed",
+            details={"exception_type": error.__class__.__name__},
+        ) from error
+    finally:
+        guard_session.close()
+    if run_id is None:
+        raise OperatorError("JOB_MISMATCH", "WorkerExecutor did not claim baseline job")
+
+    with factory() as session:
+        run = session.get(WorkerRun, run_id)
+        if run is None or run.job_id != job_id or run.status != "succeeded":
+            raise OperatorError("RUN_FAILED", "S02 baseline WorkerRun did not succeed")
+        readiness = database_readiness(session, cohort=cohort)
+        outside_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(CompanyTaxDebtSnapshot)
+                .join(Company, Company.id == CompanyTaxDebtSnapshot.company_id)
+                .where(
+                    CompanyTaxDebtSnapshot.publication_generation == 0,
+                    Company.inn.not_in(cohort),
+                )
+            )
+            or 0
+        )
+        if outside_count:
+            raise OperatorError(
+                "RUN_FAILED", "S02 baseline published facts outside approved cohort"
+            )
+        return {
+            **report,
+            "status": "BASELINE_READY",
+            "created": created,
+            "job_id": job_id,
+            "run_id": run.id,
+            "baseline_generation": readiness["baseline_generation"],
+            "worker_generation": readiness["worker_generation"],
+            "counters": _worker_run_counters(run),
+            "outside_cohort_facts": outside_count,
+        }
 
 
 def command_run_once(args: argparse.Namespace, factory) -> dict[str, Any]:
@@ -1326,10 +1855,14 @@ def command_status(args: argparse.Namespace, factory) -> dict[str, Any]:
                 try:
                     job_id = UUID(args.job_id)
                 except ValueError as error:
-                    raise OperatorError("JOB_MISMATCH", "job-id must be a UUID") from error
+                    raise OperatorError(
+                        "JOB_MISMATCH", "job-id must be a UUID"
+                    ) from error
                 job = session.get(WorkerJob, job_id)
                 if job is None:
-                    raise OperatorError("STATUS_NOT_FOUND", "selected job does not exist")
+                    raise OperatorError(
+                        "STATUS_NOT_FOUND", "selected job does not exist"
+                    )
                 selected = {
                     "job_id": job.id,
                     "source_id": job.source_id,
@@ -1371,8 +1904,13 @@ def command_rollback(args: argparse.Namespace, factory) -> dict[str, Any]:
     with factory() as session:
         try:
             before = _generation_state(session)
-            if before["worker_generation"] is None or before["rollback_pointer_identity"] is None:
-                raise OperatorError("ROLLBACK_NOT_AVAILABLE", "S02 rollback generation is unavailable")
+            if (
+                before["worker_generation"] is None
+                or before["rollback_pointer_identity"] is None
+            ):
+                raise OperatorError(
+                    "ROLLBACK_NOT_AVAILABLE", "S02 rollback generation is unavailable"
+                )
             if before["worker_generation"] != args.expected_generation:
                 raise OperatorError(
                     "ROLLBACK_NOT_AVAILABLE",
@@ -1381,7 +1919,9 @@ def command_rollback(args: argparse.Namespace, factory) -> dict[str, Any]:
                 )
             try:
                 rollback_fns_tax_debt_generation(
-                    session, expected_generation=args.expected_generation, now=_utc_now()
+                    session,
+                    expected_generation=args.expected_generation,
+                    now=_utc_now(),
                 )
             except Exception as error:
                 raise OperatorError(
@@ -1392,15 +1932,21 @@ def command_rollback(args: argparse.Namespace, factory) -> dict[str, Any]:
             session.rollback()
             raise
     with factory() as session:
-        return {"status": "ROLLED_BACK", "before": before, "after": _generation_state(session)}
+        return {
+            "status": "ROLLED_BACK",
+            "before": before,
+            "after": _generation_state(session),
+        }
 
 
 def command_evidence(args: argparse.Namespace, factory) -> dict[str, Any]:
     with factory() as session:
         try:
             try:
-                fact, risk, summary, projection = calculate_s02_vertical_slice_from_persisted(
-                    session, args.company_id, calculated_at=_utc_now()
+                fact, risk, summary, projection = (
+                    calculate_s02_vertical_slice_from_persisted(
+                        session, args.company_id, calculated_at=_utc_now()
+                    )
                 )
             except Exception as error:
                 raise OperatorError(
@@ -1478,6 +2024,19 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     approve.add_argument("--approved-by", required=True)
     approve.add_argument("--approved-at", required=True)
     approve.add_argument("--confirm-controlled-live", required=True)
+    baseline_approve = sub.add_parser("approve-baseline")
+    _add_preflight_inputs(baseline_approve)
+    baseline_approve.add_argument("--approved-by", required=True)
+    baseline_approve.add_argument("--approved-at", required=True)
+    baseline_approve.add_argument("--confirm-baseline-approval", required=True)
+    prepare_baseline = sub.add_parser("prepare-baseline")
+    _add_preflight_inputs(prepare_baseline)
+    prepare_baseline.add_argument("--artifact-store", type=Path, required=True)
+    prepare_baseline.add_argument("--worker-id", required=True)
+    prepare_baseline.add_argument(
+        "--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS
+    )
+    prepare_baseline.add_argument("--confirm-prepare-baseline", required=True)
     enqueue = sub.add_parser("enqueue")
     _add_preflight_inputs(enqueue)
     enqueue.add_argument("--artifact-store", type=Path, required=True)
@@ -1518,6 +2077,8 @@ def session_factory(database_url: str | None):
 COMMANDS: dict[str, Callable[[argparse.Namespace, Any], dict[str, Any]]] = {
     "preflight": command_preflight,
     "approve": command_approve,
+    "approve-baseline": command_approve_baseline,
+    "prepare-baseline": command_prepare_baseline,
     "enqueue": command_enqueue,
     "run-once": command_run_once,
     "status": command_status,

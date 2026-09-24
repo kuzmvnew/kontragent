@@ -31,13 +31,20 @@ from app.models.tax_debt import (
     FnsTaxDebtRawArtifact,
     TAX_DEBT_FACT_CODE,
 )
-from app.models.worker import WorkerHandlerRegistration, WorkerJob, WorkerPublicationState, WorkerRun
+from app.models.worker import (
+    WorkerHandlerRegistration,
+    WorkerJob,
+    WorkerPublicationState,
+    WorkerRun,
+)
 from app.providers.fns_tax_debt_provider import (
     TaxDebtDiscovery,
     TaxDebtOfficialRelease,
     validate_tax_debt_release,
 )
 from app.sources.fns_tax_debt import (
+    BASELINE_COHORT_LIMIT,
+    BASELINE_HANDLER_VERSION,
     CONTROLLED_LIVE_HANDLER_VERSION,
     CONTROLLED_LIVE_PILOT_ENABLED,
     DATASET_CODE,
@@ -67,7 +74,12 @@ from app.worker.errors import (
     SchemaMismatchError,
     TemporaryInfrastructureError,
 )
-from app.worker.execution import ClaimedExecution, JobCreation, create_job, register_handler
+from app.worker.execution import (
+    ClaimedExecution,
+    JobCreation,
+    create_job,
+    register_handler,
+)
 from app.worker.registry import HandlerRegistry
 
 
@@ -143,7 +155,9 @@ class ControlledLivePilotConfig:
         if not self.enabled:
             raise LegalBlockError("S02 controlled live pilot is disabled")
         if self.environment != PILOT_ENVIRONMENT:
-            raise LegalBlockError("S02 controlled live pilot environment marker is invalid")
+            raise LegalBlockError(
+                "S02 controlled live pilot environment marker is invalid"
+            )
         if self.handler_version != CONTROLLED_LIVE_HANDLER_VERSION:
             raise LegalBlockError("S02 controlled live handler version is not pinned")
         if not self.cohort_inns:
@@ -152,9 +166,36 @@ class ControlledLivePilotConfig:
             raise LegalBlockError(
                 f"S02 controlled live cohort exceeds {PILOT_COHORT_LIMIT} legal entities"
             )
-        invalid = sorted(inn for inn in self.cohort_inns if not is_valid_legal_entity_inn(inn))
+        invalid = sorted(
+            inn for inn in self.cohort_inns if not is_valid_legal_entity_inn(inn)
+        )
         if invalid:
-            raise LegalBlockError("S02 controlled live cohort contains invalid legal-entity INN")
+            raise LegalBlockError(
+                "S02 controlled live cohort contains invalid legal-entity INN"
+            )
+
+
+@dataclass(frozen=True)
+class BaselinePreparationConfig:
+    """Exact bounded scope for the explicit generation-0 preparation."""
+
+    cohort_inns: frozenset[str]
+    handler_version: str = BASELINE_HANDLER_VERSION
+
+    def validate(self) -> None:
+        if not self.cohort_inns:
+            raise LegalBlockError("S02 baseline cohort is empty")
+        if len(self.cohort_inns) > BASELINE_COHORT_LIMIT:
+            raise LegalBlockError(
+                f"S02 baseline cohort exceeds {BASELINE_COHORT_LIMIT} legal entities"
+            )
+        invalid = sorted(
+            inn for inn in self.cohort_inns if not is_valid_legal_entity_inn(inn)
+        )
+        if invalid:
+            raise LegalBlockError(
+                "S02 baseline cohort contains invalid legal-entity INN"
+            )
 
 
 def release_freshness(
@@ -166,7 +207,11 @@ def release_freshness(
         raise ValueError("now must contain a timezone")
     if official_actual_until is None:
         return "unknown"
-    return "stale" if now.astimezone(timezone.utc).date() > official_actual_until else "current"
+    return (
+        "stale"
+        if now.astimezone(timezone.utc).date() > official_actual_until
+        else "current"
+    )
 
 
 def _canonical_json(value: object) -> str:
@@ -215,7 +260,9 @@ def calculate_sha256(path: str | Path) -> tuple[str, int]:
                 digest.update(chunk)
                 size += len(chunk)
     except OSError as error:
-        raise TemporaryInfrastructureError(f"cannot read source artifact: {error}") from error
+        raise TemporaryInfrastructureError(
+            f"cannot read source artifact: {error}"
+        ) from error
     return digest.hexdigest(), size
 
 
@@ -271,7 +318,9 @@ def stage_tax_debt_xsd(
             ).encode("utf-8"),
         )
     except OSError as error:
-        raise TemporaryInfrastructureError(f"cannot persist S02 XSD: {error}") from error
+        raise TemporaryInfrastructureError(
+            f"cannot persist S02 XSD: {error}"
+        ) from error
     return target, checksum
 
 
@@ -303,12 +352,11 @@ def stage_tax_debt_artifact(
     pinned_xsd_path: Path | None = None
     pinned_xsd_sha256: str | None = None
     if mode == "controlled_live":
-        config = ControlledLivePilotConfig(
+        ControlledLivePilotConfig(
             enabled=pilot_enabled,
             environment=str(pilot_environment or ""),
             cohort_inns=frozenset(cohort_inns),
-        )
-        config.validate()
+        ).validate()
         required_live = {
             "discovery_page_url": discovery_page_url,
             "artifact_url": artifact_url,
@@ -319,7 +367,9 @@ def stage_tax_debt_artifact(
             "data_as_of": data_as_of,
         }
         missing_live = sorted(
-            field for field, value in required_live.items() if value is None or value == ""
+            field
+            for field, value in required_live.items()
+            if value is None or value == ""
         )
         if missing_live:
             raise LegalBlockError(
@@ -411,7 +461,10 @@ def stage_tax_debt_artifact(
                 )
         else:
             try:
-                with source.open("rb") as input_stream, target.open("xb") as output_stream:
+                with (
+                    source.open("rb") as input_stream,
+                    target.open("xb") as output_stream,
+                ):
                     shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
                     output_stream.flush()
                     os.fsync(output_stream.fileno())
@@ -667,7 +720,12 @@ def parse_tax_debt_zip(
                     root = ET.fromstring(xml_bytes)
                 except TaxDebtSchemaError:
                     raise
-                except (ET.ParseError, etree.XMLSyntaxError, OSError, RuntimeError) as error:
+                except (
+                    ET.ParseError,
+                    etree.XMLSyntaxError,
+                    OSError,
+                    RuntimeError,
+                ) as error:
                     raise TaxDebtParseError(
                         f"cannot parse XML member {member}: {error}"
                     ) from error
@@ -687,7 +745,9 @@ def parse_tax_debt_zip(
                         f"{information_type or 'missing'}"
                     )
                 schema_versions.add(version)
-                documents = [node for node in root if local_name(node.tag) == "Документ"]
+                documents = [
+                    node for node in root if local_name(node.tag) == "Документ"
+                ]
                 if not documents:
                     raise TaxDebtSchemaError(
                         f"S02 XML member {member} has no Документ records"
@@ -715,8 +775,12 @@ def parse_tax_debt_zip(
                             None,
                         )
                         inn = str(
-                            (taxpayer.attrib if taxpayer is not None else {}).get("ИННЮЛ")
-                            or (taxpayer.attrib if taxpayer is not None else {}).get("ИНН")
+                            (taxpayer.attrib if taxpayer is not None else {}).get(
+                                "ИННЮЛ"
+                            )
+                            or (taxpayer.attrib if taxpayer is not None else {}).get(
+                                "ИНН"
+                            )
                             or ""
                         ).strip()
                         if inn not in cohort_inns:
@@ -823,7 +887,9 @@ def load_staged_normalization(pointer: str, *, expected_sha256: str) -> dict[str
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise InvalidDataError(f"cannot replay S02 staged normalization: {error}") from error
+        raise InvalidDataError(
+            f"cannot replay S02 staged normalization: {error}"
+        ) from error
     if payload.get("schema_version") != STAGING_SCHEMA_VERSION:
         raise TaxDebtSchemaError("unsupported S02 staging schema")
     if payload.get("artifact_sha256") != expected_sha256:
@@ -846,11 +912,15 @@ def resolve_inn_match(
     return InnMatch(company_id, "matched", "inn_exact")
 
 
-def _identity_candidates(session, inns: set[str]) -> dict[str, tuple[tuple[int, str | None], ...]]:
+def _identity_candidates(
+    session, inns: set[str]
+) -> dict[str, tuple[tuple[int, str | None], ...]]:
     grouped: dict[str, list[tuple[int, str | None]]] = defaultdict(list)
     if inns:
         for company_id, inn, entity_type in session.execute(
-            select(Company.id, Company.inn, Company.entity_type).where(Company.inn.in_(inns))
+            select(Company.id, Company.inn, Company.entity_type).where(
+                Company.inn.in_(inns)
+            )
         ):
             grouped[inn].append((company_id, entity_type))
     return {key: tuple(sorted(values)) for key, values in grouped.items()}
@@ -949,27 +1019,32 @@ def _restore_entry(value: Mapping[str, Any]) -> dict[str, Any]:
 def _dataset_metadata(dataset: DataSet) -> dict[str, Any]:
     """Capture the exact shared dataset state that predates the pilot scope."""
 
-    return {
-        field: _json_safe(getattr(dataset, field))
-        for field in (
-            "last_attempt_at",
-            "last_success_at",
-            "last_data_date",
-            "source_as_of",
-            "retrieved_at",
-            "checked_at",
-            "published_at",
-            "record_count",
-            "coverage",
-            "operational_status",
-            "last_error",
-            "last_error_at",
-            "retry_count",
-            "next_retry_at",
-            "next_expected_update_at",
-            "auto_update_status",
+    result: dict[str, Any] = {}
+    for field in (
+        "last_attempt_at",
+        "last_success_at",
+        "last_data_date",
+        "source_as_of",
+        "retrieved_at",
+        "checked_at",
+        "published_at",
+        "record_count",
+        "coverage",
+        "operational_status",
+        "last_error",
+        "last_error_at",
+        "retry_count",
+        "next_retry_at",
+        "next_expected_update_at",
+        "auto_update_status",
+    ):
+        value = getattr(dataset, field)
+        result[field] = (
+            value.astimezone(timezone.utc).isoformat()
+            if isinstance(value, datetime) and value.tzinfo is not None
+            else _json_safe(value)
         )
-    }
+    return result
 
 
 def _restore_dataset_metadata(dataset: DataSet, metadata: Mapping[str, Any]) -> None:
@@ -1008,7 +1083,11 @@ def _capture_baseline_generation(
         return baseline
 
     pointer = session.get(WorkerPublicationState, SOURCE_ID, with_for_update=True)
-    if pointer is None or pointer.active_pointer is None or pointer.published_by_run_id is None:
+    if (
+        pointer is None
+        or pointer.active_pointer is None
+        or pointer.published_by_run_id is None
+    ):
         raise LegalBlockError("S02 controlled live pilot requires an existing baseline")
     pointer_validation = dict(pointer.validation_metadata or {})
     validation = dict(pointer_validation.get("validation") or {})
@@ -1106,9 +1185,13 @@ def _controlled_live_generation(
         or approval_metadata.get("pilot_environment") != PILOT_ENVIRONMENT
         or approval_metadata.get("mode") != "controlled_live"
     ):
-        raise HandlerNotRegisteredError("S02 controlled live registry approval is inactive")
+        raise HandlerNotRegisteredError(
+            "S02 controlled live registry approval is inactive"
+        )
     if claim.handler_version != CONTROLLED_LIVE_HANDLER_VERSION:
-        raise LegalBlockError("S02 controlled live publication used an unpinned handler")
+        raise LegalBlockError(
+            "S02 controlled live publication used an unpinned handler"
+        )
 
     existing = session.scalar(
         select(FnsTaxDebtPublicationGeneration).where(
@@ -1146,7 +1229,9 @@ def _controlled_live_generation(
     elif not pilot.enabled or pilot.pilot_environment != PILOT_ENVIRONMENT:
         raise LegalBlockError("S02 controlled live pilot state is disabled")
     elif frozenset(str(value) for value in (pilot.cohort_inns or ())) != cohort:
-        raise LegalBlockError("S02 controlled live cohort differs from approved pilot scope")
+        raise LegalBlockError(
+            "S02 controlled live cohort differs from approved pilot scope"
+        )
 
     _capture_baseline_generation(session, dataset=dataset, pilot=pilot)
 
@@ -1170,14 +1255,17 @@ def _controlled_live_generation(
         previous_rollback.status = "superseded"
     if current_generation is not None:
         current_generation.status = "rollback"
-    next_generation = int(
-        session.scalar(
-            select(func.max(FnsTaxDebtPublicationGeneration.generation)).where(
-                FnsTaxDebtPublicationGeneration.dataset_id == dataset.id
+    next_generation = (
+        int(
+            session.scalar(
+                select(func.max(FnsTaxDebtPublicationGeneration.generation)).where(
+                    FnsTaxDebtPublicationGeneration.dataset_id == dataset.id
+                )
             )
+            or 0
         )
-        or 0
-    ) + 1
+        + 1
+    )
     return next_generation, pilot
 
 
@@ -1190,7 +1278,23 @@ def _assert_controlled_live_entries(
     ControlledLivePilotConfig(enabled=True, cohort_inns=cohort).validate()
     outside = sorted({entry["inn"] for entry in entries} - cohort)
     if outside:
-        raise LegalBlockError("S02 publication outside the approved cohort is prohibited")
+        raise LegalBlockError(
+            "S02 publication outside the approved cohort is prohibited"
+        )
+
+
+def _assert_baseline_entries(
+    entries: tuple[dict[str, Any], ...],
+    *,
+    manifest: Mapping[str, Any],
+) -> None:
+    cohort = frozenset(str(value) for value in manifest.get("cohort_inns") or ())
+    BaselinePreparationConfig(cohort_inns=cohort).validate()
+    outside = sorted({entry["inn"] for entry in entries} - cohort)
+    if outside:
+        raise LegalBlockError(
+            "S02 baseline publication outside the approved cohort is prohibited"
+        )
 
 
 def publish_tax_debt_result(
@@ -1201,7 +1305,9 @@ def publish_tax_debt_result(
     """Publish normalization and facts in the worker completion transaction."""
 
     if len(result.raw_artifacts) != 1 or result.staging_result is None:
-        raise InvalidDataError("S02 handler result must contain one RAW and one staging result")
+        raise InvalidDataError(
+            "S02 handler result must contain one RAW and one staging result"
+        )
     raw = result.raw_artifacts[0]
     staged = load_staged_normalization(
         result.staging_result.staging_pointer,
@@ -1216,7 +1322,11 @@ def publish_tax_debt_result(
         claim=claim,
         raw=raw,
     )
-    controlled_live = raw.manifest.get("ingestion_mode") == "controlled_live"
+    ingestion_mode = raw.manifest.get("ingestion_mode")
+    baseline = claim.handler_version == BASELINE_HANDLER_VERSION
+    controlled_live = ingestion_mode == "controlled_live" and not baseline
+    if baseline and ingestion_mode != "controlled_live":
+        raise LegalBlockError("S02 baseline requires the verified official pipeline")
 
     session.execute(
         delete(FnsTaxDebtQuarantineRecord).where(
@@ -1248,6 +1358,29 @@ def publish_tax_debt_result(
             claim=claim,
             raw=raw,
         )
+    elif baseline:
+        _assert_baseline_entries(entries, manifest=raw.manifest)
+        existing_pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        existing_generation = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+                FnsTaxDebtPublicationGeneration.generation == 0,
+            )
+        )
+        existing_facts = int(
+            session.scalar(
+                select(func.count())
+                .select_from(CompanyTaxDebtSnapshot)
+                .where(CompanyTaxDebtSnapshot.dataset_id == dataset.id)
+            )
+            or 0
+        )
+        if (
+            existing_pointer is not None
+            or existing_generation is not None
+            or existing_facts
+        ):
+            raise LegalBlockError("S02 generation-0 baseline already exists")
     candidates = _identity_candidates(session, {entry["inn"] for entry in entries})
     matched = 0
     unmatched = 0
@@ -1262,13 +1395,13 @@ def publish_tax_debt_result(
         (values["data_date"] for values in entries),
         default=None,
     )
-    if controlled_live:
+    if controlled_live or baseline:
         official_data_as_of = _parse_date(raw.manifest.get("data_as_of"))
         if official_data_as_of is None:
-            raise InvalidDataError("S02 controlled live data_as_of is invalid")
+            raise InvalidDataError(f"S02 {ingestion_mode} data_as_of is invalid")
         if snapshot_data_date is not None and snapshot_data_date != official_data_as_of:
             raise InvalidDataError(
-                "S02 cohort record date differs from official discovery metadata"
+                f"S02 {ingestion_mode} cohort record date differs from official discovery metadata"
             )
         snapshot_data_date = official_data_as_of
 
@@ -1339,8 +1472,7 @@ def publish_tax_debt_result(
                 CompanyTaxDebtSnapshot.company_id == match.company_id,
                 CompanyTaxDebtSnapshot.dataset_id == dataset.id,
                 CompanyTaxDebtSnapshot.data_date == values["data_date"],
-                CompanyTaxDebtSnapshot.publication_generation
-                == publication_generation,
+                CompanyTaxDebtSnapshot.publication_generation == publication_generation,
             )
         )
         if snapshot is None:
@@ -1352,7 +1484,22 @@ def publish_tax_debt_result(
             )
             session.add(snapshot)
             session.flush()
-        snapshot.normalized_record_id = normalized.id
+        baseline_owner = None
+        if controlled_live and publication_generation > 0:
+            baseline_owner = session.scalar(
+                select(CompanyTaxDebtSnapshot.id).where(
+                    CompanyTaxDebtSnapshot.normalized_record_id == normalized.id,
+                    CompanyTaxDebtSnapshot.publication_generation == 0,
+                    CompanyTaxDebtSnapshot.id != snapshot.id,
+                )
+            )
+        # The schema deliberately permits only one provenance owner for a
+        # normalized row. Same-release Run A reuses generation-0 normalization;
+        # keep that immutable baseline link and let the pilot snapshot rely on
+        # its full source_reference/provenance instead of stealing the FK.
+        snapshot.normalized_record_id = (
+            None if baseline_owner is not None else normalized.id
+        )
         snapshot.fact_code = TAX_DEBT_FACT_CODE
         snapshot.document_date = values["document_date"]
         snapshot.source_document_id = values.get("source_document_id")
@@ -1391,25 +1538,34 @@ def publish_tax_debt_result(
         "database_duplicates": database_duplicates,
         "projected_facts": published,
     }
-    if controlled_live:
+    if controlled_live or baseline:
         coverage.update(
             {
-                "pilot_environment": PILOT_ENVIRONMENT,
+                "publication_scope": "pilot" if controlled_live else "baseline",
                 "cohort_size": len(raw.manifest["cohort_inns"]),
+                "cohort_inns": list(raw.manifest["cohort_inns"]),
                 "official_actual_until": raw.manifest["official_actual_until"],
                 "fact_generation": publication_generation,
                 "query_generation": publication_generation,
             }
         )
+        if controlled_live:
+            coverage["pilot_environment"] = PILOT_ENVIRONMENT
     data_date = snapshot_data_date
     # Controlled-live facts have their own publication scope.  The shared
     # dataset row remains the baseline for every company outside the cohort.
     if not controlled_live:
+        actual_until = _parse_date(raw.manifest.get("official_actual_until"))
+        if baseline and actual_until is None:
+            raise TaxDebtFreshnessError("S02 official_actual_until is invalid")
         dataset.last_attempt_at = artifact.retrieved_at
         dataset.last_success_at = artifact.retrieved_at
         dataset.source_as_of = artifact.source_as_of
         dataset.retrieved_at = artifact.retrieved_at
-        dataset.published_at = datetime.now(timezone.utc)
+        dataset.checked_at = datetime.now(timezone.utc)
+        dataset.published_at = dataset.checked_at
+        if baseline:
+            dataset.official_actual_until = actual_until
         dataset.record_count = len(entries)
         dataset.coverage = coverage
         dataset.operational_status = "ready"
@@ -1436,10 +1592,36 @@ def publish_tax_debt_result(
             "data_date": data_date.isoformat() if data_date else None,
             "ingestion_mode": raw.manifest.get("ingestion_mode"),
             "raw_pointer": raw.artifact_reference,
-            "fact_generation": publication_generation if controlled_live else 0,
-            "query_generation": publication_generation if controlled_live else 0,
+            "fact_generation": publication_generation,
+            "query_generation": publication_generation,
         },
     )
+    if baseline:
+        actual_until = _parse_date(raw.manifest.get("official_actual_until"))
+        if actual_until is None:
+            raise TaxDebtFreshnessError("S02 official_actual_until is invalid")
+        generation_row = FnsTaxDebtPublicationGeneration(
+            dataset_id=dataset.id,
+            artifact_id=artifact.id,
+            worker_run_id=claim.run_id,
+            generation=0,
+            publication_scope="baseline",
+            status="baseline",
+            staging_pointer=result.staging_result.staging_pointer,
+            raw_pointer=raw.artifact_reference,
+            checksum=raw.checksum,
+            source_as_of=artifact.source_as_of,
+            retrieved_at=artifact.retrieved_at,
+            official_actual_until=actual_until,
+            last_data_date=data_date,
+            record_count=len(entries),
+            coverage=coverage,
+            counters=counters.as_dict(),
+            validation_metadata=validation.metadata,
+            dataset_metadata=_dataset_metadata(dataset),
+            published_at=dataset.published_at,
+        )
+        session.add(generation_row)
     if controlled_live:
         assert pilot_state is not None
         actual_until = _parse_date(raw.manifest.get("official_actual_until"))
@@ -1515,7 +1697,9 @@ def fns_tax_debt_handler(context: HandlerContext) -> HandlerResult:
     context.ensure_active(now=datetime.now(timezone.utc))
     metadata = context.schedule_metadata
     required = ("source_path", "artifact_store", "source_as_of", "retrieved_at")
-    missing = tuple(field for field in required if not str(metadata.get(field) or "").strip())
+    missing = tuple(
+        field for field in required if not str(metadata.get(field) or "").strip()
+    )
     if missing:
         raise InvalidDataError("S02 job metadata missing: " + ", ".join(missing))
     mode = str(metadata.get("mode") or "fixture")
@@ -1609,6 +1793,102 @@ def register_fns_tax_debt_handler(session, registry: HandlerRegistry):
             "task": "DEV-009",
             "source_contract": FNS_TAX_DEBT_SOURCE_CONTRACT.as_dict(),
         },
+    )
+
+
+def _cohort_sha256(cohort_inns: frozenset[str]) -> str:
+    return sha256(
+        "".join(f"{inn}\n" for inn in sorted(cohort_inns)).encode("ascii")
+    ).hexdigest()
+
+
+def approve_fns_tax_debt_baseline_handler(
+    session,
+    *,
+    approved_by: str,
+    approved_at: datetime,
+    config: BaselinePreparationConfig,
+    artifact_sha256: str,
+    xsd_sha256: str,
+) -> WorkerHandlerRegistration:
+    """Durably approve one exact cohort and official package for generation 0."""
+
+    config.validate()
+    if not approved_by.strip():
+        raise ValueError("approved_by is required")
+    approved_at = _aware_utc(approved_at, "approved_at")
+    if len(artifact_sha256) != 64 or len(xsd_sha256) != 64:
+        raise ValueError("baseline artifact and XSD checksums must be SHA-256")
+    metadata = {
+        "task": "S02-baseline-bootstrap",
+        "mode": "official_baseline",
+        "publication_scope": "baseline",
+        "handler_version_pin": config.handler_version,
+        "cohort_limit": BASELINE_COHORT_LIMIT,
+        "cohort_sha256": _cohort_sha256(config.cohort_inns),
+        "artifact_sha256": artifact_sha256.lower(),
+        "xsd_sha256": xsd_sha256.lower(),
+        "approved_by": approved_by.strip(),
+        "approved_at": approved_at.isoformat(),
+        "mass_ingestion_enabled": False,
+    }
+    record = session.get(
+        WorkerHandlerRegistration,
+        (SOURCE_ID, config.handler_version),
+    )
+    if record is None:
+        record = WorkerHandlerRegistration(
+            source_id=SOURCE_ID,
+            handler_version=config.handler_version,
+            approved=True,
+            enabled=True,
+            live_mode=False,
+            metadata_json=metadata,
+        )
+        session.add(record)
+    else:
+        record.approved = True
+        record.enabled = True
+        record.live_mode = False
+        record.metadata_json = metadata
+    session.flush()
+    return record
+
+
+def register_fns_tax_debt_baseline_handler(
+    session,
+    registry: HandlerRegistry,
+):
+    """Register the explicit generation-0 handler after durable approval."""
+
+    approval = session.get(
+        WorkerHandlerRegistration,
+        (SOURCE_ID, BASELINE_HANDLER_VERSION),
+    )
+    metadata = dict(approval.metadata_json or {}) if approval is not None else {}
+    if (
+        approval is None
+        or not approval.approved
+        or not approval.enabled
+        or approval.live_mode
+        or metadata.get("mode") != "official_baseline"
+        or metadata.get("publication_scope") != "baseline"
+        or metadata.get("handler_version_pin") != BASELINE_HANDLER_VERSION
+    ):
+        raise HandlerNotRegisteredError(
+            "S02 baseline handler requires explicit durable registry approval"
+        )
+    return register_handler(
+        session,
+        registry,
+        source_id=SOURCE_ID,
+        version=BASELINE_HANDLER_VERSION,
+        handler=fns_tax_debt_handler,
+        publisher=publish_tax_debt_result,
+        approved=True,
+        live=False,
+        fixture=False,
+        metadata=metadata,
     )
 
 
@@ -1727,9 +2007,10 @@ def record_tax_debt_discovery(
             errors=[],
         )
         session.add(state)
-    elif state.cohort_inns and frozenset(
-        str(value) for value in state.cohort_inns
-    ) != config.cohort_inns:
+    elif (
+        state.cohort_inns
+        and frozenset(str(value) for value in state.cohort_inns) != config.cohort_inns
+    ):
         raise LegalBlockError("S02 discovery cohort differs from approved pilot scope")
     previous = (
         state.discovered_artifact_url,
@@ -1783,10 +2064,13 @@ def enqueue_fns_tax_debt_controlled_live_job(
     config.validate()
     validate_tax_debt_release(discovery.release)
     retrieved_at = _aware_utc(retrieved_at, "retrieved_at")
-    if release_freshness(
-        discovery.release.official_actual_until,
-        now=retrieved_at,
-    ) == "stale":
+    if (
+        release_freshness(
+            discovery.release.official_actual_until,
+            now=retrieved_at,
+        )
+        == "stale"
+    ):
         raise TaxDebtFreshnessError("S02 official release is stale")
     approval = session.get(
         WorkerHandlerRegistration,
@@ -1841,6 +2125,94 @@ def enqueue_fns_tax_debt_controlled_live_job(
             "mode": "controlled_live",
             "pilot_enabled": True,
             "pilot_environment": config.environment,
+            "cohort_inns": sorted(config.cohort_inns),
+            "discovery_page_url": discovery.release.discovery_page_url,
+            "artifact_url": discovery.release.artifact_url,
+            "xsd_url": discovery.release.xsd_url,
+            "official_actual_until": discovery.release.official_actual_until.isoformat(),
+            "data_as_of": discovery.release.data_as_of.isoformat(),
+        },
+        max_attempts=max_attempts,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def enqueue_fns_tax_debt_baseline_job(
+    session,
+    *,
+    source_path: str | Path,
+    xsd_path: str | Path,
+    artifact_store: str | Path,
+    discovery: TaxDebtDiscovery,
+    config: BaselinePreparationConfig,
+    retrieved_at: datetime,
+    expected_sha256: str,
+    expected_xsd_sha256: str,
+    max_attempts: int = 3,
+    timeout_seconds: int = 300,
+) -> JobCreation:
+    """Create the one bounded official generation-0 job idempotently."""
+
+    config.validate()
+    validate_tax_debt_release(discovery.release)
+    retrieved_at = _aware_utc(retrieved_at, "retrieved_at")
+    if (
+        release_freshness(discovery.release.official_actual_until, now=retrieved_at)
+        == "stale"
+    ):
+        raise TaxDebtFreshnessError("S02 official release is stale")
+    source_path = Path(source_path).resolve()
+    xsd_path = Path(xsd_path).resolve()
+    checksum, _ = calculate_sha256(source_path)
+    xsd_checksum, _ = calculate_sha256(xsd_path)
+    if checksum != expected_sha256.lower():
+        raise TaxDebtParseError("S02 baseline enqueue checksum mismatch")
+    if xsd_checksum != expected_xsd_sha256.lower():
+        raise TaxDebtSchemaError("S02 baseline enqueue XSD checksum mismatch")
+
+    approval = session.get(
+        WorkerHandlerRegistration,
+        (SOURCE_ID, config.handler_version),
+    )
+    metadata = dict(approval.metadata_json or {}) if approval is not None else {}
+    if (
+        approval is None
+        or not approval.approved
+        or not approval.enabled
+        or approval.live_mode
+        or metadata.get("mode") != "official_baseline"
+        or metadata.get("publication_scope") != "baseline"
+        or metadata.get("handler_version_pin") != config.handler_version
+        or metadata.get("cohort_sha256") != _cohort_sha256(config.cohort_inns)
+        or metadata.get("artifact_sha256") != checksum
+        or metadata.get("xsd_sha256") != xsd_checksum
+    ):
+        raise HandlerNotRegisteredError(
+            "S02 baseline job requires exact durable package and cohort approval"
+        )
+
+    return create_job(
+        session,
+        source_id=SOURCE_ID,
+        job_type="fns_tax_debt_baseline",
+        handler_version=config.handler_version,
+        idempotency_key=(
+            f"{SOURCE_ID}:baseline:{checksum}:{xsd_checksum}:"
+            f"{_cohort_sha256(config.cohort_inns)}:{NORMALIZATION_VERSION}"
+        ),
+        schedule_metadata={
+            "source_path": str(source_path),
+            "xsd_path": str(xsd_path),
+            "artifact_store": str(Path(artifact_store).resolve()),
+            "source_as_of": discovery.release.source_as_of.isoformat(),
+            "retrieved_at": retrieved_at.isoformat(),
+            "expected_sha256": checksum,
+            "expected_xsd_sha256": xsd_checksum,
+            # Official staging deliberately stays byte-identical to Run A.
+            "mode": "controlled_live",
+            "job_mode": "official_baseline",
+            "pilot_enabled": True,
+            "pilot_environment": PILOT_ENVIRONMENT,
             "cohort_inns": sorted(config.cohort_inns),
             "discovery_page_url": discovery.release.discovery_page_url,
             "artifact_url": discovery.release.artifact_url,
@@ -1914,7 +2286,10 @@ def rollback_fns_tax_debt_generation(
     )
     if pointer is None or pilot is None or pointer.rollback_pointer is None:
         raise LookupError("S02 rollback generation is unavailable")
-    if pointer.generation != expected_generation or pilot.generation != expected_generation:
+    if (
+        pointer.generation != expected_generation
+        or pilot.generation != expected_generation
+    ):
         raise LeaseLostError("S02 publication generation changed before rollback")
     if (
         pilot.rollback_fact_generation is None
