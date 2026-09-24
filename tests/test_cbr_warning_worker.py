@@ -177,6 +177,38 @@ def test_daily_schedule_is_idempotent_and_uses_existing_worker_foundation(
     assert len(calls) == 2
 
 
+def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
+    expected = {
+        "fns_tax_offence",
+        "fns_revenue_expenses",
+        "fns_tax_debt",
+        "fns_tax_paid",
+        "cbr_warning_list",
+    }
+    assert set(scheduler.HANDLERS) == expected
+    assert scheduler.FNS_BULK_DATASET_CODES == expected - {"cbr_warning_list"}
+    assert scheduler.SCHEDULED_SOURCE_DATASET_CODES == expected
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "HANDLERS",
+        {source_id: lambda source_id=source_id: calls.append(source_id)
+         for source_id in expected},
+    )
+
+    result = scheduler.run_due_updates(due_codes=reversed(sorted(expected)))
+
+    assert calls == [
+        "fns_tax_offence",
+        "fns_revenue_expenses",
+        "fns_tax_debt",
+        "fns_tax_paid",
+        "cbr_warning_list",
+    ]
+    assert set(result) == expected
+    assert set(result.values()) == {"success"}
+
+
 def test_postgresql_publish_then_unchanged_check_preserves_generation(
     cbr_db, tmp_path, monkeypatch
 ):

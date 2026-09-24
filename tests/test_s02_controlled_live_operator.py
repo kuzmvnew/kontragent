@@ -1131,6 +1131,17 @@ def test_confirmation_tokens_are_exact(source_files):
             "confirm_enqueue",
             operator.ENQUEUE_TOKEN,
         ),
+        (
+            operator.command_retry_failed,
+            _preflight_args(
+                source_files,
+                source_files.manifest.parent,
+                job_id=str(uuid4()),
+                confirm_retry="yes",
+            ),
+            "confirm_retry",
+            operator.RETRY_TOKEN,
+        ),
     ):
         with pytest.raises(operator.OperatorError) as caught:
             function(args, factory)
@@ -1242,6 +1253,87 @@ def test_enqueue_timeout_override_is_bounded(source_files, timeout):
     assert caught.value.code == "OPERATOR_ERROR"
 
 
+def test_retry_failed_job_is_explicit_and_preserves_attempt_history(
+    committed_operator_db, source_files, tmp_path, monkeypatch
+):
+    _seed_baseline(committed_operator_db, tmp_path, source_files.inn)
+    monkeypatch.setattr(
+        operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient()
+    )
+    monkeypatch.setattr(operator, "_utc_now", lambda: NOW)
+    monkeypatch.setattr(worker_execution, "utc_now", lambda: NOW)
+    base = _preflight_args(source_files, tmp_path)
+    operator.command_approve(
+        SimpleNamespace(
+            **vars(base),
+            approved_by="S02 retry integration",
+            approved_at=NOW.isoformat(),
+            confirm_controlled_live=operator.APPROVE_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    enqueued = operator.command_enqueue(
+        SimpleNamespace(
+            **vars(base),
+            artifact_store=tmp_path / "official-raw",
+            retrieved_at=NOW.isoformat(),
+            timeout_seconds=3600,
+            confirm_enqueue=operator.ENQUEUE_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    with committed_operator_db() as session:
+        job = session.get(WorkerJob, enqueued["job_id"])
+        job.status = "failed"
+        failed_run = WorkerRun(
+            job_id=job.id,
+            attempt_no=1,
+            started_at=NOW,
+            finished_at=NOW,
+            status="failed",
+            worker_id="s02-broken-runtime",
+            fencing_token=1,
+            handler_version=job.handler_version,
+            current_stage="failed",
+            errors=[{"kind": "invalid_data", "message": "reviewed failure"}],
+            checksum_metadata={},
+            heartbeat_at=NOW,
+            records_seen=0,
+            records_written=0,
+            records_rejected=0,
+            records_duplicated=0,
+            records_published=0,
+            retryable=False,
+        )
+        session.add(failed_run)
+        session.commit()
+        failed_run_id = failed_run.id
+
+    retried = operator.command_retry_failed(
+        SimpleNamespace(
+            **vars(base),
+            job_id=str(enqueued["job_id"]),
+            confirm_retry=operator.RETRY_TOKEN,
+        ),
+        committed_operator_db,
+    )
+
+    assert retried["status"] == "RETRY_QUEUED"
+    assert retried["previous_run_id"] == failed_run_id
+    assert retried["next_attempt_no"] == 2
+    with committed_operator_db() as session:
+        job = session.get(WorkerJob, enqueued["job_id"])
+        runs = session.scalars(
+            select(WorkerRun)
+            .where(WorkerRun.job_id == job.id)
+            .order_by(WorkerRun.attempt_no)
+        ).all()
+        assert job.status == "queued"
+        assert job.next_attempt_at is None
+        assert [(run.attempt_no, run.status) for run in runs] == [(1, "failed")]
+        assert runs[0].errors[0]["message"] == "reviewed failure"
+
+
 def test_prepare_baseline_is_bounded_idempotent_and_supports_same_release_run_a(
     committed_operator_db, source_files, tmp_path, monkeypatch
 ):
@@ -1339,7 +1431,7 @@ def test_prepare_baseline_is_bounded_idempotent_and_supports_same_release_run_a(
         SimpleNamespace(
             **vars(base),
             artifact_store=tmp_path / "official-raw",
-            retrieved_at=NOW.isoformat(),
+            retrieved_at=(NOW + timedelta(minutes=5)).isoformat(),
             timeout_seconds=3600,
             confirm_enqueue=operator.ENQUEUE_TOKEN,
         ),

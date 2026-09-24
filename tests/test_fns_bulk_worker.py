@@ -14,10 +14,12 @@ from app.database.postgres import engine
 from app.ingestion import fns_bulk_worker as bulk
 from app.ingestion import fns_revenue_expense as revexp
 from app.ingestion import fns_tax_offence as taxoffence
+from app.ingestion import fns_tax_payment as taxpayment
 from app.models.company import Company
 from app.models.revenue_expense import CompanyRevenueExpenseSnapshot
 from app.models.source import DataSet, DataSource
 from app.models.tax_offence import CompanyTaxOffence
+from app.models.tax_payment import CompanyTaxPaymentItem, CompanyTaxPaymentSnapshot
 from app.models.worker import WorkerPublicationState
 from app.services import data_readiness_scheduler as scheduler
 from app.worker.contracts import (
@@ -78,19 +80,46 @@ def test_official_discovery_extracts_current_zip_xsd_and_separate_source_date():
     assert release.source_data_date.isoformat() not in release.artifact_url
 
 
-def test_s03_and_s04_are_separate_operational_sources_and_handlers_are_non_empty():
+def test_paytax_parser_preserves_items_and_computes_totals():
+    document = taxpayment.ET.fromstring(
+        """
+        <Документ ИдДок="paytax-doc-1" ДатаДок="01.04.2026" ДатаСост="31.12.2025">
+          <СведНП ИННЮЛ="7701234567" НаимОрг="ООО Тест" />
+          <СвУплСумНал НаимНалог="Налог на прибыль" СумУплНал="1000.00" />
+          <СвУплСумНал НаимНалог="Суммы пеней" СумУплНал="25.50" />
+        </Документ>
+        """
+    )
+
+    record = taxpayment.parse_tax_payment_document(document)
+
+    assert record["inn"] == "7701234567"
+    assert record["data_date"] == date(2025, 12, 31)
+    assert record["total_amount"] == taxpayment.Decimal("1025.50")
+    assert record["tax_amount"] == taxpayment.Decimal("1000.00")
+    assert record["penalty_amount"] == taxpayment.Decimal("25.50")
+    assert record["stored_item_count"] == 2
+    assert {item["payment_type"] for item in record["items"]} == {"tax", "penalty"}
+
+
+def test_fns_bulk_sources_are_separate_and_handlers_are_non_empty():
     s03 = revexp._worker_spec()
     s04 = taxoffence._worker_spec()
+    paytax = taxpayment._worker_spec()
 
     assert s03.source_id == "fns_revenue_expenses"
     assert s04.source_id == "fns_tax_offence"
-    assert s03.source_id != s04.source_id
-    assert s03.handler_version != s04.handler_version
+    assert paytax.source_id == "fns_tax_paid"
+    assert len({s03.source_id, s04.source_id, paytax.source_id}) == 3
+    assert len({s03.handler_version, s04.handler_version, paytax.handler_version}) == 3
     assert scheduler.HANDLERS[s03.dataset_code] is scheduler._enqueue_revenue_expense
     assert scheduler.HANDLERS[s04.dataset_code] is scheduler._enqueue_tax_offence
+    assert scheduler.HANDLERS[paytax.dataset_code] is scheduler._enqueue_tax_payment
+    assert paytax.check_frequency == "weekly"
+    assert paytax.check_interval.days == 7
 
 
-def test_scheduler_executes_s04_before_s03(monkeypatch):
+def test_scheduler_executes_bulk_sources_in_priority_order(monkeypatch):
     calls = []
     monkeypatch.setattr(
         scheduler,
@@ -98,15 +127,20 @@ def test_scheduler_executes_s04_before_s03(monkeypatch):
         {
             "fns_tax_offence": lambda: calls.append("S04"),
             "fns_revenue_expenses": lambda: calls.append("S03"),
+            "fns_tax_paid": lambda: calls.append("PAYTAX"),
         },
     )
 
     result = scheduler.run_due_updates(
-        due_codes=["fns_revenue_expenses", "fns_tax_offence"]
+        due_codes=["fns_tax_paid", "fns_revenue_expenses", "fns_tax_offence"]
     )
 
-    assert calls == ["S04", "S03"]
-    assert result == {"fns_tax_offence": "success", "fns_revenue_expenses": "success"}
+    assert calls == ["S04", "S03", "PAYTAX"]
+    assert result == {
+        "fns_tax_offence": "success",
+        "fns_revenue_expenses": "success",
+        "fns_tax_paid": "success",
+    }
 
 
 def test_source_scoped_activation_enables_s04_without_enabling_s03(monkeypatch):
@@ -329,7 +363,7 @@ def test_old_worker_failure_is_not_replayed_after_newer_success(monkeypatch):
     assert dataset.operational_status == "current"
 
 
-def test_two_sources_have_independent_release_idempotency_namespaces(monkeypatch, tmp_path):
+def test_sources_have_independent_release_idempotency_namespaces(monkeypatch, tmp_path):
     keys = []
     monkeypatch.setattr(
         bulk,
@@ -338,12 +372,17 @@ def test_two_sources_have_independent_release_idempotency_namespaces(monkeypatch
     )
     approval = SimpleNamespace(approved=True, enabled=True, live_mode=False)
     session = SimpleNamespace(get=lambda *_args: approval)
-    for spec in (taxoffence._worker_spec(), revexp._worker_spec()):
+    for spec in (
+        taxoffence._worker_spec(),
+        revexp._worker_spec(),
+        taxpayment._worker_spec(),
+    ):
         bulk.enqueue_bulk_release(session, spec=spec, release=_release(spec), raw_root=Path(tmp_path))
 
     assert keys[0].startswith("fns_tax_offence:release:")
     assert keys[1].startswith("fns_revenue_expenses:release:")
-    assert keys[0] != keys[1]
+    assert keys[2].startswith("fns_tax_paid:release:")
+    assert len(set(keys)) == 3
 
 
 def test_machine_readable_queue_has_required_columns_and_unique_processes():
@@ -394,7 +433,7 @@ def _seed_accepted_snapshot(
             },
         )
         model = CompanyTaxOffence
-    else:
+    elif spec.kind == "revenue_expense":
         rows = (
             {
                 "inn": first_inn,
@@ -420,6 +459,50 @@ def _seed_accepted_snapshot(
             },
         )
         model = CompanyRevenueExpenseSnapshot
+    else:
+        rows = (
+            {
+                "inn": first_inn,
+                "company_name": f"First {suffix}",
+                "data_date": release.source_data_date.isoformat(),
+                "data_year": release.source_data_date.year,
+                "document_date": "2025-12-20",
+                "document_id": f"doc-first-{suffix}",
+                "total_amount": "1250.00",
+                "tax_amount": "1000.00",
+                "insurance_amount": "250.00",
+                "penalty_amount": "0.00",
+                "non_tax_amount": "0.00",
+                "other_amount": "0.00",
+                "source_item_count": 2,
+                "stored_item_count": 2,
+                "items": [
+                    {"tax_name": "Налог", "payment_type": "tax", "amount": "1000.00"},
+                    {"tax_name": "Взносы", "payment_type": "insurance", "amount": "250.00"},
+                ],
+            },
+            {
+                "inn": second_inn,
+                "company_name": f"Second {suffix}",
+                "data_date": release.source_data_date.isoformat(),
+                "data_year": release.source_data_date.year,
+                "document_date": "2025-12-21",
+                "document_id": f"doc-second-{suffix}",
+                "total_amount": "2200.00",
+                "tax_amount": "2000.00",
+                "insurance_amount": "0.00",
+                "penalty_amount": "200.00",
+                "non_tax_amount": "0.00",
+                "other_amount": "0.00",
+                "source_item_count": 2,
+                "stored_item_count": 2,
+                "items": [
+                    {"tax_name": "Налог", "payment_type": "tax", "amount": "2000.00"},
+                    {"tax_name": "Суммы пеней", "payment_type": "penalty", "amount": "200.00"},
+                ],
+            },
+        )
+        model = CompanyTaxPaymentSnapshot
     snapshot = tmp_path / "accepted-normalized.jsonl"
     snapshot.write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
@@ -587,7 +670,10 @@ def test_postgresql_freshness_boundary_and_next_day_do_not_republish(
         assert state.generation == 1
 
 
-@pytest.mark.parametrize("source_kind", ("tax_offence", "revenue_expense"))
+@pytest.mark.parametrize(
+    "source_kind",
+    ("tax_offence", "revenue_expense", "tax_payment"),
+)
 def test_postgresql_same_release_replay_projects_new_master_company_idempotently(
     bulk_db,
     tmp_path,
@@ -598,7 +684,11 @@ def test_postgresql_same_release_replay_projects_new_master_company_idempotently
     spec = (
         taxoffence._worker_spec()
         if source_kind == "tax_offence"
-        else revexp._worker_spec()
+        else (
+            revexp._worker_spec()
+            if source_kind == "revenue_expense"
+            else taxpayment._worker_spec()
+        )
     )
     seed = _seed_accepted_snapshot(
         bulk_db,
@@ -658,3 +748,10 @@ def test_postgresql_same_release_replay_projects_new_master_company_idempotently
         assert session.get(
             WorkerPublicationState, seed["spec"].source_id
         ).generation == 1
+        if source_kind == "tax_payment":
+            assert session.scalar(
+                sa.select(sa.func.count()).select_from(CompanyTaxPaymentItem)
+            ) == 4
+            assert session.get(DataSet, seed["dataset_id"]).next_expected_update_at == (
+                NOW + taxpayment.timedelta(days=7)
+            )

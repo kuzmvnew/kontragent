@@ -166,6 +166,38 @@ def test_raw_checksum_rejects_tampered_expectation(tmp_path):
         )
 
 
+def test_same_checksum_reuses_first_immutable_raw_manifest_observation(tmp_path):
+    source = _zip(tmp_path / "fixture.zip", [_document()])
+    artifact_store = tmp_path / "raw"
+
+    first = pipeline.stage_tax_debt_artifact(
+        source,
+        artifact_store=artifact_store,
+        source_as_of=SOURCE_AS_OF,
+        retrieved_at=RETRIEVED_AT,
+    )
+    manifest_bytes = first.manifest_path.read_bytes()
+    replay = pipeline.stage_tax_debt_artifact(
+        source,
+        artifact_store=artifact_store,
+        source_as_of=SOURCE_AS_OF,
+        retrieved_at=RETRIEVED_AT + timedelta(minutes=5),
+    )
+
+    assert replay.manifest_path.read_bytes() == manifest_bytes
+    assert replay.manifest["retrieved_at"] == RETRIEVED_AT.isoformat()
+    with pytest.raises(
+        pipeline.RawArtifactImmutabilityError,
+        match="immutable artifact member differs",
+    ):
+        pipeline.stage_tax_debt_artifact(
+            source,
+            artifact_store=artifact_store,
+            source_as_of=SOURCE_AS_OF + timedelta(days=1),
+            retrieved_at=RETRIEVED_AT + timedelta(minutes=10),
+        )
+
+
 def test_parser_failure_is_fail_closed_for_malformed_xml(tmp_path):
     source = tmp_path / "malformed.zip"
     with ZipFile(source, "w") as archive:
@@ -862,6 +894,304 @@ def test_controlled_live_same_artifact_creates_one_job(
         assert first.created is True
         assert second.created is False
         assert second.job.id == first.job.id
+
+
+def test_scheduled_same_release_is_check_only_and_does_not_download(
+    monkeypatch,
+    tmp_path,
+):
+    inn = _valid_inn(uuid4().int)
+    discovered_at = datetime(2026, 9, 24, 12, tzinfo=timezone.utc)
+    discovery = _controlled_discovery(
+        artifact_date="20260825",
+        data_as_of=date(2026, 8, 1),
+        actual_until=date(2026, 9, 26),
+        discovered_at=discovered_at,
+    )
+    pilot = SimpleNamespace(
+        enabled=True,
+        cohort_inns=[inn],
+        discovered_artifact_url=discovery.release.artifact_url,
+        discovered_xsd_url=discovery.release.xsd_url,
+        discovered_source_as_of=discovery.release.source_as_of,
+        official_actual_until=date(2026, 9, 25),
+        active_data_date=discovery.release.data_as_of,
+        active_source_as_of=discovery.release.source_as_of,
+        active_checksum="a" * 64,
+    )
+    artifact = SimpleNamespace(manifest={"xsd_sha256": "b" * 64})
+    approval = SimpleNamespace(
+        approved=True,
+        enabled=True,
+        live_mode=False,
+        metadata_json={
+            "mode": "controlled_live",
+            "pilot_environment": PILOT_ENVIRONMENT,
+            "handler_version_pin": CONTROLLED_LIVE_HANDLER_VERSION,
+        },
+    )
+
+    class FakeClient:
+        def discover(self, **_kwargs):
+            return discovery
+
+        def download_exact(self, *_args, **_kwargs):
+            raise AssertionError("same S02 release must not be downloaded")
+
+    scalars = iter((pilot, artifact))
+    session = SimpleNamespace(
+        scalar=lambda _statement: next(scalars),
+        get=lambda *_args: approval,
+    )
+    captured = {}
+
+    def fake_create_job(_session, **kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(pipeline, "create_job", fake_create_job)
+
+    result = pipeline.schedule_fns_tax_debt_check(
+        session,
+        raw_root=tmp_path,
+        now=discovered_at,
+        client=FakeClient(),
+    )
+
+    assert result["job_type"] == "fns_tax_debt_check"
+    assert captured["schedule_metadata"]["check_only"] is True
+    assert captured["schedule_metadata"]["official_actual_until"] == "2026-09-26"
+    assert "source_path" not in captured["schedule_metadata"]
+
+
+def test_scheduled_changed_release_downloads_exact_bytes_and_enqueues_bounded_run(
+    monkeypatch,
+    tmp_path,
+):
+    inn = _valid_inn(uuid4().int)
+    discovered_at = datetime(2026, 9, 24, 12, tzinfo=timezone.utc)
+    discovery = _controlled_discovery(
+        artifact_date="20260924",
+        data_as_of=date(2026, 9, 1),
+        actual_until=date(2026, 10, 25),
+        discovered_at=discovered_at,
+    )
+    pilot = SimpleNamespace(
+        enabled=True,
+        cohort_inns=[inn],
+        discovered_artifact_url=(
+            "https://file.nalog.ru/opendata/7707329152-debtam/"
+            "data-20260825-structure-20181201.zip"
+        ),
+        discovered_xsd_url=discovery.release.xsd_url,
+        discovered_source_as_of=datetime(2026, 8, 25, tzinfo=timezone.utc),
+        official_actual_until=date(2026, 9, 25),
+        active_data_date=date(2026, 8, 1),
+        active_source_as_of=datetime(2026, 8, 25, tzinfo=timezone.utc),
+        active_checksum="a" * 64,
+    )
+    downloaded = []
+
+    class FakeClient:
+        def discover(self, **_kwargs):
+            return discovery
+
+        def download_exact(self, url, destination, *, kind):
+            downloaded.append((url, kind))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(
+                b"new-official-zip" if kind == "artifact" else b"new-official-xsd"
+            )
+            return destination
+
+    captured = {}
+
+    def fake_enqueue(_session, **kwargs):
+        captured.update(kwargs)
+        return "release-job"
+
+    monkeypatch.setattr(
+        pipeline,
+        "enqueue_fns_tax_debt_controlled_live_job",
+        fake_enqueue,
+    )
+    session = SimpleNamespace(scalar=lambda _statement: pilot)
+
+    result = pipeline.schedule_fns_tax_debt_check(
+        session,
+        raw_root=tmp_path,
+        now=discovered_at,
+        client=FakeClient(),
+    )
+
+    assert result == "release-job"
+    assert [kind for _url, kind in downloaded] == ["artifact", "xsd"]
+    assert captured["config"].cohort_inns == frozenset({inn})
+    assert len(captured["config"].cohort_inns) <= 40
+    assert Path(captured["source_path"]).read_bytes() == b"new-official-zip"
+    assert Path(captured["xsd_path"]).read_bytes() == b"new-official-xsd"
+    assert captured["expected_sha256"] == pipeline.calculate_sha256(
+        captured["source_path"]
+    )[0]
+
+
+def test_postgresql_same_release_check_records_run_without_republication(
+    pipeline_db,
+    tmp_path,
+):
+    inn = _valid_inn(uuid4().int)
+    late_inn = _valid_inn(uuid4().int)
+    dataset_id, _company_id = _ensure_dataset_and_company(pipeline_db, inn=inn)
+    baseline = _zip(
+        tmp_path / "check-baseline.zip",
+        [
+            _document(inn=inn, document_id="CHECK-A"),
+            _document(inn=late_inn, document_id="CHECK-LATE-A"),
+        ],
+    )
+    current = _zip(
+        tmp_path / "check-current.zip",
+        [
+            _document(inn=inn, document_id="CHECK-B", data_date="01.09.2026"),
+            _document(
+                inn=late_inn,
+                document_id="CHECK-LATE-B",
+                data_date="01.09.2026",
+            ),
+        ],
+    )
+    xsd = _controlled_xsd(tmp_path / "check-structure.xsd")
+    discovery = _controlled_discovery(
+        artifact_date="20260920",
+        data_as_of=date(2026, 9, 1),
+        actual_until=date(2026, 10, 20),
+        discovered_at=RETRIEVED_AT,
+    )
+    config = pipeline.ControlledLivePilotConfig(
+        enabled=True,
+        cohort_inns=frozenset({inn, late_inn}),
+    )
+    registry = HandlerRegistry()
+    with pipeline_db() as session:
+        pipeline.register_fns_tax_debt_handler(session, registry)
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session,
+            approved_by="S02 check-only test",
+            approved_at=RETRIEVED_AT,
+        )
+        pipeline.register_fns_tax_debt_controlled_live_handler(session, registry)
+        pipeline.enqueue_fns_tax_debt_fixture_job(
+            session,
+            source_path=baseline,
+            artifact_store=tmp_path / "raw",
+            source_as_of=SOURCE_AS_OF,
+            retrieved_at=RETRIEVED_AT,
+        )
+        session.commit()
+    WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="s02-check-baseline",
+        process_start_method="fork",
+    ).run_once()
+
+    _set_baseline_actual_until(
+        pipeline_db,
+        dataset_id=dataset_id,
+        actual_until=date(2026, 10, 20),
+    )
+    with pipeline_db() as session:
+        pipeline.enqueue_fns_tax_debt_controlled_live_job(
+            session,
+            source_path=current,
+            xsd_path=xsd,
+            artifact_store=tmp_path / "raw",
+            discovery=discovery,
+            config=config,
+            retrieved_at=RETRIEVED_AT,
+        )
+        session.commit()
+    WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="s02-check-publication",
+        process_start_method="fork",
+    ).run_once()
+    _, late_company_id = _ensure_dataset_and_company(pipeline_db, inn=late_inn)
+
+    checked_at = RETRIEVED_AT + timedelta(days=1)
+    checked_discovery = _controlled_discovery(
+        artifact_date="20260920",
+        data_as_of=date(2026, 9, 1),
+        actual_until=date(2026, 10, 21),
+        discovered_at=checked_at,
+    )
+
+    class FakeClient:
+        def discover(self, **_kwargs):
+            return checked_discovery
+
+        def download_exact(self, *_args, **_kwargs):
+            raise AssertionError("same S02 release must not be downloaded")
+
+    with pipeline_db() as session:
+        dataset = session.get(DataSet, dataset_id)
+        state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        before = {
+            "last_success_at": dataset.last_success_at,
+            "record_count": dataset.record_count,
+            "pilot_generation": state.generation,
+            "fact_generation": state.fact_generation,
+            "pointer_generation": pointer.generation,
+            "pointer": pointer.active_pointer,
+            "facts": session.scalar(
+                select(func.count()).select_from(CompanyTaxDebtSnapshot)
+            ),
+        }
+        creation = pipeline.schedule_fns_tax_debt_check(
+            session,
+            raw_root=tmp_path / "raw",
+            now=checked_at,
+            client=FakeClient(),
+        )
+        assert creation.created is True
+        assert creation.job.job_type == "fns_tax_debt_check"
+        session.commit()
+
+    run_id = WorkerExecutor(
+        session_factory=pipeline_db,
+        registry=registry,
+        worker_id="s02-check-only",
+        process_start_method="fork",
+    ).run_once()
+
+    with pipeline_db() as session:
+        dataset = session.get(DataSet, dataset_id)
+        state = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        run = session.get(pipeline.WorkerRun, run_id)
+        assert run.status == "succeeded"
+        assert run.records_published == 1
+        assert dataset.checked_at > before["last_success_at"]
+        assert dataset.last_success_at == before["last_success_at"]
+        assert dataset.record_count == before["record_count"]
+        assert dataset.official_actual_until == date(2026, 10, 21)
+        assert state.generation == before["pilot_generation"]
+        assert state.fact_generation == before["fact_generation"]
+        assert pointer.generation == before["pointer_generation"]
+        assert pointer.active_pointer == before["pointer"]
+        assert session.scalar(
+            select(func.count()).select_from(CompanyTaxDebtSnapshot)
+        ) == before["facts"] + 1
+        late_fact = session.scalar(
+            select(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.company_id == late_company_id,
+                CompanyTaxDebtSnapshot.publication_generation
+                == state.fact_generation,
+            )
+        )
+        assert late_fact is not None
 
 
 def test_controlled_live_handler_requires_explicit_durable_approval(pipeline_db):

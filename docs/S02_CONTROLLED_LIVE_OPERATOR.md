@@ -220,8 +220,28 @@ the manifest checksums, official discovery metadata, and normalized cohort to
 execute the worker. The pipeline's checksum-based idempotency key means an
 identical request returns the existing job; it never creates a second one.
 
+The checksum-addressed RAW manifest preserves the first accepted
+`retrieved_at`. A later execution of the same bytes may carry a newer check
+time in its job metadata, but reuses that original immutable RAW observation;
+every other source, XSD, parser and cohort coordinate must still match exactly.
+
 If another runnable job would precede the new/reused job, enqueue rolls back
 and returns `QUEUE_NOT_EXCLUSIVE`.
+
+If a reviewed terminal failure is corrected by a later deployment, explicitly
+requeue that same job without deleting its failed WorkerRun history:
+
+```text
+python -m scripts.run_s02_controlled_live retry-failed \
+  <preflight-inputs> \
+  --job-id <uuid> \
+  --confirm-retry S02_CONTROLLED_LIVE_RETRY
+```
+
+The command reruns every preflight gate, verifies the exact failed job package
+and cohort, requires remaining attempt capacity and an empty runnable queue,
+then performs only the durable `failed -> queued` Worker Foundation transition.
+Execution remains a separate `run-once` action.
 
 ### 4. Run once (high risk)
 
