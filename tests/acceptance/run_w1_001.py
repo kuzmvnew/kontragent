@@ -82,6 +82,16 @@ def fixtures():
         raise AssertionError("Provider timeout must fail")
     assert before == fingerprint()
     assert audit_snapshot()["latest_attempt_status"] == "failed"
+    degraded = browser_check([
+        {"label": "fixture-failed-refresh-found", "inn": "7701234567", "result": "unavailable"},
+        {"label": "fixture-failed-refresh-absent", "inn": "7812345678", "result": "unavailable"},
+    ], OUT)
+    # A failed refresh is a visible error signal even though the previously
+    # published rows remain intact.  Recover with the same accepted snapshot
+    # before proving positive and clean-negative product semantics again.
+    sync_cbr_warning_list(provider=FixtureProvider())
+    recovered = audit_snapshot()
+    assert recovered["reread_pass"] and recovered["latest_attempt_status"] == "success"
     pages = browser_check([
         {"label": "fixture-found", "inn": "7701234567", "result": "found", "text": "SYNTHETIC TEST SIGNAL"},
         {"label": "fixture-absent", "inn": "7812345678", "result": "not_found"},
@@ -96,7 +106,10 @@ def fixtures():
         s.commit()
     return {"evidence_kind": "SYNTHETIC_FIXTURES_NOT_LIVE_COMPANIES", "postgres": "PASS",
             "rollback_after_delete": "PASS", "repeat_import_no_duplicates": "PASS",
-            "fetch_failure_logged_old_snapshot_preserved": "PASS", "browser": unavailable + pages + disabled}
+            "fetch_failure_logged_old_snapshot_preserved": "PASS",
+            "failed_refresh_blocks_clean_semantics": "PASS",
+            "same_snapshot_recovery": "PASS",
+            "browser": unavailable + degraded + pages + disabled}
 
 
 def live():
