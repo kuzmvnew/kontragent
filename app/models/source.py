@@ -269,6 +269,9 @@ class DataSet(Base):
     source_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Official publisher validity boundary.  This is deliberately separate
+    # from our check/retrieval timestamps and from the source data date.
+    official_actual_until: Mapped[date | None] = mapped_column(Date, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     record_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     coverage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -156,6 +156,8 @@ def company_result(
 def dataset_result(
     *,
     loaded=True,
+    operational_status="current",
+    actual_until=date(2099, 12, 31),
 ):
     return FakeResult(
         scalar=SimpleNamespace(
@@ -168,6 +170,8 @@ def dataset_result(
             source_as_of=datetime(2026, 8, 2, tzinfo=timezone.utc),
             retrieved_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
             coverage={"official_actual_until": "2099-12-31"},
+            operational_status=operational_status,
+            official_actual_until=actual_until,
         )
     )
 
@@ -787,6 +791,34 @@ def test_offence_check_found(
         session.closed
         is True
     )
+
+
+@pytest.mark.parametrize(
+    ("dataset_kwargs", "reason"),
+    (
+        ({"actual_until": date(2000, 1, 1)}, "dataset_stale"),
+        ({"operational_status": "unavailable"}, "dataset_unavailable"),
+        ({"actual_until": None}, "dataset_freshness_unavailable"),
+    ),
+)
+def test_tax_offence_stale_or_unavailable_never_proves_clean_negative(
+    monkeypatch,
+    dataset_kwargs,
+    reason,
+):
+    install_fake_session(
+        monkeypatch,
+        tax_offence_service,
+        company_result("7701234567"),
+        dataset_result(**dataset_kwargs),
+        FakeResult(rows=[]),
+    )
+
+    result = tax_offence_service.get_tax_offence_check_for_company(101)
+
+    assert result["result"] == "unavailable"
+    assert result["checked"] is False
+    assert result["reason"] == reason
 
 
 @pytest.mark.parametrize(

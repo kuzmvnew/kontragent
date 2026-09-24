@@ -2,6 +2,8 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from app.services import (
     revenue_expense_service,
 )
@@ -105,6 +107,8 @@ def company(
 def dataset(
     *,
     loaded=True,
+    operational_status="current",
+    actual_until=date(2099, 12, 31),
 ):
     return FakeResult(
         scalar=SimpleNamespace(
@@ -114,6 +118,8 @@ def dataset(
                 if loaded
                 else None
             ),
+            operational_status=operational_status,
+            official_actual_until=actual_until,
         )
     )
 
@@ -341,6 +347,33 @@ def test_not_found_means_absent_from_loaded_dataset(
         ]
         is False
     )
+
+
+@pytest.mark.parametrize(
+    ("dataset_kwargs", "reason"),
+    (
+        ({"actual_until": date(2000, 1, 1)}, "dataset_stale"),
+        ({"operational_status": "unavailable"}, "dataset_unavailable"),
+        ({"actual_until": None}, "dataset_freshness_unavailable"),
+    ),
+)
+def test_stale_or_unavailable_dataset_never_proves_clean_negative(
+    monkeypatch,
+    dataset_kwargs,
+    reason,
+):
+    install_session(
+        monkeypatch,
+        company(),
+        dataset(**dataset_kwargs),
+        FakeResult(scalar=None),
+    )
+
+    result = revenue_expense_service.get_revenue_expense_check_for_company(101)
+
+    assert result["result"] == "unavailable"
+    assert result["checked"] is False
+    assert result["reason"] == reason
 
 
 def test_dataset_not_loaded_is_unavailable(

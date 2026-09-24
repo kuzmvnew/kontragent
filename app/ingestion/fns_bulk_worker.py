@@ -125,6 +125,30 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def release_operational_status(
+    actual_until: date | None,
+    *,
+    now: datetime,
+) -> OperationalStatus:
+    """Return fail-closed official-release freshness.
+
+    The official ``actual_until`` date is inclusive.  A missing boundary
+    cannot prove a clean negative; an expired boundary is stale regardless of
+    how recently our scheduler checked the passport.
+    """
+
+    now = _utc(now)
+    if actual_until is None:
+        return OperationalStatus.UNAVAILABLE
+    if now.date() > actual_until:
+        return OperationalStatus.STALE
+    return OperationalStatus.CURRENT
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -361,7 +385,7 @@ def normalize_release(
     *,
     xsd_path: Path,
     iterator: Callable[[Any], Iterable[Mapping[str, Any] | None]],
-) -> tuple[Path, dict[str, Any]]:
+) -> tuple[Path, str, dict[str, Any]]:
     """Stream every XML member through the existing source parser into JSONL."""
 
     from lxml import etree
@@ -371,13 +395,17 @@ def normalize_release(
     except (etree.XMLSyntaxError, etree.XMLSchemaParseError, OSError) as error:
         raise SchemaMismatchError(f"official FNS XSD is invalid: {error}") from error
 
-    staging_path = zip_path.parent / "normalized.jsonl"
-    if staging_path.exists():
-        staging_path.unlink()
+    descriptor, staging_name = tempfile.mkstemp(
+        prefix="normalized-",
+        suffix=".jsonl.tmp",
+        dir=zip_path.parent,
+    )
+    os.close(descriptor)
+    staging_temp = Path(staging_name)
     counters = {"records_seen": 0, "records_valid": 0, "records_rejected": 0, "xml_files": 0}
     data_dates: set[str] = set()
     try:
-        with ZipFile(zip_path, "r") as archive, staging_path.open("x", encoding="utf-8") as output:
+        with ZipFile(zip_path, "r") as archive, staging_temp.open("w", encoding="utf-8") as output:
             broken = archive.testzip()
             if broken:
                 raise SchemaMismatchError(f"ZIP CRC failed: {broken}")
@@ -413,19 +441,28 @@ def normalize_release(
                         counters["records_valid"] += 1
                         data_dates.add(str(record["data_date"]))
                         output.write(_json_record(record) + "\n")
+    except SchemaMismatchError:
+        staging_temp.unlink(missing_ok=True)
+        raise
     except (BadZipFile, OSError) as error:
-        staging_path.unlink(missing_ok=True)
+        staging_temp.unlink(missing_ok=True)
         raise SchemaMismatchError(f"cannot parse official FNS ZIP: {error}") from error
+    except Exception:
+        staging_temp.unlink(missing_ok=True)
+        raise
     if counters["records_rejected"]:
-        staging_path.unlink(missing_ok=True)
+        staging_temp.unlink(missing_ok=True)
         raise SchemaMismatchError(
             f"official FNS release contains {counters['records_rejected']} invalid documents"
         )
     if counters["records_valid"] == 0 or len(data_dates) != 1:
-        staging_path.unlink(missing_ok=True)
+        staging_temp.unlink(missing_ok=True)
         raise SchemaMismatchError("official FNS release has empty or mixed-date normalized data")
     counters["source_data_date"] = next(iter(data_dates))
-    return staging_path, counters
+    normalized_checksum, _normalized_size = _hash_file(staging_temp)
+    staging_path = zip_path.parent / f"normalized-{normalized_checksum}.jsonl"
+    _persist_download(staging_temp, staging_path, checksum=normalized_checksum)
+    return staging_path, normalized_checksum, counters
 
 
 def release_from_metadata(metadata: Mapping[str, Any]) -> FnsRelease:
@@ -456,16 +493,20 @@ def run_bulk_handler(
         raise InvalidDataError("FNS source passport URL differs from handler pin")
     if metadata.get("check_only"):
         return HandlerResult(
-            checksum_metadata={"release_identity": release.identity, "check_only": True},
+            checksum_metadata={
+                "release_identity": release.identity,
+                "check_only": True,
+                "replay_snapshot": bool(metadata.get("replay_snapshot")),
+            },
             counters=ExecutionCounters(),
         )
-    context.ensure_active(now=datetime.now(timezone.utc))
+    context.ensure_active(now=utc_now())
     raw_root = Path(str(metadata.get("raw_root") or "")).resolve()
     if not str(metadata.get("raw_root") or "").strip():
         raise InvalidDataError("raw_root is required")
     zip_path, xsd_path, manifest = stage_release(spec, release, raw_root=raw_root)
     context.heartbeat()
-    staging_path, counters = normalize_release(
+    staging_path, normalized_checksum, counters = normalize_release(
         zip_path,
         xsd_path=xsd_path,
         iterator=iterator,
@@ -473,7 +514,7 @@ def run_bulk_handler(
     parsed_data_date = date.fromisoformat(str(counters["source_data_date"]))
     if parsed_data_date != release.source_data_date:
         raise SchemaMismatchError("parsed source data date differs from official passport")
-    context.ensure_active(now=datetime.now(timezone.utc))
+    context.ensure_active(now=utc_now())
     execution = ExecutionCounters(
         records_seen=int(counters["records_seen"]),
         records_written=int(counters["records_valid"]),
@@ -486,7 +527,7 @@ def run_bulk_handler(
         ),),
         staging_result=StagingResult(
             staging_pointer=staging_path.as_uri(),
-            checksum=manifest["artifact_sha256"],
+            checksum=normalized_checksum,
             validation=ValidationResult(accepted=True, metadata={
                 "release_identity": release.identity,
                 "source_data_date": release.source_data_date.isoformat(),
@@ -504,6 +545,7 @@ def run_bulk_handler(
         checksum_metadata={
             "artifact_sha256": manifest["artifact_sha256"],
             "xsd_sha256": manifest["xsd_sha256"],
+            "normalized_sha256": normalized_checksum,
             "release_identity": release.identity,
         },
         counters=execution,
@@ -523,38 +565,71 @@ def _iter_jsonl(path: Path, *, batch_size: int = 5000) -> Iterable[list[dict[str
         yield batch
 
 
-def publish_bulk_result(
-    session: Session,
-    claim: Any,
-    result: HandlerResult,
-    *,
-    spec: FnsBulkSourceSpec,
-) -> HandlerResult:
-    """Exact-INN match and atomic domain publication in the worker transaction."""
+def _file_path(reference: str) -> Path:
+    parsed = urlparse(reference)
+    if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+        raise InvalidDataError("accepted normalized snapshot must use a local file URI")
+    path = Path(unquote(parsed.path))
+    if not path.is_absolute() or not path.is_file():
+        raise InvalidDataError("accepted normalized snapshot is unavailable")
+    return path
 
-    dataset = session.scalar(select(DataSet).where(DataSet.code == spec.dataset_code).with_for_update())
-    if dataset is None:
-        raise InvalidDataError(f"dataset is not registered: {spec.dataset_code}")
-    now = datetime.now(timezone.utc)
-    if claim.schedule_metadata.get("check_only"):
-        dataset.checked_at = now
-        dataset.next_expected_update_at = now + CHECK_INTERVAL
-        dataset.last_error = None
-        dataset.last_error_at = None
-        return replace(result, staging_result=None)
-    if result.staging_result is None:
-        raise InvalidDataError("FNS publisher requires normalized staging")
-    staging_path = Path(unquote(urlparse(result.staging_result.staging_pointer).path))
-    matched = unmatched = 0
+
+def _claim_actual_until(claim: Any) -> date | None:
+    raw = claim.schedule_metadata.get("actual_until")
+    if raw in {None, ""}:
+        return None
+    try:
+        return date.fromisoformat(str(raw))
+    except ValueError as error:
+        raise InvalidDataError("official actual_until is invalid") from error
+
+
+def _apply_successful_check(
+    dataset: DataSet,
+    *,
+    actual_until: date | None,
+    now: datetime,
+) -> OperationalStatus:
+    status = release_operational_status(actual_until, now=now)
+    dataset.checked_at = now
+    dataset.official_actual_until = actual_until
+    dataset.operational_status = status
+    dataset.next_expected_update_at = now + CHECK_INTERVAL
+    dataset.last_error = None
+    dataset.last_error_at = None
+    dataset.retry_count = 0
+    dataset.next_retry_at = None
+    return status
+
+
+def _project_normalized_snapshot(
+    session: Session,
+    *,
+    dataset: DataSet,
+    spec: FnsBulkSourceSpec,
+    staging_path: Path,
+    replace_existing: bool,
+) -> tuple[int, int, set[int], int]:
+    """Exact-INN project a normalized snapshot using existing fact tables.
+
+    A new release replaces its complete source snapshot atomically.  A
+    same-release replay uses ``ON CONFLICT DO NOTHING`` so it only fills facts
+    for Master companies added after the original publication.
+    """
+
+    matched = unmatched = changed = 0
     matched_companies: set[int] = set()
     model = CompanyTaxOffence if spec.kind == "tax_offence" else CompanyRevenueExpenseSnapshot
-    # A release is a complete official snapshot.  Delete + rebuild occurs in
-    # this same publisher transaction; on any failure SQLAlchemy rollback keeps
-    # the previous successful facts and WorkerPublicationState pointer intact.
-    session.execute(delete(model).where(model.dataset_id == dataset.id))
+    if replace_existing:
+        session.execute(delete(model).where(model.dataset_id == dataset.id))
     for batch in _iter_jsonl(staging_path):
         inns = {str(row["inn"]) for row in batch}
-        company_ids = dict(session.execute(select(Company.inn, Company.id).where(Company.inn.in_(inns))).all())
+        company_ids = dict(
+            session.execute(
+                select(Company.inn, Company.id).where(Company.inn.in_(inns))
+            ).all()
+        )
         values: list[dict[str, Any]] = []
         for row in batch:
             company_id = company_ids.get(str(row["inn"]))
@@ -589,38 +664,153 @@ def publish_bulk_result(
             continue
         if spec.kind == "tax_offence":
             values = list({str(value["source_document_id"]): value for value in values}.values())
+            statement = pg_insert(CompanyTaxOffence).values(values)
+            if replace_existing:
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_company_tax_offence_dataset_document",
+                    set_={
+                        "company_id": statement.excluded.company_id,
+                        "data_date": statement.excluded.data_date,
+                        "document_date": statement.excluded.document_date,
+                        "fine_amount": statement.excluded.fine_amount,
+                        "updated_at": func.now(),
+                    },
+                )
+            else:
+                statement = statement.on_conflict_do_nothing(
+                    constraint="uq_company_tax_offence_dataset_document"
+                )
         else:
             values = list({
                 (int(value["company_id"]), value["data_date"]): value for value in values
             }.values())
-        if spec.kind == "tax_offence":
-            statement = pg_insert(CompanyTaxOffence).values(values)
-            statement = statement.on_conflict_do_update(
-                constraint="uq_company_tax_offence_dataset_document",
-                set_={
-                    "company_id": statement.excluded.company_id,
-                    "data_date": statement.excluded.data_date,
-                    "document_date": statement.excluded.document_date,
-                    "fine_amount": statement.excluded.fine_amount,
-                    "updated_at": func.now(),
-                },
-            )
-        else:
             statement = pg_insert(CompanyRevenueExpenseSnapshot).values(values)
-            statement = statement.on_conflict_do_update(
-                constraint="uq_company_revexp_company_dataset_date",
-                set_={
-                    "data_year": statement.excluded.data_year,
-                    "document_date": statement.excluded.document_date,
-                    "source_document_id": statement.excluded.source_document_id,
-                    "source_company_name": statement.excluded.source_company_name,
-                    "revenue": statement.excluded.revenue,
-                    "expenses": statement.excluded.expenses,
-                    "profit_loss": statement.excluded.profit_loss,
-                    "updated_at": func.now(),
-                },
+            if replace_existing:
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_company_revexp_company_dataset_date",
+                    set_={
+                        "data_year": statement.excluded.data_year,
+                        "document_date": statement.excluded.document_date,
+                        "source_document_id": statement.excluded.source_document_id,
+                        "source_company_name": statement.excluded.source_company_name,
+                        "revenue": statement.excluded.revenue,
+                        "expenses": statement.excluded.expenses,
+                        "profit_loss": statement.excluded.profit_loss,
+                        "updated_at": func.now(),
+                    },
+                )
+            else:
+                statement = statement.on_conflict_do_nothing(
+                    constraint="uq_company_revexp_company_dataset_date"
+                )
+        changed += len(session.scalars(statement.returning(model.id)).all())
+    return matched, unmatched, matched_companies, changed
+
+
+def _accepted_replay_path(
+    session: Session,
+    *,
+    claim: Any,
+    spec: FnsBulkSourceSpec,
+) -> Path:
+    pointer = str(claim.schedule_metadata.get("replay_pointer") or "")
+    expected_checksum = str(claim.schedule_metadata.get("replay_checksum") or "")
+    state = session.scalar(
+        select(WorkerPublicationState)
+        .where(WorkerPublicationState.source_id == spec.source_id)
+        .with_for_update()
+    )
+    if state is None or state.active_pointer != pointer:
+        raise InvalidDataError("accepted normalized replay pointer changed")
+    validation = dict(state.validation_metadata or {})
+    release_identity = (validation.get("validation") or {}).get("release_identity")
+    if release_identity != claim.schedule_metadata.get("release_identity"):
+        raise InvalidDataError("accepted normalized replay release changed")
+    if not expected_checksum or validation.get("checksum") != expected_checksum:
+        raise InvalidDataError("accepted normalized replay checksum changed")
+    path = _file_path(pointer)
+    actual_checksum, _size = _hash_file(path)
+    if actual_checksum != expected_checksum:
+        raise InvalidDataError("accepted normalized replay checksum mismatch")
+    return path
+
+
+def publish_bulk_result(
+    session: Session,
+    claim: Any,
+    result: HandlerResult,
+    *,
+    spec: FnsBulkSourceSpec,
+) -> HandlerResult:
+    """Exact-INN match and atomic domain publication in the worker transaction."""
+
+    dataset = session.scalar(select(DataSet).where(DataSet.code == spec.dataset_code).with_for_update())
+    if dataset is None:
+        raise InvalidDataError(f"dataset is not registered: {spec.dataset_code}")
+    now = utc_now()
+    actual_until = _claim_actual_until(claim)
+    if claim.schedule_metadata.get("check_only"):
+        matched = unmatched = inserted = 0
+        matched_companies: set[int] = set()
+        if claim.schedule_metadata.get("replay_snapshot"):
+            replay_path = _accepted_replay_path(session, claim=claim, spec=spec)
+            matched, unmatched, matched_companies, inserted = _project_normalized_snapshot(
+                session,
+                dataset=dataset,
+                spec=spec,
+                staging_path=replay_path,
+                replace_existing=False,
             )
-        session.execute(statement)
+            model = CompanyTaxOffence if spec.kind == "tax_offence" else CompanyRevenueExpenseSnapshot
+            dataset.record_count = int(
+                session.scalar(
+                    select(func.count()).select_from(model).where(model.dataset_id == dataset.id)
+                )
+                or 0
+            )
+            coverage = dict(dataset.coverage or {})
+            coverage["last_replay"] = {
+                "checked_at": now.isoformat(),
+                "matched": matched,
+                "unmatched": unmatched,
+                "new_facts": inserted,
+                "candidate_companies": len(matched_companies),
+            }
+            coverage["published_facts"] = dataset.record_count
+            dataset.coverage = coverage
+        status = _apply_successful_check(
+            dataset,
+            actual_until=actual_until,
+            now=now,
+        )
+        return replace(
+            result,
+            staging_result=None,
+            checksum_metadata={
+                **result.checksum_metadata,
+                "freshness": status.value,
+                "official_actual_until": actual_until.isoformat() if actual_until else None,
+            },
+            counters=ExecutionCounters(
+                records_seen=matched + unmatched,
+                records_written=inserted,
+                records_published=inserted,
+            ),
+        )
+    if result.staging_result is None:
+        raise InvalidDataError("FNS publisher requires normalized staging")
+    staging_path = _file_path(result.staging_result.staging_pointer)
+    model = CompanyTaxOffence if spec.kind == "tax_offence" else CompanyRevenueExpenseSnapshot
+    # A release is a complete official snapshot.  Delete + rebuild occurs in
+    # this same publisher transaction; on any failure SQLAlchemy rollback keeps
+    # the previous successful facts and WorkerPublicationState pointer intact.
+    matched, unmatched, matched_companies, _changed = _project_normalized_snapshot(
+        session,
+        dataset=dataset,
+        spec=spec,
+        staging_path=staging_path,
+        replace_existing=True,
+    )
 
     published = int(
         session.scalar(
@@ -633,12 +823,10 @@ def publish_bulk_result(
     source_as_of = datetime.combine(source_date, datetime.min.time(), tzinfo=timezone.utc)
     dataset.enabled = True
     dataset.auto_update_status = AutoUpdateStatus.CONFIGURED
-    dataset.operational_status = OperationalStatus.CURRENT
     dataset.last_success_at = now
     dataset.last_data_date = source_date
     dataset.source_as_of = source_as_of
     dataset.retrieved_at = now
-    dataset.checked_at = now
     dataset.published_at = now
     dataset.record_count = published
     dataset.coverage = {
@@ -651,11 +839,11 @@ def publish_bulk_result(
         "card_projection": spec.card_projection,
         "release_identity": claim.schedule_metadata.get("release_identity"),
     }
-    dataset.last_error = None
-    dataset.last_error_at = None
-    dataset.retry_count = 0
-    dataset.next_retry_at = None
-    dataset.next_expected_update_at = now + CHECK_INTERVAL
+    status = _apply_successful_check(
+        dataset,
+        actual_until=actual_until,
+        now=now,
+    )
     validation = replace(
         result.staging_result.validation,
         metadata={
@@ -666,6 +854,8 @@ def publish_bulk_result(
             "risk_summary_candidate_companies": len(matched_companies),
             "api_projection": spec.api_projection,
             "card_projection": spec.card_projection,
+            "freshness": status.value,
+            "official_actual_until": actual_until.isoformat() if actual_until else None,
         },
     )
     return replace(
@@ -714,6 +904,8 @@ def enqueue_bulk_release(
     release: FnsRelease,
     raw_root: Path,
     check_only: bool = False,
+    replay_pointer: str | None = None,
+    replay_checksum: str | None = None,
     scheduled_for: date | None = None,
     max_attempts: int = 3,
     timeout_seconds: int = 7200,
@@ -735,6 +927,9 @@ def enqueue_bulk_release(
             **release.as_metadata(),
             "raw_root": str(raw_root.resolve()),
             "check_only": check_only,
+            "replay_snapshot": bool(replay_pointer),
+            "replay_pointer": replay_pointer,
+            "replay_checksum": replay_checksum,
             "check_frequency": "daily",
             "publication_frequency": "official_release",
         },
@@ -750,16 +945,19 @@ def schedule_source_check(
     raw_root: Path,
     now: datetime | None = None,
 ) -> JobCreation:
-    now = _utc(now or datetime.now(timezone.utc))
+    now = _utc(now or utc_now())
     release = discover_fns_release(spec, now=now)
     state = session.get(WorkerPublicationState, spec.source_id)
     validation = dict(state.validation_metadata or {}) if state else {}
     current_identity = (validation.get("validation") or {}).get("release_identity")
+    same_release = current_identity == release.identity
     return enqueue_bulk_release(
         session,
         spec=spec,
         release=release,
         raw_root=raw_root,
-        check_only=current_identity == release.identity,
+        check_only=same_release,
+        replay_pointer=state.active_pointer if same_release and state else None,
+        replay_checksum=str(validation.get("checksum") or "") if same_release else None,
         scheduled_for=now.date(),
     )
