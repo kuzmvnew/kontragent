@@ -16,13 +16,24 @@ from app.database.postgres import engine
 from app.ingestion import fns_tax_debt_pipeline as pipeline
 from app.models.company import Company
 from app.models.source import DataSet, DataSource
-from app.models.worker import WorkerHandlerRegistration, WorkerJob, WorkerRun
+from app.models.tax_debt import (
+    FnsTaxDebtPilotState,
+    FnsTaxDebtPublicationGeneration,
+    FnsTaxDebtRawArtifact,
+)
+from app.models.worker import (
+    WorkerHandlerRegistration,
+    WorkerJob,
+    WorkerPublicationState,
+    WorkerRun,
+)
 from app.providers.fns_tax_debt_provider import TaxDebtDiscovery, TaxDebtOfficialRelease
 from app.sources.fns_tax_debt import (
     CONTROLLED_LIVE_HANDLER_VERSION,
     CONTROLLED_LIVE_PILOT_ENABLED,
     MASS_INGESTION_ENABLED,
     OFFICIAL_SOURCE_PAGE,
+    PILOT_ENVIRONMENT,
     SOURCE_ID,
 )
 from app.worker.execution import WorkerExecutor, create_job
@@ -34,6 +45,12 @@ NOW = datetime(2026, 9, 24, 10, tzinfo=timezone.utc)
 SOURCE_AS_OF = datetime(2026, 8, 25, tzinfo=timezone.utc)
 DATA_AS_OF = date(2026, 8, 1)
 ACTUAL_UNTIL = date(2026, 9, 25)
+SECRET_CANARIES = (
+    "qa-super-secret-password",
+    "postgresql://user:SUPERSECRET@host/db",
+    "https://example.invalid/?token=SUPERSECRET",
+    "/tmp/SUPERSECRET/file.json",
+)
 
 
 def _valid_inn(seed: int) -> str:
@@ -283,6 +300,39 @@ def _seed_baseline(factory, tmp_path: Path, inn: str) -> int:
             **dict(dataset.coverage or {}),
             "official_actual_until": ACTUAL_UNTIL.isoformat(),
         }
+        pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        run = session.get(WorkerRun, pointer.published_by_run_id)
+        validation = dict(pointer.validation_metadata["validation"])
+        artifact = session.scalar(
+            select(FnsTaxDebtRawArtifact).where(
+                FnsTaxDebtRawArtifact.dataset_id == dataset.id,
+                FnsTaxDebtRawArtifact.artifact_reference == validation["raw_pointer"],
+            )
+        )
+        session.flush()
+        session.add(
+            FnsTaxDebtPublicationGeneration(
+                dataset_id=dataset.id,
+                artifact_id=artifact.id,
+                worker_run_id=run.id,
+                generation=0,
+                publication_scope="baseline",
+                status="baseline",
+                staging_pointer=pointer.active_pointer,
+                raw_pointer=artifact.artifact_reference,
+                checksum=artifact.sha256,
+                source_as_of=dataset.source_as_of,
+                retrieved_at=dataset.retrieved_at,
+                official_actual_until=ACTUAL_UNTIL,
+                last_data_date=dataset.last_data_date,
+                record_count=dataset.record_count,
+                coverage=dict(dataset.coverage),
+                counters=operator._worker_run_counters(run),
+                validation_metadata=validation,
+                dataset_metadata=operator._dataset_metadata_snapshot(dataset),
+                published_at=dataset.published_at,
+            )
+        )
         session.commit()
     return company_id
 
@@ -312,6 +362,61 @@ def test_manifest_local_files_and_cohort_are_canonical(source_files):
     assert cohort == (source_files.inn,)
     assert len(cohort_hash) == 64
     assert len(operator.source_package_fingerprint(package)) == 64
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "artifact_final_url",
+            "https://www.nalog.gov.ru/redirect/data-20260825-structure-20181201.zip",
+        ),
+        (
+            "xsd_final_url",
+            "https://www.nalog.gov.ru/redirect/structure-20181201.xsd",
+        ),
+        (
+            "artifact_final_url",
+            "https://file.nalog.ru/opendata/other/data-20260825-structure-20181201.zip",
+        ),
+    ],
+)
+def test_manifest_rejects_untrusted_final_transport_coordinates(
+    source_files, field, value
+):
+    _write_manifest(
+        source_files.manifest,
+        source_files.artifact,
+        source_files.xsd,
+        **{field: value},
+    )
+    with pytest.raises(operator.OperatorError) as caught:
+        operator.load_source_package(source_files.manifest)
+    assert caught.value.code == "MANIFEST_INVALID"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "artifact_requested_url",
+        "artifact_final_url",
+        "xsd_requested_url",
+        "xsd_final_url",
+    ],
+)
+@pytest.mark.parametrize(
+    "suffix",
+    ["?token=SUPERSECRET", "#SUPERSECRET"],
+)
+def test_manifest_download_coordinates_reject_query_and_fragment(
+    source_files, field, suffix
+):
+    package = json.loads(source_files.manifest.read_text(encoding="utf-8"))
+    package[field] += suffix
+    source_files.manifest.write_text(json.dumps(package), encoding="utf-8")
+    with pytest.raises(operator.OperatorError) as caught:
+        operator.load_source_package(source_files.manifest)
+    assert caught.value.code == "MANIFEST_INVALID"
 
 
 @pytest.mark.parametrize("kind", ["artifact", "xsd"])
@@ -402,8 +507,264 @@ def test_preflight_ready_and_read_only(operator_db, source_files, tmp_path):
         after = session.scalar(select(func.count()).select_from(WorkerJob))
     assert report["status"] == "READY"
     assert report["cohort_count"] == 1
+    assert report["baseline_generation"] == 0
     assert report["mass_ingestion_enabled"] is False
     assert before == after
+
+
+def _baseline_chain(session):
+    dataset = session.scalar(select(DataSet).where(DataSet.code == "fns_tax_debt"))
+    pointer = session.get(WorkerPublicationState, SOURCE_ID)
+    run = session.get(WorkerRun, pointer.published_by_run_id)
+    artifact = session.scalar(
+        select(FnsTaxDebtRawArtifact).where(
+            FnsTaxDebtRawArtifact.dataset_id == dataset.id,
+            FnsTaxDebtRawArtifact.artifact_reference
+            == pointer.validation_metadata["validation"]["raw_pointer"],
+        )
+    )
+    generation = session.scalar(
+        select(FnsTaxDebtPublicationGeneration).where(
+            FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+            FnsTaxDebtPublicationGeneration.generation == 0,
+        )
+    )
+    return dataset, pointer, run, artifact, generation
+
+
+def _add_alternate_artifact(session, dataset, run, *, reference, checksum):
+    artifact = FnsTaxDebtRawArtifact(
+        dataset_id=dataset.id,
+        first_worker_run_id=run.id,
+        sha256=checksum,
+        artifact_reference=reference,
+        original_file_name="alternate.zip",
+        media_type="application/zip",
+        size_bytes=1,
+        manifest={"fixture": True},
+        source_as_of=dataset.source_as_of or SOURCE_AS_OF,
+        retrieved_at=dataset.retrieved_at or NOW,
+    )
+    session.add(artifact)
+    session.flush()
+    return artifact
+
+
+BASELINE_FAILURE_CASES = (
+    "generation_missing",
+    "published_by_run_null",
+    "published_by_run_missing",
+    "run_not_succeeded",
+    "active_pointer_mismatch",
+    "validation_raw_pointer_mismatch",
+    "pointer_checksum_mismatch",
+    "raw_artifact_missing",
+    "raw_artifact_wrong_dataset",
+    "generation_artifact_mismatch",
+    "generation_run_mismatch",
+    "generation_raw_pointer_mismatch",
+    "generation_checksum_mismatch",
+    "generation_source_as_of_mismatch",
+    "generation_retrieved_at_mismatch",
+    "generation_last_data_date_mismatch",
+    "generation_actual_until_mismatch",
+    "generation_wrong_scope",
+    "generation_wrong_status",
+)
+
+
+@pytest.mark.parametrize("case", BASELINE_FAILURE_CASES)
+def test_exact_baseline_chain_adversarial_cases_are_blocked_read_only(
+    operator_db, source_files, tmp_path, monkeypatch, case
+):
+    _seed_baseline(operator_db, tmp_path, source_files.inn)
+    with operator_db() as session:
+        dataset, pointer, run, artifact, generation = _baseline_chain(session)
+        if case == "generation_missing":
+            session.delete(generation)
+        elif case == "published_by_run_null":
+            pointer.published_by_run_id = None
+        elif case == "published_by_run_missing":
+            original_get = session.get
+
+            def missing_run(entity, identity, *args, **kwargs):
+                if entity is WorkerRun and identity == run.id:
+                    return None
+                return original_get(entity, identity, *args, **kwargs)
+
+            monkeypatch.setattr(session, "get", missing_run)
+        elif case == "run_not_succeeded":
+            run.status = "failed"
+        elif case == "active_pointer_mismatch":
+            pointer.active_pointer = "file:///safe/mismatched-staging.json"
+        elif case == "validation_raw_pointer_mismatch":
+            alternate = _add_alternate_artifact(
+                session,
+                dataset,
+                run,
+                reference="file:///safe/alternate-raw.zip",
+                checksum="1" * 64,
+            )
+            pointer.validation_metadata = {
+                **dict(pointer.validation_metadata),
+                "validation": {
+                    **dict(pointer.validation_metadata["validation"]),
+                    "raw_pointer": alternate.artifact_reference,
+                },
+            }
+        elif case == "pointer_checksum_mismatch":
+            pointer.validation_metadata = {
+                **dict(pointer.validation_metadata),
+                "checksum": "2" * 64,
+            }
+        elif case == "raw_artifact_missing":
+            pointer.validation_metadata = {
+                **dict(pointer.validation_metadata),
+                "validation": {
+                    **dict(pointer.validation_metadata["validation"]),
+                    "raw_pointer": "file:///safe/missing-raw.zip",
+                },
+            }
+        elif case == "raw_artifact_wrong_dataset":
+            other_dataset = DataSet(
+                source_id=dataset.source_id,
+                code=f"other-{uuid4()}",
+                name="Other dataset",
+                domain="tax_debt",
+                update_mode="bulk",
+                data_format="xml",
+                priority=100,
+                enabled=False,
+            )
+            session.add(other_dataset)
+            session.flush()
+            alternate = _add_alternate_artifact(
+                session,
+                other_dataset,
+                run,
+                reference="file:///safe/wrong-dataset.zip",
+                checksum="3" * 64,
+            )
+            pointer.validation_metadata = {
+                **dict(pointer.validation_metadata),
+                "validation": {
+                    **dict(pointer.validation_metadata["validation"]),
+                    "raw_pointer": alternate.artifact_reference,
+                },
+                "checksum": alternate.sha256,
+            }
+        elif case == "generation_artifact_mismatch":
+            alternate = _add_alternate_artifact(
+                session,
+                dataset,
+                run,
+                reference="file:///safe/generation-artifact.zip",
+                checksum="4" * 64,
+            )
+            generation.artifact_id = alternate.id
+        elif case == "generation_run_mismatch":
+            other_job = create_job(
+                session,
+                source_id=SOURCE_ID,
+                job_type="fns_tax_debt_fixture",
+                handler_version=run.handler_version,
+                idempotency_key=f"other-baseline-{uuid4()}",
+                now=NOW,
+            ).job
+            other_run = WorkerRun(
+                job_id=other_job.id,
+                attempt_no=1,
+                started_at=NOW,
+                finished_at=NOW,
+                status="succeeded",
+                worker_id="other-baseline",
+                fencing_token=999,
+                handler_version=run.handler_version,
+                current_stage="completed",
+                errors=[],
+                checksum_metadata={},
+                heartbeat_at=NOW,
+                records_seen=run.records_seen,
+                records_written=run.records_written,
+                records_rejected=run.records_rejected,
+                records_duplicated=run.records_duplicated,
+                records_published=run.records_published,
+                retryable=False,
+            )
+            session.add(other_run)
+            session.flush()
+            generation.worker_run_id = other_run.id
+        elif case == "generation_raw_pointer_mismatch":
+            generation.raw_pointer = "file:///safe/wrong-generation-raw.zip"
+        elif case == "generation_checksum_mismatch":
+            generation.checksum = "5" * 64
+        elif case == "generation_source_as_of_mismatch":
+            generation.source_as_of += timedelta(days=1)
+        elif case == "generation_retrieved_at_mismatch":
+            generation.retrieved_at += timedelta(seconds=1)
+        elif case == "generation_last_data_date_mismatch":
+            generation.last_data_date += timedelta(days=1)
+        elif case == "generation_actual_until_mismatch":
+            generation.official_actual_until += timedelta(days=1)
+        elif case == "generation_wrong_scope":
+            generation.publication_scope = "pilot"
+        elif case == "generation_wrong_status":
+            generation.status = "superseded"
+        session.commit()
+
+        with pytest.raises(operator.OperatorError) as caught:
+            operator.database_readiness(session, cohort=(source_files.inn,))
+        assert caught.value.code == "BASELINE_NOT_READY"
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+
+
+def test_valid_exact_baseline_chain_is_ready_without_pilot_state(
+    operator_db, source_files, tmp_path
+):
+    _seed_baseline(operator_db, tmp_path, source_files.inn)
+    with operator_db() as session:
+        assert session.get(FnsTaxDebtPilotState, SOURCE_ID) is None
+        readiness = operator.database_readiness(session, cohort=(source_files.inn,))
+    assert readiness["baseline_generation"] == 0
+    assert readiness["baseline_metadata_captured"] is True
+    assert readiness["pilot_generation"] is None
+
+
+def test_existing_pilot_state_cannot_contradict_baseline_generation_zero(
+    operator_db, source_files, tmp_path
+):
+    _seed_baseline(operator_db, tmp_path, source_files.inn)
+    with operator_db() as session:
+        dataset, _pointer, _run, artifact, _generation = _baseline_chain(session)
+        session.add(
+            FnsTaxDebtPilotState(
+                source_id=SOURCE_ID,
+                dataset_id=dataset.id,
+                pilot_environment=PILOT_ENVIRONMENT,
+                enabled=True,
+                cohort_inns=[source_files.inn],
+                active_raw_pointer=artifact.artifact_reference,
+                active_checksum="9" * 64,
+                active_source_as_of=dataset.source_as_of,
+                active_retrieved_at=dataset.retrieved_at,
+                generation=0,
+                baseline_generation=0,
+                normalized_generation=0,
+                fact_generation=0,
+                query_generation=0,
+                baseline_data_date=dataset.last_data_date,
+                counters={},
+                freshness="unknown",
+                errors=[],
+            )
+        )
+        session.commit()
+        with pytest.raises(operator.OperatorError) as caught:
+            operator.database_readiness(session, cohort=(source_files.inn,))
+    assert caught.value.code == "BASELINE_NOT_READY"
+    assert "pilot_checksum" in caught.value.details["failed_checks"]
 
 
 def test_missing_or_non_legal_master_company_and_baseline_are_blocked(
@@ -450,6 +811,203 @@ def test_existing_legal_company_without_baseline_is_blocked(operator_db, source_
         with pytest.raises(operator.OperatorError) as caught:
             operator.database_readiness(session, cohort=(source_files.inn,))
     assert caught.value.code == "BASELINE_NOT_READY"
+
+
+def _preflight_cli_args(source_files, **changes):
+    values = {
+        "source_package": str(source_files.manifest),
+        "artifact": str(source_files.artifact),
+        "xsd": str(source_files.xsd),
+        "cohort": str(source_files.cohort),
+        "expected_main_sha": operator.resolve_runtime_sha(),
+    }
+    values.update(changes)
+    return [
+        "preflight",
+        "--source-package",
+        values["source_package"],
+        "--artifact",
+        values["artifact"],
+        "--xsd",
+        values["xsd"],
+        "--cohort",
+        values["cohort"],
+        "--expected-main-sha",
+        values["expected_main_sha"],
+    ]
+
+
+def _assert_secret_safe_cli(capsys, expected_code):
+    captured = capsys.readouterr()
+    rendered = captured.out + captured.err
+    payload = json.loads(captured.out)
+    assert payload["error"] == expected_code
+    for canary in SECRET_CANARIES:
+        assert canary not in rendered
+
+
+def test_missing_and_malformed_manifest_errors_are_secret_safe(
+    source_files, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        operator, "session_factory", lambda _database_url: lambda: _FailingSession()
+    )
+    missing = "/tmp/qa-super-secret-password/missing-manifest.json"
+    assert operator.main(_preflight_cli_args(source_files, source_package=missing)) == 33
+    _assert_secret_safe_cli(capsys, "MANIFEST_INVALID")
+
+    secret_dir = tmp_path / "qa-super-secret-password"
+    secret_dir.mkdir()
+    malformed = secret_dir / "manifest.json"
+    malformed.write_text(SECRET_CANARIES[1], encoding="utf-8")
+    assert (
+        operator.main(
+            _preflight_cli_args(source_files, source_package=str(malformed))
+        )
+        == 33
+    )
+    _assert_secret_safe_cli(capsys, "MANIFEST_INVALID")
+
+
+def test_missing_and_malformed_cohort_errors_are_secret_safe(
+    source_files, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        operator, "session_factory", lambda _database_url: lambda: _FailingSession()
+    )
+    missing = "/tmp/SUPERSECRET/file.json"
+    assert operator.main(_preflight_cli_args(source_files, cohort=missing)) == 23
+    _assert_secret_safe_cli(capsys, "COHORT_INVALID")
+
+    malformed = tmp_path / "qa-super-secret-password-cohort.json"
+    malformed.write_text(SECRET_CANARIES[2], encoding="utf-8")
+    assert operator.main(_preflight_cli_args(source_files, cohort=str(malformed))) == 23
+    _assert_secret_safe_cli(capsys, "COHORT_INVALID")
+
+
+@pytest.mark.parametrize(
+    ("kind", "missing_path"),
+    [
+        ("artifact", "/tmp/SUPERSECRET/data-20260825-structure-20181201.zip"),
+        ("xsd", "/tmp/SUPERSECRET/structure-20181201.xsd"),
+    ],
+)
+def test_missing_artifact_and_xsd_errors_are_secret_safe(
+    source_files, monkeypatch, capsys, kind, missing_path
+):
+    monkeypatch.setattr(
+        operator, "session_factory", lambda _database_url: lambda: _FailingSession()
+    )
+    assert operator.main(_preflight_cli_args(source_files, **{kind: missing_path})) == 22
+    _assert_secret_safe_cli(capsys, "CHECKSUM_MISMATCH")
+
+
+@pytest.mark.parametrize("hash_kind", ["artifact", "xsd"])
+def test_hash_rediscovery_and_provider_failures_are_secret_safe(
+    source_files, monkeypatch, capsys, hash_kind
+):
+    monkeypatch.setattr(
+        operator, "session_factory", lambda _database_url: lambda: _FailingSession()
+    )
+
+    def hash_failure(path):
+        if Path(path) == getattr(source_files, hash_kind):
+            raise OSError(SECRET_CANARIES[0])
+        return pipeline.calculate_sha256(path)
+
+    monkeypatch.setattr(operator, "calculate_sha256", hash_failure)
+    assert operator.main(_preflight_cli_args(source_files)) == 22
+    _assert_secret_safe_cli(capsys, "CHECKSUM_MISMATCH")
+    monkeypatch.setattr(operator, "calculate_sha256", pipeline.calculate_sha256)
+
+    class FailingDiscoveryClient:
+        def discover(self, **_kwargs):
+            raise RuntimeError(SECRET_CANARIES[2])
+
+    monkeypatch.setattr(operator, "FnsTaxDebtOfficialClient", FailingDiscoveryClient)
+    assert operator.main(_preflight_cli_args(source_files)) == 20
+    _assert_secret_safe_cli(capsys, "SOURCE_PACKAGE_CHANGED")
+
+    monkeypatch.setattr(
+        operator,
+        "validate_tax_debt_release",
+        lambda _release: (_ for _ in ()).throw(RuntimeError(SECRET_CANARIES[1])),
+    )
+    assert operator.main(_preflight_cli_args(source_files)) == 33
+    _assert_secret_safe_cli(capsys, "MANIFEST_INVALID")
+
+
+def test_cli_boundary_removes_raw_database_status_and_arbitrary_error_material(
+    monkeypatch, capsys
+):
+    args = SimpleNamespace(command="status", database_url=SECRET_CANARIES[1], job_id=None)
+    monkeypatch.setattr(operator, "parse_arguments", lambda _argv=None: args)
+    monkeypatch.setattr(operator, "session_factory", lambda _database_url: object())
+
+    for raw_error in (
+        RuntimeError(SECRET_CANARIES[1]),
+        operator.OperatorError(
+            "OPERATOR_ERROR",
+            SECRET_CANARIES[2],
+            details={
+                "unsafe": SECRET_CANARIES[3],
+                "kind": SECRET_CANARIES[0],
+                "failed_checks": [SECRET_CANARIES[0]],
+            },
+        ),
+    ):
+        def fail(_args, _factory, error=raw_error):
+            raise error
+
+        monkeypatch.setitem(operator.COMMANDS, "status", fail)
+        assert operator.main([]) == 40
+        _assert_secret_safe_cli(capsys, "OPERATOR_ERROR")
+
+
+class _FailingSession:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def rollback(self):
+        return None
+
+
+def test_evidence_and_rollback_wrappers_do_not_copy_provider_errors(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError(SECRET_CANARIES[0])
+
+    monkeypatch.setattr(operator, "calculate_s02_vertical_slice_from_persisted", fail)
+    with pytest.raises(operator.OperatorError) as evidence:
+        operator.command_evidence(
+            SimpleNamespace(company_id=1), lambda: _FailingSession()
+        )
+    assert evidence.value.code == "EVIDENCE_NOT_AVAILABLE"
+    assert SECRET_CANARIES[0] not in str(evidence.value)
+
+    monkeypatch.setattr(operator, "check_main_sha", lambda **_kwargs: "0" * 40)
+    monkeypatch.setattr(
+        operator,
+        "_generation_state",
+        lambda _session: {
+            "worker_generation": 1,
+            "rollback_pointer_identity": "0" * 64,
+        },
+    )
+    monkeypatch.setattr(operator, "rollback_fns_tax_debt_generation", fail)
+    with pytest.raises(operator.OperatorError) as rollback:
+        operator.command_rollback(
+            SimpleNamespace(
+                confirm_rollback=operator.ROLLBACK_TOKEN,
+                expected_main_sha="0" * 40,
+                expected_generation=1,
+            ),
+            lambda: _FailingSession(),
+        )
+    assert rollback.value.code == "ROLLBACK_NOT_AVAILABLE"
+    assert SECRET_CANARIES[0] not in str(rollback.value)
 
 
 def test_confirmation_tokens_are_exact(source_files):

@@ -61,8 +61,15 @@ official URLs, and non-`PASS` validation fail closed.
 
 `artifact_requested_url` and `xsd_requested_url` describe the URLs exposed by
 official discovery. The corresponding `*_final_url` fields retain redirect
-evidence. Live rediscovery must still expose the requested URLs and the same
-source date, data date, and official validity date.
+evidence. All four download coordinates must use HTTPS, the exact
+`file.nalog.ru` host, no credentials, no query or fragment, no unexpected port,
+and the exact `/opendata/7707329152-debtam/` directory. Each requested and final
+URL must end in its frozen manifest filename, so a redirect cannot silently
+change the artifact/XSD filename or version. `www.nalog.gov.ru` is accepted only
+as the pinned official dataset page, never as an artifact or XSD download host.
+Live rediscovery must still expose the requested URLs and the same source date,
+data date, and official validity date. A future FNS redirect-model change needs
+a separately reviewed transport contract; it is not accepted automatically.
 
 The manifest `main_sha`, the operator's `--expected-main-sha`, and the runtime
 Git revision must all be identical. In a packaged deployment without `.git`,
@@ -109,6 +116,27 @@ freshness, live official rediscovery, cohort, Master Company membership,
 baseline/source tables, worker publication state, generation metadata, safety
 flags, and the current runnable queue. It rolls the session back and performs
 no writes.
+
+`READY` additionally requires one exact persisted baseline chain:
+
+```text
+DataSet
+  -> WorkerPublicationState
+  -> succeeded S02 WorkerRun and WorkerJob
+  -> exact FnsTaxDebtRawArtifact resolved by validation.raw_pointer
+  -> FnsTaxDebtPublicationGeneration(dataset, generation=0)
+  -> matching dataset, coverage, counters and validation metadata
+```
+
+The pointer checksum, RAW reference, worker run, staging pointer, source and
+retrieval timestamps, data date, official validity date, record count,
+coverage, counters, validation metadata, and captured dataset metadata must all
+agree. A missing generation-0 ledger is `BASELINE_NOT_READY`; preflight never
+creates it and never calls the pipeline's private baseline-capture helper. This
+means a real first run may require a separate, explicit baseline-preparation
+phase before this operator can return `READY`. Absence of pilot state is valid
+before Run A. If pilot state exists, none of its populated baseline coordinates
+may contradict generation 0.
 
 `official_actual_until` is inclusive. The day after it, the package is stale;
 there is no override. If live discovery exposes another release, the command
@@ -216,6 +244,18 @@ Evidence calls `calculate_s02_vertical_slice_from_persisted` only. It performs
 no provider requests and emits a bounded internal fact/Risk/Summary,
 coverage/freshness, and limitations summary. Provenance paths, credentials and
 private payloads are omitted. This is not a public release operation.
+
+## Secret-safe failures
+
+Blocked commands expose a stable error code, a stable public message, and only
+allowlisted safe details such as counts, generations, hashes, and fixed reason
+categories. Raw `OSError`, HTTP/provider, SQLAlchemy/database, subprocess,
+parser, evidence, and rollback exception text is retained only through internal
+exception chaining. It is never copied to stdout/stderr JSON. In particular,
+local paths, arbitrary URLs, query strings, credentials, database DSNs,
+environment values, and payload fragments are not error output. Successful
+commands may still emit validated public FNS coordinates, hashes, IDs, counts,
+and dates where the command contract calls for them.
 
 ## Transactions and recovery
 

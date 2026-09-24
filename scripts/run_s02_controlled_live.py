@@ -85,6 +85,8 @@ MIN_TIMEOUT_SECONDS = 600
 MAX_TIMEOUT_SECONDS = 7200
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 CHECKSUM_RE = re.compile(r"[0-9a-f]{64}\Z")
+DOWNLOAD_HOST = "file.nalog.ru"
+DOWNLOAD_DIRECTORY = f"/opendata/{DATASET_ID}/"
 
 EXIT_CODES = {
     "SOURCE_PACKAGE_CHANGED": 20,
@@ -105,6 +107,113 @@ EXIT_CODES = {
     "EVIDENCE_NOT_AVAILABLE": 35,
     "OPERATOR_ERROR": 40,
 }
+
+PUBLIC_ERROR_MESSAGES = {
+    "SOURCE_PACKAGE_CHANGED": "S02 official rediscovery did not match the frozen package",
+    "SOURCE_PACKAGE_STALE": "official S02 source package is stale",
+    "CHECKSUM_MISMATCH": "artifact bytes could not be verified",
+    "COHORT_INVALID": "cohort is invalid",
+    "MAIN_SHA_MISMATCH": "runtime Git revision does not match the approved revision",
+    "MAIN_SHA_NOT_VERIFIED": "runtime Git revision could not be verified",
+    "BASELINE_NOT_READY": "exact persisted S02 baseline chain is not ready",
+    "DURABLE_APPROVAL_MISSING": "exact durable S02 approval is missing",
+    "QUEUE_NOT_EXCLUSIVE": "the runnable worker queue is not exclusive",
+    "JOB_MISMATCH": "the selected worker job does not match the approved S02 job",
+    "RUN_FAILED": "S02 worker execution failed",
+    "ROLLBACK_NOT_AVAILABLE": "S02 rollback is not available",
+    "CONFIRMATION_REQUIRED": "the exact confirmation token is required",
+    "MANIFEST_INVALID": "source package is invalid",
+    "STATUS_NOT_FOUND": "the selected status record was not found",
+    "EVIDENCE_NOT_AVAILABLE": "S02 evidence is not available",
+    "OPERATOR_ERROR": "operator command failed",
+}
+
+SAFE_DETAIL_FIELDS = frozenset(
+    {
+        "actual_main_sha",
+        "expected_main_sha",
+        "actual_sha256",
+        "actual_size",
+        "kind",
+        "current_generation",
+        "failed_checks",
+        "missing_table_count",
+        "raw_artifact_count",
+        "baseline_fact_count",
+    }
+)
+SAFE_BASELINE_CHECKS = frozenset(
+    {
+        "required_tables",
+        "dataset_missing",
+        "dataset_code",
+        "dataset_status",
+        "dataset_source_as_of",
+        "dataset_retrieved_at",
+        "dataset_last_data_date",
+        "dataset_published_at",
+        "dataset_record_count",
+        "dataset_coverage",
+        "dataset_official_actual_until",
+        "dataset_time_order",
+        "dataset_actual_until_order",
+        "publication_state_missing",
+        "publication_source",
+        "publication_active_pointer",
+        "publication_published_by_run",
+        "publication_generation",
+        "publication_validation_metadata",
+        "publication_raw_pointer",
+        "publication_checksum",
+        "publication_run_missing",
+        "publication_run_status",
+        "publication_run_finished_at",
+        "publication_run_counters",
+        "publication_job_missing",
+        "publication_job_source",
+        "publication_job_type",
+        "publication_job_handler",
+        "publication_job_status",
+        "raw_artifact_missing",
+        "raw_artifact_dataset",
+        "raw_artifact_pointer",
+        "raw_artifact_checksum",
+        "raw_artifact_run",
+        "raw_artifact_source_as_of",
+        "raw_artifact_retrieved_at",
+        "baseline_generation_missing",
+        "baseline_generation",
+        "baseline_scope",
+        "baseline_status",
+        "baseline_dataset",
+        "baseline_artifact",
+        "baseline_run",
+        "baseline_staging_pointer",
+        "baseline_raw_pointer",
+        "baseline_checksum",
+        "baseline_source_as_of",
+        "baseline_retrieved_at",
+        "baseline_last_data_date",
+        "baseline_official_actual_until",
+        "baseline_record_count",
+        "baseline_coverage",
+        "baseline_counters",
+        "baseline_validation_metadata",
+        "baseline_dataset_metadata",
+        "baseline_published_at",
+        "pilot_dataset",
+        "pilot_generation",
+        "pilot_baseline_generation",
+        "pilot_normalized_generation",
+        "pilot_fact_generation",
+        "pilot_query_generation",
+        "pilot_raw_pointer",
+        "pilot_checksum",
+        "pilot_source_as_of",
+        "pilot_retrieved_at",
+        "pilot_data_date",
+    }
+)
 
 MANIFEST_FIELDS = frozenset(
     {
@@ -145,6 +254,38 @@ class OperatorError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.details = dict(details or {})
+
+    @property
+    def public_message(self) -> str:
+        return PUBLIC_ERROR_MESSAGES.get(
+            self.code, PUBLIC_ERROR_MESSAGES["OPERATOR_ERROR"]
+        )
+
+    def public_details(self) -> dict[str, Any]:
+        """Return only fields whose type and vocabulary are safe for CLI JSON."""
+
+        safe: dict[str, Any] = {}
+        for key, value in self.details.items():
+            if key not in SAFE_DETAIL_FIELDS:
+                continue
+            if key in {"actual_main_sha", "expected_main_sha"}:
+                if isinstance(value, str) and SHA_RE.fullmatch(value):
+                    safe[key] = value
+            elif key == "actual_sha256":
+                if isinstance(value, str) and CHECKSUM_RE.fullmatch(value):
+                    safe[key] = value
+            elif key == "kind":
+                if value in {"artifact", "xsd"}:
+                    safe[key] = value
+            elif key == "failed_checks":
+                if isinstance(value, (list, tuple)) and all(
+                    isinstance(item, str) and item in SAFE_BASELINE_CHECKS
+                    for item in value
+                ):
+                    safe[key] = list(value)
+            elif isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                safe[key] = value
+        return safe
 
 
 def _utc_now() -> datetime:
@@ -205,17 +346,27 @@ def _validation_passed(value: Any) -> bool:
     return isinstance(value, Mapping) and value.get("status") == "PASS"
 
 
-def _official_https_url(value: Any, field: str) -> str:
+def _download_url(value: Any, field: str, filename: str) -> str:
     text = str(value or "")
     parsed = urlparse(text)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise OperatorError("MANIFEST_INVALID", f"{field} has an invalid port") from error
     if (
         parsed.scheme != "https"
-        or parsed.hostname not in {"www.nalog.gov.ru", "file.nalog.ru"}
+        or parsed.hostname != DOWNLOAD_HOST
         or parsed.username is not None
         or parsed.password is not None
+        or port not in {None, 443}
+        or parsed.query
         or parsed.fragment
+        or parsed.path != f"{DOWNLOAD_DIRECTORY}{filename}"
     ):
-        raise OperatorError("MANIFEST_INVALID", f"{field} is not an official HTTPS URL")
+        raise OperatorError(
+            "MANIFEST_INVALID",
+            f"{field} is not an approved S02 download coordinate",
+        )
     return text
 
 
@@ -223,7 +374,7 @@ def load_source_package(path: str | Path) -> dict[str, Any]:
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise OperatorError("MANIFEST_INVALID", f"cannot read source package: {error}") from error
+        raise OperatorError("MANIFEST_INVALID", "source package could not be read") from error
     if not isinstance(raw, dict):
         raise OperatorError("MANIFEST_INVALID", "source package must be a JSON object")
     missing = sorted(MANIFEST_FIELDS - raw.keys())
@@ -232,27 +383,18 @@ def load_source_package(path: str | Path) -> dict[str, Any]:
         raise OperatorError(
             "MANIFEST_INVALID",
             "source package fields do not match the strict contract",
-            details={"missing_fields": missing, "unknown_fields": unknown},
         )
     if raw["dataset_id"] != DATASET_ID:
         raise OperatorError("MANIFEST_INVALID", "dataset_id is not the accepted S02 dataset")
     if raw["official_page"] != OFFICIAL_SOURCE_PAGE:
         raise OperatorError("MANIFEST_INVALID", "official_page is not pinned")
-    for field in (
-        "artifact_requested_url",
-        "artifact_final_url",
-        "xsd_requested_url",
-        "xsd_final_url",
-    ):
-        raw[field] = _official_https_url(raw[field], field)
     for prefix in ("artifact", "xsd"):
         filename = str(raw[f"{prefix}_filename"] or "")
         if not filename or Path(filename).name != filename:
             raise OperatorError("MANIFEST_INVALID", f"{prefix}_filename is invalid")
-        if Path(urlparse(raw[f"{prefix}_final_url"]).path).name != filename:
-            raise OperatorError(
-                "MANIFEST_INVALID", f"{prefix}_filename differs from final URL"
-            )
+        for coordinate in ("requested", "final"):
+            field = f"{prefix}_{coordinate}_url"
+            raw[field] = _download_url(raw[field], field, filename)
         size = raw[f"{prefix}_size"]
         if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
             raise OperatorError("MANIFEST_INVALID", f"{prefix}_size must be positive")
@@ -305,7 +447,7 @@ def load_cohort(path: str | Path) -> tuple[tuple[str, ...], str]:
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise OperatorError("COHORT_INVALID", f"cannot read cohort: {error}") from error
+        raise OperatorError("COHORT_INVALID", "cohort could not be read") from error
     values = raw.get("inns") if isinstance(raw, dict) else raw
     if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
         raise OperatorError("COHORT_INVALID", "cohort must be a JSON list or {\"inns\": [...]} object")
@@ -318,7 +460,7 @@ def load_cohort(path: str | Path) -> tuple[tuple[str, ...], str]:
     try:
         config.validate()
     except Exception as error:
-        raise OperatorError("COHORT_INVALID", str(error)) from error
+        raise OperatorError("COHORT_INVALID", "cohort validation failed") from error
     ordered = tuple(sorted(normalized))
     canonical = ("\n".join(ordered) + "\n").encode("ascii")
     return ordered, sha256(canonical).hexdigest()
@@ -377,7 +519,7 @@ def _release_from_package(package: Mapping[str, Any]) -> TaxDebtOfficialRelease:
     try:
         validate_tax_debt_release(release)
     except Exception as error:
-        raise OperatorError("MANIFEST_INVALID", str(error)) from error
+        raise OperatorError("MANIFEST_INVALID", "source release metadata is invalid") from error
     return release
 
 
@@ -394,7 +536,9 @@ def discover_exact_release(
             previous=frozen,
         )
     except Exception as error:
-        raise OperatorError("SOURCE_PACKAGE_CHANGED", f"official rediscovery failed: {error}") from error
+        raise OperatorError(
+            "SOURCE_PACKAGE_CHANGED", "S02 official rediscovery failed"
+        ) from error
     release = discovery.release
     expected = (
         frozen.discovery_page_url,
@@ -432,7 +576,9 @@ def verify_local_files(
         try:
             digest, size = calculate_sha256(path)
         except Exception as error:
-            raise OperatorError("CHECKSUM_MISMATCH", f"cannot hash {kind}: {error}") from error
+            raise OperatorError(
+                "CHECKSUM_MISMATCH", f"{kind} bytes could not be verified"
+            ) from error
         if digest != package[f"{kind}_sha256"] or size != package[f"{kind}_size"]:
             raise OperatorError(
                 "CHECKSUM_MISMATCH",
@@ -495,6 +641,48 @@ def require_durable_approval(session: Session) -> WorkerHandlerRegistration:
     return approval
 
 
+def _dataset_metadata_snapshot(dataset: DataSet) -> dict[str, Any]:
+    return {
+        field: _json_safe(getattr(dataset, field))
+        for field in (
+            "last_attempt_at",
+            "last_success_at",
+            "last_data_date",
+            "source_as_of",
+            "retrieved_at",
+            "checked_at",
+            "published_at",
+            "record_count",
+            "coverage",
+            "operational_status",
+            "last_error",
+            "last_error_at",
+            "retry_count",
+            "next_retry_at",
+            "next_expected_update_at",
+            "auto_update_status",
+        )
+    }
+
+
+def _worker_run_counters(run: WorkerRun) -> dict[str, int]:
+    return {
+        "records_seen": run.records_seen,
+        "records_written": run.records_written,
+        "records_rejected": run.records_rejected,
+        "records_duplicated": run.records_duplicated,
+        "records_published": run.records_published,
+    }
+
+
+def _usable_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _mapping_dict(value: Any) -> dict[str, Any] | None:
+    return dict(value) if isinstance(value, Mapping) else None
+
+
 def database_readiness(
     session: Session, *, cohort: tuple[str, ...]
 ) -> dict[str, Any]:
@@ -513,6 +701,15 @@ def database_readiness(
         "company_tax_debt_snapshots",
     }
     missing_tables = sorted(required_tables - table_names)
+    if missing_tables:
+        raise OperatorError(
+            "BASELINE_NOT_READY",
+            "required S02 tables are missing",
+            details={
+                "failed_checks": ["required_tables"],
+                "missing_table_count": len(missing_tables),
+            },
+        )
     companies = session.scalars(select(Company).where(Company.inn.in_(cohort))).all()
     by_inn = {company.inn: company for company in companies}
     missing_companies = sorted(set(cohort) - by_inn.keys())
@@ -531,14 +728,28 @@ def database_readiness(
     dataset = session.scalar(select(DataSet).where(DataSet.code == DATASET_CODE))
     pointer = session.get(WorkerPublicationState, SOURCE_ID)
     pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
-    baseline_row = None
+    baseline_row: FnsTaxDebtPublicationGeneration | None = None
+    run: WorkerRun | None = None
+    job: WorkerJob | None = None
+    artifact: FnsTaxDebtRawArtifact | None = None
     raw_count = 0
     fact_count = 0
+    pointer_metadata = (
+        dict(pointer.validation_metadata)
+        if pointer is not None and isinstance(pointer.validation_metadata, Mapping)
+        else {}
+    )
+    validation = (
+        dict(pointer_metadata.get("validation"))
+        if isinstance(pointer_metadata.get("validation"), Mapping)
+        else {}
+    )
+    raw_pointer = validation.get("raw_pointer")
+    checksum = pointer_metadata.get("checksum")
     if dataset is not None:
         baseline_row = session.scalar(
             select(FnsTaxDebtPublicationGeneration).where(
                 FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
-                FnsTaxDebtPublicationGeneration.publication_scope == "baseline",
                 FnsTaxDebtPublicationGeneration.generation == 0,
             )
         )
@@ -559,8 +770,22 @@ def database_readiness(
             )
             or 0
         )
+        if isinstance(raw_pointer, str) and raw_pointer:
+            artifact = session.scalar(
+                select(FnsTaxDebtRawArtifact).where(
+                    FnsTaxDebtRawArtifact.dataset_id == dataset.id,
+                    FnsTaxDebtRawArtifact.artifact_reference == raw_pointer,
+                )
+            )
+    if pointer is not None and pointer.published_by_run_id is not None:
+        run = session.get(WorkerRun, pointer.published_by_run_id)
+    if run is not None:
+        job = session.get(WorkerJob, run.job_id)
+
     baseline_actual_until = None
-    if dataset is not None:
+    coverage: dict[str, Any] = {}
+    if dataset is not None and isinstance(dataset.coverage, Mapping):
+        coverage = dict(dataset.coverage)
         raw_actual_until = dict(dataset.coverage or {}).get("official_actual_until")
         try:
             baseline_actual_until = (
@@ -568,38 +793,187 @@ def database_readiness(
             )
         except ValueError:
             baseline_actual_until = None
-    baseline_ready = bool(
-        not missing_tables
+
+    failed: list[str] = []
+
+    def require(condition: Any, name: str) -> None:
+        if not condition:
+            failed.append(name)
+
+    require(dataset is not None, "dataset_missing")
+    if dataset is not None:
+        require(dataset.code == DATASET_CODE, "dataset_code")
+        require(dataset.operational_status == "ready", "dataset_status")
+        require(dataset.source_as_of is not None, "dataset_source_as_of")
+        require(dataset.retrieved_at is not None, "dataset_retrieved_at")
+        require(dataset.last_data_date is not None, "dataset_last_data_date")
+        require(dataset.published_at is not None, "dataset_published_at")
+        require(_usable_count(dataset.record_count), "dataset_record_count")
+        require(bool(coverage), "dataset_coverage")
+        require(baseline_actual_until is not None, "dataset_official_actual_until")
+        if dataset.source_as_of is not None and dataset.retrieved_at is not None:
+            require(dataset.source_as_of <= dataset.retrieved_at, "dataset_time_order")
+        if dataset.last_data_date is not None and baseline_actual_until is not None:
+            require(
+                dataset.last_data_date <= baseline_actual_until,
+                "dataset_actual_until_order",
+            )
+
+    require(pointer is not None, "publication_state_missing")
+    if pointer is not None:
+        require(pointer.source_id == SOURCE_ID, "publication_source")
+        require(bool(pointer.active_pointer), "publication_active_pointer")
+        require(
+            pointer.published_by_run_id is not None,
+            "publication_published_by_run",
+        )
+        require(
+            _usable_count(pointer.generation) and pointer.generation > 0,
+            "publication_generation",
+        )
+        require(bool(pointer_metadata), "publication_validation_metadata")
+        require(
+            isinstance(raw_pointer, str) and bool(raw_pointer),
+            "publication_raw_pointer",
+        )
+        require(
+            isinstance(checksum, str) and CHECKSUM_RE.fullmatch(checksum) is not None,
+            "publication_checksum",
+        )
+
+    require(run is not None, "publication_run_missing")
+    if run is not None:
+        require(run.status == "succeeded", "publication_run_status")
+        require(run.finished_at is not None, "publication_run_finished_at")
+        require(
+            all(_usable_count(value) for value in _worker_run_counters(run).values()),
+            "publication_run_counters",
+        )
+    require(job is not None, "publication_job_missing")
+    if job is not None and run is not None:
+        require(job.source_id == SOURCE_ID, "publication_job_source")
+        require(
+            job.job_type in {"fns_tax_debt_fixture", "fns_tax_debt_controlled_live"},
+            "publication_job_type",
+        )
+        require(job.handler_version == run.handler_version, "publication_job_handler")
+        require(job.status == "succeeded", "publication_job_status")
+
+    require(artifact is not None, "raw_artifact_missing")
+    if artifact is not None and dataset is not None and run is not None:
+        require(artifact.dataset_id == dataset.id, "raw_artifact_dataset")
+        require(artifact.artifact_reference == raw_pointer, "raw_artifact_pointer")
+        require(artifact.sha256 == checksum, "raw_artifact_checksum")
+        require(artifact.first_worker_run_id == run.id, "raw_artifact_run")
+        require(
+            artifact.source_as_of == dataset.source_as_of,
+            "raw_artifact_source_as_of",
+        )
+        require(
+            artifact.retrieved_at == dataset.retrieved_at,
+            "raw_artifact_retrieved_at",
+        )
+
+    require(baseline_row is not None, "baseline_generation_missing")
+    if (
+        baseline_row is not None
         and dataset is not None
-        and dataset.operational_status == "ready"
-        and dataset.source_as_of is not None
-        and dataset.retrieved_at is not None
-        and dataset.last_data_date is not None
-        and baseline_actual_until is not None
         and pointer is not None
-        and pointer.active_pointer
-        and raw_count > 0
-        and fact_count > 0
-    )
-    if not baseline_ready:
+        and run is not None
+        and artifact is not None
+    ):
+        require(baseline_row.generation == 0, "baseline_generation")
+        require(baseline_row.publication_scope == "baseline", "baseline_scope")
+        require(baseline_row.status == "baseline", "baseline_status")
+        require(baseline_row.dataset_id == dataset.id, "baseline_dataset")
+        require(baseline_row.artifact_id == artifact.id, "baseline_artifact")
+        require(baseline_row.worker_run_id == run.id, "baseline_run")
+        require(
+            baseline_row.staging_pointer == pointer.active_pointer,
+            "baseline_staging_pointer",
+        )
+        require(
+            baseline_row.raw_pointer == artifact.artifact_reference,
+            "baseline_raw_pointer",
+        )
+        require(baseline_row.checksum == artifact.sha256, "baseline_checksum")
+        require(
+            baseline_row.source_as_of == dataset.source_as_of,
+            "baseline_source_as_of",
+        )
+        require(
+            baseline_row.retrieved_at == dataset.retrieved_at,
+            "baseline_retrieved_at",
+        )
+        require(
+            baseline_row.last_data_date == dataset.last_data_date,
+            "baseline_last_data_date",
+        )
+        require(
+            baseline_row.official_actual_until == baseline_actual_until,
+            "baseline_official_actual_until",
+        )
+        require(
+            baseline_row.record_count == dataset.record_count,
+            "baseline_record_count",
+        )
+        require(_mapping_dict(baseline_row.coverage) == coverage, "baseline_coverage")
+        require(
+            _mapping_dict(baseline_row.counters) == _worker_run_counters(run),
+            "baseline_counters",
+        )
+        require(
+            _mapping_dict(baseline_row.validation_metadata) == validation,
+            "baseline_validation_metadata",
+        )
+        require(
+            _mapping_dict(baseline_row.dataset_metadata)
+            == _dataset_metadata_snapshot(dataset),
+            "baseline_dataset_metadata",
+        )
+        require(baseline_row.published_at == dataset.published_at, "baseline_published_at")
+
+    if pilot is not None and dataset is not None and artifact is not None:
+        require(pilot.dataset_id == dataset.id, "pilot_dataset")
+        require(pilot.generation == 0, "pilot_generation")
+        require(pilot.baseline_generation == 0, "pilot_baseline_generation")
+        require(pilot.normalized_generation == 0, "pilot_normalized_generation")
+        require(pilot.fact_generation == 0, "pilot_fact_generation")
+        require(pilot.query_generation == 0, "pilot_query_generation")
+        require(
+            pilot.active_raw_pointer in {None, artifact.artifact_reference},
+            "pilot_raw_pointer",
+        )
+        require(pilot.active_checksum in {None, artifact.sha256}, "pilot_checksum")
+        require(
+            pilot.active_source_as_of in {None, dataset.source_as_of},
+            "pilot_source_as_of",
+        )
+        require(
+            pilot.active_retrieved_at in {None, dataset.retrieved_at},
+            "pilot_retrieved_at",
+        )
+        require(
+            pilot.baseline_data_date in {None, dataset.last_data_date},
+            "pilot_data_date",
+        )
+
+    if failed:
         raise OperatorError(
             "BASELINE_NOT_READY",
-            "S02 baseline/publication/source-table readiness is incomplete",
+            "exact S02 baseline chain could not be proven",
             details={
-                "missing_tables": missing_tables,
-                "dataset_ready": bool(dataset and dataset.operational_status == "ready"),
-                "worker_publication_ready": bool(pointer and pointer.active_pointer),
+                "failed_checks": sorted(set(failed)),
                 "raw_artifact_count": raw_count,
                 "baseline_fact_count": fact_count,
-                "baseline_official_actual_until": baseline_actual_until,
             },
         )
     return {
         "dataset_id": dataset.id,
-        "baseline_generation": baseline_row.generation if baseline_row else 0,
+        "baseline_generation": baseline_row.generation,
         "worker_generation": pointer.generation,
-        "pilot_generation": pilot.generation if pilot else 0,
-        "baseline_metadata_captured": baseline_row is not None,
+        "pilot_generation": pilot.generation if pilot else None,
+        "baseline_metadata_captured": True,
     }
 
 
@@ -1010,7 +1384,9 @@ def command_rollback(args: argparse.Namespace, factory) -> dict[str, Any]:
                     session, expected_generation=args.expected_generation, now=_utc_now()
                 )
             except Exception as error:
-                raise OperatorError("ROLLBACK_NOT_AVAILABLE", str(error)) from error
+                raise OperatorError(
+                    "ROLLBACK_NOT_AVAILABLE", "S02 rollback operation failed"
+                ) from error
             session.commit()
         except Exception:
             session.rollback()
@@ -1027,7 +1403,9 @@ def command_evidence(args: argparse.Namespace, factory) -> dict[str, Any]:
                     session, args.company_id, calculated_at=_utc_now()
                 )
             except Exception as error:
-                raise OperatorError("EVIDENCE_NOT_AVAILABLE", str(error)) from error
+                raise OperatorError(
+                    "EVIDENCE_NOT_AVAILABLE", "S02 evidence calculation failed"
+                ) from error
             fact_data = _json_safe(fact)
             risk_data = _json_safe(risk)
             summary_data = _json_safe(summary)
@@ -1157,19 +1535,19 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "status": "BLOCKED",
                 "error": error.code,
-                "message": str(error),
-                "details": error.details,
+                "message": error.public_message,
+                "details": error.public_details(),
                 "blockers": [error.code],
             }
         )
         return EXIT_CODES.get(error.code, EXIT_CODES["OPERATOR_ERROR"])
-    except Exception as error:
+    except Exception:
         emit_json(
             {
                 "status": "BLOCKED",
                 "error": "OPERATOR_ERROR",
                 "message": "unexpected operator failure",
-                "details": {"exception_type": error.__class__.__name__},
+                "details": {},
                 "blockers": ["OPERATOR_ERROR"],
             }
         )
