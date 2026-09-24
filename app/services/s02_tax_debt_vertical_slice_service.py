@@ -141,6 +141,34 @@ def _quarantine_legal_entity_inn(payload: Mapping[str, Any]) -> str | None:
     return next(iter(valid)) if len(valid) == 1 and values == valid else None
 
 
+def _pilot_generation_coordinates_match(
+    session: Session,
+    *,
+    pilot: FnsTaxDebtPilotState,
+    generation: FnsTaxDebtPublicationGeneration,
+) -> bool:
+    pointer = session.get(WorkerPublicationState, SOURCE_ID)
+    if pointer is None:
+        return False
+    pointer_metadata = dict(pointer.validation_metadata or {})
+    pointer_validation = dict(pointer_metadata.get("validation") or {})
+    return bool(
+        pilot.query_generation == generation.generation
+        and pilot.fact_generation == generation.generation
+        and pilot.normalized_generation == generation.generation
+        and pilot.active_data_date == generation.last_data_date
+        and pilot.active_raw_pointer == generation.raw_pointer
+        and pilot.active_checksum == generation.checksum
+        and pilot.active_source_as_of == generation.source_as_of
+        and pilot.active_retrieved_at == generation.retrieved_at
+        and pointer.active_pointer == generation.staging_pointer
+        and pointer.published_by_run_id == generation.worker_run_id
+        and pointer_metadata.get("checksum") == generation.checksum
+        and pointer_validation.get("raw_pointer") == generation.raw_pointer
+        and pointer.generation == pilot.generation
+    )
+
+
 def _selected_negative_closure_publication(
     session: Session,
     *,
@@ -169,6 +197,14 @@ def _selected_negative_closure_publication(
         )
     )
     if generation is not None:
+        if pilot_selected:
+            assert pilot is not None
+            if not _pilot_generation_coordinates_match(
+                session,
+                pilot=pilot,
+                generation=generation,
+            ):
+                return None, "pilot_generation_coordinates_mismatch"
         expected_scope = "pilot" if pilot_selected and generation.generation != 0 else "baseline"
         allowed_statuses = {"active"} if pilot_selected else {"baseline", "active"}
         if (
@@ -434,17 +470,26 @@ def _negative_closure_decision(
             False, "publication_processing_incomplete", generation_ref
         )
 
-    target_conflict = session.scalar(
-        select(func.count(FnsTaxDebtNormalizedRecord.id)).where(
-            FnsTaxDebtNormalizedRecord.dataset_id == dataset.id,
-            FnsTaxDebtNormalizedRecord.artifact_id == selected.artifact_id,
-            FnsTaxDebtNormalizedRecord.inn == inn,
-            FnsTaxDebtNormalizedRecord.match_state == "conflict",
+    target_match_states = set(
+        session.scalars(
+            select(FnsTaxDebtNormalizedRecord.match_state).where(
+                FnsTaxDebtNormalizedRecord.dataset_id == dataset.id,
+                FnsTaxDebtNormalizedRecord.artifact_id == selected.artifact_id,
+                FnsTaxDebtNormalizedRecord.inn == inn,
+            )
         )
     )
-    if target_conflict:
+    if "conflict" in target_match_states:
         return _NegativeClosureDecision(
             False, "target_identity_conflict", generation_ref
+        )
+    if "unmatched" in target_match_states:
+        return _NegativeClosureDecision(
+            False, "target_identity_unmatched", generation_ref
+        )
+    if "matched" in target_match_states:
+        return _NegativeClosureDecision(
+            False, "publication_processing_incomplete", generation_ref
         )
 
     quarantines = session.scalars(

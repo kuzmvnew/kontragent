@@ -516,16 +516,18 @@ def _seed_baseline(
     mode: str = "negative",
     quarantine_inn: str | None = None,
 ):
-    company = Company(
-        inn=TARGET_INN,
-        name="DEV-012 target",
-        entity_type="legal",
-        source="dev012_correction_test",
-    )
-    session.add(company)
-    session.flush()
-    matched = int(mode in {"positive", "zero"})
-    unmatched = int(mode == "negative")
+    company = None
+    if mode != "target_unmatched_late":
+        company = Company(
+            inn=TARGET_INN,
+            name="DEV-012 target",
+            entity_type="legal",
+            source="dev012_correction_test",
+        )
+        session.add(company)
+        session.flush()
+    matched = int(mode in {"positive", "zero", "matched_missing"})
+    unmatched = int(mode in {"negative", "target_unmatched", "target_unmatched_late"})
     conflicts = int(mode == "conflict")
     quarantined = int(mode == "quarantine")
     coverage = _coverage(
@@ -547,6 +549,16 @@ def _seed_baseline(
             match_state="unmatched",
             suffix=1,
         )
+    elif mode in {"target_unmatched", "target_unmatched_late"}:
+        _add_normalized(
+            session,
+            dataset,
+            artifact,
+            inn=TARGET_INN,
+            match_state="unmatched",
+            amount=Decimal("999.00"),
+            suffix=5,
+        )
     elif mode == "conflict":
         _add_normalized(
             session,
@@ -565,6 +577,7 @@ def _seed_baseline(
             suffix=3,
         )
     elif mode in {"positive", "zero"}:
+        assert company is not None
         amount = Decimal("125.00") if mode == "positive" else Decimal("0")
         record = _add_normalized(
             session,
@@ -577,6 +590,27 @@ def _seed_baseline(
             suffix=4,
         )
         _add_snapshot(session, dataset, record, company, amount=amount)
+    elif mode == "matched_missing":
+        assert company is not None
+        _add_normalized(
+            session,
+            dataset,
+            artifact,
+            inn=TARGET_INN,
+            match_state="matched",
+            company_id=company.id,
+            amount=Decimal("999.00"),
+            suffix=6,
+        )
+    if company is None:
+        company = Company(
+            inn=TARGET_INN,
+            name="DEV-012 target created after publication",
+            entity_type="legal",
+            source="dev012_correction_test",
+        )
+        session.add(company)
+        session.flush()
     validation = {
         "coverage": coverage,
         "fact_code": "tax.debt.amount_as_of_date",
@@ -601,6 +635,7 @@ def _seed_baseline(
     }
     pointer.updated_at = RETRIEVED_AT
     session.flush()
+    assert company is not None
     return company, dataset, artifact, run
 
 
@@ -610,11 +645,10 @@ def _tax_check(risk):
     )
 
 
-def _assert_unresolved(result, *, reason: str):
+def _assert_fail_closed(result):
     fact, risk, summary, projection = result
     check = _tax_check(risk)
-    assert fact.state == S02FactState.SOURCE_UNAVAILABLE
-    assert fact.freshness.reason == reason
+    assert fact.state in {S02FactState.SOURCE_UNAVAILABLE, S02FactState.STALE_DATA}
     assert check.observation == Observation.UNKNOWN
     assert check.negative_closure_proven is False
     assert any(item.blocks_positive_conclusion for item in check.limitations)
@@ -622,9 +656,20 @@ def _assert_unresolved(result, *, reason: str):
     assert projection.coverage.resolution_state == ResolutionState.UNRESOLVED
     assert all(item.factor_code != "TAX_DEBT_PRESENT" for item in risk.factors)
     assert summary.overall_conclusion.result == OverallRiskResult.INCOMPLETE_NO_POSITIVE_CONCLUSION
+    assert summary.overall_conclusion.positive_conclusion_allowed is False
     rendered = str(projection.model_dump(mode="json"))
     assert "file:///private/internal" not in rendered
     assert "internal-worker-run" not in rendered
+    assert "data.xml" not in rendered
+    assert "record_hash" not in rendered
+    assert "artifact_sha256" not in rendered
+
+
+def _assert_unresolved(result, *, reason: str):
+    fact = result[0]
+    assert fact.state == S02FactState.SOURCE_UNAVAILABLE
+    assert fact.freshness.reason == reason
+    _assert_fail_closed(result)
 
 
 def test_persisted_complete_publication_proves_negative_closure(s02_db):
@@ -639,6 +684,36 @@ def test_persisted_complete_publication_proves_negative_closure(s02_db):
     assert check.observation == Observation.NOT_FOUND
     assert check.negative_closure_proven is True
     assert projection.coverage.negative_closure_proven is True
+
+
+def test_persisted_target_unmatched_fails_closed(s02_db):
+    company, _, _, _ = _seed_baseline(s02_db, mode="target_unmatched")
+
+    result = calculate_s02_vertical_slice_from_persisted(
+        s02_db, company.id, calculated_at=NOW
+    )
+
+    _assert_unresolved(result, reason="target_identity_unmatched")
+
+
+def test_company_created_after_unmatched_publication_is_not_not_found(s02_db):
+    company, _, _, _ = _seed_baseline(s02_db, mode="target_unmatched_late")
+
+    result = calculate_s02_vertical_slice_from_persisted(
+        s02_db, company.id, calculated_at=NOW
+    )
+
+    _assert_unresolved(result, reason="target_identity_unmatched")
+
+
+def test_persisted_target_matched_without_snapshot_fails_closed(s02_db):
+    company, _, _, _ = _seed_baseline(s02_db, mode="matched_missing")
+
+    result = calculate_s02_vertical_slice_from_persisted(
+        s02_db, company.id, calculated_at=NOW
+    )
+
+    _assert_unresolved(result, reason="publication_processing_incomplete")
 
 
 def test_persisted_target_quarantine_fails_closed(s02_db):
@@ -805,6 +880,34 @@ def test_old_artifact_quarantine_and_conflict_do_not_contaminate_active_generati
     assert projection.coverage.negative_closure_proven is True
 
 
+def test_old_target_unmatched_does_not_contaminate_active_generation(s02_db):
+    company, dataset, _, _ = _seed_baseline(s02_db)
+    old_coverage = _coverage(unmatched=1)
+    old_run = _add_worker_run(
+        s02_db, _counters(old_coverage), suffix="old-unmatched"
+    )
+    old_artifact = _add_artifact(
+        s02_db, dataset, old_run, suffix=uuid4().int % 10**12
+    )
+    _add_normalized(
+        s02_db,
+        dataset,
+        old_artifact,
+        inn=TARGET_INN,
+        match_state="unmatched",
+        amount=Decimal("999.00"),
+        suffix=22,
+    )
+
+    fact, risk, _, projection = calculate_s02_vertical_slice_from_persisted(
+        s02_db, company.id, calculated_at=NOW
+    )
+
+    assert fact.state == S02FactState.NOT_FOUND
+    assert _tax_check(risk).negative_closure_proven is True
+    assert projection.coverage.negative_closure_proven is True
+
+
 def _generation_validation(coverage, artifact, generation):
     return {
         "coverage": coverage,
@@ -863,7 +966,7 @@ def _add_generation(
     return row
 
 
-def test_pilot_and_baseline_negative_closure_evidence_are_isolated(s02_db):
+def _seed_consistent_pilot(s02_db):
     cohort_company, dataset, baseline_artifact, baseline_run = _seed_baseline(
         s02_db, mode="quarantine", quarantine_inn=TARGET_INN
     )
@@ -876,7 +979,7 @@ def test_pilot_and_baseline_negative_closure_evidence_are_isolated(s02_db):
     s02_db.add(outside_company)
     s02_db.flush()
     baseline_coverage = dict(dataset.coverage)
-    _add_generation(
+    baseline_generation = _add_generation(
         s02_db,
         dataset,
         baseline_artifact,
@@ -897,7 +1000,7 @@ def test_pilot_and_baseline_negative_closure_evidence_are_isolated(s02_db):
     _add_quarantine(
         s02_db, dataset, pilot_artifact, inn=OTHER_INN, suffix=30
     )
-    _add_generation(
+    pilot_generation = _add_generation(
         s02_db,
         dataset,
         pilot_artifact,
@@ -933,14 +1036,138 @@ def test_pilot_and_baseline_negative_closure_evidence_are_isolated(s02_db):
     s02_db.add(pilot)
     s02_db.flush()
 
+    pointer = s02_db.get(WorkerPublicationState, SOURCE_ID)
+    pointer.active_pointer = pilot_generation.staging_pointer
+    pointer.rollback_pointer = baseline_generation.staging_pointer
+    pointer.generation = pilot.generation
+    pointer.published_by_run_id = pilot_run.id
+    pointer.validation_metadata = {
+        "checksum": pilot_artifact.sha256,
+        "validation": pilot_generation.validation_metadata,
+        "staging": {"replayable": True, "source_id": SOURCE_ID},
+    }
+    pointer.updated_at = RETRIEVED_AT
+    s02_db.flush()
+    return {
+        "cohort_company": cohort_company,
+        "outside_company": outside_company,
+        "dataset": dataset,
+        "baseline_generation": baseline_generation,
+        "baseline_run": baseline_run,
+        "pilot_generation": pilot_generation,
+        "pilot_run": pilot_run,
+        "pilot_artifact": pilot_artifact,
+        "pilot": pilot,
+        "pointer": pointer,
+    }
+
+
+def test_pilot_and_baseline_negative_closure_evidence_are_isolated(s02_db):
+    seeded = _seed_consistent_pilot(s02_db)
+
     cohort_result = calculate_s02_vertical_slice_from_persisted(
-        s02_db, cohort_company.id, calculated_at=NOW
+        s02_db, seeded["cohort_company"].id, calculated_at=NOW
     )
     outside_result = calculate_s02_vertical_slice_from_persisted(
-        s02_db, outside_company.id, calculated_at=NOW
+        s02_db, seeded["outside_company"].id, calculated_at=NOW
     )
 
     assert cohort_result[0].state == S02FactState.NOT_FOUND
     assert _tax_check(cohort_result[1]).negative_closure_proven is True
     assert outside_result[0].state == S02FactState.NOT_FOUND
     assert _tax_check(outside_result[1]).negative_closure_proven is True
+
+
+@pytest.mark.parametrize(
+    "coordinate",
+    (
+        "worker_active_pointer",
+        "worker_published_run",
+        "worker_validation_checksum",
+        "worker_validation_raw_pointer",
+        "pilot_active_raw_pointer",
+        "pilot_active_checksum",
+        "pilot_active_source_as_of",
+        "pilot_active_retrieved_at",
+        "pilot_active_data_date",
+        "pilot_normalized_generation",
+        "pilot_fact_generation",
+        "pilot_query_generation",
+        "pilot_worker_state_generation",
+    ),
+)
+def test_pilot_generation_coordinate_corruption_fails_closed(s02_db, coordinate):
+    seeded = _seed_consistent_pilot(s02_db)
+    pilot = seeded["pilot"]
+    pointer = seeded["pointer"]
+
+    if coordinate == "worker_active_pointer":
+        pointer.active_pointer = "file:///private/internal/wrong-staging.json"
+    elif coordinate == "worker_published_run":
+        pointer.published_by_run_id = seeded["baseline_run"].id
+    elif coordinate == "worker_validation_checksum":
+        pointer.validation_metadata = {
+            **pointer.validation_metadata,
+            "checksum": "f" * 64,
+        }
+    elif coordinate == "worker_validation_raw_pointer":
+        pointer.validation_metadata = {
+            **pointer.validation_metadata,
+            "validation": {
+                **pointer.validation_metadata["validation"],
+                "raw_pointer": "file:///private/internal/wrong-raw.zip",
+            },
+        }
+    elif coordinate == "pilot_active_raw_pointer":
+        pilot.active_raw_pointer = "file:///private/internal/wrong-raw.zip"
+    elif coordinate == "pilot_active_checksum":
+        pilot.active_checksum = "f" * 64
+    elif coordinate == "pilot_active_source_as_of":
+        pilot.active_source_as_of = datetime(2026, 9, 19, 8, tzinfo=timezone.utc)
+    elif coordinate == "pilot_active_retrieved_at":
+        pilot.active_retrieved_at = datetime(2026, 9, 19, 9, tzinfo=timezone.utc)
+    elif coordinate == "pilot_active_data_date":
+        pilot.active_data_date = date(2026, 8, 1)
+    elif coordinate == "pilot_normalized_generation":
+        pilot.normalized_generation = 0
+    elif coordinate == "pilot_fact_generation":
+        pilot.fact_generation = 0
+    elif coordinate == "pilot_query_generation":
+        pilot.query_generation = 0
+    elif coordinate == "pilot_worker_state_generation":
+        pilot.generation += 1
+    else:
+        raise AssertionError(f"unsupported coordinate: {coordinate}")
+    s02_db.flush()
+
+    result = calculate_s02_vertical_slice_from_persisted(
+        s02_db, seeded["cohort_company"].id, calculated_at=NOW
+    )
+
+    _assert_unresolved(result, reason="pilot_generation_coordinates_mismatch")
+
+
+def test_active_pilot_pointer_is_not_applied_to_outside_baseline(s02_db):
+    seeded = _seed_consistent_pilot(s02_db)
+    seeded["pointer"].active_pointer = "file:///private/internal/wrong-staging.json"
+    s02_db.flush()
+
+    fact, risk, _, projection = calculate_s02_vertical_slice_from_persisted(
+        s02_db, seeded["outside_company"].id, calculated_at=NOW
+    )
+
+    assert fact.state == S02FactState.NOT_FOUND
+    assert _tax_check(risk).negative_closure_proven is True
+    assert projection.coverage.negative_closure_proven is True
+
+
+def test_missing_required_pilot_generation_ledger_never_proves_not_found(s02_db):
+    seeded = _seed_consistent_pilot(s02_db)
+    s02_db.delete(seeded["pilot_generation"])
+    s02_db.flush()
+
+    result = calculate_s02_vertical_slice_from_persisted(
+        s02_db, seeded["cohort_company"].id, calculated_at=NOW
+    )
+
+    _assert_fail_closed(result)
