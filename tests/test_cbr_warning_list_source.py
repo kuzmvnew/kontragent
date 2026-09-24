@@ -176,6 +176,8 @@ def test_ip_is_checked_against_current_snapshot(monkeypatch):
     dataset = SimpleNamespace(
         id=10,
         last_data_date=snapshot_date,
+        operational_status="current",
+        official_actual_until=date.today(),
     )
 
     session = FakeSession(

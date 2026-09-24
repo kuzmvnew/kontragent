@@ -7,6 +7,7 @@ from app.database.postgres import get_session
 from app.models.cbr_warning_list import CbrWarningListEntry
 from app.models.source import DataSet
 from app.services.check_result import build_check_result
+from app.services.data_readiness_service import clean_negative_blocker
 
 
 DATASET_CODE = "cbr_warning_list"
@@ -150,6 +151,19 @@ def get_cbr_warning_list_check_for_inn(
                 dataset_code=DATASET_CODE,
                 source=SOURCE_CODE,
                 reason="dataset_not_loaded",
+                **_empty_payload(),
+            )
+
+        freshness_blocker = clean_negative_blocker(dataset)
+        if freshness_blocker is not None:
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=data_date,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason=freshness_blocker,
                 **_empty_payload(),
             )
 

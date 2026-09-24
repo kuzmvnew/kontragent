@@ -50,6 +50,19 @@ def _enqueue_revenue_expense() -> object:
         return creation
 
 
+def _enqueue_cbr_warning() -> object:
+    from app.ingestion.cbr_warning_worker import schedule_cbr_warning_check
+
+    with SessionLocal() as session:
+        creation = schedule_cbr_warning_check(session, raw_root=_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(
+                f"CBR Warning List job is terminal: {creation.job.id}"
+            )
+        return creation
+
+
 def _enqueue_tax_payment() -> object:
     from app.ingestion.fns_tax_payment import schedule_fns_tax_payment_check
 
@@ -77,10 +90,19 @@ def _enqueue_tax_debt() -> object:
 HANDLERS: dict[str, UpdateHandler] = {
     "fns_tax_offence": _enqueue_tax_offence,
     "fns_revenue_expenses": _enqueue_revenue_expense,
+    "cbr_warning_list": _enqueue_cbr_warning,
     "fns_tax_paid": _enqueue_tax_payment,
     "fns_tax_debt": _enqueue_tax_debt,
 }
-FNS_BULK_DATASET_CODES = frozenset(HANDLERS)
+FNS_BULK_DATASET_CODES = frozenset(
+    {
+        "fns_tax_offence",
+        "fns_revenue_expenses",
+        "fns_tax_debt",
+        "fns_tax_paid",
+    }
+)
+SCHEDULED_SOURCE_DATASET_CODES = frozenset(HANDLERS)
 
 
 def register_handler(dataset_code: str, handler: UpdateHandler) -> None:
@@ -118,6 +140,56 @@ def configure_fns_bulk_schedules(
         missing = set(requested) - found
         if missing:
             raise ValueError("datasets are not registered: " + ", ".join(sorted(missing)))
+        for dataset in datasets:
+            dataset.enabled = enabled
+            dataset.auto_update_status = (
+                AutoUpdateStatus.CONFIGURED
+                if enabled
+                else AutoUpdateStatus.NOT_CONFIGURED
+            )
+            dataset.next_expected_update_at = now if enabled else None
+            if not enabled and dataset.last_success_at is None:
+                dataset.operational_status = OperationalStatus.NOT_CONFIGURED
+        session.commit()
+
+
+def configure_source_schedules(
+    *,
+    enabled: bool,
+    dataset_codes: Iterable[str],
+    now: datetime | None = None,
+) -> None:
+    """Enable or disable explicitly supported source schedules."""
+
+    requested = tuple(dict.fromkeys(dataset_codes))
+    unknown = set(requested) - SCHEDULED_SOURCE_DATASET_CODES
+    if unknown:
+        raise ValueError(
+            "unsupported scheduled datasets: " + ", ".join(sorted(unknown))
+        )
+    fns = tuple(code for code in requested if code in FNS_BULK_DATASET_CODES)
+    if fns:
+        configure_fns_bulk_schedules(
+            enabled=enabled, dataset_codes=fns, now=now
+        )
+    non_fns = tuple(code for code in requested if code not in FNS_BULK_DATASET_CODES)
+    if not non_fns:
+        return
+    now = now or datetime.now(timezone.utc)
+    with SessionLocal() as session:
+        datasets = list(
+            session.scalars(
+                select(DataSet)
+                .where(DataSet.code.in_(non_fns))
+                .with_for_update()
+            )
+        )
+        found = {dataset.code for dataset in datasets}
+        missing = set(non_fns) - found
+        if missing:
+            raise ValueError(
+                "datasets are not registered: " + ", ".join(sorted(missing))
+            )
         for dataset in datasets:
             dataset.enabled = enabled
             dataset.auto_update_status = (
@@ -205,6 +277,7 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
         "fns_revenue_expenses": 1,
         "fns_tax_debt": 2,
         "fns_tax_paid": 3,
+        "cbr_warning_list": 4,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

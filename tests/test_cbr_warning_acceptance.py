@@ -77,7 +77,7 @@ class Session:
     (None, None, "dataset_not_registered"),
     (SimpleNamespace(id=1, enabled=False, last_data_date=date(2026, 9, 16)), None, "dataset_disabled"),
     (SimpleNamespace(id=1, enabled=True, last_data_date=None), None, "dataset_not_loaded"),
-    (SimpleNamespace(id=1, enabled=True, last_data_date=date(2026, 9, 16)), 0, "dataset_snapshot_missing"),
+    (SimpleNamespace(id=1, enabled=True, last_data_date=date(2026, 9, 16), operational_status="current", official_actual_until=date.today()), 0, "dataset_snapshot_missing"),
 ])
 def test_unavailable_is_not_a_negative_result(monkeypatch, dataset, count, reason):
     session = Session(dataset, count)
@@ -88,6 +88,25 @@ def test_unavailable_is_not_a_negative_result(monkeypatch, dataset, count, reaso
     assert check["checked"] is False
     assert check["is_listed"] is None
     assert session.closed
+
+
+def test_stale_snapshot_cannot_return_clean_negative(monkeypatch):
+    dataset = SimpleNamespace(
+        id=1,
+        enabled=True,
+        last_data_date=date(2026, 9, 16),
+        operational_status="current",
+        official_actual_until=date(2020, 1, 1),
+    )
+    session = Session(dataset)
+    monkeypatch.setattr(service, "get_session", lambda: session)
+
+    check = service.get_cbr_warning_list_check_for_inn("7701234567")
+
+    assert check["result"] == "unavailable"
+    assert check["checked"] is False
+    assert check["is_listed"] is None
+    assert check["reason"] == "dataset_stale"
 
 
 def test_database_connection_error_is_not_not_found(monkeypatch):
