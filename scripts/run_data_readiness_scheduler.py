@@ -5,6 +5,9 @@ import json
 
 from app.database.postgres import SessionLocal
 from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
+from app.ingestion.fns_tax_debt_pipeline import (
+    register_fns_tax_debt_controlled_live_handler,
+)
 from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
@@ -13,7 +16,7 @@ from app.services.data_readiness_scheduler import (
     sync_worker_failure_signals,
     worker_loop,
 )
-from app.worker.errors import WorkerFoundationError
+from app.worker.errors import HandlerNotRegisteredError, WorkerFoundationError
 from app.worker.execution import WorkerExecutor
 from app.worker.registry import HandlerRegistry
 
@@ -25,6 +28,11 @@ def build_registry() -> HandlerRegistry:
         # independent source ids, leases, jobs and publication generations.
         register_fns_tax_offence_worker(session, registry)
         register_fns_revenue_expense_worker(session, registry)
+        # S02 is registered only after its explicit durable cohort approval.
+        try:
+            register_fns_tax_debt_controlled_live_handler(session, registry)
+        except HandlerNotRegisteredError:
+            pass
         session.commit()
     return registry
 

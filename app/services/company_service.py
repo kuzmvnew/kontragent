@@ -9,7 +9,10 @@ from app.models.company import (
 from app.providers.dadata_provider import DadataCompanyProvider
 
 
-provider = DadataCompanyProvider()
+def _external_provider():
+    """Build the optional external adapter only after a local Master miss."""
+
+    return DadataCompanyProvider()
 
 
 def company_to_dict(company: Company):
@@ -252,7 +255,7 @@ def get_company_by_inn(inn: str):
         company["source"] = "database"
         return company
 
-    external_company = provider.get_company(
+    external_company = _external_provider().get_company(
         inn
     )
 
