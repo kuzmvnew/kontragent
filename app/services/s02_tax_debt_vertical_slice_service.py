@@ -7,11 +7,12 @@ Risk v3 input and projects the resulting existing Risk/Summary contracts.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.contracts.risk_v3 import (
@@ -45,7 +46,15 @@ from app.contracts.s02_tax_debt import (
 from app.contracts.summary_v3 import SummaryV3
 from app.models.company import Company
 from app.models.source import DataSet
-from app.models.tax_debt import CompanyTaxDebtSnapshot
+from app.models.tax_debt import (
+    CompanyTaxDebtSnapshot,
+    FnsTaxDebtNormalizedRecord,
+    FnsTaxDebtPilotState,
+    FnsTaxDebtPublicationGeneration,
+    FnsTaxDebtQuarantineRecord,
+    FnsTaxDebtRawArtifact,
+)
+from app.models.worker import WorkerPublicationState, WorkerRun
 from app.services.risk_engine_v3_service import calculate_risk_v3
 from app.services.summary_engine_v3_service import build_summary_v3
 from app.services.tax_debt_freshness import (
@@ -55,6 +64,7 @@ from app.services.tax_debt_freshness import (
 from app.sources.fns_tax_debt import (
     DATASET_CODE,
     OFFICIAL_SOURCE_PAGE,
+    PILOT_ENVIRONMENT,
     SOURCE_ID,
 )
 
@@ -66,6 +76,397 @@ DEFAULT_LIMITATIONS = (
     "legal_entities_only",
     "does_not_prove_bailiff_referral",
 )
+
+
+@dataclass(frozen=True)
+class _NegativeClosurePublication:
+    artifact_id: int
+    coverage: Mapping[str, Any]
+    counters: Mapping[str, Any]
+    record_count: int
+    validation_metadata: Mapping[str, Any]
+    operational_status: str | None
+    last_error: str | None
+    pilot_selected: bool
+
+
+@dataclass(frozen=True)
+class _NegativeClosureDecision:
+    eligible: bool
+    reason: str | None
+    evidence_ref: str
+
+
+_COVERAGE_COUNTERS = (
+    "source_records",
+    "cohort_records",
+    "normalized_records",
+    "quarantined_records",
+    "identical_duplicates",
+    "identity_conflicts",
+    "matched_records",
+    "unmatched_records",
+    "entity_conflicts",
+    "database_duplicates",
+    "projected_facts",
+)
+_WORKER_COUNTERS = (
+    "records_seen",
+    "records_written",
+    "records_rejected",
+    "records_duplicated",
+    "records_published",
+)
+
+
+def _non_negative_integer(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _quarantine_legal_entity_inn(payload: Mapping[str, Any]) -> str | None:
+    """Return an INN only when the persisted payload identifies it unambiguously."""
+
+    values: set[str] = set()
+    direct = payload.get("inn")
+    if direct is not None:
+        values.add(str(direct).strip())
+    taxpayer = payload.get("taxpayer")
+    if isinstance(taxpayer, Mapping):
+        for key in ("ИННЮЛ", "ИНН"):
+            if taxpayer.get(key) is not None:
+                values.add(str(taxpayer[key]).strip())
+    valid = {value for value in values if len(value) == 10 and value.isdigit()}
+    return next(iter(valid)) if len(valid) == 1 and values == valid else None
+
+
+def _selected_negative_closure_publication(
+    session: Session,
+    *,
+    dataset: DataSet,
+    publication,
+    inn: str,
+) -> tuple[_NegativeClosurePublication | None, str | None]:
+    """Resolve completeness metadata for exactly the generation being queried."""
+
+    pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+    pilot_active = bool(
+        pilot is not None
+        and pilot.enabled
+        and pilot.pilot_environment == PILOT_ENVIRONMENT
+        and pilot.dataset_id == dataset.id
+    )
+    pilot_selected = bool(
+        pilot_active
+        and inn in frozenset(str(value) for value in (pilot.cohort_inns or ()))
+    )
+    generation = session.scalar(
+        select(FnsTaxDebtPublicationGeneration).where(
+            FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+            FnsTaxDebtPublicationGeneration.generation
+            == publication.publication_generation,
+        )
+    )
+    if generation is not None:
+        expected_scope = "pilot" if pilot_selected and generation.generation != 0 else "baseline"
+        allowed_statuses = {"active"} if pilot_selected else {"baseline", "active"}
+        if (
+            generation.publication_scope != expected_scope
+            or generation.status not in allowed_statuses
+            or generation.last_data_date != publication.data_as_of
+            or generation.source_as_of != publication.source_as_of
+            or generation.retrieved_at != publication.retrieved_at
+        ):
+            return None, "publication_generation_metadata_mismatch"
+        artifact = session.get(FnsTaxDebtRawArtifact, generation.artifact_id)
+        if (
+            artifact is None
+            or artifact.dataset_id != dataset.id
+            or artifact.artifact_reference != generation.raw_pointer
+            or artifact.sha256 != generation.checksum
+            or artifact.source_as_of != generation.source_as_of
+            or artifact.retrieved_at != generation.retrieved_at
+        ):
+            return None, "publication_artifact_unavailable"
+        run = session.get(WorkerRun, generation.worker_run_id)
+        if run is None or run.status != "succeeded":
+            return None, "publication_artifact_unavailable"
+        metadata = dict(generation.dataset_metadata or {})
+        if pilot_selected and pilot is not None and list(pilot.errors or []):
+            return None, "publication_source_error"
+        metadata_status = str(metadata.get("operational_status") or "") or None
+        metadata_error = str(metadata.get("last_error") or "") or None
+        if metadata_status not in {"ready", "current"}:
+            return None, "publication_operational_state_invalid"
+        if metadata_error:
+            return None, "publication_source_error"
+        operational_status = (
+            metadata_status if pilot_selected else dataset.operational_status
+        )
+        last_error = (
+            metadata_error if pilot_selected else dataset.last_error
+        )
+        return (
+            _NegativeClosurePublication(
+                artifact_id=artifact.id,
+                coverage=dict(generation.coverage or {}),
+                counters=dict(generation.counters or {}),
+                record_count=generation.record_count,
+                validation_metadata=dict(generation.validation_metadata or {}),
+                operational_status=operational_status,
+                last_error=last_error,
+                pilot_selected=pilot_selected,
+            ),
+            None,
+        )
+
+    # A controlled-live selection always has an immutable generation ledger.
+    # Falling back to the shared baseline pointer here would mix scopes.
+    if pilot_active or publication.publication_generation != 0:
+        return None, "publication_generation_metadata_missing"
+
+    pointer = session.get(WorkerPublicationState, SOURCE_ID)
+    if (
+        pointer is None
+        or pointer.active_pointer is None
+        or pointer.published_by_run_id is None
+    ):
+        return None, "publication_generation_metadata_missing"
+    pointer_metadata = dict(pointer.validation_metadata or {})
+    validation = dict(pointer_metadata.get("validation") or {})
+    raw_pointer = str(validation.get("raw_pointer") or "")
+    checksum = str(pointer_metadata.get("checksum") or "")
+    if not raw_pointer or not checksum:
+        return None, "publication_artifact_unavailable"
+    artifact = session.scalar(
+        select(FnsTaxDebtRawArtifact).where(
+            FnsTaxDebtRawArtifact.dataset_id == dataset.id,
+            FnsTaxDebtRawArtifact.artifact_reference == raw_pointer,
+            FnsTaxDebtRawArtifact.sha256 == checksum,
+        )
+    )
+    run = session.get(WorkerRun, pointer.published_by_run_id)
+    if (
+        artifact is None
+        or artifact.source_as_of != publication.source_as_of
+        or artifact.retrieved_at != publication.retrieved_at
+        or run is None
+        or run.status != "succeeded"
+    ):
+        return None, "publication_artifact_unavailable"
+    counters = {name: getattr(run, name) for name in _WORKER_COUNTERS}
+    return (
+        _NegativeClosurePublication(
+            artifact_id=artifact.id,
+            coverage=dict(dataset.coverage or {}),
+            counters=counters,
+            record_count=dataset.record_count,
+            validation_metadata=validation,
+            operational_status=dataset.operational_status,
+            last_error=dataset.last_error,
+            pilot_selected=False,
+        ),
+        None,
+    )
+
+
+def _negative_closure_decision(
+    session: Session,
+    *,
+    dataset: DataSet,
+    publication,
+    inn: str,
+) -> _NegativeClosureDecision:
+    selected, reason = _selected_negative_closure_publication(
+        session,
+        dataset=dataset,
+        publication=publication,
+        inn=inn,
+    )
+    generation_ref = (
+        f"data_sets:{dataset.id}:generation:{publication.publication_generation}"
+    )
+    if selected is None:
+        return _NegativeClosureDecision(False, reason, generation_ref)
+
+    if selected.operational_status not in {"ready", "current"}:
+        return _NegativeClosureDecision(
+            False, "publication_operational_state_invalid", generation_ref
+        )
+    if selected.last_error:
+        return _NegativeClosureDecision(
+            False, "publication_source_error", generation_ref
+        )
+
+    coverage = {
+        name: _non_negative_integer(selected.coverage.get(name))
+        for name in _COVERAGE_COUNTERS
+    }
+    counters = {
+        name: _non_negative_integer(selected.counters.get(name))
+        for name in _WORKER_COUNTERS
+    }
+    if (
+        any(value is None for value in coverage.values())
+        or any(value is None for value in counters.values())
+        or _non_negative_integer(selected.record_count) is None
+    ):
+        return _NegativeClosureDecision(
+            False, "publication_processing_metadata_incomplete", generation_ref
+        )
+
+    validation_coverage = selected.validation_metadata.get("coverage")
+    validation_data_date = selected.validation_metadata.get("data_date")
+    validation_fact_generation = selected.validation_metadata.get("fact_generation")
+    validation_query_generation = selected.validation_metadata.get("query_generation")
+    if (
+        not isinstance(validation_coverage, Mapping)
+        or any(
+            validation_coverage.get(name) != selected.coverage.get(name)
+            for name in _COVERAGE_COUNTERS
+        )
+        or validation_data_date
+        != (publication.data_as_of.isoformat() if publication.data_as_of else None)
+        or validation_fact_generation != publication.publication_generation
+        or validation_query_generation != publication.publication_generation
+    ):
+        return _NegativeClosureDecision(
+            False, "publication_validation_metadata_mismatch", generation_ref
+        )
+
+    source_records = coverage["source_records"]
+    cohort_records = coverage["cohort_records"]
+    normalized_records = coverage["normalized_records"]
+    quarantined_records = coverage["quarantined_records"]
+    identical_duplicates = coverage["identical_duplicates"]
+    identity_conflicts = coverage["identity_conflicts"]
+    matched_records = coverage["matched_records"]
+    unmatched_records = coverage["unmatched_records"]
+    entity_conflicts = coverage["entity_conflicts"]
+    database_duplicates = coverage["database_duplicates"]
+    projected_facts = coverage["projected_facts"]
+    assert all(
+        value is not None
+        for value in (
+            source_records,
+            cohort_records,
+            normalized_records,
+            quarantined_records,
+            identical_duplicates,
+            identity_conflicts,
+            matched_records,
+            unmatched_records,
+            entity_conflicts,
+            database_duplicates,
+            projected_facts,
+        )
+    )
+
+    actual_match_counts = dict(
+        session.execute(
+            select(
+                FnsTaxDebtNormalizedRecord.match_state,
+                func.count(FnsTaxDebtNormalizedRecord.id),
+            )
+            .where(
+                FnsTaxDebtNormalizedRecord.dataset_id == dataset.id,
+                FnsTaxDebtNormalizedRecord.artifact_id == selected.artifact_id,
+            )
+            .group_by(FnsTaxDebtNormalizedRecord.match_state)
+        ).all()
+    )
+    actual_normalized = sum(actual_match_counts.values())
+    actual_wrong_date = session.scalar(
+        select(func.count(FnsTaxDebtNormalizedRecord.id)).where(
+            FnsTaxDebtNormalizedRecord.dataset_id == dataset.id,
+            FnsTaxDebtNormalizedRecord.artifact_id == selected.artifact_id,
+            FnsTaxDebtNormalizedRecord.data_date != publication.data_as_of,
+        )
+    )
+    actual_quarantined = session.scalar(
+        select(func.count(FnsTaxDebtQuarantineRecord.id)).where(
+            FnsTaxDebtQuarantineRecord.dataset_id == dataset.id,
+            FnsTaxDebtQuarantineRecord.artifact_id == selected.artifact_id,
+        )
+    )
+    actual_projected = session.scalar(
+        select(func.count(CompanyTaxDebtSnapshot.id))
+        .join(
+            FnsTaxDebtNormalizedRecord,
+            CompanyTaxDebtSnapshot.normalized_record_id
+            == FnsTaxDebtNormalizedRecord.id,
+        )
+        .where(
+            CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+            CompanyTaxDebtSnapshot.data_date == publication.data_as_of,
+            CompanyTaxDebtSnapshot.publication_generation
+            == publication.publication_generation,
+            FnsTaxDebtNormalizedRecord.artifact_id == selected.artifact_id,
+        )
+    )
+    complete = (
+        source_records >= cohort_records
+        and (selected.pilot_selected or source_records == cohort_records)
+        and cohort_records
+        == normalized_records + quarantined_records + identical_duplicates
+        and normalized_records
+        == matched_records + unmatched_records + entity_conflicts
+        and projected_facts == matched_records
+        and identity_conflicts <= quarantined_records
+        and selected.record_count == normalized_records
+        and counters["records_seen"] == source_records
+        and counters["records_written"] == normalized_records
+        and counters["records_rejected"] == quarantined_records
+        and counters["records_duplicated"]
+        == identical_duplicates + database_duplicates
+        and counters["records_published"] == projected_facts
+        and actual_normalized == normalized_records
+        and actual_wrong_date == 0
+        and actual_quarantined == quarantined_records
+        and actual_match_counts.get("matched", 0) == matched_records
+        and actual_match_counts.get("unmatched", 0) == unmatched_records
+        and actual_match_counts.get("conflict", 0) == entity_conflicts
+        and actual_projected == projected_facts
+    )
+    if not complete:
+        return _NegativeClosureDecision(
+            False, "publication_processing_incomplete", generation_ref
+        )
+
+    target_conflict = session.scalar(
+        select(func.count(FnsTaxDebtNormalizedRecord.id)).where(
+            FnsTaxDebtNormalizedRecord.dataset_id == dataset.id,
+            FnsTaxDebtNormalizedRecord.artifact_id == selected.artifact_id,
+            FnsTaxDebtNormalizedRecord.inn == inn,
+            FnsTaxDebtNormalizedRecord.match_state == "conflict",
+        )
+    )
+    if target_conflict:
+        return _NegativeClosureDecision(
+            False, "target_identity_conflict", generation_ref
+        )
+
+    quarantines = session.scalars(
+        select(FnsTaxDebtQuarantineRecord).where(
+            FnsTaxDebtQuarantineRecord.dataset_id == dataset.id,
+            FnsTaxDebtQuarantineRecord.artifact_id == selected.artifact_id,
+        )
+    )
+    for quarantined in quarantines:
+        quarantined_inn = _quarantine_legal_entity_inn(
+            dict(quarantined.raw_payload or {})
+        )
+        if quarantined_inn is None:
+            return _NegativeClosureDecision(
+                False, "publication_quarantine_identity_ambiguous", generation_ref
+            )
+        if quarantined_inn == inn:
+            return _NegativeClosureDecision(
+                False, "target_in_quarantine", generation_ref
+            )
+
+    return _NegativeClosureDecision(True, None, generation_ref)
 
 
 def _timestamp(value: datetime | date | None) -> datetime | None:
@@ -260,6 +661,26 @@ def load_s02_tax_debt_fact(
         .limit(1)
     )
     if row is None:
+        negative_closure = _negative_closure_decision(
+            session,
+            dataset=dataset,
+            publication=publication,
+            inn=inn,
+        )
+        if not negative_closure.eligible:
+            reason = negative_closure.reason or "negative_closure_not_proven"
+            return build_s02_tax_debt_fact(
+                company_id=company.id,
+                state=S02FactState.SOURCE_UNAVAILABLE,
+                checked_at=captured_at,
+                evidence_refs=(negative_closure.evidence_ref,),
+                amount_as_of_date=publication.data_as_of,
+                source_as_of=publication.source_as_of,
+                retrieved_at=publication.retrieved_at,
+                official_actual_until=publication.official_actual_until,
+                freshness_reason=reason,
+                limitations=(reason, "negative_closure_not_proven"),
+            )
         return build_s02_tax_debt_fact(
             company_id=company.id,
             state=S02FactState.NOT_FOUND,
