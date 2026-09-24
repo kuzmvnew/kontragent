@@ -1,5 +1,5 @@
 import csv
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -401,6 +401,7 @@ def test_old_worker_failure_is_not_replayed_after_newer_success(monkeypatch):
         operational_status="current",
     )
     run = SimpleNamespace(
+        status="failed",
         finished_at=finished,
         errors=[{"message": "old failure"}],
     )
@@ -431,6 +432,117 @@ def test_old_worker_failure_is_not_replayed_after_newer_success(monkeypatch):
     assert scheduler.sync_worker_failure_signals() == 0
     assert dataset.last_error is None
     assert dataset.operational_status == "current"
+
+
+def test_newer_successful_check_suppresses_failure_without_moving_last_success(
+    monkeypatch,
+):
+    last_success = NOW - timedelta(days=30)
+    failed_at = NOW - timedelta(minutes=5)
+    checked_at = NOW
+    dataset = SimpleNamespace(
+        last_success_at=last_success,
+        last_error_at=None,
+        last_error=None,
+        retry_count=0,
+        next_retry_at=None,
+        operational_status="current",
+    )
+    failed_run = SimpleNamespace(
+        status="failed",
+        finished_at=failed_at,
+        errors=[{"message": "superseded check failure"}],
+    )
+    failed_job = SimpleNamespace(
+        source_id="fns_tax_paid", status="failed", next_attempt_at=None
+    )
+    successful_check = SimpleNamespace(status="succeeded", finished_at=checked_at)
+    successful_job = SimpleNamespace(source_id="fns_tax_paid")
+
+    class Result:
+        def all(self):
+            return [(successful_check, successful_job), (failed_run, failed_job)]
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, _statement):
+            return Result()
+
+        def scalar(self, _statement):
+            return dataset
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(scheduler, "SessionLocal", FakeSession)
+
+    assert scheduler.sync_worker_failure_signals() == 0
+    assert dataset.last_success_at == last_success
+    assert dataset.last_error is None
+    assert dataset.last_error_at is None
+    assert dataset.retry_count == 0
+    assert dataset.operational_status == "current"
+
+
+def test_latest_worker_failure_is_projected_after_older_success(monkeypatch):
+    last_success = NOW - timedelta(days=30)
+    succeeded_at = NOW - timedelta(minutes=10)
+    failed_at = NOW - timedelta(minutes=5)
+    dataset = SimpleNamespace(
+        last_success_at=last_success,
+        last_error_at=None,
+        last_error=None,
+        retry_count=0,
+        next_retry_at=None,
+        operational_status="current",
+    )
+    failed_run = SimpleNamespace(
+        status="failed",
+        finished_at=failed_at,
+        errors=[{"message": "latest check failure"}],
+    )
+    failed_job = SimpleNamespace(
+        source_id="fns_tax_paid",
+        status="retry_scheduled",
+        next_attempt_at=NOW + timedelta(minutes=15),
+    )
+    old_success = SimpleNamespace(status="succeeded", finished_at=succeeded_at)
+    successful_job = SimpleNamespace(source_id="fns_tax_paid")
+
+    class Result:
+        def all(self):
+            return [(failed_run, failed_job), (old_success, successful_job)]
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, _statement):
+            return Result()
+
+        def scalar(self, _statement):
+            return dataset
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(scheduler, "SessionLocal", FakeSession)
+
+    assert scheduler.sync_worker_failure_signals() == 1
+    assert dataset.last_success_at == last_success
+    assert dataset.last_error == "latest check failure"
+    assert dataset.last_error_at == failed_at
+    assert dataset.retry_count == 1
+    assert dataset.next_retry_at == failed_job.next_attempt_at
+    assert dataset.operational_status == "error"
 
 
 def test_sources_have_independent_release_idempotency_namespaces(monkeypatch, tmp_path):

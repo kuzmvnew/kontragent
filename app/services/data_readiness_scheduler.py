@@ -236,14 +236,25 @@ def sync_worker_failure_signals() -> int:
         rows = session.execute(
             select(WorkerRun, WorkerJob)
             .join(WorkerJob, WorkerRun.job_id == WorkerJob.id)
-            .where(WorkerRun.status.in_(("failed", "timed_out", "interrupted")))
-            .order_by(WorkerRun.finished_at.desc())
+            .where(
+                WorkerRun.status.in_(
+                    ("succeeded", "failed", "timed_out", "interrupted")
+                )
+            )
+            .order_by(
+                WorkerRun.finished_at.desc().nulls_last(),
+                WorkerRun.started_at.desc(),
+                WorkerRun.attempt_no.desc(),
+                WorkerRun.id.desc(),
+            )
         ).all()
         seen: set[str] = set()
         for run, job in rows:
             if job.source_id in seen:
                 continue
             seen.add(job.source_id)
+            if run.status == "succeeded":
+                continue
             dataset = session.scalar(
                 select(DataSet).where(DataSet.code == job.source_id).with_for_update()
             )
