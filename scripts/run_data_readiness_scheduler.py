@@ -3,18 +3,73 @@
 import argparse
 import json
 
-from app.services.data_readiness_scheduler import run_due_updates, worker_loop
+from app.database.postgres import SessionLocal
+from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
+from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
+from app.services.data_readiness_scheduler import (
+    configure_fns_bulk_schedules,
+    run_due_updates,
+    sync_worker_failure_signals,
+    worker_loop,
+)
+from app.worker.errors import WorkerFoundationError
+from app.worker.execution import WorkerExecutor
+from app.worker.registry import HandlerRegistry
+
+
+def build_registry() -> HandlerRegistry:
+    registry = HandlerRegistry()
+    with SessionLocal() as session:
+        # S04 is deliberately registered first, then S03.  They retain
+        # independent source ids, leases, jobs and publication generations.
+        register_fns_tax_offence_worker(session, registry)
+        register_fns_revenue_expense_worker(session, registry)
+        session.commit()
+    return registry
+
+
+def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
+    executor = WorkerExecutor(
+        session_factory=SessionLocal,
+        registry=registry,
+        worker_id="data-readiness-supervisor",
+    )
+    completed: list[str] = []
+    for _ in range(max_jobs):
+        try:
+            run_id = executor.run_once()
+        except WorkerFoundationError:
+            sync_worker_failure_signals()
+            continue
+        if run_id is None:
+            break
+        completed.append(str(run_id))
+    return completed
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loop", action="store_true", help="Run a supervised polling loop")
     parser.add_argument("--poll-seconds", type=int, default=60)
+    parser.add_argument("--max-jobs", type=int, default=2)
+    parser.add_argument(
+        "--activate-s03-s04",
+        action="store_true",
+        help="Explicitly enable S04/S03 official-release schedules before running",
+    )
     args = parser.parse_args()
+    registry = build_registry()
+    if args.activate_s03_s04:
+        configure_fns_bulk_schedules(enabled=True)
     if args.loop:
-        worker_loop(poll_seconds=args.poll_seconds)
+        worker_loop(
+            poll_seconds=args.poll_seconds,
+            after_poll=lambda: run_workers(registry, max_jobs=args.max_jobs),
+        )
     else:
-        print(json.dumps(run_due_updates(), ensure_ascii=False, indent=2))
+        scheduled = run_due_updates()
+        completed = run_workers(registry, max_jobs=args.max_jobs)
+        print(json.dumps({"scheduled": scheduled, "worker_run_ids": completed}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
