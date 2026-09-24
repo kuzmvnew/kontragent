@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 SOURCE_ID = "S02"
 DATASET_CODE = "fns_tax_debt"
 HANDLER_VERSION = "fns-tax-debt-v1"
+BASELINE_HANDLER_VERSION = "fns-tax-debt-baseline-v1"
 CONTROLLED_LIVE_HANDLER_VERSION = "fns-tax-debt-controlled-live-v1"
 PARSER_VERSION = "fns-debtam-xml-v1"
 NORMALIZATION_VERSION = "tax-debt-normalization-v1"
@@ -16,6 +17,7 @@ OFFICIAL_SOURCE_PAGE = "https://www.nalog.gov.ru/opendata/7707329152-debtam/"
 OFFICIAL_FILE_BASE = "https://file.nalog.ru/opendata/7707329152-debtam/"
 PILOT_ENVIRONMENT = "s02-controlled-live-pilot"
 PILOT_COHORT_LIMIT = 100
+BASELINE_COHORT_LIMIT = 40
 CONTROLLED_LIVE_PILOT_ENABLED = False
 MASS_INGESTION_ENABLED = False
 

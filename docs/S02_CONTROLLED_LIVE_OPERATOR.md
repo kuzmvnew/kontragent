@@ -99,6 +99,51 @@ must already resolve to exactly one Master Company row with
 
 ## Commands
 
+### 0. Prepare generation-0 baseline
+
+An empty operational S02 dataset must be initialized explicitly before Run A.
+This is a separate approval and execution path; it does not approve, enqueue,
+or change the semantics of the controlled-live pilot.
+
+First approve the exact official package and cohort (maximum 40 legal entities):
+
+```text
+python -m scripts.run_s02_controlled_live approve-baseline \
+  <preflight-inputs> \
+  --approved-by '<operator identity>' \
+  --approved-at 'YYYY-MM-DDTHH:MM:SS+00:00' \
+  --confirm-baseline-approval S02_BASELINE_APPROVE
+```
+
+Approval writes only the pinned durable handler registration. It creates no
+job and publishes no data. Then execute the one bounded Worker Foundation job:
+
+```text
+python -m scripts.run_s02_controlled_live prepare-baseline \
+  <preflight-inputs> \
+  --artifact-store /persistent/immutable/raw \
+  --worker-id <stable-operator-worker-id> \
+  --timeout-seconds 3600 \
+  --confirm-prepare-baseline S02_BASELINE_PREPARE
+```
+
+`prepare-baseline` live-rediscovers and verifies the frozen official release,
+requires 1–40 exact existing Master legal-entity INNs, proves the S02 dataset
+has no unledgered publication, guards the global runnable queue, and executes
+one real `fns_tax_debt_baseline` WorkerJob. The normal Worker transaction
+creates immutable RAW metadata, cohort-filtered normalization and facts,
+DataSet coordinates, WorkerPublicationState, a succeeded WorkerRun, and
+`FnsTaxDebtPublicationGeneration(generation=0, publication_scope=baseline)`.
+Facts outside the cohort are forbidden and verified as zero.
+
+The command is checksum/cohort-idempotent. Repeating it after success returns
+the existing job/run and never republishes. Official staging deliberately uses
+the same `controlled_live` byte manifest as Run A so the same release can be
+reused without changing content-addressed RAW. If that normalized record is
+already linked from generation 0, the later pilot snapshot keeps its nullable
+normalized FK empty while retaining complete source reference and provenance;
+the unique baseline provenance owner is not weakened.
+
 ### 1. Preflight (read-only)
 
 ```text
