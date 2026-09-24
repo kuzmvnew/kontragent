@@ -319,7 +319,10 @@ DEFAULT_DATASETS = [
         "refresh_schedule": "annual",
         "priority": 10,
         "enabled": False,
-        "source_url": None,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-revexp/"
+        ),
         "description": (
             "Сведения о доходах и расходах"
         ),
