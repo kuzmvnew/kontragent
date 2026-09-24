@@ -36,6 +36,7 @@ from app.sources.fns_tax_debt import (
     PILOT_ENVIRONMENT,
     SOURCE_ID,
 )
+from app.worker import execution as worker_execution
 from app.worker.execution import WorkerExecutor, create_job
 from app.worker.registry import HandlerRegistry
 from scripts import run_s02_controlled_live as operator
@@ -1151,6 +1152,7 @@ def test_disposable_postgres_operator_flow(
     company_id = _seed_baseline(committed_operator_db, tmp_path, source_files.inn)
     monkeypatch.setattr(operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient())
     monkeypatch.setattr(operator, "_utc_now", lambda: NOW)
+    monkeypatch.setattr(worker_execution, "utc_now", lambda: NOW)
     base = _preflight_args(source_files, tmp_path)
 
     preflight = operator.command_preflight(base, committed_operator_db)
