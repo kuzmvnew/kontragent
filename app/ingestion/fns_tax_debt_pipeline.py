@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
@@ -38,6 +38,7 @@ from app.models.worker import (
     WorkerRun,
 )
 from app.providers.fns_tax_debt_provider import (
+    FnsTaxDebtOfficialClient,
     TaxDebtDiscovery,
     TaxDebtOfficialRelease,
     validate_tax_debt_release,
@@ -1337,6 +1338,234 @@ def _assert_baseline_entries(
         )
 
 
+def _replay_missing_tax_debt_facts(
+    session,
+    *,
+    dataset: DataSet,
+    pilot: FnsTaxDebtPilotState,
+    claim: ClaimedExecution,
+    cohort: frozenset[str],
+) -> tuple[int, int, int, int]:
+    """Project only missing cohort facts from the accepted normalized snapshot."""
+
+    generation = session.scalar(
+        select(FnsTaxDebtPublicationGeneration)
+        .where(
+            FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+            FnsTaxDebtPublicationGeneration.generation == pilot.fact_generation,
+            FnsTaxDebtPublicationGeneration.status == "active",
+        )
+        .with_for_update()
+    )
+    if generation is None:
+        raise InvalidDataError("S02 active publication generation is unavailable")
+    artifact = session.get(FnsTaxDebtRawArtifact, generation.artifact_id)
+    if artifact is None or artifact.sha256 != pilot.active_checksum:
+        raise InvalidDataError("S02 active immutable RAW artifact changed")
+    staged = load_staged_normalization(
+        generation.staging_pointer,
+        expected_sha256=generation.checksum,
+    )
+    entries = tuple(_restore_entry(value) for value in staged["entries"])
+    outside = {entry["inn"] for entry in entries} - cohort
+    if outside:
+        raise LegalBlockError("S02 replay outside the approved cohort is prohibited")
+    candidates = _identity_candidates(session, {entry["inn"] for entry in entries})
+    matched = unmatched = conflicts = published = 0
+    for values in entries:
+        match = resolve_inn_match(values["inn"], candidates)
+        if match.state == "unmatched":
+            unmatched += 1
+            continue
+        if match.state == "conflict":
+            conflicts += 1
+            continue
+        matched += 1
+        existing = session.scalar(
+            select(CompanyTaxDebtSnapshot.id).where(
+                CompanyTaxDebtSnapshot.company_id == match.company_id,
+                CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                CompanyTaxDebtSnapshot.data_date == values["data_date"],
+                CompanyTaxDebtSnapshot.publication_generation
+                == generation.generation,
+            )
+        )
+        if existing is not None:
+            continue
+        normalized = session.scalar(
+            select(FnsTaxDebtNormalizedRecord).where(
+                FnsTaxDebtNormalizedRecord.artifact_id == artifact.id,
+                FnsTaxDebtNormalizedRecord.record_hash == values["record_hash"],
+            )
+        )
+        if normalized is None:
+            raise InvalidDataError("S02 accepted normalized replay row is unavailable")
+        normalized.company_id = match.company_id
+        normalized.match_state = match.state
+        normalized.match_method = match.method
+        provenance_owner = session.scalar(
+            select(CompanyTaxDebtSnapshot.id).where(
+                CompanyTaxDebtSnapshot.normalized_record_id == normalized.id
+            )
+        )
+        snapshot = CompanyTaxDebtSnapshot(
+            company_id=match.company_id,
+            dataset_id=dataset.id,
+            normalized_record_id=None if provenance_owner is not None else normalized.id,
+            data_date=values["data_date"],
+            publication_generation=generation.generation,
+            fact_code=TAX_DEBT_FACT_CODE,
+            document_date=values["document_date"],
+            source_document_id=values.get("source_document_id"),
+            total_arrears=values["total_arrears"],
+            total_penalties=values["total_penalties"],
+            total_fines=values["total_fines"],
+            total_debt=values["total_debt"],
+            item_count=len(values["items"]),
+            source_reference=(
+                f"{artifact.artifact_reference}#record={values['record_hash']}"
+            ),
+            provenance=build_fact_provenance(
+                values,
+                artifact=artifact,
+                run_id=claim.run_id,
+                match_method=match.method or "inn_exact",
+            ),
+            limitation_states=list(LIMITATION_STATES),
+            retrieved_at=artifact.retrieved_at,
+        )
+        session.add(snapshot)
+        session.flush()
+        for item in values["items"]:
+            session.add(
+                CompanyTaxDebtItem(
+                    snapshot_id=snapshot.id,
+                    tax_name=item["tax_name"],
+                    arrears=item["arrears"],
+                    penalties=item["penalties"],
+                    fines=item["fines"],
+                    total=item["total"],
+                )
+            )
+        published += 1
+    return len(entries), unmatched, conflicts, published
+
+
+def _publish_tax_debt_check(
+    session,
+    claim: ClaimedExecution,
+    result: HandlerResult,
+) -> HandlerResult:
+    """Persist a successful official passport check without republishing facts."""
+
+    if result.raw_artifacts or result.staging_result is not None:
+        raise InvalidDataError("S02 check-only result cannot publish RAW or staging")
+    metadata = claim.schedule_metadata
+    actual_until = _parse_date(metadata.get("official_actual_until"))
+    data_as_of = _parse_date(metadata.get("data_as_of"))
+    source_as_of = _parse_timestamp(metadata.get("source_as_of"), "source_as_of")
+    discovered_at = _parse_timestamp(metadata.get("discovered_at"), "discovered_at")
+    now = datetime.now(timezone.utc)
+    if actual_until is None or data_as_of is None:
+        raise InvalidDataError("S02 check-only release dates are invalid")
+    if release_freshness(actual_until, now=now) == "stale":
+        raise TaxDebtFreshnessError("S02 official release is stale")
+
+    cohort = frozenset(str(value) for value in metadata.get("cohort_inns") or ())
+    BaselinePreparationConfig(cohort_inns=cohort).validate()
+    dataset = session.scalar(
+        select(DataSet).where(DataSet.code == DATASET_CODE).with_for_update()
+    )
+    pilot = session.scalar(
+        select(FnsTaxDebtPilotState)
+        .where(FnsTaxDebtPilotState.source_id == SOURCE_ID)
+        .with_for_update()
+    )
+    pointer = session.scalar(
+        select(WorkerPublicationState)
+        .where(WorkerPublicationState.source_id == SOURCE_ID)
+        .with_for_update()
+    )
+    checksum = str(metadata.get("expected_sha256") or "")
+    xsd_checksum = str(metadata.get("expected_xsd_sha256") or "")
+    pointer_validation = dict(pointer.validation_metadata or {}) if pointer else {}
+    if (
+        dataset is None
+        or pilot is None
+        or pointer is None
+        or pilot.dataset_id != dataset.id
+        or not pilot.last_success_at
+        or pilot.fact_generation <= 0
+        or pilot.active_checksum != checksum
+        or pilot.discovered_checksum != checksum
+        or pointer_validation.get("checksum") != checksum
+        or frozenset(str(value) for value in pilot.cohort_inns or ()) != cohort
+        or pilot.active_source_as_of != source_as_of
+        or pilot.active_data_date != data_as_of
+        or metadata.get("artifact_url") != pilot.discovered_artifact_url
+        or metadata.get("xsd_url") != pilot.discovered_xsd_url
+    ):
+        raise LegalBlockError("S02 check-only active publication coordinates changed")
+
+    seen, unmatched, conflicts, published = _replay_missing_tax_debt_facts(
+        session,
+        dataset=dataset,
+        pilot=pilot,
+        claim=claim,
+        cohort=cohort,
+    )
+    dataset.checked_at = now
+    dataset.official_actual_until = actual_until
+    dataset.operational_status = "current"
+    dataset.next_expected_update_at = now + timedelta(days=1)
+    dataset.last_error = None
+    dataset.last_error_at = None
+    dataset.retry_count = 0
+    dataset.next_retry_at = None
+    coverage = dict(dataset.coverage or {})
+    coverage["last_check"] = {
+        "checked_at": now.isoformat(),
+        "worker_run_id": str(claim.run_id),
+        "same_release": True,
+        "downloaded": False,
+        "republished": False,
+        "new_facts": published,
+        "unmatched": unmatched,
+        "conflicts": conflicts,
+    }
+    dataset.coverage = coverage
+
+    pilot.last_discovery_at = discovered_at
+    pilot.discovered_artifact_url = str(metadata["artifact_url"])
+    pilot.discovered_xsd_url = str(metadata["xsd_url"])
+    pilot.discovered_source_as_of = source_as_of
+    pilot.discovered_checksum = checksum
+    pilot.official_actual_until = actual_until
+    pilot.freshness = "current"
+    pilot.errors = []
+    pilot.updated_at = now
+    return replace(
+        result,
+        checksum_metadata={
+            **dict(result.checksum_metadata),
+            "check_only": True,
+            "input_sha256": checksum,
+            "xsd_sha256": xsd_checksum,
+            "same_release": True,
+            "downloaded": False,
+            "republished": False,
+            "replayed": True,
+            "new_facts": published,
+        },
+        counters=ExecutionCounters(
+            records_seen=seen,
+            records_written=0,
+            records_rejected=conflicts,
+            records_published=published,
+        ),
+    )
+
+
 def publish_tax_debt_result(
     session,
     claim: ClaimedExecution,
@@ -1344,6 +1573,8 @@ def publish_tax_debt_result(
 ) -> HandlerResult:
     """Publish normalization and facts in the worker completion transaction."""
 
+    if claim.schedule_metadata.get("check_only"):
+        return _publish_tax_debt_check(session, claim, result)
     if len(result.raw_artifacts) != 1 or result.staging_result is None:
         raise InvalidDataError(
             "S02 handler result must contain one RAW and one staging result"
@@ -1736,6 +1967,20 @@ def fns_tax_debt_handler(context: HandlerContext) -> HandlerResult:
 
     context.ensure_active(now=datetime.now(timezone.utc))
     metadata = context.schedule_metadata
+    if metadata.get("check_only"):
+        actual_until = _parse_date(metadata.get("official_actual_until"))
+        if actual_until is None:
+            raise TaxDebtFreshnessError("S02 check official_actual_until is invalid")
+        if release_freshness(actual_until, now=datetime.now(timezone.utc)) == "stale":
+            raise TaxDebtFreshnessError("S02 official release is stale")
+        return HandlerResult(
+            checksum_metadata={
+                "check_only": True,
+                "input_sha256": str(metadata.get("expected_sha256") or ""),
+                "xsd_sha256": str(metadata.get("expected_xsd_sha256") or ""),
+            },
+            counters=ExecutionCounters(),
+        )
     required = ("source_path", "artifact_store", "source_as_of", "retrieved_at")
     missing = tuple(
         field for field in required if not str(metadata.get(field) or "").strip()
@@ -2174,6 +2419,188 @@ def enqueue_fns_tax_debt_controlled_live_job(
         },
         max_attempts=max_attempts,
         timeout_seconds=timeout_seconds,
+    )
+
+
+def enqueue_fns_tax_debt_check_job(
+    session,
+    *,
+    discovery: TaxDebtDiscovery,
+    config: ControlledLivePilotConfig,
+    expected_sha256: str,
+    expected_xsd_sha256: str,
+    scheduled_for: date,
+    max_attempts: int = 3,
+    timeout_seconds: int = 300,
+) -> JobCreation:
+    """Enqueue one durable passport check without downloading or republishing."""
+
+    config.validate()
+    BaselinePreparationConfig(cohort_inns=config.cohort_inns).validate()
+    validate_tax_debt_release(discovery.release)
+    if release_freshness(
+        discovery.release.official_actual_until,
+        now=discovery.discovered_at,
+    ) == "stale":
+        raise TaxDebtFreshnessError("S02 official release is stale")
+    if len(expected_sha256) != 64 or len(expected_xsd_sha256) != 64:
+        raise InvalidDataError("S02 check-only checksums must be SHA-256")
+    approval = session.get(
+        WorkerHandlerRegistration,
+        (SOURCE_ID, config.handler_version),
+    )
+    approval_metadata = dict(approval.metadata_json or {}) if approval else {}
+    if (
+        approval is None
+        or not approval.approved
+        or not approval.enabled
+        or approval.live_mode
+        or approval_metadata.get("mode") != "controlled_live"
+        or approval_metadata.get("pilot_environment") != config.environment
+        or approval_metadata.get("handler_version_pin") != config.handler_version
+    ):
+        raise HandlerNotRegisteredError(
+            "S02 check-only job requires explicit durable registry approval"
+        )
+    return create_job(
+        session,
+        source_id=SOURCE_ID,
+        job_type="fns_tax_debt_check",
+        handler_version=config.handler_version,
+        idempotency_key=(
+            f"{SOURCE_ID}:check:{scheduled_for.isoformat()}:"
+            f"{expected_sha256.lower()}:{config.handler_version}"
+        ),
+        schedule_metadata={
+            "check_only": True,
+            "expected_sha256": expected_sha256.lower(),
+            "expected_xsd_sha256": expected_xsd_sha256.lower(),
+            "pilot_enabled": True,
+            "pilot_environment": config.environment,
+            "cohort_inns": sorted(config.cohort_inns),
+            "discovery_page_url": discovery.release.discovery_page_url,
+            "artifact_url": discovery.release.artifact_url,
+            "xsd_url": discovery.release.xsd_url,
+            "source_as_of": discovery.release.source_as_of.isoformat(),
+            "data_as_of": discovery.release.data_as_of.isoformat(),
+            "official_actual_until": (
+                discovery.release.official_actual_until.isoformat()
+            ),
+            "discovered_at": discovery.discovered_at.isoformat(),
+            "check_frequency": "daily",
+            "publication_frequency": "official_release",
+        },
+        max_attempts=max_attempts,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def schedule_fns_tax_debt_check(
+    session,
+    *,
+    raw_root: str | Path,
+    now: datetime | None = None,
+    client: FnsTaxDebtOfficialClient | None = None,
+) -> JobCreation:
+    """Discover S02 and enqueue a check or bounded current-release publication."""
+
+    now = _aware_utc(now or datetime.now(timezone.utc), "now")
+    pilot = session.scalar(
+        select(FnsTaxDebtPilotState)
+        .where(FnsTaxDebtPilotState.source_id == SOURCE_ID)
+        .with_for_update()
+    )
+    if pilot is None or not pilot.enabled:
+        raise LegalBlockError("S02 pilot state is unavailable or disabled")
+    cohort = frozenset(str(value) for value in pilot.cohort_inns or ())
+    config = ControlledLivePilotConfig(
+        enabled=True,
+        environment=PILOT_ENVIRONMENT,
+        cohort_inns=cohort,
+        handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+    )
+    config.validate()
+    # Scheduled operation stays within the explicitly approved Run A scope.
+    BaselinePreparationConfig(cohort_inns=cohort).validate()
+    previous = None
+    if (
+        pilot.discovered_artifact_url
+        and pilot.discovered_xsd_url
+        and pilot.discovered_source_as_of
+        and pilot.active_data_date
+        and pilot.official_actual_until
+    ):
+        previous = TaxDebtOfficialRelease(
+            discovery_page_url=OFFICIAL_SOURCE_PAGE,
+            artifact_url=pilot.discovered_artifact_url,
+            xsd_url=pilot.discovered_xsd_url,
+            source_as_of=pilot.discovered_source_as_of,
+            data_as_of=pilot.active_data_date,
+            official_actual_until=pilot.official_actual_until,
+            metadata={},
+        )
+    official = client or FnsTaxDebtOfficialClient()
+    discovery = official.discover(discovered_at=now, previous=previous)
+    validate_tax_debt_release(discovery.release)
+    if release_freshness(
+        discovery.release.official_actual_until,
+        now=now,
+    ) == "stale":
+        raise TaxDebtFreshnessError("S02 official release is stale")
+
+    same_release = (
+        pilot.active_checksum
+        and pilot.active_source_as_of == discovery.release.source_as_of
+        and pilot.active_data_date == discovery.release.data_as_of
+        and pilot.discovered_artifact_url == discovery.release.artifact_url
+        and pilot.discovered_xsd_url == discovery.release.xsd_url
+    )
+    if same_release:
+        xsd_checksum = ""
+        active_raw = session.scalar(
+            select(FnsTaxDebtRawArtifact).where(
+                FnsTaxDebtRawArtifact.sha256 == pilot.active_checksum
+            )
+        )
+        if active_raw is not None:
+            xsd_checksum = str((active_raw.manifest or {}).get("xsd_sha256") or "")
+        if len(xsd_checksum) != 64:
+            raise InvalidDataError("S02 active XSD checksum is unavailable")
+        return enqueue_fns_tax_debt_check_job(
+            session,
+            discovery=discovery,
+            config=config,
+            expected_sha256=pilot.active_checksum,
+            expected_xsd_sha256=xsd_checksum,
+            scheduled_for=now.date(),
+        )
+
+    acquisition = Path(raw_root).resolve() / SOURCE_ID / "acquisition"
+    artifact_name = Path(urlparse(discovery.release.artifact_url).path).name
+    xsd_name = Path(urlparse(discovery.release.xsd_url).path).name
+    release_dir = acquisition / discovery.release.source_as_of.date().isoformat()
+    source_path = official.download_exact(
+        discovery.release.artifact_url,
+        release_dir / artifact_name,
+        kind="artifact",
+    )
+    xsd_path = official.download_exact(
+        discovery.release.xsd_url,
+        release_dir / xsd_name,
+        kind="xsd",
+    )
+    checksum, _ = calculate_sha256(source_path)
+    xsd_checksum, _ = calculate_sha256(xsd_path)
+    return enqueue_fns_tax_debt_controlled_live_job(
+        session,
+        source_path=source_path,
+        xsd_path=xsd_path,
+        artifact_store=Path(raw_root).resolve(),
+        discovery=discovery,
+        config=config,
+        retrieved_at=now,
+        expected_sha256=checksum,
+        expected_xsd_sha256=xsd_checksum,
     )
 
 
