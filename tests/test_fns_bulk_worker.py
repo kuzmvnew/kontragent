@@ -9,6 +9,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
 from app.database.postgres import engine
 from app.ingestion import fns_bulk_worker as bulk
 from app.ingestion import fns_revenue_expense as revexp
@@ -106,6 +107,53 @@ def test_scheduler_executes_s04_before_s03(monkeypatch):
 
     assert calls == ["S04", "S03"]
     assert result == {"fns_tax_offence": "success", "fns_revenue_expenses": "success"}
+
+
+def test_source_scoped_activation_enables_s04_without_enabling_s03(monkeypatch):
+    s04 = SimpleNamespace(
+        code="fns_tax_offence",
+        enabled=False,
+        auto_update_status=AutoUpdateStatus.NOT_CONFIGURED,
+        next_expected_update_at=None,
+        last_success_at=None,
+        operational_status=OperationalStatus.NOT_CONFIGURED,
+    )
+    s03 = SimpleNamespace(
+        code="fns_revenue_expenses",
+        enabled=False,
+        auto_update_status=AutoUpdateStatus.NOT_CONFIGURED,
+        next_expected_update_at=None,
+        last_success_at=None,
+        operational_status=OperationalStatus.NOT_CONFIGURED,
+    )
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def scalars(self, _statement):
+            return [s04]
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(scheduler, "SessionLocal", FakeSession)
+
+    scheduler.configure_fns_bulk_schedules(
+        enabled=True,
+        dataset_codes=["fns_tax_offence"],
+        now=NOW,
+    )
+
+    assert s04.enabled is True
+    assert s04.auto_update_status == AutoUpdateStatus.CONFIGURED
+    assert s04.next_expected_update_at == NOW
+    assert s03.enabled is False
+    assert s03.auto_update_status == AutoUpdateStatus.NOT_CONFIGURED
+    assert s03.next_expected_update_at is None
 
 
 def test_check_only_worker_records_run_without_downloading(monkeypatch):
