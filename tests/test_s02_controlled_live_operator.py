@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
+from app.database.base import Base
 from app.database.postgres import engine
 from app.ingestion import fns_tax_debt_pipeline as pipeline
 from app.models.company import Company
@@ -200,31 +201,35 @@ def operator_db():
         connection.close()
 
 
-def _truncate_application_tables() -> None:
-    names = [
-        name for name in sa.inspect(engine).get_table_names() if name != "alembic_version"
-    ]
-    if not names:
-        return
-    quoted = ", ".join(engine.dialect.identifier_preparer.quote(name) for name in names)
-    with engine.begin() as connection:
-        connection.execute(sa.text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
-
-
 @pytest.fixture
 def committed_operator_db():
     """Real transactions for the guard/claim snapshot integration test."""
 
-    _truncate_application_tables()
-    factory = sessionmaker(
-        bind=engine,
-        autoflush=False,
-        expire_on_commit=False,
+    schema = f"dev013_{uuid4().hex}"
+    quoted_schema = engine.dialect.identifier_preparer.quote(schema)
+    assert engine.url.database != "kontragent"
+    with engine.begin() as connection:
+        connection.execute(sa.text(f"CREATE SCHEMA {quoted_schema}"))
+    isolated_engine = sa.create_engine(engine.url, pool_pre_ping=True).execution_options(
+        schema_translate_map={None: schema},
     )
     try:
+        Base.metadata.create_all(isolated_engine)
+        with engine.begin() as connection:
+            sa.Sequence(
+                worker_execution.WORKER_FENCING_SEQUENCE.name,
+                schema=schema,
+            ).create(connection)
+        factory = sessionmaker(
+            bind=isolated_engine,
+            autoflush=False,
+            expire_on_commit=False,
+        )
         yield factory
     finally:
-        _truncate_application_tables()
+        isolated_engine.dispose()
+        with engine.begin() as connection:
+            connection.execute(sa.text(f"DROP SCHEMA {quoted_schema} CASCADE"))
 
 
 @pytest.fixture
