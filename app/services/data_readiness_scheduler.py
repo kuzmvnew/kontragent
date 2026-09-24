@@ -61,12 +61,24 @@ def _enqueue_tax_payment() -> object:
         return creation
 
 
+def _enqueue_tax_debt() -> object:
+    from app.ingestion.fns_tax_debt_pipeline import schedule_fns_tax_debt_check
+
+    with SessionLocal() as session:
+        creation = schedule_fns_tax_debt_check(session, raw_root=_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"S02 release job is terminal: {creation.job.id}")
+        return creation
+
+
 # Production handlers are explicit and non-empty.  They only discover and
 # enqueue into Worker Foundation; execution remains lease/fencing controlled.
 HANDLERS: dict[str, UpdateHandler] = {
     "fns_tax_offence": _enqueue_tax_offence,
     "fns_revenue_expenses": _enqueue_revenue_expense,
     "fns_tax_paid": _enqueue_tax_payment,
+    "fns_tax_debt": _enqueue_tax_debt,
 }
 FNS_BULK_DATASET_CODES = frozenset(HANDLERS)
 
@@ -81,7 +93,7 @@ def configure_fns_bulk_schedules(
     dataset_codes: Iterable[str] | None = None,
     now: datetime | None = None,
 ) -> None:
-    """Explicit, source-scoped gate for S04/S03 official-release checks."""
+    """Explicit, source-scoped gate for FNS official-release checks."""
 
     now = now or datetime.now(timezone.utc)
     requested = tuple(
@@ -191,7 +203,8 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
     priority = {
         "fns_tax_offence": 0,
         "fns_revenue_expenses": 1,
-        "fns_tax_paid": 2,
+        "fns_tax_debt": 2,
+        "fns_tax_paid": 3,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

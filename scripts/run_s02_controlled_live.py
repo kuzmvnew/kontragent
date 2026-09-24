@@ -86,6 +86,7 @@ APPROVE_TOKEN = "S02_CONTROLLED_LIVE_APPROVE"
 BASELINE_APPROVE_TOKEN = "S02_BASELINE_APPROVE"
 BASELINE_PREPARE_TOKEN = "S02_BASELINE_PREPARE"
 ENQUEUE_TOKEN = "S02_CONTROLLED_LIVE_ENQUEUE"
+RETRY_TOKEN = "S02_CONTROLLED_LIVE_RETRY"
 RUN_TOKEN = "S02_CONTROLLED_LIVE_RUN"
 ROLLBACK_TOKEN = "S02_CONTROLLED_LIVE_ROLLBACK"
 DEFAULT_TIMEOUT_SECONDS = 3600
@@ -1540,6 +1541,105 @@ def command_enqueue(args: argparse.Namespace, factory) -> dict[str, Any]:
             raise
 
 
+def command_retry_failed(args: argparse.Namespace, factory) -> dict[str, Any]:
+    """Explicitly requeue one exact failed Run A job after operator review."""
+
+    _require_token(args.confirm_retry, RETRY_TOKEN)
+    report, package, cohort, discovery = _critical_preflight(args, factory)
+    try:
+        job_id = UUID(args.job_id)
+    except ValueError as error:
+        raise OperatorError("JOB_MISMATCH", "job-id must be a UUID") from error
+
+    now = _utc_now()
+    with factory() as session:
+        try:
+            job = session.scalar(
+                select(WorkerJob).where(WorkerJob.id == job_id).with_for_update()
+            )
+            metadata = dict(job.schedule_metadata or {}) if job is not None else {}
+            expected_metadata = {
+                "source_path": str(Path(args.artifact).resolve()),
+                "xsd_path": str(Path(args.xsd).resolve()),
+                "expected_sha256": package["artifact_sha256"],
+                "expected_xsd_sha256": package["xsd_sha256"],
+                "mode": "controlled_live",
+                "pilot_enabled": True,
+                "pilot_environment": PILOT_ENVIRONMENT,
+                "cohort_inns": sorted(cohort),
+                "discovery_page_url": discovery.release.discovery_page_url,
+                "artifact_url": discovery.release.artifact_url,
+                "xsd_url": discovery.release.xsd_url,
+                "official_actual_until": (
+                    discovery.release.official_actual_until.isoformat()
+                ),
+                "data_as_of": discovery.release.data_as_of.isoformat(),
+                "source_as_of": discovery.release.source_as_of.isoformat(),
+            }
+            if (
+                job is None
+                or (
+                    job.source_id,
+                    job.job_type,
+                    job.handler_version,
+                    job.status,
+                )
+                != (
+                    SOURCE_ID,
+                    "fns_tax_debt_controlled_live",
+                    CONTROLLED_LIVE_HANDLER_VERSION,
+                    "failed",
+                )
+                or any(
+                    metadata.get(key) != value
+                    for key, value in expected_metadata.items()
+                )
+            ):
+                raise OperatorError(
+                    "JOB_MISMATCH",
+                    "failed job does not match the current approved S02 package and cohort",
+                )
+            previous_run = session.scalar(
+                select(WorkerRun)
+                .where(WorkerRun.job_id == job.id)
+                .order_by(WorkerRun.attempt_no.desc())
+                .limit(1)
+            )
+            if (
+                previous_run is None
+                or previous_run.status != "failed"
+                or previous_run.attempt_no >= job.max_attempts
+            ):
+                raise OperatorError(
+                    "JOB_MISMATCH",
+                    "failed job has no reviewed retry capacity",
+                )
+            require_durable_approval(session)
+            if session.scalar(_runnable_query(now).limit(1)) is not None:
+                raise OperatorError(
+                    "QUEUE_NOT_EXCLUSIVE",
+                    "another worker job is runnable before the reviewed retry",
+                )
+            job.status = "queued"
+            job.next_attempt_at = None
+            job.updated_at = now
+            session.flush()
+            queue_guard(session, expected_job_id=job.id, now=now)
+            session.commit()
+            return {
+                "status": "RETRY_QUEUED",
+                "job_id": job.id,
+                "previous_run_id": previous_run.id,
+                "previous_attempt_no": previous_run.attempt_no,
+                "next_attempt_no": previous_run.attempt_no + 1,
+                "cohort_sha256": report["cohort_sha256"],
+                "source_package_fingerprint": report["source_package_fingerprint"],
+            }
+        except Exception:
+            session.rollback()
+            raise
+
+
 class _ClaimClock:
     """Use the guard instant for claim eligibility, then resume real UTC time."""
 
@@ -2043,6 +2143,10 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     enqueue.add_argument("--retrieved-at", required=True)
     enqueue.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     enqueue.add_argument("--confirm-enqueue", required=True)
+    retry = sub.add_parser("retry-failed")
+    _add_preflight_inputs(retry)
+    retry.add_argument("--job-id", required=True)
+    retry.add_argument("--confirm-retry", required=True)
     run = sub.add_parser("run-once")
     _add_database(run)
     run.add_argument("--job-id", required=True)
@@ -2080,6 +2184,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Any], dict[str, Any]]] = {
     "approve-baseline": command_approve_baseline,
     "prepare-baseline": command_prepare_baseline,
     "enqueue": command_enqueue,
+    "retry-failed": command_retry_failed,
     "run-once": command_run_once,
     "status": command_status,
     "rollback": command_rollback,
