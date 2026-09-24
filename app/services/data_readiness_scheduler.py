@@ -56,26 +56,42 @@ HANDLERS: dict[str, UpdateHandler] = {
     "fns_tax_offence": _enqueue_tax_offence,
     "fns_revenue_expenses": _enqueue_revenue_expense,
 }
+FNS_BULK_DATASET_CODES = frozenset(HANDLERS)
 
 
 def register_handler(dataset_code: str, handler: UpdateHandler) -> None:
     HANDLERS[dataset_code] = handler
 
 
-def configure_fns_bulk_schedules(*, enabled: bool, now: datetime | None = None) -> None:
-    """Explicit operator gate for S04/S03 automatic official-release checks."""
+def configure_fns_bulk_schedules(
+    *,
+    enabled: bool,
+    dataset_codes: Iterable[str] | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Explicit, source-scoped gate for S04/S03 official-release checks."""
 
     now = now or datetime.now(timezone.utc)
+    requested = tuple(
+        dict.fromkeys(
+            FNS_BULK_DATASET_CODES if dataset_codes is None else dataset_codes
+        )
+    )
+    unknown = set(requested) - FNS_BULK_DATASET_CODES
+    if unknown:
+        raise ValueError("unsupported FNS bulk datasets: " + ", ".join(sorted(unknown)))
+    if not requested:
+        return
     with SessionLocal() as session:
         datasets = list(
             session.scalars(
                 select(DataSet).where(
-                    DataSet.code.in_(("fns_tax_offence", "fns_revenue_expenses"))
+                    DataSet.code.in_(requested)
                 ).with_for_update()
             )
         )
         found = {dataset.code for dataset in datasets}
-        missing = {"fns_tax_offence", "fns_revenue_expenses"} - found
+        missing = set(requested) - found
         if missing:
             raise ValueError("datasets are not registered: " + ", ".join(sorted(missing)))
         for dataset in datasets:
