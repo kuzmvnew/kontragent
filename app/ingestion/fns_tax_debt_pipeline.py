@@ -279,6 +279,49 @@ def _write_once(path: Path, payload: bytes) -> None:
             )
 
 
+def _write_or_reuse_raw_manifest(
+    path: Path,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Persist the first RAW observation and reuse it on exact-release replay.
+
+    ``retrieved_at`` is an observation coordinate rather than part of the
+    checksum-addressed source identity.  A later approved execution of the
+    same official bytes must keep the original immutable RAW manifest instead
+    of trying to rewrite that timestamp.  Every source, schema, cohort and
+    parser coordinate remains fail-closed.
+    """
+
+    payload = (_canonical_json(manifest) + "\n").encode("utf-8")
+    try:
+        with path.open("xb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return dict(manifest)
+    except FileExistsError:
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RawArtifactImmutabilityError(
+                f"immutable S02 RAW manifest cannot be read: {path}"
+            ) from error
+        requested_identity = {
+            key: value for key, value in manifest.items() if key != "retrieved_at"
+        }
+        existing_identity = {
+            key: value for key, value in existing.items() if key != "retrieved_at"
+        }
+        if (
+            requested_identity != existing_identity
+            or not str(existing.get("retrieved_at") or "").strip()
+        ):
+            raise RawArtifactImmutabilityError(
+                f"immutable artifact member differs: {path}"
+            )
+        return existing
+
+
 def stage_tax_debt_xsd(
     xsd_path: str | Path,
     *,
@@ -477,10 +520,7 @@ def stage_tax_debt_artifact(
                 raise RawArtifactImmutabilityError("S02 RAW copy verification failed")
 
         manifest_path = artifact_dir / "manifest.json"
-        _write_once(
-            manifest_path,
-            (_canonical_json(manifest) + "\n").encode("utf-8"),
-        )
+        manifest = _write_or_reuse_raw_manifest(manifest_path, manifest)
     except OSError as error:
         raise TemporaryInfrastructureError(
             f"cannot persist S02 RAW artifact: {error}"
