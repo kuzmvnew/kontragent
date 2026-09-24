@@ -253,12 +253,26 @@ def sync_worker_failure_signals() -> int:
             if job.source_id in seen:
                 continue
             seen.add(job.source_id)
-            if run.status == "succeeded":
-                continue
             dataset = session.scalar(
                 select(DataSet).where(DataSet.code == job.source_id).with_for_update()
             )
             if dataset is None or not run.finished_at:
+                continue
+            if run.status == "succeeded":
+                if dataset.last_error_at and dataset.last_error_at < run.finished_at:
+                    from app.ingestion.fns_bulk_worker import (
+                        release_operational_status,
+                    )
+
+                    dataset.last_error = None
+                    dataset.last_error_at = None
+                    dataset.retry_count = 0
+                    dataset.next_retry_at = None
+                    dataset.operational_status = release_operational_status(
+                        dataset.official_actual_until,
+                        now=datetime.now(timezone.utc),
+                    )
+                    changed += 1
                 continue
             if dataset.last_success_at and dataset.last_success_at >= run.finished_at:
                 continue
