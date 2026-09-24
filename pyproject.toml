@@ -7,6 +7,7 @@ dependencies = [
     "fastapi[standard]>=0.141.1",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
+    "lxml>=6.0.2",
     "openpyxl>=3.1.5",
     "pandas>=3.0.5",
     "psycopg[binary]>=3.3.5",

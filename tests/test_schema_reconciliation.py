@@ -183,6 +183,11 @@ def test_check_casts_are_significant_by_default(expected_sql, actual_sql):
         "code IN ('alpha', 'beta')",
         "(code = ANY (ARRAY['alpha'::text, 'beta'::text]))",
     ),
+    (
+        "fact_type IN ('website', 'phone')",
+        "((fact_type)::text = ANY (ARRAY['website'::character varying::text, "
+        "'phone'::character varying::text]))",
+    ),
     ("( AMOUNT >= 0 )", "amount>=0"),
 ))
 def test_known_postgresql_check_representations_are_equivalent(
@@ -207,6 +212,18 @@ def test_known_postgresql_check_representations_are_equivalent(
         *schemas,
     )
     assert not errors
+
+
+def test_dump_restored_varchar_any_rejects_non_text_second_cast():
+    expected = _schema_with_check(
+        "code IN ('alpha')", column_name="code", column_type="VARCHAR(20)"
+    )
+    actual = _schema_with_check(
+        "code::text = ANY (ARRAY['alpha'::character varying::integer])",
+        column_name="code", column_type="VARCHAR(20)",
+    )
+    errors, _ = compare_table_schema(expected, actual)
+    assert errors
 
 
 @pytest.mark.parametrize(("expected_sql", "actual_sql"), (

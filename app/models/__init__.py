@@ -48,6 +48,12 @@ from app.models.legal_event import (
 from app.models.msp import (
     CompanyMspProfile,
 )
+from app.models.mintrans_ted import (
+    MintransTedEntry,
+    MintransTedQuarantineRow,
+    MintransTedRawArtifact,
+    TransportForwardingRegistryListing,
+)
 from app.models.npd import (
     NpdStatusCheck,
 )
@@ -73,6 +79,11 @@ from app.models.stage15_checks import (
 from app.models.tax_debt import (
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
+    FnsTaxDebtNormalizedRecord,
+    FnsTaxDebtPilotState,
+    FnsTaxDebtPublicationGeneration,
+    FnsTaxDebtQuarantineRecord,
+    FnsTaxDebtRawArtifact,
 )
 from app.models.tax_offence import (
     CompanyTaxOffence,
@@ -83,6 +94,14 @@ from app.models.tax_regime import (
 from app.models.tax_payment import (
     CompanyTaxPaymentItem,
     CompanyTaxPaymentSnapshot,
+)
+from app.models.worker import (
+    WorkerHandlerRegistration,
+    WorkerJob,
+    WorkerLease,
+    WorkerPublicationState,
+    WorkerRawManifest,
+    WorkerRun,
 )
 
 
@@ -111,6 +130,11 @@ __all__ = [
     "CompanySourceData",
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
+    "FnsTaxDebtNormalizedRecord",
+    "FnsTaxDebtPilotState",
+    "FnsTaxDebtPublicationGeneration",
+    "FnsTaxDebtQuarantineRecord",
+    "FnsTaxDebtRawArtifact",
     "CompanyTaxOffence",
     "CompanyTaxRegimeSnapshot",
     "CompanyTaxPaymentItem",
@@ -123,6 +147,9 @@ __all__ = [
     "ErknmInspection",
     "FnsSmeSupportEntry",
     "IngestionRun",
+    "MintransTedEntry",
+    "MintransTedQuarantineRow",
+    "MintransTedRawArtifact",
     "NpdStatusCheck",
     "NoprizMemberCheck",
     "NostroyMemberCheck",
@@ -130,4 +157,11 @@ __all__ = [
     "RoskomnadzorPdOperatorCheck",
     "RoskomnadzorPrivatePersonRecord",
     "SroPersonRegistryRecord",
+    "TransportForwardingRegistryListing",
+    "WorkerHandlerRegistration",
+    "WorkerJob",
+    "WorkerLease",
+    "WorkerPublicationState",
+    "WorkerRawManifest",
+    "WorkerRun",
 ]

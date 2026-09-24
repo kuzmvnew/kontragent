@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -6,10 +7,18 @@ from app.database.postgres import get_session
 from app.models.company import Company
 from app.models.source import DataSet
 from app.models.tax_debt import (
+    TAX_DEBT_FACT_CODE,
     CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
 )
-
+from app.services.tax_debt_freshness import (
+    STALE_DATA,
+    TaxDebtFreshness,
+    TaxDebtPublicationContext,
+    evaluate_tax_debt_freshness,
+    resolve_tax_debt_publication,
+    utc_now,
+)
 
 # =========================================================
 # SETTINGS
@@ -23,6 +32,62 @@ SOURCE_CODE = "fns_tax_debt"
 ZERO = Decimal("0.00")
 
 
+def _publication_scope(session, *, dataset, inn):
+    """Resolve one company's data date/generation without widening pilot scope."""
+
+    context = resolve_tax_debt_publication(
+        session,
+        dataset=dataset,
+        inn=inn,
+    )
+    return context.data_as_of, context.publication_generation
+
+
+def _freshness_fields(
+    context: TaxDebtPublicationContext,
+    freshness: TaxDebtFreshness,
+    *,
+    state: str,
+) -> dict:
+    return {
+        "state": state,
+        "freshness": "fresh" if freshness.is_fresh else "stale",
+        "source_as_of": context.source_as_of,
+        "data_as_of": context.data_as_of,
+        "retrieved_at": context.retrieved_at,
+        "official_actual_until": context.official_actual_until,
+        "checked_at": freshness.checked_at,
+        "freshness_reason": freshness.reason,
+        "freshness_missing_fields": list(freshness.missing_fields),
+    }
+
+
+def _stale_debt_result(
+    context: TaxDebtPublicationContext,
+    freshness: TaxDebtFreshness,
+) -> dict:
+    """Keep the existing check contract while exposing authoritative stale state."""
+
+    result = _empty_debt_result(
+        checked=False,
+        applicable=True,
+        result="unavailable",
+        data_date=context.data_as_of,
+        reason=freshness.reason,
+    )
+    result["limitation_states"] = list(
+        dict.fromkeys(("stale_data", freshness.reason))
+    )
+    result.update(
+        _freshness_fields(
+            context,
+            freshness,
+            state=STALE_DATA,
+        )
+    )
+    return result
+
+
 # =========================================================
 # DATASET
 # =========================================================
@@ -31,6 +96,8 @@ ZERO = Decimal("0.00")
 def _get_dataset_data_date(
     session,
     dataset,
+    *,
+    publication_generation=0,
 ):
     """
     Определяет дату актуального загруженного
@@ -63,7 +130,9 @@ def _get_dataset_data_date(
             )
             .where(
                 CompanyTaxDebtSnapshot.dataset_id
-                == dataset.id
+                == dataset.id,
+                CompanyTaxDebtSnapshot.publication_generation
+                == publication_generation,
             )
         )
         .scalar_one_or_none()
@@ -108,6 +177,16 @@ def _empty_debt_result(
         "source": (
             SOURCE_CODE
         ),
+
+        "fact_code": TAX_DEBT_FACT_CODE,
+
+        "source_reference": None,
+
+        "provenance": {},
+
+        "limitation_states": [],
+
+        "retrieved_at": None,
 
         "reason": reason,
 
@@ -231,6 +310,34 @@ def _snapshot_to_result(
             SOURCE_CODE
         ),
 
+        "fact_code": getattr(
+            snapshot,
+            "fact_code",
+            TAX_DEBT_FACT_CODE,
+        ),
+
+        "source_reference": getattr(
+            snapshot,
+            "source_reference",
+            None,
+        ),
+
+        "provenance": dict(
+            getattr(snapshot, "provenance", None)
+            or {}
+        ),
+
+        "limitation_states": list(
+            getattr(snapshot, "limitation_states", None)
+            or []
+        ),
+
+        "retrieved_at": getattr(
+            snapshot,
+            "retrieved_at",
+            None,
+        ),
+
         "reason": None,
 
         # Важно:
@@ -313,6 +420,18 @@ def get_tax_debt_check_for_company(
     unavailable
         Проверку нельзя корректно
         выполнить.
+
+    Read-side state:
+
+    FOUND / NOT_FOUND
+        Возвращаются только для свежего и полностью
+        подтверждённого publication snapshot.
+
+    STALE_DATA
+        Истёкший, неполный или несогласованный snapshot.
+        Для обратной совместимости result остаётся
+        unavailable, поэтому публичный API-контракт
+        found/not_found/not_applicable/unavailable не меняется.
 
     ВАЖНО:
 
@@ -417,12 +536,23 @@ def get_tax_debt_check_for_company(
                 reason="dataset_not_registered",
             )
 
-        dataset_data_date = (
-            _get_dataset_data_date(
+        publication = resolve_tax_debt_publication(
+            session,
+            dataset=dataset,
+            inn=inn,
+        )
+        dataset_data_date = publication.data_as_of
+        publication_generation = publication.publication_generation
+        if dataset_data_date is None:
+            dataset_data_date = _get_dataset_data_date(
                 session=session,
                 dataset=dataset,
+                publication_generation=publication_generation,
             )
-        )
+            publication = replace(
+                publication,
+                data_as_of=dataset_data_date,
+            )
 
         if dataset_data_date is None:
 
@@ -432,6 +562,16 @@ def get_tax_debt_check_for_company(
                 result="unavailable",
                 data_date=None,
                 reason="dataset_not_loaded",
+            )
+
+        freshness = evaluate_tax_debt_freshness(
+            publication,
+            checked_at=utc_now(),
+        )
+        if not freshness.is_fresh:
+            return _stale_debt_result(
+                publication,
+                freshness,
             )
 
         # =================================================
@@ -450,6 +590,8 @@ def get_tax_debt_check_for_company(
                     == dataset.id,
                     CompanyTaxDebtSnapshot.data_date
                     == dataset_data_date,
+                    CompanyTaxDebtSnapshot.publication_generation
+                    == publication_generation,
                 )
                 .order_by(
                     CompanyTaxDebtSnapshot.id.desc()
@@ -465,13 +607,21 @@ def get_tax_debt_check_for_company(
 
         if snapshot is None:
 
-            return _empty_debt_result(
+            result = _empty_debt_result(
                 checked=True,
                 applicable=True,
                 result="not_found",
                 data_date=dataset_data_date,
                 reason=None,
             )
+            result.update(
+                _freshness_fields(
+                    publication,
+                    freshness,
+                    state="NOT_FOUND",
+                )
+            )
+            return result
 
         # =================================================
         # 6. FOUND
@@ -490,10 +640,18 @@ def get_tax_debt_check_for_company(
                 )
             )
 
-        return _snapshot_to_result(
+        result = _snapshot_to_result(
             snapshot=snapshot,
             items=items,
         )
+        result.update(
+            _freshness_fields(
+                publication,
+                freshness,
+                state="FOUND",
+            )
+        )
+        return result
 
     finally:
 
@@ -550,6 +708,24 @@ def get_latest_tax_debt_for_company(
     return result
 
 
+def prepare_tax_debt_public_projection(check: dict) -> dict:
+    """Prepare public-card input without changing routes, templates, or wording."""
+
+    return {
+        "fact_code": check.get("fact_code") or TAX_DEBT_FACT_CODE,
+        "result": check.get("result"),
+        "applicable": check.get("applicable"),
+        "has_debt": bool(check.get("has_debt")),
+        "amount": check.get("total_debt"),
+        "amount_as_of_date": check.get("data_date"),
+        "source": check.get("source") or SOURCE_CODE,
+        "source_reference": check.get("source_reference"),
+        "provenance": dict(check.get("provenance") or {}),
+        "limitation_states": list(check.get("limitation_states") or []),
+        "retrieved_at": check.get("retrieved_at"),
+    }
+
+
 # =========================================================
 # HISTORY
 # =========================================================
@@ -572,6 +748,18 @@ def get_tax_debt_history(
 
     try:
 
+        company = session.get(Company, company_id)
+        dataset = session.execute(
+            select(DataSet).where(DataSet.code == DATASET_CODE)
+        ).scalar_one_or_none()
+        if company is None or dataset is None:
+            return []
+        _, publication_generation = _publication_scope(
+            session,
+            dataset=dataset,
+            inn=str(company.inn or "").strip(),
+        )
+
         rows = (
             session.execute(
                 select(
@@ -579,7 +767,10 @@ def get_tax_debt_history(
                 )
                 .where(
                     CompanyTaxDebtSnapshot.company_id
-                    == company_id
+                    == company_id,
+                    CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                    CompanyTaxDebtSnapshot.publication_generation
+                    == publication_generation,
                 )
                 .order_by(
                     CompanyTaxDebtSnapshot.data_date.desc(),

@@ -1,16 +1,13 @@
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
 from app.aggregators.company_aggregator import check_used_source
-from app.services import tax_debt_service
-from app.services import tax_offence_service
-from app.services import tax_payment_service
+from app.services import tax_debt_service, tax_offence_service, tax_payment_service
 from app.services.check_result import build_check_result
-
 
 MISSING = object()
 DATA_DATE = date(2026, 8, 1)
@@ -168,6 +165,9 @@ def dataset_result(
                 if loaded
                 else None
             ),
+            source_as_of=datetime(2026, 8, 2, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            coverage={"official_actual_until": "2099-12-31"},
         )
     )
 
