@@ -276,6 +276,55 @@ def _write_once(path: Path, content: bytes) -> None:
         stream.write(content)
 
 
+def _write_or_reuse_manifest(
+    path: Path,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Persist the first immutable RAW observation and reuse it by identity.
+
+    ``discovered_at`` and ``retrieved_at`` describe when the already
+    checksum-addressed official bytes were first observed.  A capacity
+    pre-stage and the later durable worker job may discover the same release
+    at different times; the worker must retain the first observation instead
+    of attempting to relabel immutable RAW.  Every other release, source,
+    artifact, schema and HTTP integrity coordinate remains fail-closed.
+    """
+
+    payload = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
+    except FileExistsError:
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise InvalidDataError(
+                f"immutable RAW manifest cannot be read: {path}"
+            ) from error
+        observation_fields = frozenset({"discovered_at", "retrieved_at"})
+        requested_identity = {
+            key: value
+            for key, value in manifest.items()
+            if key not in observation_fields
+        }
+        existing_identity = {
+            key: value
+            for key, value in existing.items()
+            if key not in observation_fields
+        }
+        if (
+            requested_identity != existing_identity
+            or not str(existing.get("discovered_at") or "").strip()
+            or not str(existing.get("retrieved_at") or "").strip()
+        ):
+            raise InvalidDataError(f"immutable RAW manifest invariant differs: {path}")
+        return existing
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+    return dict(manifest)
+
+
 def _persist_download(temp: Path, target: Path, *, checksum: str) -> None:
     if target.exists():
         existing_checksum, _ = _hash_file(target)
@@ -371,8 +420,7 @@ def stage_release(
         "xsd_headers": {key.lower(): value for key, value in xsd_headers.items() if key.lower() in {"etag", "last-modified", "content-length", "x-amz-meta-sha256"}},
         "immutable": True,
     }
-    manifest_bytes = (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
-    _write_once(artifact_dir / "manifest.json", manifest_bytes)
+    manifest = _write_or_reuse_manifest(artifact_dir / "manifest.json", manifest)
     return zip_path, xsd_path, manifest
 
 

@@ -320,6 +320,76 @@ def test_immutable_manifest_is_retry_stable(monkeypatch, tmp_path):
     assert first[2]["xsd_reference"].startswith("file:")
 
 
+def test_paytax_capacity_prestage_is_reused_by_later_real_job(
+    monkeypatch, tmp_path
+):
+    spec = taxpayment._worker_spec()
+    capacity_release = _release(spec)
+    real_job_release = bulk.FnsRelease(
+        source_page_url=capacity_release.source_page_url,
+        artifact_url=capacity_release.artifact_url,
+        xsd_url=capacity_release.xsd_url,
+        source_data_date=capacity_release.source_data_date,
+        actual_until=capacity_release.actual_until,
+        discovered_at=NOW.replace(minute=NOW.minute + 5),
+        provenance=capacity_release.provenance,
+    )
+    sequence = 0
+
+    def fake_download(url, root):
+        nonlocal sequence
+        sequence += 1
+        path = root / f"download-{sequence}"
+        path.write_bytes(b"zip-bytes" if url.endswith(".zip") else b"xsd-bytes")
+        return path, {"Content-Length": str(path.stat().st_size)}
+
+    monkeypatch.setattr(bulk, "_download_temp", fake_download)
+
+    capacity = bulk.stage_release(spec, capacity_release, raw_root=tmp_path)
+    manifest_path = capacity[0].parent / "manifest.json"
+    first_bytes = manifest_path.read_bytes()
+    real_job = bulk.stage_release(spec, real_job_release, raw_root=tmp_path)
+
+    assert real_job[2] == capacity[2]
+    assert real_job[2]["discovered_at"] == NOW.isoformat()
+    assert real_job[2]["retrieved_at"] == NOW.isoformat()
+    assert manifest_path.read_bytes() == first_bytes
+
+
+def test_existing_bulk_manifest_rejects_xsd_invariant_change(
+    monkeypatch, tmp_path
+):
+    spec = taxpayment._worker_spec()
+    release = _release(spec)
+    sequence = 0
+
+    def fake_download(url, root):
+        nonlocal sequence
+        sequence += 1
+        path = root / f"download-{sequence}"
+        path.write_bytes(b"zip-bytes" if url.endswith(".zip") else b"xsd-bytes")
+        return path, {"Content-Length": str(path.stat().st_size)}
+
+    monkeypatch.setattr(bulk, "_download_temp", fake_download)
+    first = bulk.stage_release(spec, release, raw_root=tmp_path)
+    manifest_path = first[0].parent / "manifest.json"
+    first_bytes = manifest_path.read_bytes()
+    changed = bulk.FnsRelease(
+        source_page_url=release.source_page_url,
+        artifact_url=release.artifact_url,
+        xsd_url=release.xsd_url.replace("structure-20200101", "structure-20200102"),
+        source_data_date=release.source_data_date,
+        actual_until=release.actual_until,
+        discovered_at=NOW.replace(minute=NOW.minute + 5),
+        provenance=release.provenance,
+    )
+
+    with pytest.raises(bulk.InvalidDataError, match="manifest invariant differs"):
+        bulk.stage_release(spec, changed, raw_root=tmp_path)
+
+    assert manifest_path.read_bytes() == first_bytes
+
+
 def test_old_worker_failure_is_not_replayed_after_newer_success(monkeypatch):
     finished = datetime(2026, 9, 23, tzinfo=timezone.utc)
     dataset = SimpleNamespace(
