@@ -55,6 +55,14 @@ SECRET_CANARIES = (
 )
 
 
+class _FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return NOW.replace(tzinfo=None)
+        return NOW.astimezone(tz)
+
+
 def _valid_inn(seed: int) -> str:
     base = f"{seed % 1_000_000_000:09d}"
     digits = [int(char) for char in base]
@@ -1158,6 +1166,7 @@ def test_disposable_postgres_operator_flow(
     monkeypatch.setattr(operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient())
     monkeypatch.setattr(operator, "_utc_now", lambda: NOW)
     monkeypatch.setattr(worker_execution, "utc_now", lambda: NOW)
+    monkeypatch.setattr(pipeline, "datetime", _FrozenDateTime)
     base = _preflight_args(source_files, tmp_path)
 
     preflight = operator.command_preflight(base, committed_operator_db)
