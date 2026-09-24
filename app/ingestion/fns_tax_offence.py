@@ -829,3 +829,82 @@ def import_fns_tax_offence_zip(
         )
 
     return totals
+
+
+# =========================================================
+# WORKER FOUNDATION / OFFICIAL RELEASE SUPERVISION
+# =========================================================
+
+
+SOURCE_ID = "fns_tax_offence"
+HANDLER_VERSION = "s04-official-v1"
+
+
+def _worker_spec():
+    from app.ingestion.fns_bulk_worker import FnsBulkSourceSpec
+
+    return FnsBulkSourceSpec(
+        source_id=SOURCE_ID,
+        dataset_code=DATASET_CODE,
+        source_page_url=SOURCE_PAGE_URL,
+        source_path="7707329152-taxoffence",
+        handler_version=HANDLER_VERSION,
+        kind="tax_offence",
+        api_projection="tax_offence_check",
+        card_projection="company_card.tax_offence",
+    )
+
+
+def fns_tax_offence_worker_handler(context):
+    """Download and normalize the current S04 release in an isolated worker."""
+
+    from app.ingestion.fns_bulk_worker import run_bulk_handler
+
+    return run_bulk_handler(
+        context,
+        spec=_worker_spec(),
+        iterator=iter_xml_records,
+    )
+
+
+def publish_fns_tax_offence_worker_result(session, claim, result):
+    """Atomically publish S04 normalized facts by exact company INN."""
+
+    from app.ingestion.fns_bulk_worker import publish_bulk_result
+
+    return publish_bulk_result(session, claim, result, spec=_worker_spec())
+
+
+def register_fns_tax_offence_worker(session, registry):
+    from app.ingestion.fns_bulk_worker import register_bulk_handler
+
+    return register_bulk_handler(
+        session,
+        registry,
+        spec=_worker_spec(),
+        handler=fns_tax_offence_worker_handler,
+        publisher=publish_fns_tax_offence_worker_result,
+    )
+
+
+def enqueue_fns_tax_offence_release(session, *, release, raw_root, **kwargs):
+    from app.ingestion.fns_bulk_worker import enqueue_bulk_release
+
+    return enqueue_bulk_release(
+        session,
+        spec=_worker_spec(),
+        release=release,
+        raw_root=Path(raw_root),
+        **kwargs,
+    )
+
+
+def schedule_fns_tax_offence_check(session, *, raw_root, now=None):
+    from app.ingestion.fns_bulk_worker import schedule_source_check
+
+    return schedule_source_check(
+        session,
+        spec=_worker_spec(),
+        raw_root=Path(raw_root),
+        now=now,
+    )

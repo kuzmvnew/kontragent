@@ -16,6 +16,7 @@ from app.models.source import DataSet
 from app.services.check_result import (
     build_check_result,
 )
+from app.services.data_readiness_service import clean_negative_blocker
 
 
 DATASET_CODE = (
@@ -347,6 +348,19 @@ def get_revenue_expense_check_for_company(
         )
 
         if snapshot is None:
+
+            blocker = clean_negative_blocker(dataset)
+            if blocker is not None:
+                return build_check_result(
+                    checked=False,
+                    applicable=True,
+                    result="unavailable",
+                    data_date=dataset_data_date,
+                    dataset_code=DATASET_CODE,
+                    source=SOURCE_CODE,
+                    reason=blocker,
+                    **_empty_payload(),
+                )
 
             empty = (
                 _empty_payload()

@@ -258,6 +258,27 @@ def _next_expected(policy: str, reference: datetime) -> datetime | None:
     }.get(policy)
 
 
+def clean_negative_blocker(
+    dataset: DataSet,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Explain why an official snapshot cannot prove a clean negative."""
+
+    now = now or utc_now()
+    stored = str(
+        getattr(dataset, "operational_status", OperationalStatus.CURRENT.value)
+    )
+    if stored != OperationalStatus.CURRENT.value:
+        return f"dataset_{stored}"
+    actual_until = getattr(dataset, "official_actual_until", None)
+    if actual_until is None:
+        return "dataset_freshness_unavailable"
+    if now.astimezone(timezone.utc).date() > actual_until:
+        return "dataset_stale"
+    return None
+
+
 def effective_status(dataset: DataSet, *, now: datetime) -> str:
     fixed = {
         OperationalStatus.UPDATING,
@@ -275,6 +296,14 @@ def effective_status(dataset: DataSet, *, now: datetime) -> str:
         stored = OperationalStatus.NOT_CONFIGURED
     if stored in fixed:
         return stored.value
+    # Official validity is an inclusive date boundary.  It is independent of
+    # when our scheduler last checked the passport and takes precedence over
+    # policy-based age thresholds.
+    if (
+        dataset.official_actual_until is not None
+        and now.astimezone(timezone.utc).date() > dataset.official_actual_until
+    ):
+        return OperationalStatus.STALE.value
     stale = is_dataset_stale(
         now=now,
         freshness_policy=dataset.freshness_policy,
@@ -313,6 +342,7 @@ def get_data_readiness(*, now: datetime | None = None) -> dict:
                 "last_attempt_at": dataset.last_attempt_at,
                 "last_success_at": dataset.last_success_at,
                 "retrieved_at": dataset.retrieved_at,
+                "official_actual_until": dataset.official_actual_until,
                 "published_at": dataset.published_at,
                 "freshness_policy": dataset.freshness_policy,
                 "record_count": dataset.record_count,

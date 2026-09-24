@@ -933,3 +933,82 @@ def import_fns_revenue_expense_zip(
         raw_connection.close()
 
     return totals
+
+
+# =========================================================
+# WORKER FOUNDATION / OFFICIAL RELEASE SUPERVISION
+# =========================================================
+
+
+SOURCE_ID = "fns_revenue_expenses"
+HANDLER_VERSION = "s03-official-v1"
+
+
+def _worker_spec():
+    from app.ingestion.fns_bulk_worker import FnsBulkSourceSpec
+
+    return FnsBulkSourceSpec(
+        source_id=SOURCE_ID,
+        dataset_code=DATASET_CODE,
+        source_page_url=SOURCE_URL,
+        source_path="7707329152-revexp",
+        handler_version=HANDLER_VERSION,
+        kind="revenue_expense",
+        api_projection="revenue_expense_check",
+        card_projection="company_card.revenue_expense",
+    )
+
+
+def fns_revenue_expense_worker_handler(context):
+    """Download and normalize the current S03 release in an isolated worker."""
+
+    from app.ingestion.fns_bulk_worker import run_bulk_handler
+
+    return run_bulk_handler(
+        context,
+        spec=_worker_spec(),
+        iterator=iter_xml_records,
+    )
+
+
+def publish_fns_revenue_expense_worker_result(session, claim, result):
+    """Atomically publish S03 normalized facts by exact company INN."""
+
+    from app.ingestion.fns_bulk_worker import publish_bulk_result
+
+    return publish_bulk_result(session, claim, result, spec=_worker_spec())
+
+
+def register_fns_revenue_expense_worker(session, registry):
+    from app.ingestion.fns_bulk_worker import register_bulk_handler
+
+    return register_bulk_handler(
+        session,
+        registry,
+        spec=_worker_spec(),
+        handler=fns_revenue_expense_worker_handler,
+        publisher=publish_fns_revenue_expense_worker_result,
+    )
+
+
+def enqueue_fns_revenue_expense_release(session, *, release, raw_root, **kwargs):
+    from app.ingestion.fns_bulk_worker import enqueue_bulk_release
+
+    return enqueue_bulk_release(
+        session,
+        spec=_worker_spec(),
+        release=release,
+        raw_root=Path(raw_root),
+        **kwargs,
+    )
+
+
+def schedule_fns_revenue_expense_check(session, *, raw_root, now=None):
+    from app.ingestion.fns_bulk_worker import schedule_source_check
+
+    return schedule_source_check(
+        session,
+        spec=_worker_spec(),
+        raw_root=Path(raw_root),
+        now=now,
+    )

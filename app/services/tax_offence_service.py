@@ -6,6 +6,7 @@ from app.database.postgres import get_session
 from app.models.company import Company
 from app.models.source import DataSet
 from app.models.tax_offence import CompanyTaxOffence
+from app.services.data_readiness_service import clean_negative_blocker
 
 
 # =========================================================
@@ -416,6 +417,16 @@ def get_tax_offence_check_for_company(
         # =================================================
 
         if not rows:
+
+            blocker = clean_negative_blocker(dataset)
+            if blocker is not None:
+                return _empty_offence_result(
+                    checked=False,
+                    applicable=True,
+                    result="unavailable",
+                    data_date=dataset_data_date,
+                    reason=blocker,
+                )
 
             return _empty_offence_result(
                 checked=True,
