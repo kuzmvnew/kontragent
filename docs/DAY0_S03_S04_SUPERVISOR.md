@@ -81,10 +81,10 @@ schedules remain behind the explicit `--activate-s03-s04` operator gate.
 - S03/S04 plus Worker Foundation targeted suite: `70 passed` on the isolated
   PostgreSQL database `test`.
 - Fresh disposable database `day0_c_20260924`: `alembic upgrade head` passed.
-- Full suite on that fresh database: `986 passed`, one unrelated S02 operator
-  test failed at the frozen 11:00 UTC deadline because the child handler reads
-  wall-clock time. The same isolated S02 test failed on rerun after wall clock
-  crossed the deadline; no S03/S04 test failed.
+- The S02 disposable-operator test now freezes the child pipeline clock as well
+  as the operator and Worker clocks. This is a test-only follow-up to merged
+  PR #49; production code and the queue guard are unchanged.
+- Full suite on that fresh database: `987 passed`, `2 warnings`.
 
 ## Matrix queue scope
 
