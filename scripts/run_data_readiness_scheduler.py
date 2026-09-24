@@ -4,11 +4,17 @@ import argparse
 import json
 
 from app.database.postgres import SessionLocal
+from app.ingestion.cbr_warning_worker import register_cbr_warning_worker
 from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
 from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
+from app.services.cbr_warning_registry_service import (
+    ensure_cbr_warning_list_dataset,
+)
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
+    SCHEDULED_SOURCE_DATASET_CODES,
     configure_fns_bulk_schedules,
+    configure_source_schedules,
     run_due_updates,
     sync_worker_failure_signals,
     worker_loop,
@@ -25,6 +31,7 @@ def build_registry() -> HandlerRegistry:
         # independent source ids, leases, jobs and publication generations.
         register_fns_tax_offence_worker(session, registry)
         register_fns_revenue_expense_worker(session, registry)
+        register_cbr_warning_worker(session, registry)
         session.commit()
     return registry
 
@@ -61,7 +68,7 @@ def main() -> None:
     parser.add_argument(
         "--activate",
         action="append",
-        choices=sorted(FNS_BULK_DATASET_CODES),
+        choices=sorted(SCHEDULED_SOURCE_DATASET_CODES),
         default=[],
         metavar="SOURCE_ID",
         help="Enable one source schedule; repeat to enable more than one",
@@ -69,7 +76,7 @@ def main() -> None:
     parser.add_argument(
         "--deactivate",
         action="append",
-        choices=sorted(FNS_BULK_DATASET_CODES),
+        choices=sorted(SCHEDULED_SOURCE_DATASET_CODES),
         default=[],
         metavar="SOURCE_ID",
         help="Disable one source schedule; repeat to disable more than one",
@@ -84,9 +91,13 @@ def main() -> None:
     if args.activate_s03_s04:
         configure_fns_bulk_schedules(enabled=True)
     if args.activate:
-        configure_fns_bulk_schedules(enabled=True, dataset_codes=args.activate)
+        if "cbr_warning_list" in args.activate:
+            # Registration is deliberately tied to explicit activation; a
+            # supervisor restart must not silently enable a new source.
+            ensure_cbr_warning_list_dataset()
+        configure_source_schedules(enabled=True, dataset_codes=args.activate)
     if args.deactivate:
-        configure_fns_bulk_schedules(enabled=False, dataset_codes=args.deactivate)
+        configure_source_schedules(enabled=False, dataset_codes=args.deactivate)
     if args.loop:
         worker_loop(
             poll_seconds=args.poll_seconds,

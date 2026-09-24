@@ -123,6 +123,18 @@ class CbrWarningListProvider:
                 "raw_content": raw_content,
                 "http_status": response.status_code,
                 "source_url": FULL_LIST_JSON_URL,
+                "headers": {
+                    key.lower(): value
+                    for key, value in getattr(response, "headers", {}).items()
+                    if key.lower()
+                    in {
+                        "content-length",
+                        "content-type",
+                        "date",
+                        "etag",
+                        "last-modified",
+                    }
+                },
             }
 
         finally:

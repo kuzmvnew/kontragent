@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete, insert, select
@@ -356,6 +356,27 @@ def parse_cbr_warning_payload(
     }
 
 
+def cbr_warning_source_data_date(payload) -> date:
+    """Return the newest official row date, separate from retrieval time."""
+
+    dates: list[date] = []
+    for row in _extract_rows(payload):
+        if not isinstance(row, dict):
+            continue
+        for value in (
+            _pick(row, "dateUpdate", "updateDate", "lastUpdateDate"),
+            _pick(row, "dt", "entryDate", "date"),
+        ):
+            parsed = parse_cbr_date(value)
+            if parsed is not None:
+                dates.append(parsed)
+    if not dates:
+        raise ValueError(
+            "CBR warning list не содержит официальной даты данных"
+        )
+    return max(dates)
+
+
 def validate_cbr_warning_snapshot(parsed: dict) -> None:
     """Never publish an empty or partly parsed snapshot as a complete list."""
     if not parsed["records"]:
@@ -482,6 +503,21 @@ def replace_cbr_warning_list(
             run.details = {**(run.details or {}), **publication["details"]}
             dataset.last_data_date = run.data_date
             dataset.last_success_at = now
+            dataset.source_as_of = datetime.combine(
+                run.data_date, datetime.min.time(), tzinfo=timezone.utc
+            )
+            dataset.retrieved_at = now
+            dataset.checked_at = now
+            dataset.published_at = now
+            dataset.record_count = inserted
+            dataset.operational_status = "current"
+            dataset.auto_update_status = "configured"
+            dataset.official_actual_until = run.data_date
+            dataset.next_expected_update_at = now + timedelta(days=1)
+            dataset.last_error = None
+            dataset.last_error_at = None
+            dataset.retry_count = 0
+            dataset.next_retry_at = None
 
         session.commit()
 
