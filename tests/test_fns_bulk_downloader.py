@@ -55,6 +55,7 @@ def _multipart_opener(
     etag: str | None = None,
     advertised_sha256: str | None = None,
     mutate_range_headers=None,
+    mutate_range_body=None,
 ):
     etag = etag or _multipart_etag(content, part_size)
     advertised_sha256 = advertised_sha256 or sha256(content).hexdigest()
@@ -76,9 +77,12 @@ def _multipart_opener(
         start_text, end_text = raw_range.removeprefix("bytes=").split("-")
         start, end = int(start_text), int(end_text)
         body = content[start : end + 1]
+        expected_length = len(body)
+        if mutate_range_body is not None:
+            body = mutate_range_body(body, start, end)
         headers = {
             "Content-Range": f"bytes {start}-{end}/{len(content)}",
-            "Content-Length": str(len(body)),
+            "Content-Length": str(expected_length),
             "ETag": etag,
             "x-amz-meta-sha256": advertised_sha256,
         }
@@ -87,6 +91,77 @@ def _multipart_opener(
         return FakeResponse(body, headers, status=206)
 
     return opener, initial, requests
+
+
+def test_short_range_is_retried_without_accepting_partial_bytes(
+    monkeypatch, tmp_path
+):
+    content = b"0123456789"
+    attempts = {}
+
+    def truncate_first(body, start, _end):
+        attempts[start] = attempts.get(start, 0) + 1
+        return body[:-1] if attempts[start] == 1 else body
+
+    opener, _initial, requests = _multipart_opener(
+        content,
+        part_size=4,
+        mutate_range_body=truncate_first,
+    )
+    monkeypatch.setattr(bulk, "MULTIPART_RANGE_PART_SIZE", 4)
+    monkeypatch.setattr(bulk, "MULTIPART_RANGE_MIN_SIZE", 8)
+    monkeypatch.setattr(bulk.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(bulk, "urlopen", opener)
+
+    path, _headers = bulk._download_temp(URL, tmp_path)
+
+    assert path.read_bytes() == content
+    assert [request.get_header("Range") for request in requests] == [
+        None,
+        "bytes=0-3",
+        "bytes=0-3",
+        "bytes=4-7",
+        "bytes=4-7",
+        "bytes=8-9",
+        "bytes=8-9",
+    ]
+    assert all(
+        request.get_header("If-match") == _multipart_etag(content, 4)
+        for request in requests[1:]
+    )
+
+
+def test_exhausted_short_range_is_retryable_and_removes_partial(
+    monkeypatch, tmp_path
+):
+    content = b"0123456789"
+    opener, _initial, requests = _multipart_opener(
+        content,
+        part_size=4,
+        mutate_range_body=lambda body, _start, _end: body[:-1],
+    )
+    monkeypatch.setattr(bulk, "MULTIPART_RANGE_PART_SIZE", 4)
+    monkeypatch.setattr(bulk, "MULTIPART_RANGE_MIN_SIZE", 8)
+    monkeypatch.setattr(bulk.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(bulk, "urlopen", opener)
+
+    with pytest.raises(
+        bulk.WorkerNetworkError,
+        match="transport failed after 3 attempts",
+    ):
+        bulk._download_temp(URL, tmp_path)
+
+    assert [request.get_header("Range") for request in requests] == [
+        None,
+        "bytes=0-3",
+        "bytes=0-3",
+        "bytes=0-3",
+    ]
+    assert all(
+        request.get_header("If-match") == _multipart_etag(content, 4)
+        for request in requests[1:]
+    )
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_small_download_preserves_single_response_behavior(monkeypatch, tmp_path):
