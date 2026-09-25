@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
+from http.client import IncompleteRead
+
+import pytest
 
 from app.ingestion import roskomnadzor_bulk_worker as worker
+from app.worker.errors import WorkerNetworkError
 
 
 NOW = datetime(2026, 9, 25, 10, tzinfo=timezone.utc)
@@ -68,3 +72,24 @@ def test_same_release_check_only_never_redownloads(monkeypatch, tmp_path):
     result = worker.run_rkn_bulk_handler(context)
     assert result.staging_result is None
     assert result.checksum_metadata["check_only"] is True
+
+
+def test_incomplete_http_read_is_retryable_network_failure(monkeypatch):
+    class BrokenResponse:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            raise IncompleteRead(b"partial")
+
+    monkeypatch.setattr(worker, "urlopen", lambda *_args, **_kwargs: BrokenResponse())
+
+    with pytest.raises(WorkerNetworkError) as captured:
+        worker._fetch("https://rkn.gov.ru/opendata/test/data.xml")
+
+    assert captured.value.retryable is True
