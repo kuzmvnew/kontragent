@@ -62,7 +62,7 @@ from app.worker.registry import HandlerRegistry
 
 
 SOURCE_ID = DATASET_CODE = "firmoteka"
-HANDLER_VERSION = "firmoteka-authorized-public-catalog-v2"
+HANDLER_VERSION = "firmoteka-authorized-public-catalog-v3"
 BASE_URL = "https://firmoteka.ru/"
 ROBOTS_URL = urljoin(BASE_URL, "robots.txt")
 SITEMAP_URL = urljoin(BASE_URL, "sitemap.xml")
@@ -232,8 +232,14 @@ def _store_raw(
         "parser_version": PARSER_VERSION,
         "immutable": True,
     }
-    _write_json_once(
-        directory / f"manifest-{sha256(url.encode()).hexdigest()}.json", manifest
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, default=str) + "\n"
+    ).encode()
+    observation_digest = sha256(manifest_bytes).hexdigest()
+    _write_once(
+        directory
+        / f"manifest-{sha256(url.encode()).hexdigest()}-{observation_digest}.json",
+        manifest_bytes,
     )
     return RawArtifactReference(artifact.as_uri(), digest, manifest), manifest
 
