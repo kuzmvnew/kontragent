@@ -19,7 +19,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -436,37 +436,60 @@ def publish_exact_source_result(session: Session, claim: Any, result: HandlerRes
     coverage = dict(dataset.coverage or {})
     sweep_id = str(claim.schedule_metadata["sweep_id"])
     cohort_size = int(claim.schedule_metadata["cohort_size"])
-    completed_before = int(
-        session.scalar(
-            select(func.count()).select_from(WorkerJob).where(
+    successful_inns_before = {
+        str(value)
+        for value in session.scalars(
+            select(WorkerJob.schedule_metadata["inn"].astext)
+            .where(
                 WorkerJob.source_id == source_id,
                 WorkerJob.status == "succeeded",
                 WorkerJob.schedule_metadata["sweep_id"].astext == sweep_id,
             )
-        ) or 0
-    )
-    completed = completed_before + 1
+            .distinct()
+        )
+        if value
+    }
+    first_success_for_inn = inn not in successful_inns_before
+    completed = len(successful_inns_before | {inn})
     sweep = dict(coverage.get("active_sweep") or {})
+    if sweep.get("sweep_id") != sweep_id:
+        sweep = {}
     sweep.update(
         {
             "sweep_id": sweep_id,
             "request_date": request_date.isoformat(),
             "cohort_size": cohort_size,
             "completed": completed,
-            "found": int(sweep.get("found") or 0) + int(found),
-            "not_found": int(sweep.get("not_found") or 0) + int(not found),
-            "published_facts": int(sweep.get("published_facts") or 0) + published,
+            "found": int(sweep.get("found") or 0)
+            + (int(found) if first_success_for_inn else 0),
+            "not_found": int(sweep.get("not_found") or 0)
+            + (int(not found) if first_success_for_inn else 0),
+            "published_facts": int(sweep.get("published_facts") or 0)
+            + (published if first_success_for_inn else 0),
             "matching_method": "inn_exact",
         }
     )
     coverage["active_sweep"] = sweep
     cycle_complete = completed >= cohort_size
     if cycle_complete:
-        successful = int(coverage.get("successful_scheduled_checks") or 0) + 1
+        completed_sweep_ids = [
+            str(value)
+            for value in list(coverage.get("completed_sweep_ids") or ())
+            if value
+        ]
+        last_sweep_id = str((coverage.get("last_sweep") or {}).get("sweep_id") or "")
+        sweep_already_accepted = (
+            sweep_id in completed_sweep_ids or sweep_id == last_sweep_id
+        )
+        successful = int(coverage.get("successful_scheduled_checks") or 0)
+        if not sweep_already_accepted:
+            successful += 1
+            completed_sweep_ids.append(sweep_id)
         coverage.update(
             {
                 "last_sweep": sweep,
                 "successful_scheduled_checks": successful,
+                "completed_sweep_ids": completed_sweep_ids[-90:],
                 "operational_accepted": successful >= 2,
                 "api_projection": source_id,
                 "card_projection": f"company_card.{source_id}",
@@ -474,20 +497,23 @@ def publish_exact_source_result(session: Session, claim: Any, result: HandlerRes
         )
         dataset.last_success_at = dataset.published_at = now
         dataset.next_expected_update_at = now + CHECK_INTERVAL
+        dataset.operational_status = OperationalStatus.CURRENT
+        dataset.record_count = cohort_size
+        dataset.last_error = None
+        dataset.last_error_at = None
+    elif dataset.last_success_at is None:
+        dataset.operational_status = OperationalStatus.UPDATING
+        dataset.record_count = completed
     dataset.coverage = coverage
     dataset.enabled = True
     dataset.dataset_kind = "on_demand_api"
     dataset.freshness_policy = "daily"
     dataset.auto_update_status = AutoUpdateStatus.CONFIGURED
-    dataset.operational_status = OperationalStatus.CURRENT
     dataset.checked_at = now
     dataset.last_data_date = request_date
     dataset.source_as_of = datetime.combine(request_date, datetime.min.time(), tzinfo=timezone.utc)
     dataset.retrieved_at = now
     dataset.official_actual_until = request_date
-    dataset.record_count = int(coverage.get("last_sweep", sweep).get("cohort_size") or 0)
-    dataset.last_error = None
-    dataset.last_error_at = None
     summary = SourceChangeSummary(
         matched_companies=1,
         new_facts=published,
