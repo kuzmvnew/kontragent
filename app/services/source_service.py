@@ -176,10 +176,32 @@ DEFAULT_DATASETS = [
         "refresh_schedule": "monthly",
         "priority": 10,
         "enabled": False,
-        "source_url": None,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-rsmp/"
+        ),
         "description": (
             "Единый реестр субъектов "
             "малого и среднего предпринимательства"
+        ),
+    },
+    {
+        "source_code": "fns",
+        "code": "fns_tax_regime",
+        "name": "ФНС: Специальные налоговые режимы ЮЛ и ИП",
+        "domain": "tax_regime",
+        "update_mode": "bulk",
+        "data_format": "xml_bundle",
+        "refresh_schedule": "official_release",
+        "priority": 10,
+        "enabled": False,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-snr/"
+        ),
+        "description": (
+            "Единая operational-семья двух официальных артефактов "
+            "SNR и SNRIP; факты сохраняются в дочерних datasets"
         ),
     },
     {
@@ -251,7 +273,10 @@ DEFAULT_DATASETS = [
         "refresh_schedule": "annual",
         "priority": 10,
         "enabled": False,
-        "source_url": None,
+        "source_url": (
+            "https://www.nalog.gov.ru/"
+            "opendata/7707329152-sshr2019/"
+        ),
         "description": (
             "Среднесписочная численность работников"
         ),

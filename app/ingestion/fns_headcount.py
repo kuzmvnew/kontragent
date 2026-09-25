@@ -666,3 +666,78 @@ def import_fns_headcount_zip(
             batch.clear()
 
     return totals
+
+
+# =========================================================
+# WORKER FOUNDATION / OFFICIAL RELEASE SUPERVISION
+# =========================================================
+
+
+SOURCE_ID = DATASET_CODE
+SOURCE_PAGE_URL = "https://www.nalog.gov.ru/opendata/7707329152-sshr2019/"
+HANDLER_VERSION = "headcount-official-v1"
+
+
+def _worker_spec():
+    from app.ingestion.fns_bulk_worker import FnsBulkSourceSpec
+
+    return FnsBulkSourceSpec(
+        source_id=SOURCE_ID,
+        dataset_code=DATASET_CODE,
+        source_page_url=SOURCE_PAGE_URL,
+        source_path="7707329152-sshr2019",
+        handler_version=HANDLER_VERSION,
+        kind="headcount",
+        api_projection="headcount",
+        card_projection="company_card.headcount",
+    )
+
+
+def fns_headcount_worker_handler(context):
+    from app.ingestion.fns_bulk_worker import release_from_metadata, run_bulk_handler
+
+    release = release_from_metadata(context.schedule_metadata)
+
+    def records(xml_file):
+        for _event, element in ET.iterparse(xml_file, events=("end",)):
+            if local_name(element.tag) != "Документ":
+                continue
+            record = extract_document(element)
+            yield (
+                {
+                    **record,
+                    "year": release.source_data_date.year,
+                    "data_date": release.source_data_date,
+                }
+                if record is not None
+                else None
+            )
+            element.clear()
+
+    return run_bulk_handler(context, spec=_worker_spec(), iterator=records)
+
+
+def publish_fns_headcount_worker_result(session, claim, result):
+    from app.ingestion.fns_bulk_worker import publish_bulk_result
+
+    return publish_bulk_result(session, claim, result, spec=_worker_spec())
+
+
+def register_fns_headcount_worker(session, registry):
+    from app.ingestion.fns_bulk_worker import register_bulk_handler
+
+    return register_bulk_handler(
+        session,
+        registry,
+        spec=_worker_spec(),
+        handler=fns_headcount_worker_handler,
+        publisher=publish_fns_headcount_worker_result,
+    )
+
+
+def schedule_fns_headcount_check(session, *, raw_root, now=None):
+    from app.ingestion.fns_bulk_worker import schedule_source_check
+
+    return schedule_source_check(
+        session, spec=_worker_spec(), raw_root=Path(raw_root), now=now
+    )
