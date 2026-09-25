@@ -1,0 +1,31 @@
+[Unit]
+Description=NEXT Company private source operations console
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mikhail
+Group=mikhail
+WorkingDirectory=/opt/nextcompany/current
+EnvironmentFile=/etc/nextcompany/operational.env
+EnvironmentFile=-/etc/nextcompany/admin.env
+ExecStart=/opt/nextcompany/current/.venv/bin/uvicorn admin_app.main:app --host 127.0.0.1 --port 8081 --workers 1 --no-server-header
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=20s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/backups/nextcompany-operational
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

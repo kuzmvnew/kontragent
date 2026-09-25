@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>{% block title %}NEXT Company — Источники{% endblock %}</title>
+  <link rel="stylesheet" href="/admin/static/admin.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/admin/sources">NEXT Company <span>Operations</span></a>
+    <nav><a href="/admin/sources">Источники</a><a href="/admin/system">Система</a><a href="/admin/backups">Backup</a><a href="/admin/audit">Аудит</a></nav>
+  </header>
+  <main class="page">{% block content %}{% endblock %}</main>
+</body>
+</html>

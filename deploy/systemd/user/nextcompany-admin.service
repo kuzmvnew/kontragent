@@ -1,0 +1,23 @@
+[Unit]
+Description=NEXT Company private source operations console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mikhail/nextcompany-runtime/current
+EnvironmentFile=/home/mikhail/nextcompany-operational/runtime/worker.env
+Environment=OPERATIONS_BACKUP_DIR=/home/mikhail/nextcompany-operational/backups
+ExecStart=/home/mikhail/nextcompany-runtime/current/.venv/bin/uvicorn admin_app.main:app --host 127.0.0.1 --port 8081 --workers 1 --no-server-header
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=20s
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
