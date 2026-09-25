@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+from jinja2 import Environment, FileSystemLoader
 
 from app.providers.arbitration_court_provider import ArbitrationCourtProviderError, CheckoArbitrationProvider, parse_checko_legal_cases
 from app.providers.general_court_provider import GeneralCourtRouter, MoscowCourtProvider, RegionalSudrfProvider, parse_moscow_court_search_html
@@ -194,3 +195,20 @@ def test_arbitration_result_semantics_keep_not_found_and_unavailable_distinct():
     result = _serialize(Row())
     assert result["result"] == "unavailable"
     assert result["reason"] == "quota_exhausted"
+
+
+def test_card_renders_checked_general_court_without_coverage_metadata():
+    template = Environment(loader=FileSystemLoader("templates")).get_template(
+        "partials/stage15_courts.html"
+    )
+
+    html = template.render(
+        company={
+            "inn": "5258135690",
+            "arbitration_court_check": {"checked": False},
+            "general_court_check": {"checked": True, "cases": []},
+        }
+    )
+
+    assert "Границы покрытия не подтверждены" in html
+    assert "отрицательный вывод" in html

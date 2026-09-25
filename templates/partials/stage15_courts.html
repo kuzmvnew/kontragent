@@ -29,8 +29,12 @@
     <h2>Суды общей юрисдикции</h2>
     {% set check = company.general_court_check %}
     {% if check.checked %}
-        <p>{{ check.coverage.coverage_label }}</p>
-        {% for case in check.cases %}
+        {% if check.coverage is defined and check.coverage and check.coverage.coverage_label is defined %}
+            <p>{{ check.coverage.coverage_label }}</p>
+        {% else %}
+            <p>Границы покрытия не подтверждены; отрицательный вывод по судам общей юрисдикции запрещён.</p>
+        {% endif %}
+        {% for case in check.cases|default([], true) %}
             <div class="detail-row">
                 <div class="detail-label">{{ case.case_number or "Дело" }}</div>
                 <div class="detail-value">
