@@ -4,6 +4,13 @@ set -euo pipefail
 backup_dir="${OPERATIONS_BACKUP_DIR:-/var/backups/nextcompany-operational}"
 database_url="${DATABASE_URL:?DATABASE_URL is required}"
 database_url="${database_url/postgresql+psycopg:/postgresql:}"
+operational_database="${OPERATIONS_DATABASE_NAME:-${database_url%%\?*}}"
+operational_database="${operational_database%/}"
+operational_database="${operational_database##*/}"
+if [[ ! "$operational_database" =~ ^[a-zA-Z][a-zA-Z0-9_]{2,62}$ ]]; then
+  echo "invalid operational database name" >&2
+  exit 1
+fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_file="${backup_dir}/nextcompany_operational_${timestamp}.dump"
 
@@ -15,7 +22,8 @@ if command -v pg_dump >/dev/null 2>&1; then
 elif command -v docker >/dev/null 2>&1 \
   && docker inspect nextcompany-task045-postgres >/dev/null 2>&1; then
   docker exec nextcompany-task045-postgres sh -c \
-    'exec pg_dump --format=custom --no-owner --no-acl --username="$POSTGRES_USER" "$POSTGRES_DB"' \
+    'exec pg_dump --format=custom --no-owner --no-acl --username="$POSTGRES_USER" "$1"' \
+    sh "$operational_database" \
     > "$backup_file"
 else
   echo "pg_dump is unavailable" >&2
@@ -45,8 +53,7 @@ elif [[ -n "${OPERATIONS_RESTORE_TEST_DATABASE:-}" ]] \
     exit 1
   fi
   postgres_user="$(docker exec nextcompany-task045-postgres printenv POSTGRES_USER)"
-  production_database="$(docker exec nextcompany-task045-postgres printenv POSTGRES_DB)"
-  if [[ "$restore_database" == "$production_database" ]]; then
+  if [[ "$restore_database" == "$operational_database" ]]; then
     echo "restore-test database must differ from production" >&2
     exit 1
   fi
