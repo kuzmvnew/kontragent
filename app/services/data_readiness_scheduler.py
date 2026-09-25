@@ -28,6 +28,14 @@ def _raw_root() -> Path:
     return Path(os.environ.get("FNS_RAW_ROOT", "var/raw/fns")).resolve()
 
 
+def _non_fns_raw_root() -> Path:
+    configured = os.environ.get("NEXTCOMPANY_RAW_ROOT")
+    if configured:
+        return Path(configured).resolve()
+    fns_root = _raw_root()
+    return fns_root.parent if fns_root.name == "fns" else fns_root
+
+
 def _enqueue_tax_offence() -> object:
     from app.ingestion.fns_tax_offence import schedule_fns_tax_offence_check
 
@@ -144,6 +152,39 @@ def _enqueue_disqualified() -> object:
         return creation
 
 
+def _enqueue_roszdrav_license(category: str) -> object:
+    from app.ingestion.roszdrav_license_worker import (
+        SPECS,
+        schedule_roszdrav_license_check,
+    )
+
+    with SessionLocal() as session:
+        creation = schedule_roszdrav_license_check(
+            session,
+            category=category,
+            raw_root=_non_fns_raw_root(),
+        )
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(
+                f"{SPECS[category].source_id} release job is terminal: "
+                f"{creation.job.id}"
+            )
+        return creation
+
+
+def _enqueue_roszdrav_pharma() -> object:
+    return _enqueue_roszdrav_license("pharma")
+
+
+def _enqueue_roszdrav_narcotics() -> object:
+    return _enqueue_roszdrav_license("narcotics")
+
+
+def _enqueue_roszdrav_medical_device_maintenance() -> object:
+    return _enqueue_roszdrav_license("medical_device_maintenance")
+
+
 # Production handlers are explicit and non-empty.  They only discover and
 # enqueue into Worker Foundation; execution remains lease/fencing controlled.
 HANDLERS: dict[str, UpdateHandler] = {
@@ -157,6 +198,11 @@ HANDLERS: dict[str, UpdateHandler] = {
     "fns_tax_regime": _enqueue_tax_regime,
     "fns_sme_support": _enqueue_sme_support,
     "fns_disqualified": _enqueue_disqualified,
+    "roszdrav_pharma_licenses": _enqueue_roszdrav_pharma,
+    "roszdrav_narcotics_licenses": _enqueue_roszdrav_narcotics,
+    "roszdrav_medical_device_maintenance_licenses": (
+        _enqueue_roszdrav_medical_device_maintenance
+    ),
 }
 FNS_BULK_DATASET_CODES = frozenset(
     {
@@ -172,6 +218,13 @@ FNS_BULK_DATASET_CODES = frozenset(
     }
 )
 SCHEDULED_SOURCE_DATASET_CODES = frozenset(HANDLERS)
+ROSZDRAV_LICENSE_DATASET_CODES = frozenset(
+    {
+        "roszdrav_pharma_licenses",
+        "roszdrav_narcotics_licenses",
+        "roszdrav_medical_device_maintenance_licenses",
+    }
+)
 
 
 def register_handler(dataset_code: str, handler: UpdateHandler) -> None:
@@ -377,6 +430,9 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
         "fns_tax_regime": 7,
         "fns_sme_support": 8,
         "fns_disqualified": 9,
+        "roszdrav_pharma_licenses": 10,
+        "roszdrav_narcotics_licenses": 11,
+        "roszdrav_medical_device_maintenance_licenses": 12,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

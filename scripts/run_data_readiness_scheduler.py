@@ -16,6 +16,7 @@ from app.ingestion.fns_tax_debt_pipeline import (
 from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
 from app.ingestion.fns_tax_payment import register_fns_tax_payment_worker
 from app.ingestion.fns_tax_regime import register_fns_tax_regime_worker
+from app.ingestion.roszdrav_license_worker import register_roszdrav_license_workers
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
 )
@@ -23,8 +24,10 @@ from app.services.fns_sme_support_registry_service import (
     ensure_fns_sme_support_dataset,
 )
 from app.services.source_service import ensure_default_dataset
+from app.services.roszdrav_registry_service import ensure_roszdrav_datasets
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
+    ROSZDRAV_LICENSE_DATASET_CODES,
     SCHEDULED_SOURCE_DATASET_CODES,
     configure_fns_bulk_schedules,
     configure_source_schedules,
@@ -57,6 +60,7 @@ def build_registry() -> HandlerRegistry:
         register_fns_tax_regime_worker(session, registry)
         register_fns_sme_support_worker(session, registry)
         register_fns_disqualified_worker(session, registry)
+        register_roszdrav_license_workers(session, registry)
         session.commit()
     return registry
 
@@ -91,6 +95,8 @@ def ensure_activation_datasets(dataset_codes: list[str]) -> None:
         ensure_fns_sme_support_dataset()
     if "fns_disqualified" in dataset_codes:
         ensure_default_dataset("fns_disqualified")
+    if set(dataset_codes) & ROSZDRAV_LICENSE_DATASET_CODES:
+        ensure_roszdrav_datasets()
 
 
 def main() -> None:
@@ -119,12 +125,43 @@ def main() -> None:
         metavar="SOURCE_ID",
         help="Disable one source schedule; repeat to disable more than one",
     )
+    parser.add_argument(
+        "--activate-roszdrav-licenses",
+        action="store_true",
+        help="Enable the three distinct Roszdrav licence schedules as one family",
+    )
+    parser.add_argument(
+        "--deactivate-roszdrav-licenses",
+        action="store_true",
+        help="Disable the three distinct Roszdrav licence schedules as one family",
+    )
     args = parser.parse_args()
     overlap = set(args.activate) & set(args.deactivate)
     if overlap:
         parser.error("cannot activate and deactivate the same source: " + ", ".join(sorted(overlap)))
-    if args.activate_s03_s04 and (args.activate or args.deactivate):
+    if args.activate_s03_s04 and (
+        args.activate
+        or args.deactivate
+        or args.activate_roszdrav_licenses
+        or args.deactivate_roszdrav_licenses
+    ):
         parser.error("--activate-s03-s04 cannot be combined with source-scoped gates")
+    if args.activate_roszdrav_licenses and args.deactivate_roszdrav_licenses:
+        parser.error("cannot activate and deactivate Roszdrav licence family together")
+    family_overlap = set(args.activate) & ROSZDRAV_LICENSE_DATASET_CODES
+    if family_overlap and (
+        args.activate_roszdrav_licenses or args.deactivate_roszdrav_licenses
+    ):
+        parser.error(
+            "Roszdrav family gate cannot be combined with individual Roszdrav sources"
+        )
+    family_overlap = set(args.deactivate) & ROSZDRAV_LICENSE_DATASET_CODES
+    if family_overlap and (
+        args.activate_roszdrav_licenses or args.deactivate_roszdrav_licenses
+    ):
+        parser.error(
+            "Roszdrav family gate cannot be combined with individual Roszdrav sources"
+        )
     registry = build_registry()
     if args.activate_s03_s04:
         configure_fns_bulk_schedules(
@@ -138,8 +175,17 @@ def main() -> None:
         # scoped upsert never enables the child projection datasets.
         ensure_activation_datasets(args.activate)
         configure_source_schedules(enabled=True, dataset_codes=args.activate)
+    if args.activate_roszdrav_licenses:
+        family_codes = sorted(ROSZDRAV_LICENSE_DATASET_CODES)
+        ensure_activation_datasets(family_codes)
+        configure_source_schedules(enabled=True, dataset_codes=family_codes)
     if args.deactivate:
         configure_source_schedules(enabled=False, dataset_codes=args.deactivate)
+    if args.deactivate_roszdrav_licenses:
+        configure_source_schedules(
+            enabled=False,
+            dataset_codes=sorted(ROSZDRAV_LICENSE_DATASET_CODES),
+        )
     if args.loop:
         worker_loop(
             poll_seconds=args.poll_seconds,
