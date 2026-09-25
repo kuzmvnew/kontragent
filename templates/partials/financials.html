@@ -172,7 +172,15 @@
 
                 {% else %}
 
-                    Нет данных
+                    {% if company.headcount_check and company.headcount_check["result"] == "not_found" %}
+                        ИНН не найден в актуальном наборе ФНС
+                    {% elif company.headcount_check and company.headcount_check["result"] == "not_applicable" %}
+                        Не применяется к ИП
+                    {% elif company.headcount_check and company.headcount_check["result"] == "unavailable" %}
+                        Проверка численности временно недоступна
+                    {% else %}
+                        Нет данных
+                    {% endif %}
 
                 {% endif %}
 

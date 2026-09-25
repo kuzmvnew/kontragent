@@ -16,16 +16,17 @@ from app.services.company_service import (
     save_provider_company,
 )
 from app.services.headcount_service import (
+    get_headcount_check_for_company,
     get_latest_headcount_for_company,
 )
 from app.services.legal_event_service import (
     get_legal_events_for_company,
 )
 from app.services.msp_service import (
-    get_msp_profile_for_company,
+    get_msp_check_for_company,
 )
 from app.services.tax_regime_service import (
-    get_tax_regime_profile_for_company,
+    get_tax_regime_check_for_company,
 )
 from app.services.revenue_expense_service import (
     get_revenue_expense_check_for_company,
@@ -598,23 +599,55 @@ def load_structured_domain_data(
     """
 
     # -----------------------------------------------------
-    # MSP
+    # HEADCOUNT / MSP / TAX REGIME
     # -----------------------------------------------------
 
-    msp_profile = (
-        get_msp_profile_for_company(
+    headcount_check = (
+        get_headcount_check_for_company(
             company_id=company_id
         )
     )
-
-    # -----------------------------------------------------
-    # TAX REGIME
-    # -----------------------------------------------------
-
-    tax_regime_profile = (
-        get_tax_regime_profile_for_company(
+    msp_check = (
+        get_msp_check_for_company(
             company_id=company_id
         )
+    )
+    msp_profile = (
+        {
+            key: msp_check[key]
+            for key in (
+                "dataset_id",
+                "dataset_code",
+                "priority",
+                "data_date",
+                "inclusion_date",
+                "subject_type_code",
+                "category_code",
+                "category_name",
+                "is_new_code",
+                "social_enterprise_code",
+                "employee_count",
+                "source_document_id",
+            )
+        }
+        if msp_check.get("result") == "found"
+        else None
+    )
+    tax_regime_check = get_tax_regime_check_for_company(company_id=company_id)
+    tax_regime_profile = (
+        {
+            "company_id": tax_regime_check["company_id"],
+            "entity_type": tax_regime_check["entity_type"],
+            "data_date": tax_regime_check["data_date"],
+            "regime_codes": tax_regime_check["regime_codes"],
+            "regimes": tax_regime_check["regimes"],
+            "dataset_id": tax_regime_check["dataset_id"],
+            "dataset_code": tax_regime_check["member_dataset_code"],
+            "source_document_id": tax_regime_check["source_document_id"],
+            "source_document_date": tax_regime_check["source_document_date"],
+        }
+        if tax_regime_check.get("result") == "found"
+        else None
     )
 
     # -----------------------------------------------------
@@ -739,13 +772,19 @@ def load_structured_domain_data(
     )
 
     return {
+        "headcount_check": headcount_check,
+
         "msp_profile": (
             msp_profile
         ),
 
+        "msp_check": msp_check,
+
         "tax_regime_profile": (
             tax_regime_profile
         ),
+
+        "tax_regime_check": tax_regime_check,
 
         "revenue_expense_check": (
             revenue_expense_check
@@ -1356,12 +1395,10 @@ def aggregate_company(
         # MSP SOURCE
         # ---------------------------------------------
 
-        if (
-            structured[
-                "msp_profile"
-            ]
-            is not None
-        ):
+        if check_used_source(structured.get("headcount_check")):
+            append_source_once(result=result, source_code="fns_headcount")
+
+        if check_used_source(structured.get("msp_check")):
 
             append_source_once(
                 result=result,
@@ -1372,19 +1409,10 @@ def aggregate_company(
         # TAX REGIME SOURCE
         # ---------------------------------------------
 
-        if (
-            structured[
-                "tax_regime_profile"
-            ]
-            is not None
-        ):
+        if check_used_source(structured.get("tax_regime_check")):
 
             tax_regime_source = (
-                structured[
-                    "tax_regime_profile"
-                ].get(
-                    "dataset_code"
-                )
+                structured.get("tax_regime_check", {}).get("member_dataset_code")
             )
 
             if tax_regime_source:
@@ -1472,13 +1500,19 @@ def aggregate_company(
 
     else:
 
+        result["headcount_check"] = None
+
         result[
             "msp_profile"
         ] = None
 
+        result["msp_check"] = None
+
         result[
             "tax_regime_profile"
         ] = None
+
+        result["tax_regime_check"] = None
 
         result[
             "revenue_expense_check"
