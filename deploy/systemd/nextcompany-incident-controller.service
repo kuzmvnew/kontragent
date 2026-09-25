@@ -13,7 +13,7 @@ Environment=PYTHONPATH=.
 Environment=PYTHONUNBUFFERED=1
 Environment=INCIDENT_ROOT=/home/mikhail/nextcompany-operational/incidents
 Environment=INCIDENT_REPOSITORY=/opt/nextcompany/current
-ExecStart=/opt/nextcompany/current/.venv/bin/python -m scripts.run_incident_controller --loop --poll-seconds 60
+ExecStart=/opt/nextcompany/current/.venv/bin/python -m scripts.run_incident_controller --loop --poll-seconds 10
 Restart=on-failure
 RestartSec=15s
 TimeoutStopSec=30s

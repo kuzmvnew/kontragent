@@ -12,7 +12,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--poll-seconds", type=int, default=60)
+    parser.add_argument("--poll-seconds", type=int, default=10)
     parser.add_argument("--source")
     args = parser.parse_args()
     if args.loop and args.once:

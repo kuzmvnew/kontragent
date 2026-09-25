@@ -1,7 +1,5 @@
-from datetime import datetime, timedelta, timezone
 import inspect
-import json
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -9,6 +7,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+from admin_app import service as admin_service
 from app.database.postgres import engine
 from app.incidents import controller
 from app.incidents.classification import Classification, classify_failure, fingerprint
@@ -20,11 +19,10 @@ from app.incidents.engineering import (
     create_repair_package,
     detect_agent_runtime,
 )
-from app.incidents.safe import safe_text, safe_value
+from app.incidents.safe import safe_value
 from app.models.incident import SourceIncident, SourceIncidentAction
 from app.models.source import DataSet, DataSource
 from app.models.worker import WorkerJob, WorkerPublicationState, WorkerRun
-
 
 NOW = datetime(2026, 9, 25, 8, tzinfo=timezone.utc)
 
@@ -174,7 +172,7 @@ def test_retry_policy_respects_foundation_backoff_and_retry_after(incident_db):
         assert dataset.last_success_at == NOW - timedelta(days=1)
 
 
-def test_backoff_circuit_breaker_and_publication_are_preserved(incident_db, monkeypatch):
+def test_source_owned_checks_do_not_exhaust_and_publication_is_preserved(incident_db, monkeypatch):
     monkeypatch.setattr(controller, "run_due_updates", lambda **_kwargs: {"cbr_warning_list": "failed"})
     with incident_db() as session:
         dataset = _dataset(session, "cbr_warning_list", status="stale")
@@ -199,11 +197,94 @@ def test_backoff_circuit_breaker_and_publication_are_preserved(incident_db, monk
         for attempt in range(3):
             controller.process_incident(session, incident, now=NOW + timedelta(hours=attempt), force=True)
         session.flush()
-        assert incident.status == "AUTO_REPAIR_EXHAUSTED"
-        assert incident.attempt_count == 3
+        assert incident.status == "WAITING_SOURCE"
+        assert incident.attempt_count == 0
         assert dataset.last_success_at == initial_success
         assert publication.active_pointer == "fixture://accepted/current"
         assert publication.generation == 3
+        actions = list(session.scalars(sa.select(SourceIncidentAction).where(SourceIncidentAction.incident_id == incident.id)))
+        assert sum(action.action_type == "SOURCE_RECHECK" for action in actions) == 3
+        assert all(action.action_type != "EXHAUSTED" for action in actions)
+
+
+def test_infrastructure_incident_still_uses_circuit_breaker(incident_db, monkeypatch):
+    monkeypatch.setattr(controller, "run_due_updates", lambda **_kwargs: {"fns_msp": "failed"})
+    with incident_db() as session:
+        dataset = _dataset(session, "fns_msp", status="error", error="temporary network failure")
+        incident, _ = controller.upsert_incident(
+            session,
+            source_id="fns_msp",
+            dataset=dataset.code,
+            classification=Classification("TEMPORARY_NETWORK", "OUR_INFRASTRUCTURE", "MEDIUM", 1),
+            error_code="network_failure",
+            message="temporary network failure",
+            now=NOW,
+        )
+        for attempt in range(3):
+            controller.process_incident(session, incident, now=NOW + timedelta(hours=attempt), force=True)
+        assert incident.status == "AUTO_REPAIR_EXHAUSTED"
+        assert incident.attempt_count == 3
+
+
+def test_legacy_source_owned_exhaustion_is_normalized(incident_db):
+    with incident_db() as session:
+        dataset = _dataset(session, "fns_tax_regime", status="error", error="Official artifact violates XSD")
+        incident, _ = controller.upsert_incident(
+            session,
+            source_id="fns_tax_regime",
+            dataset=dataset.code,
+            classification=Classification("SOURCE_SCHEMA_VIOLATION", "SOURCE_OWNED", "HIGH", 2),
+            error_code="schema_mismatch",
+            message="Official artifact violates XSD",
+            now=NOW,
+        )
+        incident.status = "AUTO_REPAIR_EXHAUSTED"
+        incident.attempt_count = incident.max_attempts
+        incident.next_attempt_at = None
+        session.flush()
+        normalized = controller.normalize_source_owned_waits(session, now=NOW + timedelta(minutes=1))
+        assert normalized == [incident]
+        assert incident.status == "WAITING_SOURCE"
+        assert incident.next_attempt_at == NOW + timedelta(minutes=1)
+        assert incident.attempt_count == incident.max_attempts
+
+
+def test_manual_source_recheck_is_queued_audited_and_processed(incident_db, monkeypatch):
+    monkeypatch.setattr(admin_service, "SessionLocal", incident_db)
+    audits = []
+    monkeypatch.setattr(admin_service, "audit_action", lambda **kwargs: audits.append(kwargs))
+    monkeypatch.setattr(admin_service, "detect_agent_runtime", lambda: SimpleNamespace(available=False))
+    monkeypatch.setattr(controller, "run_due_updates", lambda **_kwargs: {"fns_tax_regime": "failed"})
+    with incident_db() as session:
+        dataset = _dataset(session, "fns_tax_regime", status="error", error="Official artifact violates XSD")
+        incident, _ = controller.upsert_incident(
+            session,
+            source_id="fns_tax_regime",
+            dataset=dataset.code,
+            classification=Classification("SOURCE_SCHEMA_VIOLATION", "SOURCE_OWNED", "HIGH", 2),
+            error_code="schema_mismatch",
+            message="Official artifact violates XSD",
+            now=NOW,
+        )
+        incident_id = incident.id
+        session.commit()
+    result = admin_service.perform_incident_action(incident_id, "check-source-now")
+    assert result["status"] == "WAITING_SOURCE"
+    assert audits[-1]["result"] == "success"
+    with incident_db() as session:
+        incident = session.get(SourceIncident, incident_id)
+        queued = list(session.scalars(sa.select(SourceIncidentAction).where(SourceIncidentAction.incident_id == incident_id)))
+        assert queued[-1].action_type == "MANUAL_SOURCE_RECHECK_REQUESTED"
+        assert queued[-1].result == "QUEUED"
+        controller.process_due_incidents(session, now=incident.next_attempt_at)
+        session.flush()
+        assert incident.status == "WAITING_SOURCE"
+        assert incident.next_attempt_at > NOW
+        timeline = list(session.scalars(sa.select(SourceIncidentAction).where(SourceIncidentAction.incident_id == incident_id)))
+        assert [item.action_type for item in timeline][-3:] == [
+            "SOURCE_REDISCOVERY", "SOURCE_RECHECK", "SOURCE_RECHECK_SCHEDULED",
+        ]
+        assert timeline[-2].result == "SOURCE_STILL_INVALID"
 
 
 def test_recovery_verification_requires_all_invariants(incident_db):

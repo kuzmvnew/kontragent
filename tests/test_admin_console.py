@@ -1,17 +1,16 @@
-from datetime import datetime, timedelta, timezone
 import inspect
 import re
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from admin_app import main as admin_main
-from admin_app import service
-from admin_app import system
+from admin_app import service, system
+from admin_app.presentation import format_date, format_datetime
 from app.contracts.data_readiness import AutoUpdateStatus
-
 
 NOW = datetime(2026, 9, 25, 3, tzinfo=timezone.utc)
 
@@ -64,6 +63,17 @@ def _snapshot(*, stage="OPERATIONAL"):
         "not_applicable": 0,
         "conflicts": 0,
         "runs": [],
+        "missing_reasons": {
+            field: "Нет данных: тестовая причина."
+            for field in (
+                "source_data_date", "official_actual_until", "last_check",
+                "last_successful_run", "last_publication", "next_scheduled_check",
+                "retry_at", "matched_companies", "master_coverage",
+                "current_fact_count", "new_facts", "changed_facts",
+                "removed_facts", "replayed_facts", "quarantined_records",
+                "publication_generation",
+            )
+        },
     }
     return {
         "sources": [source],
@@ -103,10 +113,11 @@ def client(monkeypatch):
 def test_dashboard_counters_status_and_official_source_link(client):
     response = client.get("/admin/sources")
     assert response.status_code == 200
-    assert "Operational" in response.text
+    assert "Работают" in response.text
     assert ">1<" in response.text
-    assert "CONNECTED" not in response.text  # label is title-case in the table
-    assert "YES" in response.text
+    assert "Connected" not in response.text
+    assert "ДА" in response.text
+    assert "data-tooltip" in response.text
     assert "https://www.nalog.gov.ru/opendata/7707329152-revexp/" in response.text
 
 
@@ -138,7 +149,7 @@ def test_generic_operational_gate_requires_second_accepted_check():
     ) == "OPERATIONAL"
 
 
-def test_source_detail_and_run_history_legacy_na(client, monkeypatch):
+def test_source_detail_explains_legacy_missing_metrics(client, monkeypatch):
     detail = _snapshot()["sources"][0]
     detail["runs"] = [{
         "run_id": str(uuid4()), "job_id": str(uuid4()), "type": "check",
@@ -152,7 +163,9 @@ def test_source_detail_and_run_history_legacy_na(client, monkeypatch):
     response = client.get("/admin/sources/fns_revenue_expenses")
     assert response.status_code == 200
     assert "Последние 50 запусков" in response.text
-    assert "N/A — legacy run" in response.text
+    assert "N/A" not in response.text
+    assert "Нет данных" in response.text
+    assert "старый WorkerRun не сохранял эту метрику" in response.text
     assert "file://…/source.zip" in response.text
 
 
@@ -167,7 +180,8 @@ def test_change_summary_page_explains_legacy_values(client, monkeypatch):
     monkeypatch.setattr(service, "change_history", lambda _source_id: [row])
     response = client.get("/admin/sources/fns_revenue_expenses/changes")
     assert response.status_code == 200
-    assert "N/A — legacy run" in response.text
+    assert "N/A" not in response.text
+    assert "старый WorkerRun не сохранял эту метрику" in response.text
     assert "Неизвестные значения не заменяются нулём" in response.text
 
 
@@ -212,7 +226,7 @@ def test_postgres_unavailable_and_worker_offline_are_explicit(client, monkeypatc
     monkeypatch.setattr(admin_main, "systemd_status", lambda name: {"service": name, "active": False, "enabled": False, "pid": None, "restart_count": None, "started_at": None})
     response = client.get("/admin/sources")
     assert response.status_code == 200
-    assert "Worker OFFLINE" in response.text
+    assert "Worker ОСТАНОВЛЕН" in response.text
     assert "PostgreSQL недоступен" in response.text
     assert "DATABASE_URL" not in response.text
 
@@ -343,6 +357,15 @@ def _incident():
         "resolution": None,
         "resolution_evidence": {"last_success_preserved": True},
         "actions": [],
+        "available_actions": ("check-source-now", "pause-auto-repair"),
+        "automation_paused": False,
+        "source_check_count": 1,
+        "last_source_check": NOW,
+        "last_source_check_result": "SOURCE_STILL_INVALID",
+        "problem_summary": "Официальный файл не проходит обязательную проверку схемы.",
+        "system_action_summary": "Ждёт исправленный официальный файл и проверяет источник автоматически.",
+        "owner_action_summary": "Ничего делать не требуется.",
+        "agent_available": False,
     }
 
 
@@ -372,13 +395,13 @@ def test_incidents_and_automation_pages_show_safe_state(client, monkeypatch):
     assert incidents.status_code == 200
     assert "SOURCE_SCHEMA_VIOLATION" in incidents.text
     assert "SOURCE_OWNED" in incidents.text
-    assert "AGENT_UNAVAILABLE" in incidents.text
+    assert "Автоматическое исправление кода: НЕДОСТУПНО" in incidents.text
     detail = client.get(f"/admin/incidents/{incident['id']}")
     assert detail.status_code == 200
     assert "Official artifact failed XML/XSD validation" in detail.text
     automation = client.get("/admin/automation")
     assert automation.status_code == 200
-    assert "NOTIFICATION CHANNEL NOT CONFIGURED" in automation.text
+    assert "Канал внешних уведомлений не настроен" in automation.text
     assert "1/3" in automation.text
 
 
@@ -386,19 +409,23 @@ def test_incident_actions_require_csrf_confirmation_and_audit_boundary(client, m
     incident = _incident()
     monkeypatch.setattr(service, "incident_detail", lambda incident_id: incident if str(incident_id) == incident["id"] else None)
     called = []
-    monkeypatch.setattr(service, "perform_incident_action", lambda incident_id, action: called.append((str(incident_id), action)))
+    monkeypatch.setattr(service, "perform_incident_action", lambda incident_id, action: called.append((str(incident_id), action)) or incident)
     path = f"/admin/incidents/{incident['id']}"
-    assert client.get(f"{path}/actions/run-auto-heal").status_code == 405
-    assert client.post(f"{path}/actions/run-auto-heal", data={"_csrf": "bad"}).status_code == 403
-    confirmation = client.get(f"{path}/confirm/run-auto-heal")
+    assert client.get(f"{path}/actions/check-source-now").status_code == 405
+    assert client.post(f"{path}/actions/check-source-now", data={"_csrf": "bad"}).status_code == 403
+    assert client.get(f"{path}/confirm/request-engineering").status_code == 404
+    confirmation = client.get(f"{path}/confirm/check-source-now")
+    assert "Проверить официальный источник сейчас?" in confirmation.text
     token = re.search(r'name="_csrf" value="([^"]+)"', confirmation.text).group(1)
     response = client.post(
-        f"{path}/actions/run-auto-heal",
+        f"{path}/actions/check-source-now",
         data={"_csrf": token},
         follow_redirects=False,
     )
-    assert response.status_code == 303
-    assert called == [(incident["id"], "run-auto-heal")]
+    assert response.status_code == 200
+    assert "Запрос принят" in response.text
+    assert "Ожидает выполнения" in response.text
+    assert called == [(incident["id"], "check-source-now")]
 
 
 def test_automation_policy_post_is_csrf_protected_and_predefined(client, monkeypatch):
@@ -431,3 +458,78 @@ def test_automation_policy_post_is_csrf_protected_and_predefined(client, monkeyp
         "source_id": "fns_tax_regime", "auto_heal_enabled": True,
         "auto_code_repair_enabled": False, "max_attempts": 3, "cooldown_seconds": 3600,
     }]
+
+
+def test_incident_action_eligibility_matrix_is_server_side():
+    enabled = SimpleNamespace(paused=False, auto_heal_enabled=True)
+    paused = SimpleNamespace(paused=True, auto_heal_enabled=True)
+    unavailable = SimpleNamespace(available=False)
+    available = SimpleNamespace(available=True)
+    source_owned = _incident()
+    assert service.available_incident_actions(source_owned, enabled, unavailable) == (
+        "check-source-now", "pause-auto-repair",
+    )
+    assert service.available_incident_actions(source_owned, paused, unavailable) == (
+        "resume-auto-repair",
+    )
+    our_code = {
+        **source_owned,
+        "owner_domain": "OUR_CODE",
+        "category": "PARSER_ERROR",
+        "status": "OPEN",
+    }
+    assert "prepare-repair-package" in service.available_incident_actions(our_code, enabled, unavailable)
+    assert "request-engineering" not in service.available_incident_actions(our_code, enabled, unavailable)
+    assert "request-engineering" in service.available_incident_actions(our_code, enabled, available)
+    infrastructure = {
+        **source_owned,
+        "owner_domain": "OUR_INFRASTRUCTURE",
+        "category": "WORKER_NOT_RUNNING",
+        "status": "OPEN",
+    }
+    assert service.available_incident_actions(infrastructure, enabled, unavailable) == (
+        "run-auto-heal", "pause-auto-repair", "cancel-pending",
+    )
+    assert service.available_incident_actions({**source_owned, "status": "RESOLVED"}, enabled, unavailable) == ()
+
+
+def test_russian_datetime_formatter_uses_home_worker_timezone():
+    assert format_datetime(NOW) == "25.09.2026 06:00"
+    assert format_date(NOW.date()) == "25.09.2026"
+    assert "T" not in format_datetime(NOW)
+    assert "+00:00" not in format_datetime(NOW)
+
+
+def test_dashboard_backup_tile_is_compact_and_hides_sha(client, monkeypatch):
+    monkeypatch.setattr(admin_main, "list_backups", lambda limit=50: [{
+        "timestamp": NOW,
+        "sha256": "b" * 64,
+        "restore_test": {"status": "PASS", "checked_at": NOW.isoformat()},
+    }])
+    response = client.get("/admin/sources")
+    assert response.status_code == 200
+    assert "25.09.2026 06:00" in response.text
+    assert "bbbbbbbbbbbb" not in response.text
+    assert NOW.isoformat() not in response.text
+
+
+def test_zero_is_information_and_missing_value_has_reason(client, monkeypatch):
+    snapshot = _snapshot()
+    snapshot["sources"][0]["matched_companies"] = 0
+    snapshot["sources"][0]["master_coverage"] = 0.0
+    snapshot["sources"][0]["new_facts"] = None
+    monkeypatch.setattr(service, "console_snapshot", lambda: snapshot)
+    response = client.get("/admin/sources")
+    assert response.status_code == 200
+    assert ">0<" in response.text
+    assert "0.0%" in response.text
+    assert "Нет данных" in response.text
+    assert "data-tooltip=\"Нет данных: тестовая причина.\"" in response.text
+    assert "N/A" not in response.text
+
+
+def test_source_headers_have_hover_help(client):
+    response = client.get("/admin/sources")
+    assert response.status_code == 200
+    for label in ("Подключён", "Состояние", "Автовосстановление", "Последняя проверка", "Покрытие Master"):
+        assert re.search(rf'data-tooltip="[^"]+">{label}', response.text)

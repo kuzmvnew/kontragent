@@ -1,0 +1,11 @@
+{% macro help(text, tooltip) -%}
+<span class="help" tabindex="0" title="{{ tooltip }}" data-tooltip="{{ tooltip }}">{{ text }}<span aria-hidden="true" class="help-mark">?</span></span>
+{%- endmacro %}
+
+{% macro metric(label, value, tooltip, class_name='', secondary='') -%}
+<article title="{{ tooltip }}"><small>{{ help(label, tooltip) }}</small><strong class="{{ class_name }}">{{ value }}</strong>{% if secondary %}<span>{{ secondary }}</span>{% endif %}</article>
+{%- endmacro %}
+
+{% macro missing(reason) -%}
+<span class="no-data" tabindex="0" title="{{ reason }}" data-tooltip="{{ reason }}">Нет данных</span>
+{%- endmacro %}

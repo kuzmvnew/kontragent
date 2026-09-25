@@ -1,1 +1,16 @@
-{% extends "base.html" %}{% block title %}Подтверждение — NEXT Company{% endblock %}{% block content %}<section class="panel confirm"><h1>{{ action_label }}</h1><p>{{ incident.incident_code }} · {{ incident.source_id }}</p><p class="muted">Действие выполняется только через фиксированный allowlisted controller playbook и будет записано в audit/timeline.</p><form method="post" action="/admin/incidents/{{ incident.id }}/actions/{{ action }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button primary" type="submit">Подтвердить</button><a class="button" href="/admin/incidents/{{ incident.id }}">Отмена</a></form></section>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Подтверждение — NEXT Company{% endblock %}
+{% block content %}
+<section class="panel confirm">
+  <h1>{% if action == 'check-source-now' %}Проверить официальный источник сейчас?{% else %}{{ action_label }}?{% endif %}</h1>
+  <p><strong>{{ incident.source_id }}</strong><br><span class="mono">{{ incident.incident_code }}</span></p>
+  {% if action == 'check-source-now' %}
+  <p>Система вне расписания проверит, появился ли исправленный официальный файл. Текущие успешные данные и публикация не будут удалены.</p>
+  {% elif action == 'prepare-repair-package' %}
+  <p>Контроллер подготовит безопасный диагностический пакет. Coding-agent запускаться не будет.</p>
+  {% else %}
+  <p>Будет выполнено только применимое к этому инциденту предопределённое действие. Оно появится в аудите и истории инцидента.</p>
+  {% endif %}
+  <form method="post" action="/admin/incidents/{{ incident.id }}/actions/{{ action }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button primary" type="submit">{% if action == 'check-source-now' %}Проверить источник{% else %}Подтвердить{% endif %}</button><a class="button" href="/admin/incidents/{{ incident.id }}">Отмена</a></form>
+</section>
+{% endblock %}
