@@ -6,6 +6,7 @@ After=postgresql.service
 Type=oneshot
 User=postgres
 Group=postgres
+SupplementaryGroups=nextcompany
 EnvironmentFile=/etc/nextcompany/public.env
 EnvironmentFile=/etc/nextcompany/importer.env
 ExecStart=/opt/nextcompany/current/deploy/scripts/backup_public.sh
