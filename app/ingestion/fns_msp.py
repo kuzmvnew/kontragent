@@ -1363,3 +1363,60 @@ def import_fns_msp_zip(
         raw_connection.close()
 
     return totals
+
+
+# =========================================================
+# WORKER FOUNDATION / OFFICIAL RELEASE SUPERVISION
+# =========================================================
+
+
+SOURCE_ID = DATASET_CODE
+SOURCE_PAGE_URL = "https://www.nalog.gov.ru/opendata/7707329152-rsmp/"
+HANDLER_VERSION = "msp-official-v1"
+
+
+def _worker_spec():
+    from app.ingestion.fns_bulk_worker import FnsBulkSourceSpec
+
+    return FnsBulkSourceSpec(
+        source_id=SOURCE_ID,
+        dataset_code=DATASET_CODE,
+        source_page_url=SOURCE_PAGE_URL,
+        source_path="7707329152-rsmp",
+        handler_version=HANDLER_VERSION,
+        kind="msp",
+        api_projection="msp_profile",
+        card_projection="company_card.msp",
+    )
+
+
+def fns_msp_worker_handler(context):
+    from app.ingestion.fns_bulk_worker import run_bulk_handler
+
+    return run_bulk_handler(context, spec=_worker_spec(), iterator=iter_xml_records)
+
+
+def publish_fns_msp_worker_result(session, claim, result):
+    from app.ingestion.fns_bulk_worker import publish_bulk_result
+
+    return publish_bulk_result(session, claim, result, spec=_worker_spec())
+
+
+def register_fns_msp_worker(session, registry):
+    from app.ingestion.fns_bulk_worker import register_bulk_handler
+
+    return register_bulk_handler(
+        session,
+        registry,
+        spec=_worker_spec(),
+        handler=fns_msp_worker_handler,
+        publisher=publish_fns_msp_worker_result,
+    )
+
+
+def schedule_fns_msp_check(session, *, raw_root, now=None):
+    from app.ingestion.fns_bulk_worker import schedule_source_check
+
+    return schedule_source_check(
+        session, spec=_worker_spec(), raw_root=Path(raw_root), now=now
+    )

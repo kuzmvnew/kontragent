@@ -30,10 +30,13 @@ from sqlalchemy.orm import Session
 
 from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
 from app.models.company import Company
+from app.models.headcount import CompanyHeadcount
+from app.models.msp import CompanyMspProfile
 from app.models.revenue_expense import CompanyRevenueExpenseSnapshot
 from app.models.source import DataSet
 from app.models.tax_offence import CompanyTaxOffence
 from app.models.tax_payment import CompanyTaxPaymentItem, CompanyTaxPaymentSnapshot
+from app.models.tax_regime import CompanyTaxRegimeSnapshot
 from app.models.worker import WorkerHandlerRegistration, WorkerPublicationState
 from app.worker.contracts import (
     ExecutionCounters,
@@ -72,7 +75,14 @@ class FnsBulkSourceSpec:
     check_frequency: str = "daily"
 
     def __post_init__(self) -> None:
-        if self.kind not in {"tax_offence", "revenue_expense", "tax_payment"}:
+        if self.kind not in {
+            "tax_offence",
+            "revenue_expense",
+            "tax_payment",
+            "headcount",
+            "msp",
+            "tax_regime",
+        }:
             raise ValueError(f"unsupported FNS bulk source kind: {self.kind}")
         if not all(
             value.strip()
@@ -122,6 +132,70 @@ class FnsRelease:
             "provenance": self.provenance,
             "release_identity": self.identity,
         }
+
+
+@dataclass(frozen=True)
+class FnsReleaseBundle:
+    """One operational release composed from several official FNS passports."""
+
+    releases: Mapping[str, FnsRelease]
+
+    def __post_init__(self) -> None:
+        if not self.releases:
+            raise ValueError("FNS release bundle is empty")
+
+    @property
+    def identity(self) -> str:
+        return sha256(
+            "\n".join(
+                f"{name}:{release.identity}"
+                for name, release in sorted(self.releases.items())
+            ).encode("utf-8")
+        ).hexdigest()
+
+    @property
+    def source_data_date(self) -> date:
+        # A family is only as current as its oldest required member.
+        return min(release.source_data_date for release in self.releases.values())
+
+    @property
+    def actual_until(self) -> date | None:
+        boundaries = [release.actual_until for release in self.releases.values()]
+        return min(boundaries) if all(boundaries) else None
+
+    @property
+    def discovered_at(self) -> datetime:
+        return max(release.discovered_at for release in self.releases.values())
+
+    def as_metadata(self) -> dict[str, Any]:
+        return {
+            "release_identity": self.identity,
+            "source_data_date": self.source_data_date.isoformat(),
+            "actual_until": self.actual_until.isoformat() if self.actual_until else None,
+            "discovered_at": self.discovered_at.isoformat(),
+            "releases": {
+                name: release.as_metadata()
+                for name, release in sorted(self.releases.items())
+            },
+        }
+
+
+def discover_fns_release_bundle(
+    specs: Mapping[str, FnsBulkSourceSpec],
+    *,
+    now: datetime | None = None,
+    fetch: Callable[[str], tuple[bytes, Mapping[str, str]]] | None = None,
+) -> FnsReleaseBundle:
+    """Discover all required passports or fail the family check as a whole."""
+
+    discovered_at = _utc(now or utc_now())
+    fetcher = fetch or _read_url
+    return FnsReleaseBundle(
+        releases={
+            name: discover_fns_release(spec, now=discovered_at, fetch=fetcher)
+            for name, spec in specs.items()
+        }
+    )
 
 
 def _utc(value: datetime) -> datetime:
@@ -438,6 +512,7 @@ def normalize_release(
     *,
     xsd_path: Path,
     iterator: Callable[[Any], Iterable[Mapping[str, Any] | None]],
+    postprocess: Callable[[Path], tuple[Path, Mapping[str, Any]]] | None = None,
 ) -> tuple[Path, str, dict[str, Any]]:
     """Stream every XML member through the existing source parser into JSONL."""
 
@@ -512,6 +587,16 @@ def normalize_release(
         staging_temp.unlink(missing_ok=True)
         raise SchemaMismatchError("official FNS release has empty or mixed-date normalized data")
     counters["source_data_date"] = next(iter(data_dates))
+    if postprocess is not None:
+        original = staging_temp
+        try:
+            staging_temp, metadata = postprocess(original)
+        except Exception:
+            original.unlink(missing_ok=True)
+            raise
+        if staging_temp != original:
+            original.unlink(missing_ok=True)
+        counters.update(dict(metadata))
     normalized_checksum, _normalized_size = _hash_file(staging_temp)
     staging_path = zip_path.parent / f"normalized-{normalized_checksum}.jsonl"
     _persist_download(staging_temp, staging_path, checksum=normalized_checksum)
@@ -658,11 +743,15 @@ def _apply_successful_check(
 
 
 def _fact_model(spec: FnsBulkSourceSpec) -> type[Any]:
-    if spec.kind == "tax_offence":
-        return CompanyTaxOffence
-    if spec.kind == "revenue_expense":
-        return CompanyRevenueExpenseSnapshot
-    return CompanyTaxPaymentSnapshot
+    models = {
+        "tax_offence": CompanyTaxOffence,
+        "revenue_expense": CompanyRevenueExpenseSnapshot,
+        "tax_payment": CompanyTaxPaymentSnapshot,
+        "headcount": CompanyHeadcount,
+        "msp": CompanyMspProfile,
+        "tax_regime": CompanyTaxRegimeSnapshot,
+    }
+    return models[spec.kind]
 
 
 def _project_normalized_snapshot(
@@ -723,7 +812,7 @@ def _project_normalized_snapshot(
                     "expenses": Decimal(row["expenses"]),
                     "profit_loss": Decimal(row["profit_loss"]),
                 })
-            else:
+            elif spec.kind == "tax_payment":
                 data_date = date.fromisoformat(row["data_date"])
                 key = (int(company_id), data_date)
                 values.append({
@@ -751,6 +840,41 @@ def _project_normalized_snapshot(
                     }
                     for item in row.get("items", ())
                 ]
+            elif spec.kind == "headcount":
+                values.append({
+                    "company_id": company_id,
+                    "dataset_id": dataset.id,
+                    "year": int(row["year"]),
+                    "employee_count": int(row["employee_count"]),
+                    "source_document_id": row.get("document_id"),
+                    "source_document_date": date.fromisoformat(row["document_date"])
+                    if row.get("document_date") else None,
+                })
+            elif spec.kind == "msp":
+                values.append({
+                    "company_id": company_id,
+                    "dataset_id": dataset.id,
+                    "data_date": date.fromisoformat(row["data_date"]),
+                    "inclusion_date": date.fromisoformat(row["inclusion_date"])
+                    if row.get("inclusion_date") else None,
+                    "subject_type_code": row.get("subject_type_code"),
+                    "category_code": row.get("category_code"),
+                    "is_new_code": row.get("is_new_code"),
+                    "social_enterprise_code": row.get("social_enterprise_code"),
+                    "employee_count": row.get("employee_count"),
+                    "source_document_id": row.get("document_id"),
+                })
+            else:
+                values.append({
+                    "company_id": company_id,
+                    "dataset_id": dataset.id,
+                    "entity_type": row["entity_type"],
+                    "data_date": date.fromisoformat(row["data_date"]),
+                    "regime_codes": list(row.get("regime_codes") or ()),
+                    "source_document_id": row.get("source_document_id"),
+                    "source_document_date": date.fromisoformat(row["source_document_date"])
+                    if row.get("source_document_date") else None,
+                })
         if not values:
             continue
         if spec.kind == "tax_offence":
@@ -794,7 +918,7 @@ def _project_normalized_snapshot(
                 statement = statement.on_conflict_do_nothing(
                     constraint="uq_company_revexp_company_dataset_date"
                 )
-        else:
+        elif spec.kind == "tax_payment":
             values = list({
                 (int(value["company_id"]), value["data_date"]): value
                 for value in values
@@ -853,6 +977,69 @@ def _project_normalized_snapshot(
                     )
                 session.execute(item_statement)
             continue
+        elif spec.kind == "headcount":
+            values = list({
+                (int(value["company_id"]), int(value["year"])): value
+                for value in values
+            }.values())
+            statement = pg_insert(CompanyHeadcount).values(values)
+            if replace_existing:
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_company_headcounts_company_year_dataset",
+                    set_={
+                        "employee_count": statement.excluded.employee_count,
+                        "source_document_id": statement.excluded.source_document_id,
+                        "source_document_date": statement.excluded.source_document_date,
+                        "updated_at": func.now(),
+                    },
+                )
+            else:
+                statement = statement.on_conflict_do_nothing(
+                    constraint="uq_company_headcounts_company_year_dataset"
+                )
+        elif spec.kind == "msp":
+            values = list({int(value["company_id"]): value for value in values}.values())
+            statement = pg_insert(CompanyMspProfile).values(values)
+            if replace_existing:
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_company_msp_profile_company_dataset",
+                    set_={
+                        "data_date": statement.excluded.data_date,
+                        "inclusion_date": statement.excluded.inclusion_date,
+                        "subject_type_code": statement.excluded.subject_type_code,
+                        "category_code": statement.excluded.category_code,
+                        "is_new_code": statement.excluded.is_new_code,
+                        "social_enterprise_code": statement.excluded.social_enterprise_code,
+                        "employee_count": statement.excluded.employee_count,
+                        "source_document_id": statement.excluded.source_document_id,
+                        "updated_at": func.now(),
+                    },
+                )
+            else:
+                statement = statement.on_conflict_do_nothing(
+                    constraint="uq_company_msp_profile_company_dataset"
+                )
+        else:
+            values = list({
+                (int(value["company_id"]), value["data_date"]): value
+                for value in values
+            }.values())
+            statement = pg_insert(CompanyTaxRegimeSnapshot).values(values)
+            if replace_existing:
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_company_tax_regime_company_dataset_date",
+                    set_={
+                        "entity_type": statement.excluded.entity_type,
+                        "regime_codes": statement.excluded.regime_codes,
+                        "source_document_id": statement.excluded.source_document_id,
+                        "source_document_date": statement.excluded.source_document_date,
+                        "updated_at": func.now(),
+                    },
+                )
+            else:
+                statement = statement.on_conflict_do_nothing(
+                    constraint="uq_company_tax_regime_company_dataset_date"
+                )
         changed += len(session.scalars(statement.returning(model.id)).all())
     return matched, unmatched, matched_companies, changed
 
@@ -1090,6 +1277,53 @@ def enqueue_bulk_release(
     )
 
 
+def enqueue_bulk_release_bundle(
+    session: Session,
+    *,
+    spec: FnsBulkSourceSpec,
+    bundle: FnsReleaseBundle,
+    raw_root: Path,
+    check_only: bool = False,
+    replay_pointer: str | None = None,
+    replay_checksum: str | None = None,
+    scheduled_for: date | None = None,
+    max_attempts: int = 3,
+    timeout_seconds: int = 7200,
+) -> JobCreation:
+    """Enqueue several required FNS artifacts as one operational source run."""
+
+    approval = session.get(
+        WorkerHandlerRegistration, (spec.source_id, spec.handler_version)
+    )
+    if approval is None or not approval.approved or not approval.enabled or approval.live_mode:
+        raise HandlerNotRegisteredError(
+            f"durable handler approval is missing: {spec.source_id}@{spec.handler_version}"
+        )
+    check_key = (scheduled_for or bundle.discovered_at.date()).isoformat()
+    action = f"check:{check_key}" if check_only else "release"
+    return create_job(
+        session,
+        source_id=spec.source_id,
+        job_type=f"{spec.source_id}_{'check' if check_only else 'release'}",
+        handler_version=spec.handler_version,
+        idempotency_key=(
+            f"{spec.source_id}:{action}:{bundle.identity}:{spec.handler_version}"
+        ),
+        schedule_metadata={
+            **bundle.as_metadata(),
+            "raw_root": str(raw_root.resolve()),
+            "check_only": check_only,
+            "replay_snapshot": bool(replay_pointer),
+            "replay_pointer": replay_pointer,
+            "replay_checksum": replay_checksum,
+            "check_frequency": spec.check_frequency,
+            "publication_frequency": "official_release_bundle",
+        },
+        max_attempts=max_attempts,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def schedule_source_check(
     session: Session,
     *,
@@ -1107,6 +1341,32 @@ def schedule_source_check(
         session,
         spec=spec,
         release=release,
+        raw_root=raw_root,
+        check_only=same_release,
+        replay_pointer=state.active_pointer if same_release and state else None,
+        replay_checksum=str(validation.get("checksum") or "") if same_release else None,
+        scheduled_for=now.date(),
+    )
+
+
+def schedule_source_bundle_check(
+    session: Session,
+    *,
+    spec: FnsBulkSourceSpec,
+    member_specs: Mapping[str, FnsBulkSourceSpec],
+    raw_root: Path,
+    now: datetime | None = None,
+) -> JobCreation:
+    now = _utc(now or utc_now())
+    bundle = discover_fns_release_bundle(member_specs, now=now)
+    state = session.get(WorkerPublicationState, spec.source_id)
+    validation = dict(state.validation_metadata or {}) if state else {}
+    current_identity = (validation.get("validation") or {}).get("release_identity")
+    same_release = current_identity == bundle.identity
+    return enqueue_bulk_release_bundle(
+        session,
+        spec=spec,
+        bundle=bundle,
         raw_root=raw_root,
         check_only=same_release,
         replay_pointer=state.active_pointer if same_release and state else None,

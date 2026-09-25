@@ -5,15 +5,19 @@ import json
 
 from app.database.postgres import SessionLocal
 from app.ingestion.cbr_warning_worker import register_cbr_warning_worker
+from app.ingestion.fns_headcount import register_fns_headcount_worker
+from app.ingestion.fns_msp import register_fns_msp_worker
 from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
 from app.ingestion.fns_tax_debt_pipeline import (
     register_fns_tax_debt_controlled_live_handler,
 )
 from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
 from app.ingestion.fns_tax_payment import register_fns_tax_payment_worker
+from app.ingestion.fns_tax_regime import register_fns_tax_regime_worker
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
 )
+from app.services.source_service import ensure_default_dataset
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
     SCHEDULED_SOURCE_DATASET_CODES,
@@ -43,6 +47,9 @@ def build_registry() -> HandlerRegistry:
             pass
         register_fns_tax_payment_worker(session, registry)
         register_cbr_warning_worker(session, registry)
+        register_fns_headcount_worker(session, registry)
+        register_fns_msp_worker(session, registry)
+        register_fns_tax_regime_worker(session, registry)
         session.commit()
     return registry
 
@@ -64,6 +71,15 @@ def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
             break
         completed.append(str(run_id))
     return completed
+
+
+def ensure_activation_datasets(dataset_codes: list[str]) -> None:
+    """Create control rows needed by explicitly requested activations only."""
+
+    if "cbr_warning_list" in dataset_codes:
+        ensure_cbr_warning_list_dataset()
+    if "fns_tax_regime" in dataset_codes:
+        ensure_default_dataset("fns_tax_regime")
 
 
 def main() -> None:
@@ -105,10 +121,11 @@ def main() -> None:
             dataset_codes=("fns_tax_offence", "fns_revenue_expenses"),
         )
     if args.activate:
-        if "cbr_warning_list" in args.activate:
-            # Registration is deliberately tied to explicit activation; a
-            # supervisor restart must not silently enable a new source.
-            ensure_cbr_warning_list_dataset()
+        # Registration is deliberately tied to explicit activation; a
+        # supervisor restart must not silently enable a new source.  Existing
+        # production databases predate the tax-regime family control row; its
+        # scoped upsert never enables the child projection datasets.
+        ensure_activation_datasets(args.activate)
         configure_source_schedules(enabled=True, dataset_codes=args.activate)
     if args.deactivate:
         configure_source_schedules(enabled=False, dataset_codes=args.deactivate)

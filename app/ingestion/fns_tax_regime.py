@@ -793,3 +793,571 @@ def process_ip_batch(
         records,
         dataset_id,
     )
+
+
+# =========================================================
+# WORKER FOUNDATION / OFFICIAL TWO-ARTIFACT FAMILY
+# =========================================================
+
+
+SOURCE_ID = "fns_tax_regime"
+FAMILY_DATASET_CODE = SOURCE_ID
+HANDLER_VERSION = "tax-regime-family-official-v1"
+LEGAL_SOURCE_PAGE_URL = "https://www.nalog.gov.ru/opendata/7707329152-snr/"
+IP_SOURCE_PAGE_URL = "https://www.nalog.gov.ru/opendata/7707329152-snrip/"
+
+
+def _family_spec():
+    from app.ingestion.fns_bulk_worker import FnsBulkSourceSpec
+
+    return FnsBulkSourceSpec(
+        source_id=SOURCE_ID,
+        dataset_code=FAMILY_DATASET_CODE,
+        source_page_url=LEGAL_SOURCE_PAGE_URL,
+        source_path="7707329152-snr",
+        handler_version=HANDLER_VERSION,
+        kind="tax_regime",
+        api_projection="tax_regime_profile",
+        card_projection="company_card.tax_regime",
+    )
+
+
+def _member_specs():
+    from app.ingestion.fns_bulk_worker import FnsBulkSourceSpec
+
+    common = {
+        "source_id": SOURCE_ID,
+        "handler_version": HANDLER_VERSION,
+        "kind": "tax_regime",
+        "api_projection": "tax_regime_profile",
+        "card_projection": "company_card.tax_regime",
+    }
+    return {
+        "legal": FnsBulkSourceSpec(
+            dataset_code=LEGAL_DATASET_CODE,
+            source_page_url=LEGAL_SOURCE_PAGE_URL,
+            source_path="7707329152-snr",
+            **common,
+        ),
+        "ip": FnsBulkSourceSpec(
+            dataset_code=IP_DATASET_CODE,
+            source_page_url=IP_SOURCE_PAGE_URL,
+            source_path="7707329152-snrip",
+            **common,
+        ),
+    }
+
+
+def iter_legal_xml_records(xml_file):
+    from xml.etree import ElementTree as ET
+
+    for _event, element in ET.iterparse(xml_file, events=("end",)):
+        if local_name(element.tag) != "Документ":
+            continue
+        yield parse_legal_document(element)
+        element.clear()
+
+
+def iter_ip_xml_records(xml_file):
+    from xml.etree import ElementTree as ET
+
+    for _event, element in ET.iterparse(xml_file, events=("end",)):
+        if local_name(element.tag) != "Документ":
+            continue
+        yield parse_ip_document(element)
+        element.clear()
+
+
+def _bundle_from_metadata(metadata):
+    from app.ingestion.fns_bulk_worker import FnsReleaseBundle, release_from_metadata
+    from app.worker.errors import InvalidDataError
+
+    raw = metadata.get("releases")
+    if not isinstance(raw, dict) or set(raw) != {"legal", "ip"}:
+        raise InvalidDataError("tax-regime release requires legal and IP members")
+    bundle = FnsReleaseBundle(
+        releases={name: release_from_metadata(item) for name, item in raw.items()}
+    )
+    if bundle.identity != metadata.get("release_identity"):
+        raise InvalidDataError("tax-regime bundle identity differs from job metadata")
+    return bundle
+
+
+def coalesce_tax_regime_records(staging_path):
+    """Deterministically union duplicate-INN SNR/SNRIP rows on disk.
+
+    The official SNRIP release legitimately contains duplicate INNs.  Keeping
+    only the first or last document would lose regimes.  A temporary SQLite
+    spool bounds Python memory, sorts across XML members, validates that every
+    duplicate describes the same snapshot/entity, and retains every source
+    document in the accepted normalized JSONL.
+    """
+
+    import json
+    import os
+    from pathlib import Path
+    import sqlite3
+    import tempfile
+
+    from app.worker.errors import SchemaMismatchError
+
+    source = Path(staging_path)
+    db_handle, db_name = tempfile.mkstemp(
+        prefix="tax-regime-coalesce-", suffix=".sqlite", dir=source.parent
+    )
+    os.close(db_handle)
+    output_handle, output_name = tempfile.mkstemp(
+        prefix="tax-regime-coalesced-", suffix=".jsonl.tmp", dir=source.parent
+    )
+    os.close(output_handle)
+    database = Path(db_name)
+    output = Path(output_name)
+    connection = sqlite3.connect(database)
+    total = unique = 0
+    try:
+        connection.execute("PRAGMA journal_mode=OFF")
+        connection.execute("PRAGMA synchronous=OFF")
+        connection.execute("PRAGMA temp_store=FILE")
+        connection.execute(
+            "CREATE TABLE records (inn TEXT NOT NULL, payload TEXT NOT NULL)"
+        )
+        batch = []
+        with source.open(encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                inn = str(row.get("inn") or "")
+                if not inn:
+                    raise SchemaMismatchError("tax-regime normalized row has no INN")
+                batch.append((inn, json.dumps(row, ensure_ascii=False, sort_keys=True)))
+                total += 1
+                if len(batch) >= 10000:
+                    connection.executemany(
+                        "INSERT INTO records (inn, payload) VALUES (?, ?)", batch
+                    )
+                    batch.clear()
+            if batch:
+                connection.executemany(
+                    "INSERT INTO records (inn, payload) VALUES (?, ?)", batch
+                )
+        connection.execute("CREATE INDEX records_inn ON records (inn)")
+
+        def merged(rows):
+            first = dict(rows[0])
+            identity = (first.get("entity_type"), first.get("dataset_code"))
+            data_date = first.get("data_date")
+            regime_codes = set()
+            unknown_codes = set()
+            documents = set()
+            ogrns = set()
+            for row in rows:
+                if (row.get("entity_type"), row.get("dataset_code")) != identity:
+                    raise SchemaMismatchError(
+                        f"tax-regime duplicate INN changes applicability: {first['inn']}"
+                    )
+                if row.get("data_date") != data_date:
+                    raise SchemaMismatchError(
+                        f"tax-regime duplicate INN has mixed source dates: {first['inn']}"
+                    )
+                regime_codes.update(str(code) for code in row.get("regime_codes") or ())
+                unknown_codes.update(str(code) for code in row.get("unknown_codes") or ())
+                document = (
+                    str(row.get("source_document_id") or ""),
+                    str(row.get("source_document_date") or ""),
+                )
+                if any(document):
+                    documents.add(document)
+                if row.get("ogrn"):
+                    ogrns.add(str(row["ogrn"]))
+            if len(ogrns) > 1:
+                raise SchemaMismatchError(
+                    f"tax-regime duplicate INN has conflicting OGRN: {first['inn']}"
+                )
+            ordered_documents = sorted(documents)
+            first["regime_codes"] = sorted(regime_codes)
+            first["unknown_codes"] = sorted(unknown_codes)
+            first["source_documents"] = [
+                {"source_document_id": document_id or None,
+                 "source_document_date": document_date or None}
+                for document_id, document_date in ordered_documents
+            ]
+            if ordered_documents:
+                first["source_document_id"] = ordered_documents[0][0] or None
+                first["source_document_date"] = ordered_documents[0][1] or None
+            if ogrns:
+                first["ogrn"] = next(iter(ogrns))
+            return first
+
+        with output.open("w", encoding="utf-8") as target:
+            current_inn = None
+            group = []
+            for inn, payload in connection.execute(
+                "SELECT inn, payload FROM records ORDER BY inn"
+            ):
+                if current_inn is not None and inn != current_inn:
+                    target.write(
+                        json.dumps(merged(group), ensure_ascii=False, sort_keys=True)
+                        + "\n"
+                    )
+                    unique += 1
+                    group.clear()
+                current_inn = inn
+                group.append(json.loads(payload))
+            if group:
+                target.write(
+                    json.dumps(merged(group), ensure_ascii=False, sort_keys=True) + "\n"
+                )
+                unique += 1
+    except Exception:
+        output.unlink(missing_ok=True)
+        raise
+    finally:
+        connection.close()
+        database.unlink(missing_ok=True)
+    return output, {
+        "normalized_unique_inns": unique,
+        "duplicate_inn_rows": total - unique,
+    }
+
+
+def fns_tax_regime_worker_handler(context):
+    import json
+    from pathlib import Path
+
+    from app.ingestion.fns_bulk_worker import (
+        _hash_file,
+        _write_once,
+        normalize_release,
+        stage_release,
+        utc_now,
+    )
+    from app.worker.contracts import (
+        ExecutionCounters,
+        HandlerResult,
+        RawArtifactReference,
+        StagingResult,
+        ValidationResult,
+    )
+    from app.worker.errors import InvalidDataError, SchemaMismatchError
+
+    metadata = context.schedule_metadata
+    bundle = _bundle_from_metadata(metadata)
+    if metadata.get("check_only"):
+        return HandlerResult(
+            checksum_metadata={
+                "release_identity": bundle.identity,
+                "check_only": True,
+                "replay_snapshot": bool(metadata.get("replay_snapshot")),
+            },
+            counters=ExecutionCounters(),
+        )
+    raw_value = str(metadata.get("raw_root") or "").strip()
+    if not raw_value:
+        raise InvalidDataError("raw_root is required")
+    raw_root = Path(raw_value).resolve()
+    context.ensure_active(now=utc_now())
+
+    iterators = {"legal": iter_legal_xml_records, "ip": iter_ip_xml_records}
+    members = {}
+    raw_artifacts = []
+    total_seen = total_written = total_rejected = 0
+    for name, spec in _member_specs().items():
+        release = bundle.releases[name]
+        zip_path, xsd_path, manifest = stage_release(
+            spec, release, raw_root=raw_root
+        )
+        context.heartbeat()
+        normalized_path, normalized_checksum, counters = normalize_release(
+            zip_path,
+            xsd_path=xsd_path,
+            iterator=iterators[name],
+            postprocess=coalesce_tax_regime_records,
+        )
+        if counters["source_data_date"] != release.source_data_date.isoformat():
+            raise SchemaMismatchError(
+                f"parsed {name} source data date differs from official passport"
+            )
+        members[name] = {
+            "dataset_code": spec.dataset_code,
+            "staging_pointer": normalized_path.as_uri(),
+            "normalized_sha256": normalized_checksum,
+            "release": release.as_metadata(),
+            "coverage": counters,
+        }
+        raw_artifacts.append(
+            RawArtifactReference(
+                artifact_reference=zip_path.as_uri(),
+                checksum=manifest["artifact_sha256"],
+                manifest=manifest,
+            )
+        )
+        total_seen += int(counters["records_seen"])
+        total_written += int(counters["records_valid"])
+        total_rejected += int(counters["records_rejected"])
+
+    descriptor = {
+        "manifest_version": 1,
+        "source_id": SOURCE_ID,
+        "release_identity": bundle.identity,
+        "members": members,
+        "immutable": True,
+    }
+    payload = (json.dumps(descriptor, ensure_ascii=False, sort_keys=True) + "\n").encode()
+    bundle_dir = raw_root / SOURCE_ID / "bundles" / bundle.identity
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    descriptor_path = bundle_dir / "normalized-bundle.json"
+    _write_once(descriptor_path, payload)
+    descriptor_checksum, _size = _hash_file(descriptor_path)
+    execution = ExecutionCounters(
+        records_seen=total_seen,
+        records_written=total_written,
+        records_rejected=total_rejected,
+    )
+    context.report_counters(execution)
+    return HandlerResult(
+        raw_artifacts=tuple(raw_artifacts),
+        staging_result=StagingResult(
+            staging_pointer=descriptor_path.as_uri(),
+            checksum=descriptor_checksum,
+            validation=ValidationResult(
+                accepted=True,
+                metadata={
+                    "release_identity": bundle.identity,
+                    "source_data_date": bundle.source_data_date.isoformat(),
+                    "member_release_identities": {
+                        name: release.identity for name, release in bundle.releases.items()
+                    },
+                },
+            ),
+            metadata={
+                "source_id": SOURCE_ID,
+                "dataset_code": FAMILY_DATASET_CODE,
+                "member_dataset_codes": [LEGAL_DATASET_CODE, IP_DATASET_CODE],
+            },
+        ),
+        checksum_metadata={
+            "normalized_bundle_sha256": descriptor_checksum,
+            "release_identity": bundle.identity,
+            "member_checksums": {
+                name: item["normalized_sha256"] for name, item in members.items()
+            },
+        },
+        counters=execution,
+    )
+
+
+def publish_fns_tax_regime_worker_result(session, claim, result):
+    import json
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from app.contracts.data_readiness import AutoUpdateStatus
+    from app.ingestion.fns_bulk_worker import (
+        _accepted_replay_path,
+        _apply_successful_check,
+        _fact_model,
+        _file_path,
+        _hash_file,
+        _project_normalized_snapshot,
+        utc_now,
+    )
+    from app.models.source import DataSet
+    from app.worker.contracts import ExecutionCounters
+    from app.worker.errors import InvalidDataError
+
+    bundle = _bundle_from_metadata(claim.schedule_metadata)
+    family_spec = _family_spec()
+    family = session.scalar(
+        select(DataSet).where(DataSet.code == FAMILY_DATASET_CODE).with_for_update()
+    )
+    if family is None:
+        raise InvalidDataError(f"dataset is not registered: {FAMILY_DATASET_CODE}")
+    children = {
+        dataset.code: dataset
+        for dataset in session.scalars(
+            select(DataSet)
+            .where(DataSet.code.in_((LEGAL_DATASET_CODE, IP_DATASET_CODE)))
+            .with_for_update()
+        )
+    }
+    if set(children) != {LEGAL_DATASET_CODE, IP_DATASET_CODE}:
+        raise InvalidDataError("tax-regime child datasets are not registered")
+
+    check_only = bool(claim.schedule_metadata.get("check_only"))
+    if check_only:
+        descriptor_path = _accepted_replay_path(
+            session, claim=claim, spec=family_spec
+        )
+    else:
+        if result.staging_result is None:
+            raise InvalidDataError("tax-regime publisher requires normalized bundle")
+        descriptor_path = _file_path(result.staging_result.staging_pointer)
+    try:
+        descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise InvalidDataError("tax-regime normalized bundle cannot be read") from error
+    if descriptor.get("release_identity") != bundle.identity:
+        raise InvalidDataError("tax-regime normalized bundle release changed")
+    members = descriptor.get("members")
+    if not isinstance(members, dict) or set(members) != {"legal", "ip"}:
+        raise InvalidDataError("tax-regime normalized bundle members differ")
+
+    now = utc_now()
+    totals = {"matched": 0, "unmatched": 0, "changed": 0, "published": 0}
+    matched_companies = set()
+    member_coverage = {}
+    for name, spec in _member_specs().items():
+        member = members[name]
+        release = bundle.releases[name]
+        if (
+            member.get("dataset_code") != spec.dataset_code
+            or (member.get("release") or {}).get("release_identity") != release.identity
+        ):
+            raise InvalidDataError(f"tax-regime {name} descriptor identity differs")
+        staging_path = _file_path(str(member.get("staging_pointer") or ""))
+        checksum, _size = _hash_file(staging_path)
+        if checksum != member.get("normalized_sha256"):
+            raise InvalidDataError(f"tax-regime {name} normalized checksum mismatch")
+        dataset = children[spec.dataset_code]
+        matched, unmatched, companies, changed = _project_normalized_snapshot(
+            session,
+            dataset=dataset,
+            spec=spec,
+            staging_path=staging_path,
+            replace_existing=not check_only,
+        )
+        published = int(
+            session.scalar(
+                select(func.count())
+                .select_from(_fact_model(spec))
+                .where(_fact_model(spec).dataset_id == dataset.id)
+            )
+            or 0
+        )
+        totals["matched"] += matched
+        totals["unmatched"] += unmatched
+        totals["changed"] += changed
+        totals["published"] += published
+        matched_companies.update(companies)
+        if not check_only:
+            dataset.enabled = True
+            dataset.last_success_at = now
+            dataset.last_data_date = release.source_data_date
+            dataset.source_as_of = datetime.combine(
+                release.source_data_date, datetime.min.time(), tzinfo=timezone.utc
+            )
+            dataset.retrieved_at = now
+            dataset.published_at = now
+        dataset.record_count = published
+        child_status = _apply_successful_check(
+            dataset,
+            actual_until=release.actual_until,
+            now=now,
+            check_interval=spec.check_interval,
+        )
+        # Child datasets are projections owned by the one family schedule.
+        dataset.auto_update_status = AutoUpdateStatus.NOT_CONFIGURED
+        dataset.next_expected_update_at = None
+        dataset.coverage = {
+            "managed_by_source_id": SOURCE_ID,
+            "source_records": int((member.get("coverage") or {}).get("records_seen") or 0),
+            "matched": matched,
+            "unmatched": unmatched,
+            "published_facts": published,
+            "freshness": child_status.value,
+            "release_identity": release.identity,
+        }
+        member_coverage[name] = dict(dataset.coverage)
+
+    if not check_only:
+        family.enabled = True
+        family.auto_update_status = AutoUpdateStatus.CONFIGURED
+        family.last_success_at = now
+        family.last_data_date = bundle.source_data_date
+        family.source_as_of = datetime.combine(
+            bundle.source_data_date, datetime.min.time(), tzinfo=timezone.utc
+        )
+        family.retrieved_at = now
+        family.published_at = now
+    family.record_count = totals["published"]
+    status = _apply_successful_check(
+        family,
+        actual_until=bundle.actual_until,
+        now=now,
+        check_interval=family_spec.check_interval,
+    )
+    family.coverage = {
+        "source_records": totals["matched"] + totals["unmatched"],
+        "matched": totals["matched"],
+        "unmatched": totals["unmatched"],
+        "published_facts": totals["published"],
+        "risk_summary_candidate_companies": len(matched_companies),
+        "api_projection": family_spec.api_projection,
+        "card_projection": family_spec.card_projection,
+        "release_identity": bundle.identity,
+        "members": member_coverage,
+    }
+    counters = ExecutionCounters(
+        records_seen=totals["matched"] + totals["unmatched"],
+        records_written=(totals["changed"] if check_only else totals["matched"]),
+        records_published=(totals["changed"] if check_only else totals["published"]),
+    )
+    if check_only:
+        return replace(
+            result,
+            staging_result=None,
+            checksum_metadata={
+                **result.checksum_metadata,
+                "freshness": status.value,
+                "official_actual_until": (
+                    bundle.actual_until.isoformat() if bundle.actual_until else None
+                ),
+            },
+            counters=counters,
+        )
+    validation = replace(
+        result.staging_result.validation,
+        metadata={
+            **result.staging_result.validation.metadata,
+            **totals,
+            "risk_summary_candidate_companies": len(matched_companies),
+            "freshness": status.value,
+            "official_actual_until": (
+                bundle.actual_until.isoformat() if bundle.actual_until else None
+            ),
+        },
+    )
+    return replace(
+        result,
+        staging_result=replace(result.staging_result, validation=validation),
+        counters=counters,
+    )
+
+
+def register_fns_tax_regime_worker(session, registry):
+    from app.ingestion.fns_bulk_worker import register_bulk_handler
+
+    return register_bulk_handler(
+        session,
+        registry,
+        spec=_family_spec(),
+        handler=fns_tax_regime_worker_handler,
+        publisher=publish_fns_tax_regime_worker_result,
+    )
+
+
+def schedule_fns_tax_regime_check(session, *, raw_root, now=None):
+    from pathlib import Path
+
+    from app.ingestion.fns_bulk_worker import schedule_source_bundle_check
+
+    return schedule_source_bundle_check(
+        session,
+        spec=_family_spec(),
+        member_specs=_member_specs(),
+        raw_root=Path(raw_root),
+        now=now,
+    )

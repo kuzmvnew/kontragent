@@ -85,6 +85,39 @@ def _enqueue_tax_debt() -> object:
         return creation
 
 
+def _enqueue_headcount() -> object:
+    from app.ingestion.fns_headcount import schedule_fns_headcount_check
+
+    with SessionLocal() as session:
+        creation = schedule_fns_headcount_check(session, raw_root=_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"HEADCOUNT release job is terminal: {creation.job.id}")
+        return creation
+
+
+def _enqueue_msp() -> object:
+    from app.ingestion.fns_msp import schedule_fns_msp_check
+
+    with SessionLocal() as session:
+        creation = schedule_fns_msp_check(session, raw_root=_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"MSP release job is terminal: {creation.job.id}")
+        return creation
+
+
+def _enqueue_tax_regime() -> object:
+    from app.ingestion.fns_tax_regime import schedule_fns_tax_regime_check
+
+    with SessionLocal() as session:
+        creation = schedule_fns_tax_regime_check(session, raw_root=_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"TAX-REGIME release job is terminal: {creation.job.id}")
+        return creation
+
+
 # Production handlers are explicit and non-empty.  They only discover and
 # enqueue into Worker Foundation; execution remains lease/fencing controlled.
 HANDLERS: dict[str, UpdateHandler] = {
@@ -93,6 +126,9 @@ HANDLERS: dict[str, UpdateHandler] = {
     "cbr_warning_list": _enqueue_cbr_warning,
     "fns_tax_paid": _enqueue_tax_payment,
     "fns_tax_debt": _enqueue_tax_debt,
+    "fns_headcount": _enqueue_headcount,
+    "fns_msp": _enqueue_msp,
+    "fns_tax_regime": _enqueue_tax_regime,
 }
 FNS_BULK_DATASET_CODES = frozenset(
     {
@@ -100,6 +136,9 @@ FNS_BULK_DATASET_CODES = frozenset(
         "fns_revenue_expenses",
         "fns_tax_debt",
         "fns_tax_paid",
+        "fns_headcount",
+        "fns_msp",
+        "fns_tax_regime",
     }
 )
 SCHEDULED_SOURCE_DATASET_CODES = frozenset(HANDLERS)
@@ -303,6 +342,9 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
         "fns_tax_debt": 2,
         "fns_tax_paid": 3,
         "cbr_warning_list": 4,
+        "fns_headcount": 5,
+        "fns_msp": 6,
+        "fns_tax_regime": 7,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:
