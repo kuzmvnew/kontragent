@@ -257,6 +257,25 @@ def _parse_date(value: str | None) -> date | None:
     return date(int(year.group(1)), 12, 31) if year else None
 
 
+def _source_date_from_artifact_url(artifact_url: str) -> date | None:
+    """Read the dated current-release token from the pinned FNS ZIP name."""
+
+    basename = Path(unquote(urlparse(artifact_url).path)).name
+    match = re.fullmatch(
+        r"data-(?P<source_date>\d{8})-structure-[A-Za-z0-9][A-Za-z0-9._-]*\.zip",
+        basename,
+        flags=re.I,
+    )
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group("source_date"), "%d%m%Y").date()
+    except ValueError as error:
+        raise SchemaMismatchError(
+            "official FNS artifact has an invalid source data date"
+        ) from error
+
+
 def _read_url(url: str, *, timeout_seconds: int = 60) -> tuple[bytes, Mapping[str, str]]:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in OFFICIAL_HOSTS:
@@ -300,6 +319,8 @@ def discover_fns_release(
     )
     provenance = re.sub(r"<[^>]+>", " ", provenance_match.group(1)).strip() if provenance_match else ""
     source_data_date = _parse_date(provenance)
+    if source_data_date is None:
+        source_data_date = _source_date_from_artifact_url(artifact_url)
     if source_data_date is None:
         raise SchemaMismatchError("official FNS passport has no source data date")
 
