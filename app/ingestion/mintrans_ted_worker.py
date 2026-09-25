@@ -40,6 +40,20 @@ SEARCH_URL = "https://www.mintrans.gov.ru/search"
 CHECK_INTERVAL = timedelta(days=1)
 BATCH_SIZE = 1000
 MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+RUSSIAN_MONTHS = {
+    "января": 1,
+    "февраля": 2,
+    "марта": 3,
+    "апреля": 4,
+    "мая": 5,
+    "июня": 6,
+    "июля": 7,
+    "августа": 8,
+    "сентября": 9,
+    "октября": 10,
+    "ноября": 11,
+    "декабря": 12,
+}
 
 
 @dataclass(frozen=True)
@@ -80,22 +94,40 @@ class MintransOfficialProvider:
         candidates: list[MintransRelease] = []
         for page in range(1, max_pages + 1):
             query = urlencode({
-                "page_search2": page, "search_type": 0,
-                "value": "Реестр уведомлений о транспортно-экспедиционной деятельности",
+                "page_search2": page,
+                "search_type": 2,
+                "check_name": 1,
+                "value": "транспортно-экспедиционной деятельности",
             })
             content, _headers = self._fetch(f"{SEARCH_URL}?{query}")
             html = content.decode("utf-8", errors="replace")
             page_candidates = 0
-            for match in re.finditer(r'href=["\']([^"\']*/file/(\d+)[^"\']*)["\']', html, re.I):
-                context = unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html[max(0, match.start()-500):min(len(html), match.end()+500)]))).strip()
+            for block in re.split(
+                r'class=["\']document-list-item["\']', html, flags=re.I
+            )[1:]:
+                match = re.search(
+                    r'href=["\']([^"\']*/file/(\d+)[^"\']*)["\']',
+                    block,
+                    re.I,
+                )
+                if match is None:
+                    continue
+                context = unescape(
+                    re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", block))
+                ).strip()
                 lowered = context.lower()
                 if "транспортно-экспедицион" not in lowered and "реестр тэд" not in lowered:
                     continue
-                dates = re.findall(r"(?<!\d)(\d{2})[.](\d{2})[.](20\d{2})(?!\d)", context)
-                if not dates:
+                date_text = re.search(
+                    r'class=["\']date-span["\'][^>]*>\s*([^<]+)',
+                    block,
+                    re.I,
+                )
+                source_date = _official_result_date(
+                    date_text.group(1) if date_text is not None else context
+                )
+                if source_date is None:
                     continue
-                day, month, year = dates[-1]
-                source_date = date(int(year), int(month), int(day))
                 url = urljoin(SEARCH_URL, match.group(1))
                 candidates.append(MintransRelease(
                     artifact_url=url, artifact_id=match.group(2),
@@ -116,6 +148,32 @@ class MintransOfficialProvider:
             raise SchemaMismatchError("Mintrans artifact content type is not XLSX")
         target.write_bytes(content)
         return headers
+
+
+def _official_result_date(value: str) -> date | None:
+    numeric = re.search(
+        r"(?<!\d)(\d{1,2})[.](\d{1,2})[.](20\d{2})(?!\d)", value
+    )
+    if numeric is not None:
+        day, month, year = numeric.groups()
+        try:
+            return date(int(year), int(month), int(day))
+        except ValueError:
+            return None
+    words = re.search(
+        r"(?<!\d)(\d{1,2})\s+([A-Za-zА-Яа-яЁё]+)\s+(20\d{2})(?!\d)",
+        value,
+    )
+    if words is None:
+        return None
+    day, month_name, year = words.groups()
+    month = RUSSIAN_MONTHS.get(month_name.casefold())
+    if month is None:
+        return None
+    try:
+        return date(int(year), month, int(day))
+    except ValueError:
+        return None
 
 
 def _text(value: Any) -> str | None:
