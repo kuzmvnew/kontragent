@@ -20,6 +20,12 @@ from app.ingestion.fns_tax_payment import register_fns_tax_payment_worker
 from app.ingestion.fns_tax_regime import register_fns_tax_regime_worker
 from app.ingestion.fns_registry_master import register_fns_registry_workers
 from app.ingestion.girbo_worker import register_girbo_worker
+from app.ingestion.firmoteka_worker import register_firmoteka_worker
+from app.ingestion.exact_source_workers import (
+    register_eis_rnp_worker,
+    register_exact_source_workers,
+)
+from app.ingestion.roskomnadzor_bulk_worker import register_rkn_bulk_workers
 from app.ingestion.mintrans_ted_worker import register_mintrans_ted_worker
 from app.ingestion.roszdrav_license_worker import register_roszdrav_license_workers
 from app.services.cbr_warning_registry_service import (
@@ -57,6 +63,10 @@ def build_registry() -> HandlerRegistry:
         # Sources are deliberately registered in scheduler priority order.
         # Each retains an independent source id, lease, job namespace and
         # publication generation.
+        register_firmoteka_worker(session, registry)
+        register_exact_source_workers(session, registry)
+        register_eis_rnp_worker(session, registry)
+        register_rkn_bulk_workers(session, registry)
         register_fns_tax_offence_worker(session, registry)
         register_fns_revenue_expense_worker(session, registry)
         # S02 is registered only after its explicit durable cohort approval.
@@ -118,6 +128,12 @@ def ensure_activation_datasets(dataset_codes: list[str]) -> None:
     if set(dataset_codes) & ROSZDRAV_LICENSE_DATASET_CODES:
         ensure_roszdrav_datasets()
     if set(dataset_codes) & {
+        "firmoteka", "fns_npd", "nostroy_sro_members_on_demand",
+        "nopriz_sro_members_on_demand", "prime_corporate_disclosure", "eis_rnp",
+        "rkn_personal_data_operators",
+        "rkn_communications_licenses", "rkn_broadcast_licenses",
+        "rkn_registered_media", "rkn_information_distributors",
+        "rkn_hosting_providers",
         "fns_egrul", "fns_egrip", "mintrans_ted_registry", "girbo_accounting"
     }:
         with SessionLocal() as session:

@@ -198,6 +198,18 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "roszdrav_pharma_licenses",
         "roszdrav_narcotics_licenses",
         "roszdrav_medical_device_maintenance_licenses",
+        "firmoteka",
+        "fns_npd",
+        "nostroy_sro_members_on_demand",
+        "nopriz_sro_members_on_demand",
+        "prime_corporate_disclosure",
+        "rkn_personal_data_operators",
+        "eis_rnp",
+        "rkn_communications_licenses",
+        "rkn_broadcast_licenses",
+        "rkn_registered_media",
+        "rkn_information_distributors",
+        "rkn_hosting_providers",
     }
     assert set(scheduler.HANDLERS) == expected
     assert scheduler.FNS_BULK_DATASET_CODES == expected - {
@@ -207,6 +219,18 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         *scheduler.ROSZDRAV_LICENSE_DATASET_CODES,
         "mintrans_ted_registry",
         "girbo_accounting",
+        "firmoteka",
+        "fns_npd",
+        "nostroy_sro_members_on_demand",
+        "nopriz_sro_members_on_demand",
+        "prime_corporate_disclosure",
+        "rkn_personal_data_operators",
+        "eis_rnp",
+        "rkn_communications_licenses",
+        "rkn_broadcast_licenses",
+        "rkn_registered_media",
+        "rkn_information_distributors",
+        "rkn_hosting_providers",
     }
     assert scheduler.SCHEDULED_SOURCE_DATASET_CODES == expected
     calls = []
@@ -220,6 +244,7 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
     result = scheduler.run_due_updates(due_codes=reversed(sorted(expected)))
 
     assert calls == [
+        "firmoteka",
         "fns_egrul",
         "fns_egrip",
         "fns_tax_offence",
@@ -239,6 +264,17 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "roszdrav_medical_device_maintenance_licenses",
         "mintrans_ted_registry",
         "girbo_accounting",
+        "fns_npd",
+        "nostroy_sro_members_on_demand",
+        "nopriz_sro_members_on_demand",
+        "prime_corporate_disclosure",
+        "eis_rnp",
+        "rkn_personal_data_operators",
+        "rkn_communications_licenses",
+        "rkn_broadcast_licenses",
+        "rkn_registered_media",
+        "rkn_information_distributors",
+        "rkn_hosting_providers",
     ]
     assert set(result) == expected
     assert set(result.values()) == {"success"}

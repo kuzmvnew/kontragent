@@ -11,6 +11,9 @@
   <article><small>Blocked</small><strong class="red">{{ snapshot.summary.blocked }}</strong></article>
   <article><small>Disabled</small><strong>{{ snapshot.summary.disabled }}</strong></article>
   <article><small>Master</small><strong>{{ snapshot.master.total }}</strong><span>ЮЛ {{ snapshot.master.legal }} · ИП {{ snapshot.master.ip }}</span></article>
+  <article><small>Official / provisional</small><strong>{{ snapshot.master.official_verified|default(0) }} / {{ snapshot.master.firmoteka_provisional|default(0) }}</strong><span>pending verify {{ snapshot.master.pending_official_verification|default(0) }}</span></article>
+  <article><small>Enriched ≥1 / ≥3 / ≥5 / ≥10</small><strong>{{ snapshot.master.enriched_1|default(0) }} / {{ snapshot.master.enriched_3|default(0) }} / {{ snapshot.master.enriched_5|default(0) }} / {{ snapshot.master.enriched_10|default(0) }}</strong><span>zero {{ snapshot.master.zero_source_snapshots|default(0) }} · avg {{ '%.1f'|format(snapshot.master.average_source_snapshots|default(0)) }}</span></article>
+  <article><small>Master today</small><strong>+{{ snapshot.master.new_today|default(0) }} / Δ{{ snapshot.master.changed_today|default(0) }}</strong></article>
   <article><small>Queue / retry / leases</small><strong>{{ snapshot.summary.queue }} / {{ snapshot.summary.retry_scheduled }} / {{ snapshot.summary.active_leases }}</strong></article>
   <article><small>PostgreSQL</small><strong class="{{ 'green' if database.available else 'red' }}">{{ database.status }}</strong></article>
   <article><small>Последний backup</small><strong>{{ latest_backup.timestamp if latest_backup else '—' }}</strong><span>{{ latest_backup.sha256[:12] if latest_backup and latest_backup.sha256 else 'SHA недоступен' }} · {{ latest_backup.restore_test.status if latest_backup else 'нет статуса' }}</span></article>

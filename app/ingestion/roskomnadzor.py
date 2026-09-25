@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 import hashlib
 import io
+from itertools import chain
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -161,14 +162,20 @@ def parse_hosting_xlsx(content: bytes, *, data_date: date):
     except Exception as error:
         raise ValueError("Некорректный XLSX реестра провайдеров хостинга") from error
     sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    header_index = next((index for index, row in enumerate(rows[:20]) if any("инн" in str(value or "").lower() for value in row)), None)
+    row_iterator = iter(sheet.iter_rows(values_only=True))
+    prefix = []
+    for _ in range(20):
+        try:
+            prefix.append(next(row_iterator))
+        except StopIteration:
+            break
+    header_index = next((index for index, row in enumerate(prefix) if any("инн" in str(value or "").lower() for value in row)), None)
     if header_index is None:
         raise ValueError("В XLSX не найден заголовок с ИНН")
-    headers = [" ".join(str(value or "").lower().split()) for value in rows[header_index]]
+    headers = [" ".join(str(value or "").lower().split()) for value in prefix[header_index]]
     public, private, seen = [], [], set()
     source = duplicates = 0
-    for values in rows[header_index + 1:]:
+    for values in chain(prefix[header_index + 1:], row_iterator):
         if not any(value not in (None, "") for value in values):
             continue
         source += 1
@@ -183,6 +190,7 @@ def parse_hosting_xlsx(content: bytes, *, data_date: date):
         if row["record_key"] in seen: duplicates += 1
         else:
             seen.add(row["record_key"]); (public if kind == "public" else private).append(row)
+    workbook.close()
     return {"public_records": public, "private_records": private, "source_records": source, "imported_records": len(public) + len(private), "duplicate_records": duplicates, "rejected_records": 0}
 
 
