@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from hashlib import sha256
+from hashlib import md5, sha256
 from html import unescape
 import json
 import os
@@ -59,6 +59,20 @@ from app.worker.registry import HandlerRegistry
 OFFICIAL_HOSTS = frozenset({"www.nalog.gov.ru", "data.nalog.ru", "file.nalog.ru"})
 CHECK_INTERVAL = timedelta(days=1)
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+MULTIPART_RANGE_PART_SIZE = 8 * 1024 * 1024
+MULTIPART_RANGE_MIN_SIZE = 64 * 1024 * 1024
+_MULTIPART_ETAG = re.compile(
+    r'^"?(?P<digest>[0-9a-fA-F]{32})-(?P<part_count>[1-9][0-9]*)"?$'
+)
+
+
+@dataclass(frozen=True)
+class _MultipartDownloadPlan:
+    size: int
+    etag: str
+    etag_digest: str
+    part_count: int
+    advertised_sha256: str | None
 
 
 @dataclass(frozen=True)
@@ -318,6 +332,163 @@ def _hash_file(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _header(headers: Mapping[str, str], name: str) -> str | None:
+    return next(
+        (value for key, value in headers.items() if key.lower() == name.lower()),
+        None,
+    )
+
+
+def _multipart_download_plan(
+    headers: Mapping[str, str],
+) -> _MultipartDownloadPlan | None:
+    """Select the verified range path for large FNS S3 multipart objects."""
+
+    raw_etag = _header(headers, "etag")
+    if raw_etag is None:
+        return None
+    etag = raw_etag.strip()
+    weak_etag = etag.startswith("W/")
+    match = _MULTIPART_ETAG.fullmatch(etag[2:].lstrip() if weak_etag else etag)
+    if match is None:
+        return None
+
+    raw_size = _header(headers, "content-length")
+    if raw_size is None:
+        raise InvalidDataError("multipart download has no Content-Length")
+    try:
+        size = int(raw_size)
+    except ValueError as error:
+        raise InvalidDataError("multipart download has an invalid Content-Length") from error
+    if size < MULTIPART_RANGE_MIN_SIZE:
+        return None
+    if weak_etag:
+        raise InvalidDataError("large multipart download has no strong ETag")
+
+    accept_ranges = _header(headers, "accept-ranges")
+    if accept_ranges is None or "bytes" not in {
+        token.strip().lower() for token in accept_ranges.split(",")
+    }:
+        raise InvalidDataError("large multipart download does not advertise byte ranges")
+
+    part_count = int(match.group("part_count"))
+    expected_part_count = (
+        size + MULTIPART_RANGE_PART_SIZE - 1
+    ) // MULTIPART_RANGE_PART_SIZE
+    if part_count != expected_part_count:
+        raise InvalidDataError(
+            "large multipart ETag part count differs from the pinned range layout"
+        )
+
+    advertised_sha256 = _header(headers, "x-amz-meta-sha256")
+    if advertised_sha256 is not None and re.fullmatch(
+        r"[0-9a-fA-F]{64}", advertised_sha256.strip()
+    ) is None:
+        raise InvalidDataError("multipart download has an invalid official SHA256")
+    return _MultipartDownloadPlan(
+        size=size,
+        etag=etag,
+        etag_digest=match.group("digest").lower(),
+        part_count=part_count,
+        advertised_sha256=(
+            advertised_sha256.strip().lower() if advertised_sha256 else None
+        ),
+    )
+
+
+def _response_status(response: Any) -> int:
+    status = getattr(response, "status", None)
+    return int(status if status is not None else response.getcode())
+
+
+def _read_verified_range(
+    url: str,
+    *,
+    start: int,
+    end: int,
+    plan: _MultipartDownloadPlan,
+) -> bytes:
+    expected_size = end - start + 1
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "next.company-source-worker/1.0",
+            "Range": f"bytes={start}-{end}",
+            "If-Match": plan.etag,
+        },
+    )
+    with urlopen(request, timeout=120) as response:
+        headers = dict(response.headers.items())
+        if _response_status(response) != 206:
+            raise InvalidDataError("multipart range request did not return HTTP 206")
+        if _header(headers, "content-range") != f"bytes {start}-{end}/{plan.size}":
+            raise InvalidDataError("multipart response Content-Range differs")
+        if _header(headers, "content-length") != str(expected_size):
+            raise InvalidDataError("multipart response Content-Length differs")
+        if _header(headers, "etag") != plan.etag:
+            raise InvalidDataError("multipart response ETag changed during download")
+        response_sha256 = _header(headers, "x-amz-meta-sha256")
+        if plan.advertised_sha256 is not None and (
+            response_sha256 is None
+            or response_sha256.strip().lower() != plan.advertised_sha256
+        ):
+            raise InvalidDataError(
+                "multipart response official SHA256 changed during download"
+            )
+
+        content = bytearray()
+        while chunk := response.read(DOWNLOAD_CHUNK_SIZE):
+            content.extend(chunk)
+            if len(content) > expected_size:
+                raise InvalidDataError("multipart range body is longer than declared")
+        if len(content) != expected_size:
+            raise InvalidDataError("multipart range body is shorter than declared")
+        return bytes(content)
+
+
+def _download_verified_multipart(
+    url: str,
+    path: Path,
+    *,
+    plan: _MultipartDownloadPlan,
+) -> None:
+    part_digests: list[bytes] = []
+    content_sha256 = sha256()
+    written = 0
+    with path.open("wb") as output:
+        for part_index in range(plan.part_count):
+            start = part_index * MULTIPART_RANGE_PART_SIZE
+            end = min(start + MULTIPART_RANGE_PART_SIZE, plan.size) - 1
+            content = _read_verified_range(
+                url,
+                start=start,
+                end=end,
+                plan=plan,
+            )
+            part_digest = md5(usedforsecurity=False)
+            part_digest.update(content)
+            part_digests.append(part_digest.digest())
+            content_sha256.update(content)
+            output.write(content)
+            written += len(content)
+        output.flush()
+        os.fsync(output.fileno())
+
+    if written != plan.size:
+        raise InvalidDataError("multipart assembled size differs from HTTP metadata")
+    multipart_digest = md5(usedforsecurity=False)
+    multipart_digest.update(b"".join(part_digests))
+    if multipart_digest.hexdigest() != plan.etag_digest:
+        raise InvalidDataError("multipart assembled ETag differs from HTTP metadata")
+    if (
+        plan.advertised_sha256 is not None
+        and content_sha256.hexdigest() != plan.advertised_sha256
+    ):
+        raise InvalidDataError(
+            "multipart assembled checksum differs from official response metadata"
+        )
+
+
 def _download_temp(url: str, root: Path) -> tuple[Path, dict[str, str]]:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in OFFICIAL_HOSTS:
@@ -329,11 +500,21 @@ def _download_temp(url: str, root: Path) -> tuple[Path, dict[str, str]]:
         with urlopen(
             Request(url, headers={"User-Agent": "next.company-source-worker/1.0"}),
             timeout=120,
-        ) as response, path.open("wb") as output:
+        ) as response:
             headers = dict(response.headers.items())
-            while chunk := response.read(DOWNLOAD_CHUNK_SIZE):
-                output.write(chunk)
+            multipart_plan = _multipart_download_plan(headers)
+            if multipart_plan is None:
+                with path.open("wb") as output:
+                    while chunk := response.read(DOWNLOAD_CHUNK_SIZE):
+                        output.write(chunk)
+                    output.flush()
+                    os.fsync(output.fileno())
+        if multipart_plan is not None:
+            _download_verified_multipart(url, path, plan=multipart_plan)
         return path, headers
+    except InvalidDataError:
+        path.unlink(missing_ok=True)
+        raise
     except (HTTPError, URLError, TimeoutError, OSError) as error:
         path.unlink(missing_ok=True)
         raise WorkerNetworkError(f"FNS download failed for {url}: {error}") from error
