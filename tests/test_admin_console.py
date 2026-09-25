@@ -194,6 +194,34 @@ def test_no_get_mutation_and_csrf_is_required(client):
     assert response.status_code == 403
 
 
+def test_csrf_accepts_browser_null_origin_but_rejects_foreign_origin(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        service,
+        "perform_source_action",
+        lambda source_id, action: called.append((source_id, action)),
+    )
+    confirmation = client.get("/admin/sources/fns_revenue_expenses/confirm/pause")
+    token = re.search(r'name="_csrf" value="([^"]+)"', confirmation.text).group(1)
+
+    accepted = client.post(
+        "/admin/sources/fns_revenue_expenses/actions/pause",
+        data={"_csrf": token},
+        headers={"Origin": "null"},
+        follow_redirects=False,
+    )
+    rejected = client.post(
+        "/admin/sources/fns_revenue_expenses/actions/pause",
+        data={"_csrf": token},
+        headers={"Origin": "https://attacker.example"},
+        follow_redirects=False,
+    )
+
+    assert accepted.status_code == 303
+    assert rejected.status_code == 403
+    assert called == [("fns_revenue_expenses", "pause")]
+
+
 def test_valid_csrf_post_calls_control_once(client, monkeypatch):
     called = []
     monkeypatch.setattr(service, "perform_source_action", lambda source_id, action: called.append((source_id, action)))
