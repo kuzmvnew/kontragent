@@ -30,17 +30,17 @@ def test_found_browser_contract_preserves_license_details():
     validate_cached_case(check, 'found')
 
 
-def test_not_found_browser_contract_is_scoped_not_a_safety_verdict():
+def test_official_no_hit_browser_contract_is_deterministically_not_applicable():
     row = make_saved_row()
     row.is_participant = False
     row.licenses = []
     check = service._serialize_success(row, cached=True)
     html = render(check)
-    assert 'data-result="not_found"' in html
+    assert 'data-result="not_applicable"' in html
     assert 'Сведения участника финансового рынка по ИНН не найдены' in html
     assert 'Отсутствие записи не означает нарушение' in html
     assert 'data-testid="cbr-finorg-license"' not in html
-    validate_cached_case(check, 'not_found')
+    validate_cached_case(check, 'not_applicable')
 
 
 class ReadOnlySession:

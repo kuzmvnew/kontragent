@@ -100,7 +100,7 @@
         </div>
         {% endif %}
 
-    {% elif check["result"] == "not_found" %}
+    {% elif check["result"] in ["not_applicable", "not_found"] %}
 
         <div class="risk-placeholder">
             <div class="risk-placeholder-title">
@@ -108,7 +108,8 @@
             </div>
             <p>
                 В официальном веб-сервисе Банка России на дату проверки
-                нет участника с точным совпадением этого ИНН.
+                нет участника с точным совпадением этого ИНН; поэтому
+                проверка финансовой организации к этой сущности не применима.
             </p>
         </div>
 

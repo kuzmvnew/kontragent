@@ -483,14 +483,21 @@ class CbrFinorgProvider:
         )
         return xml.encode("utf-8")
 
-    def _post(self, *, action: str, body: str) -> bytes:
+    def _post(
+        self,
+        *,
+        action: str,
+        body: str,
+        observations: list[dict] | None = None,
+    ) -> bytes:
         client, should_close = self._client()
+        request_content = self._envelope(body)
 
         try:
             try:
                 response = client.post(
                     SERVICE_URL,
-                    content=self._envelope(body),
+                    content=request_content,
                     headers={
                         "Content-Type": (
                             "text/xml; charset=utf-8"
@@ -533,13 +540,31 @@ class CbrFinorgProvider:
                     http_status=response.status_code,
                 )
 
-            return bytes(response.content)
+            response_content = bytes(response.content)
+            if observations is not None:
+                observations.append(
+                    {
+                        "action": action,
+                        "request_content": request_content,
+                        "response_content": response_content,
+                        "http_status": response.status_code,
+                        "response_headers": dict(
+                            getattr(response, "headers", {}) or {}
+                        ),
+                    }
+                )
+            return response_content
 
         finally:
             if should_close:
                 client.close()
 
-    def check_inn(self, inn: str) -> dict:
+    def check_inn(
+        self,
+        inn: str,
+        *,
+        _observations: list[dict] | None = None,
+    ) -> dict:
         clean_inn = normalize_inn(inn)
 
         if len(clean_inn) not in {10, 12}:
@@ -560,6 +585,7 @@ class CbrFinorgProvider:
                 "</INNs>"
                 "</SearchByINNs>"
             ),
+            observations=_observations,
         )
 
         search = parse_search_by_inns_response(
@@ -582,6 +608,7 @@ class CbrFinorgProvider:
                 f"<INN>{clean_inn}</INN>"
                 "</GetFullInfoByINN>"
             ),
+            observations=_observations,
         )
 
         participant = parse_full_info_response(
@@ -589,9 +616,35 @@ class CbrFinorgProvider:
             requested_inn=clean_inn,
         )
 
+        search_ogrn = normalize_inn(
+            (search.get("record") or {}).get("ogrn")
+        )
+        participant_ogrn = normalize_inn(
+            participant.get("ogrn")
+        )
+        if (
+            search_ogrn
+            and participant_ogrn
+            and search_ogrn != participant_ogrn
+        ):
+            raise CbrFinorgProviderError(
+                kind="identity_mismatch",
+                message=(
+                    "Банк России вернул несовпадающий ОГРН "
+                    "в поиске и полной карточке"
+                ),
+            )
+
         return {
             "found": True,
             "participant": participant,
             "search_record": search["record"],
             "http_status": 200,
         }
+
+    def check_inn_with_raw(self, inn: str) -> dict:
+        """Return the parsed lookup plus exact SOAP request/response bytes."""
+
+        observations: list[dict] = []
+        result = self.check_inn(inn, _observations=observations)
+        return {**result, "observations": tuple(observations)}
