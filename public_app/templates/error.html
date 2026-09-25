@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block head %}<title>{{ status_code }} — NEXT Company</title><meta name="robots" content="noindex, follow">{% endblock %}
+{% block content %}<section class="error-page"><p class="eyebrow">Ошибка {{ status_code }}</p><h1>{{ message }}</h1><p><a href="/">Вернуться на главную</a></p></section>{% endblock %}

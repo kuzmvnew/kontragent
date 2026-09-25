@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block head %}
+<title>{{ projection.company.name }} — ИНН {{ projection.company.inn }} | NEXT Company</title>
+<meta name="description" content="{{ description }}">
+<meta name="robots" content="{{ robots }}">
+<link rel="canonical" href="{{ canonical }}">
+<meta property="og:type" content="profile">
+<meta property="og:title" content="{{ projection.company.name }} — NEXT Company">
+<meta property="og:description" content="{{ description }}">
+<meta property="og:url" content="{{ canonical }}">
+<meta property="og:site_name" content="NEXT Company">
+<script type="application/ld+json">{{ json_ld | tojson }}</script>
+{% endblock %}
+{% block content %}
+{% set company = projection.company %}
+<article class="company-page">
+  <section class="company-hero">
+    <div>
+      <p class="eyebrow">Карточка юридического лица</p>
+      <h1>{{ company.name }}</h1>
+      {% if company.full_name and company.full_name != company.name %}<p class="full-name">{{ company.full_name }}</p>{% endif %}
+    </div>
+    <span class="status-pill">{{ company.legal_status or 'Статус не указан' }}</span>
+    <dl class="identity-grid">
+      <div><dt>ИНН</dt><dd>{{ company.inn }}</dd></div>
+      <div><dt>КПП</dt><dd>{{ company.kpp or '—' }}</dd></div>
+      <div><dt>ОГРН</dt><dd>{{ company.ogrn or '—' }}</dd></div>
+    </dl>
+    <p class="result-date">Дата результата <time datetime="{{ projection.publication.result_date }}">{{ projection.publication.result_date.strftime('%d.%m.%Y') }}</time></p>
+  </section>
+
+  <section class="summary-panel risk-state-{{ projection.risk.state.value | lower }}">
+    <p class="section-kicker">Краткий вывод</p>
+    <h2>{{ projection.summary.short_conclusion }}</h2>
+    {% if projection.summary.main_factors %}<ul>{% for factor in projection.summary.main_factors %}<li>{{ factor }}</li>{% endfor %}</ul>{% endif %}
+  </section>
+
+  <section class="content-section">
+    <div class="section-heading"><div><p class="section-kicker">Risk v3</p><h2>{{ projection.risk.title }}</h2></div><span class="state-badge state-{{ projection.risk.state.value | lower }}">{{ projection.risk.state.value }}</span></div>
+    <p class="lead">{{ projection.risk.explanation }}</p>
+    {% if projection.risk.factors %}<div class="factor-grid">{% for factor in projection.risk.factors %}<article><h3>{{ factor.title }}</h3>{% if factor.explanation %}<p>{{ factor.explanation }}</p>{% endif %}{% if factor.source_name %}<small>{{ factor.source_name }}{% if factor.source_data_date %} · {{ factor.source_data_date.strftime('%d.%m.%Y') }}{% endif %}</small>{% endif %}</article>{% endfor %}</div>{% endif %}
+    <p class="engine-meta">Оценка: {{ projection.risk.assessment_date.strftime('%d.%m.%Y') }}{% if projection.risk.model_version %} · Модель {{ projection.risk.model_version }}{% endif %}</p>
+  </section>
+
+  <section class="content-section">
+    <p class="section-kicker">Основные сведения</p><h2>О компании</h2>
+    <dl class="details-grid">
+      <div><dt>Полное наименование</dt><dd>{{ company.full_name or company.name }}</dd></div>
+      <div><dt>Дата регистрации</dt><dd>{{ company.registration_date.strftime('%d.%m.%Y') if company.registration_date else 'Не указана' }}</dd></div>
+      <div><dt>Юридический адрес</dt><dd>{{ company.address or 'Не указан' }}</dd></div>
+      <div><dt>Руководитель</dt><dd>{{ company.director_name or 'Не указан' }}{% if company.director_position %}<small>{{ company.director_position }}</small>{% endif %}</dd></div>
+    </dl>
+  </section>
+
+  <section class="content-section">
+    <p class="section-kicker">Официальные наборы данных</p><h2>Налоги и финансовые показатели</h2>
+    <div class="source-grid">
+    {% for source in projection.sources %}
+      <article class="source-card state-{{ source.state.value | lower }}">
+        <div class="source-title"><div><span>{{ source.code }}</span><h3>{{ source.source_name }}</h3></div><span class="state-badge state-{{ source.state.value | lower }}">{{ source.state.value }}</span></div>
+        {% if source.values %}<dl>{% for key, value in source.values.items() %}<div><dt>{{ key }}</dt><dd>{{ value if value is not none else '—' }}</dd></div>{% endfor %}</dl>{% endif %}
+        <div class="dates"><span>Дата данных источника <b>{{ source.source_data_date.strftime('%d.%m.%Y') if source.source_data_date else 'не указана' }}</b></span><span>Дата результата <b>{{ source.result_date.strftime('%d.%m.%Y') }}</b></span></div>
+        {% if source.limitation %}<p class="limitation">{{ source.limitation }}</p>{% endif %}
+      </article>
+    {% endfor %}
+    </div>
+  </section>
+
+  {% if projection.summary.limitations or projection.summary.recommendations %}
+  <section class="content-section two-column">
+    <div><p class="section-kicker">Ограничения</p><h2>Что учитывать</h2><ul>{% for item in projection.summary.limitations %}<li>{{ item }}</li>{% endfor %}</ul></div>
+    <div><p class="section-kicker">Рекомендации</p><h2>Что проверить дальше</h2><ul>{% for item in projection.summary.recommendations %}<li>{{ item }}</li>{% endfor %}</ul></div>
+  </section>
+  {% endif %}
+  <p class="release-meta">Публикация {{ projection.publication.release_id }} · обновлено {{ projection.publication.content_updated_at.strftime('%d.%m.%Y') }}</p>
+</article>
+{% endblock %}

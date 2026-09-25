@@ -1,0 +1,20 @@
+[Unit]
+Description=Backup NEXT Company public PostgreSQL
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+EnvironmentFile=/etc/nextcompany/public.env
+EnvironmentFile=/etc/nextcompany/importer.env
+ExecStart=/opt/nextcompany/current/deploy/scripts/backup_public.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/nextcompany
+UMask=0077

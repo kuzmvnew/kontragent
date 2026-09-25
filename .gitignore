@@ -5,3 +5,4 @@ __pycache__/
 kontragent.db
 .DS_Store
 data/
+public_releases/
