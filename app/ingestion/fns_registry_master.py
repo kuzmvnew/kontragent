@@ -579,6 +579,17 @@ def publish_registry_result(session: Session, claim: Any, result: HandlerResult,
         dataset.next_expected_update_at = now + CHECK_INTERVAL
         if dataset.last_success_at:
             dataset.operational_status = OperationalStatus.CURRENT
+        coverage = dict(dataset.coverage or {})
+        successful_checks = max(
+            1, int(coverage.get("successful_scheduled_checks") or 0)
+        ) + 1
+        coverage.update(
+            {
+                "successful_scheduled_checks": successful_checks,
+                "operational_accepted": successful_checks >= 2,
+            }
+        )
+        dataset.coverage = coverage
         summary = SourceChangeSummary(
             matched_companies=0, new_facts=0, changed_facts=0, removed_or_expired_facts=0,
             unchanged_facts=int(dataset.record_count or 0), replayed_facts=0, quarantined_records=0,
@@ -726,11 +737,16 @@ def publish_registry_result(session: Session, claim: Any, result: HandlerResult,
     dataset.official_actual_until = now.date()
     dataset.source_as_of = datetime.combine(source_date, datetime.min.time(), tzinfo=timezone.utc)
     dataset.record_count = current_master_records
+    successful_checks = int(
+        (dataset.coverage or {}).get("successful_scheduled_checks") or 0
+    ) + 1
     dataset.coverage = {
         "master_inserted": inserted, "master_matched": matched, "master_changed": changed,
         "master_current_records": current_master_records,
         "manager_changes": leaders_changed, "format_version": checkpoint.format_version,
         "release_identity": release_identity, "change_summary": summary.as_dict(),
+        "successful_scheduled_checks": successful_checks,
+        "operational_accepted": successful_checks >= 2,
     }
     dataset.next_expected_update_at = now + CHECK_INTERVAL
     return replace(result, change_summary=summary, counters=ExecutionCounters(

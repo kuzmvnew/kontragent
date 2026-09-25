@@ -519,7 +519,13 @@ def publish_mintrans_ted_result(session: Session, claim: Any, result: HandlerRes
             "last_replay_conflicts": conflicts,
             "replayed_facts": replayed,
             "change_summary": summary.as_dict(),
+            "successful_scheduled_checks": max(
+                1, int(coverage.get("successful_scheduled_checks") or 0)
+            ) + 1,
         })
+        coverage["operational_accepted"] = (
+            coverage["successful_scheduled_checks"] >= 2
+        )
         dataset.coverage = coverage
         dataset.checked_at = now; dataset.official_actual_until = now.date(); dataset.operational_status = OperationalStatus.CURRENT
         dataset.next_expected_update_at = now + CHECK_INTERVAL; dataset.last_error = None; dataset.last_error_at = None
@@ -585,6 +591,9 @@ def publish_mintrans_ted_result(session: Session, claim: Any, result: HandlerRes
     dataset.last_data_date = source_date; dataset.source_as_of = datetime.combine(source_date, datetime.min.time(), tzinfo=timezone.utc)
     dataset.retrieved_at = now; dataset.official_actual_until = now.date(); dataset.record_count = int(validation["normalized_records"])
     dataset.next_expected_update_at = now + CHECK_INTERVAL
+    successful_checks = int(
+        (dataset.coverage or {}).get("successful_scheduled_checks") or 0
+    ) + 1
     dataset.coverage = {
         "source_records": int(validation["source_records"]), "normalized_records": int(validation["normalized_records"]),
         "quarantined_records": int(validation["quarantined_records"]), "duplicate_records": int(validation["duplicate_records"]),
@@ -593,6 +602,8 @@ def publish_mintrans_ted_result(session: Session, claim: Any, result: HandlerRes
         "artifact_sha256": validation["artifact_sha256"], "release_identity": release_identity,
         "api_projection": "transport_forwarding_registry", "card_projection": "company_card.transport_forwarding_registry",
         "change_summary": summary.as_dict(),
+        "successful_scheduled_checks": successful_checks,
+        "operational_accepted": successful_checks >= 2,
     }
     return replace(result, change_summary=summary, counters=ExecutionCounters(
         records_seen=int(validation["source_records"]), records_written=int(validation["normalized_records"]),

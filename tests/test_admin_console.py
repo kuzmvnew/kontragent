@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import inspect
 import re
 from types import SimpleNamespace
@@ -108,6 +108,34 @@ def test_dashboard_counters_status_and_official_source_link(client):
     assert "CONNECTED" not in response.text  # label is title-case in the table
     assert "YES" in response.text
     assert "https://www.nalog.gov.ru/opendata/7707329152-revexp/" in response.text
+
+
+def test_generic_operational_gate_requires_second_accepted_check():
+    dataset = SimpleNamespace(
+        enabled=True,
+        auto_update_status=AutoUpdateStatus.CONFIGURED,
+        last_success_at=NOW,
+        next_expected_update_at=NOW + timedelta(days=1),
+        coverage={"successful_scheduled_checks": 1, "operational_accepted": False},
+    )
+    assert service._stage(
+        dataset,
+        connected=True,
+        freshness="current",
+        latest_job=None,
+        latest_run=None,
+        now=NOW,
+    ) == "FIRST RUN"
+    dataset.coverage["successful_scheduled_checks"] = 2
+    dataset.coverage["operational_accepted"] = True
+    assert service._stage(
+        dataset,
+        connected=True,
+        freshness="current",
+        latest_job=None,
+        latest_run=None,
+        now=NOW,
+    ) == "OPERATIONAL"
 
 
 def test_source_detail_and_run_history_legacy_na(client, monkeypatch):

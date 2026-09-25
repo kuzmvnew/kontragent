@@ -284,6 +284,8 @@ def _stage(
         if latest_job is not None and latest_job.status in {"queued", "retry_scheduled", "running"}:
             return "CHECK PENDING"
         return "FIRST RUN"
+    if (dataset.coverage or {}).get("operational_accepted") is False:
+        return "FIRST RUN"
     if (
         dataset.next_expected_update_at is not None
         and dataset.next_expected_update_at <= now
