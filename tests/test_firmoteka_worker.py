@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import gzip
 from hashlib import sha256
 from types import SimpleNamespace
@@ -86,6 +86,33 @@ def test_content_addressed_raw_is_immutable_and_deduplicated(tmp_path):
     )
     assert first.checksum == second.checksum == manifest["response_sha256"]
     assert first.artifact_reference == second.artifact_reference
+
+
+def test_same_body_keeps_each_retrieval_as_an_immutable_observation(tmp_path):
+    first, _ = worker._store_raw(
+        raw_root=tmp_path,
+        content=_page(),
+        kind="company",
+        url=f"https://firmoteka.ru/{INN}",
+        status=200,
+        headers={"content-type": "text/html", "date": "first"},
+        retrieved_at=NOW,
+    )
+    second, _ = worker._store_raw(
+        raw_root=tmp_path,
+        content=_page(),
+        kind="company",
+        url=f"https://firmoteka.ru/{INN}",
+        status=200,
+        headers={"content-type": "text/html", "date": "second"},
+        retrieved_at=NOW + timedelta(days=1),
+    )
+
+    artifact_dir = tmp_path / worker.SOURCE_ID / first.checksum
+    manifests = tuple(artifact_dir.glob("manifest-*.json"))
+    assert first.artifact_reference == second.artifact_reference
+    assert len(manifests) == 2
+    assert manifests[0].read_bytes() != manifests[1].read_bytes()
 
 
 def test_gzip_sitemap_is_decoded_for_discovery_but_raw_keeps_wire_bytes(
