@@ -44,6 +44,7 @@ jobs:
         run: |
           uv run --with playwright==1.63.0 python - <<'PY'
           import io, json, struct, urllib.request, zlib
+          from datetime import datetime, timezone
           from pathlib import Path
           from xml.etree import ElementTree as ET
           from zipfile import ZipFile
@@ -53,6 +54,7 @@ jobs:
           import app.models
           from app.models.company import Company
           from app.models.fns_sme_support import FnsSmeSupportEntry as Entry
+          from app.models.source import DataSet
           from app.providers.fns_sme_support_provider import FnsSmeSupportProvider, FnsSmeSupportRelease
           from app.ingestion.fns_sme_support import stream_xml_file
           from app.ingestion.fns_sme_support_integrity import count_xml
@@ -103,6 +105,18 @@ jobs:
           assert imported['integrity']['parser_counts_match']
           assert imported['source_records'] == independent['source_records']
           assert imported['persisted_records'] == independent['eligible_records']
+          with get_session() as session:
+              dataset = session.scalar(select(DataSet).where(DataSet.code == 'fns_sme_support'))
+              checked_at = datetime.now(timezone.utc)
+              dataset.enabled = True
+              dataset.operational_status = 'current'
+              dataset.auto_update_status = 'configured'
+              dataset.official_actual_until = release.data_date
+              dataset.checked_at = checked_at
+              dataset.retrieved_at = checked_at
+              dataset.published_at = checked_at
+              dataset.record_count = imported['persisted_records']
+              session.commit()
           with get_session() as session:
               session.add(Company(inn=inn, name=name, entity_type='legal'))
               session.commit()
