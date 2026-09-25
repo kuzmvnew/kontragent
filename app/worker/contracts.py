@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -86,11 +86,81 @@ class ExecutionCounters:
 
 
 @dataclass(frozen=True)
+class SourceChangeSummary:
+    """Admin-safe publication delta shared by every source adapter.
+
+    A metric may be unknown, but it may never be silently invented. Unknown
+    values therefore require a non-empty reason keyed by the metric name.
+    """
+
+    matched_companies: int | None
+    new_facts: int | None
+    changed_facts: int | None
+    removed_or_expired_facts: int | None
+    unchanged_facts: int | None
+    replayed_facts: int | None
+    quarantined_records: int | None
+    source_records: int | None
+    source_data_date: date | None
+    previous_source_data_date: date | None
+    unavailable_reasons: dict[str, str] = field(default_factory=dict)
+
+    _METRIC_NAMES = (
+        "matched_companies",
+        "new_facts",
+        "changed_facts",
+        "removed_or_expired_facts",
+        "unchanged_facts",
+        "replayed_facts",
+        "quarantined_records",
+        "source_records",
+        "source_data_date",
+        "previous_source_data_date",
+    )
+
+    def __post_init__(self) -> None:
+        for name in self._METRIC_NAMES:
+            value = getattr(self, name)
+            if name.endswith("_date"):
+                if value is not None and not isinstance(value, date):
+                    raise ValueError(f"{name} must be a date or null")
+            elif value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer or null")
+
+            reason = str(self.unavailable_reasons.get(name) or "").strip()
+            if value is None and not reason:
+                raise ValueError(f"null change-summary metric requires reason: {name}")
+            if value is not None and name in self.unavailable_reasons:
+                raise ValueError(
+                    f"available change-summary metric cannot have a reason: {name}"
+                )
+
+        unknown = set(self.unavailable_reasons) - set(self._METRIC_NAMES)
+        if unknown:
+            raise ValueError(
+                "unknown change-summary reason fields: " + ", ".join(sorted(unknown))
+            )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            name: (
+                getattr(self, name).isoformat()
+                if isinstance(getattr(self, name), date)
+                else getattr(self, name)
+            )
+            for name in self._METRIC_NAMES
+        } | {"unavailable_reasons": dict(self.unavailable_reasons)}
+
+
+@dataclass(frozen=True)
 class HandlerResult:
     raw_artifacts: tuple[RawArtifactReference, ...] = ()
     staging_result: StagingResult | None = None
     checksum_metadata: dict[str, Any] = field(default_factory=dict)
     counters: ExecutionCounters | None = None
+    change_summary: SourceChangeSummary | None = None
 
 
 @dataclass(frozen=True)

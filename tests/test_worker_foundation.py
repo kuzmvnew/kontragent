@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import multiprocessing
 from threading import Thread
 import time
@@ -20,6 +20,7 @@ from app.worker.contracts import (
     ExecutionCounters,
     HandlerResult,
     RawArtifactReference,
+    SourceChangeSummary,
     StagingResult,
     ValidationResult,
 )
@@ -72,6 +73,27 @@ def _success_handler(context):
             "input_sha256": "a" * 64,
             "fencing_token": context.fencing_token,
         },
+    )
+
+
+def _change_summary_handler(_context):
+    return HandlerResult(
+        checksum_metadata={"release": "fixture-v1"},
+        change_summary=SourceChangeSummary(
+            matched_companies=2,
+            new_facts=3,
+            changed_facts=1,
+            removed_or_expired_facts=0,
+            unchanged_facts=4,
+            replayed_facts=0,
+            quarantined_records=0,
+            source_records=8,
+            source_data_date=date(2026, 9, 25),
+            previous_source_data_date=None,
+            unavailable_reasons={
+                "previous_source_data_date": "first accepted publication"
+            },
+        ),
     )
 
 
@@ -243,6 +265,60 @@ def _create(factory, source_id, *, version="fixture-v1", **changes):
         )
         session.commit()
         return creation.job.id
+
+
+def test_change_summary_requires_reasons_for_unknown_metrics():
+    with pytest.raises(
+        ValueError,
+        match="null change-summary metric requires reason: changed_facts",
+    ):
+        SourceChangeSummary(
+            matched_companies=1,
+            new_facts=1,
+            changed_facts=None,
+            removed_or_expired_facts=0,
+            unchanged_facts=0,
+            replayed_facts=0,
+            quarantined_records=0,
+            source_records=1,
+            source_data_date=date(2026, 9, 25),
+            previous_source_data_date=date(2026, 9, 24),
+        )
+
+
+def test_change_summary_is_persisted_in_worker_run_metadata(worker_db):
+    registry = HandlerRegistry()
+    source_id = _identity("source")
+    _register_fixture(worker_db, registry, source_id, _change_summary_handler)
+    job_id = _create(worker_db, source_id)
+    executor = WorkerExecutor(
+        session_factory=worker_db,
+        registry=registry,
+        worker_id="change-summary-worker",
+        clock=lambda: NOW + timedelta(seconds=1),
+    )
+
+    run_id = executor.run_once()
+
+    with worker_db() as session:
+        run = session.get(WorkerRun, run_id)
+        assert run.job_id == job_id
+        assert run.checksum_metadata["release"] == "fixture-v1"
+        assert run.checksum_metadata["change_summary"] == {
+            "matched_companies": 2,
+            "new_facts": 3,
+            "changed_facts": 1,
+            "removed_or_expired_facts": 0,
+            "unchanged_facts": 4,
+            "replayed_facts": 0,
+            "quarantined_records": 0,
+            "source_records": 8,
+            "source_data_date": "2026-09-25",
+            "previous_source_data_date": None,
+            "unavailable_reasons": {
+                "previous_source_data_date": "first accepted publication"
+            },
+        }
 
 
 def test_job_create_and_duplicate_prevention(worker_db):

@@ -529,7 +529,14 @@ def complete_run_success(
     run.finished_at = now
     run.heartbeat_at = now
     run.duration_ms = max(0, int((now - run.started_at).total_seconds() * 1000))
-    run.checksum_metadata = result.checksum_metadata
+    run.checksum_metadata = {
+        **result.checksum_metadata,
+        **(
+            {"change_summary": result.change_summary.as_dict()}
+            if result.change_summary is not None
+            else {}
+        ),
+    }
     if result.counters is not None:
         for name, value in result.counters.as_dict().items():
             setattr(run, name, value)
