@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database.postgres import engine
 from app.ingestion import fns_disqualified as disqualified
-from app.models.company import Company
+from app.models.company import Company, CompanyManager
 from app.models.disqualified_person import DisqualifiedPersonSnapshot
 from app.models.source import DataSet, DataSource
 from app.models.worker import WorkerPublicationState
@@ -291,4 +291,172 @@ def test_product_ip_not_applicable_and_stale_is_unavailable(monkeypatch):
     )
     assert stale["result"] == "unavailable"
     assert stale["reason"] == "dataset_stale"
+    assert stale["matching_state"] == "STALE"
     assert stale["name_only_matching_used"] is False
+
+
+@pytest.fixture
+def current_manager_product_state(monkeypatch):
+    connection = engine.connect()
+    transaction = connection.begin()
+    factory = sessionmaker(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    inn = "7700999918"
+    data_date = date(2026, 9, 20)
+
+    with factory() as session:
+        source = session.scalar(
+            sa.select(DataSource).where(DataSource.code == "fns")
+        )
+        if source is None:
+            source = DataSource(
+                code="fns",
+                name="FNS",
+                source_type="official",
+                priority=10,
+                enabled=True,
+            )
+            session.add(source)
+            session.flush()
+        dataset = session.scalar(
+            sa.select(DataSet).where(DataSet.code == disqualified.DATASET_CODE)
+        )
+        if dataset is None:
+            dataset = DataSet(
+                source_id=source.id,
+                code=disqualified.DATASET_CODE,
+                name="FNS disqualified",
+                domain="disqualification",
+                update_mode="bulk",
+                data_format="csv",
+                priority=10,
+            )
+            session.add(dataset)
+            session.flush()
+        dataset.enabled = True
+        dataset.operational_status = "current"
+        dataset.last_data_date = data_date
+        dataset.official_actual_until = date(2026, 9, 30)
+
+        company = Company(
+            inn=inn,
+            name="Current manager product test",
+            entity_type="legal",
+        )
+        session.add(company)
+        session.flush()
+        manager = CompanyManager(
+            company_id=company.id,
+            full_name="Иванов  Иван Иванович",
+            position="Директор",
+            is_current=True,
+            source="fns",
+        )
+        session.add(manager)
+        session.add_all([
+            DisqualifiedPersonSnapshot(
+                dataset_id=dataset.id,
+                data_date=data_date,
+                register_number="CURRENT-MANAGER-ACTIVE",
+                full_name="иванов иван иванович",
+                organization_name="ООО ТЕСТ",
+                organization_inn=inn,
+                position="ДИРЕКТОР",
+                offence_article="not projected",
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 12, 31),
+            ),
+            DisqualifiedPersonSnapshot(
+                dataset_id=dataset.id,
+                data_date=data_date,
+                register_number="CURRENT-MANAGER-EXPIRED",
+                full_name="ИВАНОВ ИВАН ИВАНОВИЧ",
+                organization_name="ООО ТЕСТ",
+                organization_inn=inn,
+                position="ДИРЕКТОР",
+                offence_article="not projected",
+                start_date=date(2024, 1, 1),
+                end_date=date(2025, 12, 31),
+            ),
+        ])
+        session.commit()
+        manager_id = manager.id
+        company_id = company.id
+
+    monkeypatch.setattr(disqualified_service, "get_session", factory)
+    try:
+        yield {
+            "factory": factory,
+            "inn": inn,
+            "manager_id": manager_id,
+            "company_id": company_id,
+        }
+    finally:
+        transaction.rollback()
+        connection.close()
+
+
+def test_product_matches_only_active_exact_current_manager(
+    current_manager_product_state,
+):
+    result = disqualified_service.get_disqualified_check_for_inn(
+        current_manager_product_state["inn"],
+        now=NOW,
+    )
+
+    assert result["result"] == "found"
+    assert result["matching_state"] == "MATCHED"
+    assert result["matching_method"] == (
+        "current_manager_full_name_exact_and_company_inn"
+    )
+    assert result["record_count"] == 1
+    assert result["records"][0]["register_number"] == "CURRENT-MANAGER-ACTIVE"
+    assert set(result["records"][0]) == {
+        "register_number",
+        "full_name",
+        "organization_inn",
+        "position",
+        "start_date",
+        "end_date",
+        "active_on_data_date",
+        "matching_state",
+        "name_only_matching_used",
+    }
+
+
+def test_product_does_not_project_historical_manager_as_positive(
+    current_manager_product_state,
+):
+    with current_manager_product_state["factory"]() as session:
+        historical = session.get(
+            CompanyManager,
+            current_manager_product_state["manager_id"],
+        )
+        historical.is_current = False
+        session.add(CompanyManager(
+            company_id=current_manager_product_state["company_id"],
+            full_name="ПЕТРОВ ПЕТР ПЕТРОВИЧ",
+            position="Директор",
+            is_current=True,
+            source="fns",
+        ))
+        session.commit()
+
+    result = disqualified_service.get_disqualified_check_for_inn(
+        current_manager_product_state["inn"],
+        now=NOW,
+    )
+
+    assert result["result"] == "unavailable"
+    assert result["matching_state"] == "CONFLICTING"
+    assert result["reason"] == (
+        "organization_record_conflicts_with_current_manager"
+    )
+    assert result["has_records"] is False
+    assert result["record_count"] == 0
+    assert result["records"] == []
+    assert result["organization_candidate_count"] == 1
