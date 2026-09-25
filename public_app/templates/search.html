@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block head %}
+<title>Поиск компаний — NEXT Company</title>
+<meta name="robots" content="noindex, follow">
+{% endblock %}
+{% block content %}
+<section class="page-shell">
+  <p class="eyebrow">Поиск</p>
+  <h1>{% if query %}Результаты по запросу «{{ query }}»{% else %}Найдите компанию{% endif %}</h1>
+  {% if results %}
+  <div class="result-list">
+    {% for item in results %}
+    <a class="result-card" href="/companies/{{ item.company.inn }}">
+      <strong>{{ item.company.name }}</strong>
+      <span>ИНН {{ item.company.inn }}{% if item.company.legal_status %} · {{ item.company.legal_status }}{% endif %}</span>
+      <span class="arrow">→</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% elif query %}<p class="empty-message">В активной публикации совпадений нет. Проверьте название или ИНН.</p>{% endif %}
+</section>
+{% endblock %}

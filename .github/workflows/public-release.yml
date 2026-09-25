@@ -1,0 +1,76 @@
+name: Public release
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "public_app/**"
+      - "public_migrations/**"
+      - "public_alembic.ini"
+      - "config/public_release_40.json"
+      - "scripts/*public_release*"
+      - "scripts/accept_public_launch.py"
+      - "scripts/publish_public_release.sh"
+      - "deploy/**"
+      - "tests/test_public_*"
+      - ".github/workflows/public-release.yml"
+  push:
+    branches: [main]
+    paths:
+      - "public_app/**"
+      - "public_migrations/**"
+      - "scripts/*public_release*"
+      - "deploy/**"
+
+permissions:
+  contents: read
+
+jobs:
+  public-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: public_importer
+          POSTGRES_PASSWORD: public_test
+          POSTGRES_DB: nextcompany_public_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U public_importer -d nextcompany_public_test"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      PUBLIC_IMPORT_DATABASE_URL: postgresql+psycopg://public_importer:public_test@localhost:5432/nextcompany_public_test
+      PUBLIC_TEST_DATABASE_URL: postgresql://public_importer:public_test@localhost:5432/nextcompany_public_test
+      PUBLIC_TEST_WEB_DATABASE_URL: postgresql://public_web:web_test@localhost:5432/nextcompany_public_test
+      PUBLIC_TRUSTED_HOSTS: 127.0.0.1,localhost,testserver
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python -m pip install --upgrade uv
+      - run: uv sync --frozen --group dev
+      - name: Isolated public migration lineage
+        run: uv run alembic -c public_alembic.ini upgrade head
+      - name: Provision and prove read-only web role
+        env:
+          PGPASSWORD: public_test
+        run: |
+          psql -h localhost -U public_importer -d nextcompany_public_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE public_web LOGIN PASSWORD 'web_test';
+          REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+          GRANT USAGE ON SCHEMA public TO public_web;
+          GRANT SELECT ON public_releases, public_company_projections, public_publication_state TO public_web;
+          SQL
+      - name: Contracts, release switching, routes and security
+        run: uv run python -m pytest tests/test_public_projection.py tests/test_public_web.py tests/test_public_release_postgres.py -q
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Desktop and mobile Card V2
+        run: uv run python -m pytest tests/test_public_playwright.py -q
+      - name: Diff hygiene
+        run: git diff --check

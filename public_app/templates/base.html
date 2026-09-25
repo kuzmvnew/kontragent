@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102821">
+  {% block head %}<title>NEXT Company</title>{% endblock %}
+  <link rel="stylesheet" href="/static/public.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="NEXT Company — на главную"><span>NEXT</span> Company</a>
+    <form class="header-search" action="/search" method="get" role="search">
+      <label class="sr-only" for="header-q">Название или ИНН</label>
+      <input id="header-q" name="q" inputmode="search" placeholder="Название или ИНН" maxlength="160">
+      <button type="submit">Найти</button>
+    </form>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <footer><span>NEXT Company</span><span>Проверка контрагентов по опубликованным данным</span></footer>
+</body>
+</html>
