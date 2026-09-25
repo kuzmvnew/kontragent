@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -690,6 +690,8 @@ def _worker_spec():
         kind="headcount",
         api_projection="headcount",
         card_projection="company_card.headcount",
+        check_interval=timedelta(days=7),
+        check_frequency="weekly",
     )
 
 

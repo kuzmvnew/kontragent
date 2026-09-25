@@ -17,12 +17,14 @@ from app.models.source import DataSet, DataSource
 from app.models.tax_regime import CompanyTaxRegimeSnapshot
 from app.models.worker import WorkerPublicationState
 from app.services import data_readiness_scheduler as scheduler
+from app.services import source_service
 from app.worker.contracts import (
     ExecutionCounters,
     HandlerResult,
     StagingResult,
     ValidationResult,
 )
+from scripts import run_data_readiness_scheduler as supervisor
 
 
 NOW = datetime(2026, 9, 25, 10, tzinfo=timezone.utc)
@@ -98,6 +100,8 @@ def test_next3_sources_have_independent_non_empty_scheduler_handlers():
     assert scheduler.HANDLERS["fns_msp"] is scheduler._enqueue_msp
     assert scheduler.HANDLERS["fns_tax_regime"] is scheduler._enqueue_tax_regime
     assert fns_tax_regime._family_spec().source_id == "fns_tax_regime"
+    assert fns_headcount._worker_spec().check_frequency == "weekly"
+    assert fns_headcount._worker_spec().check_interval == timedelta(days=7)
     assert {spec.dataset_code for spec in fns_tax_regime._member_specs().values()} == {
         "fns_snr",
         "fns_snrip",
@@ -197,6 +201,52 @@ def test_tax_regime_handler_stages_two_artifacts_into_one_publication(
     assert result.checksum_metadata["normalized_bundle_sha256"] == bulk._hash_file(
         bulk._file_path(result.staging_result.staging_pointer)
     )[0]
+
+
+def test_postgresql_scoped_family_registry_upsert_preserves_child_schedules(
+    next3_db, monkeypatch
+):
+    with next3_db() as session:
+        family = _source_and_dataset(session, "fns_tax_regime")
+        legal = _source_and_dataset(session, "fns_snr")
+        ip = _source_and_dataset(session, "fns_snrip")
+        legal.enabled = False
+        ip.enabled = False
+        family_id = family.id
+        session.delete(family)
+        session.flush()
+
+        monkeypatch.setattr(source_service, "get_session", next3_db)
+        source_service.ensure_default_dataset("fns_tax_regime")
+
+        restored = session.scalar(
+            sa.select(DataSet).where(DataSet.code == "fns_tax_regime")
+        )
+        session.refresh(legal)
+        session.refresh(ip)
+        assert restored is not None
+        assert restored.id != family_id
+        assert restored.enabled is False
+        assert legal.enabled is False
+        assert ip.enabled is False
+
+
+def test_activation_ensures_only_requested_new_control_dataset(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_default_dataset",
+        lambda code: calls.append(("default", code)),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_cbr_warning_list_dataset",
+        lambda: calls.append(("cbr", "cbr_warning_list")),
+    )
+
+    supervisor.ensure_activation_datasets(["fns_tax_regime", "fns_headcount"])
+
+    assert calls == [("default", "fns_tax_regime")]
 
 
 def test_snrip_duplicate_inn_rows_union_regimes_and_preserve_provenance(tmp_path):

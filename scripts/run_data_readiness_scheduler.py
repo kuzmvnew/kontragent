@@ -17,6 +17,7 @@ from app.ingestion.fns_tax_regime import register_fns_tax_regime_worker
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
 )
+from app.services.source_service import ensure_default_dataset
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
     SCHEDULED_SOURCE_DATASET_CODES,
@@ -72,6 +73,15 @@ def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
     return completed
 
 
+def ensure_activation_datasets(dataset_codes: list[str]) -> None:
+    """Create control rows needed by explicitly requested activations only."""
+
+    if "cbr_warning_list" in dataset_codes:
+        ensure_cbr_warning_list_dataset()
+    if "fns_tax_regime" in dataset_codes:
+        ensure_default_dataset("fns_tax_regime")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loop", action="store_true", help="Run a supervised polling loop")
@@ -111,10 +121,11 @@ def main() -> None:
             dataset_codes=("fns_tax_offence", "fns_revenue_expenses"),
         )
     if args.activate:
-        if "cbr_warning_list" in args.activate:
-            # Registration is deliberately tied to explicit activation; a
-            # supervisor restart must not silently enable a new source.
-            ensure_cbr_warning_list_dataset()
+        # Registration is deliberately tied to explicit activation; a
+        # supervisor restart must not silently enable a new source.  Existing
+        # production databases predate the tax-regime family control row; its
+        # scoped upsert never enables the child projection datasets.
+        ensure_activation_datasets(args.activate)
         configure_source_schedules(enabled=True, dataset_codes=args.activate)
     if args.deactivate:
         configure_source_schedules(enabled=False, dataset_codes=args.deactivate)
