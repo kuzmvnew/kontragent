@@ -4,6 +4,7 @@ import argparse
 import json
 
 from app.database.postgres import SessionLocal
+from app.ingestion.cbr_finorg_worker import register_cbr_finorg_worker
 from app.ingestion.cbr_warning_worker import register_cbr_warning_worker
 from app.ingestion.erknm_worker import register_erknm_worker
 from app.ingestion.fns_headcount import register_fns_headcount_worker
@@ -21,6 +22,7 @@ from app.ingestion.roszdrav_license_worker import register_roszdrav_license_work
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
 )
+from app.services.cbr_finorg_registry_service import ensure_cbr_finorg_dataset
 from app.services.fns_sme_support_registry_service import (
     ensure_fns_sme_support_dataset,
 )
@@ -56,6 +58,7 @@ def build_registry() -> HandlerRegistry:
         except HandlerNotRegisteredError:
             pass
         register_fns_tax_payment_worker(session, registry)
+        register_cbr_finorg_worker(session, registry)
         register_cbr_warning_worker(session, registry)
         register_fns_headcount_worker(session, registry)
         register_fns_msp_worker(session, registry)
@@ -92,6 +95,8 @@ def ensure_activation_datasets(dataset_codes: list[str]) -> None:
 
     if "cbr_warning_list" in dataset_codes:
         ensure_cbr_warning_list_dataset()
+    if "cbr_finorg" in dataset_codes:
+        ensure_cbr_finorg_dataset()
     if "fns_tax_regime" in dataset_codes:
         ensure_default_dataset("fns_tax_regime")
     if "fns_sme_support" in dataset_codes:

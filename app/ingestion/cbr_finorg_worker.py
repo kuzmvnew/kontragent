@@ -457,7 +457,10 @@ def publish_cbr_finorg_worker_result(
         session.scalar(
             select(func.count())
             .select_from(CbrFinorgCheck)
-            .where(CbrFinorgCheck.dataset_id == dataset.id)
+            .where(
+                CbrFinorgCheck.dataset_id == dataset.id,
+                CbrFinorgCheck.request_date == request_date,
+            )
         )
         or 0
     )
@@ -465,6 +468,7 @@ def publish_cbr_finorg_worker_result(
         session.scalar(
             select(func.count(func.distinct(CbrFinorgCheck.inn))).where(
                 CbrFinorgCheck.dataset_id == dataset.id,
+                CbrFinorgCheck.request_date == request_date,
                 CbrFinorgCheck.result_status == "success",
             )
         )
@@ -474,6 +478,7 @@ def publish_cbr_finorg_worker_result(
         session.scalar(
             select(func.count()).select_from(CbrFinorgCheck).where(
                 CbrFinorgCheck.dataset_id == dataset.id,
+                CbrFinorgCheck.request_date == request_date,
                 CbrFinorgCheck.result_status == "success",
                 CbrFinorgCheck.is_participant.is_(True),
             )
@@ -484,6 +489,7 @@ def publish_cbr_finorg_worker_result(
         session.scalar(
             select(func.count()).select_from(CbrFinorgCheck).where(
                 CbrFinorgCheck.dataset_id == dataset.id,
+                CbrFinorgCheck.request_date == request_date,
                 CbrFinorgCheck.result_status == "success",
                 CbrFinorgCheck.is_participant.is_(False),
             )
@@ -508,14 +514,20 @@ def publish_cbr_finorg_worker_result(
         ),
     )
     dataset.enabled = True
-    dataset.dataset_kind = "on_demand_api"
-    dataset.freshness_policy = "on_demand"
     scheduled = claim.schedule_metadata.get("execution_mode") == "scheduled_master_sweep"
     previously_scheduled = dataset.auto_update_status == AutoUpdateStatus.CONFIGURED.value
     dataset.auto_update_status = (
         AutoUpdateStatus.CONFIGURED
         if scheduled or previously_scheduled
         else AutoUpdateStatus.USER_TRIGGERED
+    )
+    dataset.dataset_kind = (
+        "scheduled_and_on_demand_api"
+        if scheduled or previously_scheduled
+        else "on_demand_api"
+    )
+    dataset.freshness_policy = (
+        "daily" if scheduled or previously_scheduled else "on_demand"
     )
     dataset.last_success_at = now
     dataset.last_data_date = request_date
@@ -541,6 +553,8 @@ def publish_cbr_finorg_worker_result(
         if scheduled or previously_scheduled
         else None
     )
+    prior_coverage = dict(dataset.coverage or {})
+    sweep_audit = prior_coverage.get("scheduled_master_sweep")
     dataset.coverage = {
         "checked_inns": checked_inns,
         "cached_checks": total,
@@ -551,7 +565,8 @@ def publish_cbr_finorg_worker_result(
         "api_projection": "cbr_finorg_check",
         "card_projection": "company_card.cbr_finorg",
         "on_demand": True,
-        "scheduled_master_sweep": scheduled or previously_scheduled,
+        "scheduled": scheduled or previously_scheduled,
+        "scheduled_master_sweep": sweep_audit,
         "check_frequency": "daily" if scheduled or previously_scheduled else "on_demand",
         "change_summary": summary.as_dict(),
     }

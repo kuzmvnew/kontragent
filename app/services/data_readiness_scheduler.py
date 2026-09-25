@@ -166,6 +166,18 @@ def _enqueue_erknm() -> object:
         return creation
 
 
+def _enqueue_cbr_finorg() -> object:
+    from app.ingestion.cbr_finorg_worker import schedule_cbr_finorg_master_sweep
+
+    with SessionLocal() as session:
+        sweep = schedule_cbr_finorg_master_sweep(
+            session,
+            raw_root=_non_fns_raw_root(),
+        )
+        session.commit()
+        return sweep
+
+
 def _enqueue_roszdrav_license(category: str) -> object:
     from app.ingestion.roszdrav_license_worker import (
         SPECS,
@@ -213,6 +225,7 @@ HANDLERS: dict[str, UpdateHandler] = {
     "fns_sme_support": _enqueue_sme_support,
     "fns_disqualified": _enqueue_disqualified,
     "erknm_inspections": _enqueue_erknm,
+    "cbr_finorg": _enqueue_cbr_finorg,
     "roszdrav_pharma_licenses": _enqueue_roszdrav_pharma,
     "roszdrav_narcotics_licenses": _enqueue_roszdrav_narcotics,
     "roszdrav_medical_device_maintenance_licenses": (
@@ -446,9 +459,10 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
         "fns_sme_support": 8,
         "fns_disqualified": 9,
         "erknm_inspections": 10,
-        "roszdrav_pharma_licenses": 11,
-        "roszdrav_narcotics_licenses": 12,
-        "roszdrav_medical_device_maintenance_licenses": 13,
+        "cbr_finorg": 11,
+        "roszdrav_pharma_licenses": 12,
+        "roszdrav_narcotics_licenses": 13,
+        "roszdrav_medical_device_maintenance_licenses": 14,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

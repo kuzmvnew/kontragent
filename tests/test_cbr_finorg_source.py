@@ -340,7 +340,7 @@ def test_product_aggregator_adds_cbr_finorg_source(monkeypatch):
     assert company["sources_used"] == ["fns"]
 
 
-def test_registry_specs_are_official_on_demand_api():
+def test_registry_specs_are_official_scheduled_and_on_demand_api():
     source = build_cbr_finorg_source_spec()
     dataset = build_cbr_finorg_dataset_spec(
         source_id=10
@@ -350,7 +350,9 @@ def test_registry_specs_are_official_on_demand_api():
     assert dataset["code"] == "cbr_finorg"
     assert dataset["update_mode"] == "api"
     assert dataset["data_format"] == "soap_xml"
-    assert dataset["refresh_schedule"] == "on_demand"
+    assert dataset["refresh_schedule"] == "daily"
+    assert dataset["dataset_kind"] == "scheduled_and_on_demand_api"
+    assert dataset["freshness_policy"] == "daily"
 
 
 def test_cbr_finorg_template_compiles():

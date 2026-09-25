@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+import os
 from pathlib import Path
 
 from sqlalchemy import select
@@ -24,18 +25,26 @@ DATASET_CODE = "cbr_finorg"
 SOURCE_CODE = "cbr_finorg"
 
 
+def _default_worker_raw_root() -> Path:
+    configured = os.environ.get("NEXTCOMPANY_RAW_ROOT")
+    if configured:
+        return Path(configured).resolve()
+    fns_root = Path(os.environ.get("FNS_RAW_ROOT", "var/raw/fns")).resolve()
+    return fns_root.parent if fns_root.name == "fns" else fns_root
+
+
 def request_cbr_finorg_check_for_inn(
     inn,
     *,
-    raw_root: Path,
+    raw_root: Path | None = None,
     request_date=None,
     now=None,
 ):
     """Queue one durable, idempotent official CBR check.
 
-    CBR FINORG intentionally remains on-demand.  Ordinary companies and
-    entrepreneurs are not classified as NOT_APPLICABLE before the official
-    service answers for their exact INN.
+    The same per-INN job is shared by the bounded daily Master sweep and the
+    on-demand API. Ordinary companies and entrepreneurs are not classified as
+    NOT_APPLICABLE before the official service answers for their exact INN.
     """
 
     clean_inn = normalize_inn(inn)
@@ -55,7 +64,7 @@ def request_cbr_finorg_check_for_inn(
             session,
             inn=clean_inn,
             request_date=request_date,
-            raw_root=raw_root,
+            raw_root=raw_root or _default_worker_raw_root(),
             now=now,
         )
         session.commit()

@@ -142,6 +142,50 @@ def test_on_demand_enqueue_is_idempotent_and_has_no_mass_schedule(monkeypatch, t
     assert len(calls) == 2
 
 
+def test_daily_master_sweep_is_bounded_and_persists_audit(monkeypatch, tmp_path):
+    dataset = SimpleNamespace(
+        coverage={},
+        auto_update_status="not_configured",
+        next_expected_update_at=None,
+    )
+    companies = [
+        SimpleNamespace(id=1, inn="7700000001"),
+        SimpleNamespace(id=2, inn="7700000002"),
+    ]
+
+    class Session:
+        def scalar(self, _query):
+            return dataset
+
+        def scalars(self, _query):
+            return companies
+
+    calls = []
+
+    def enqueue(_session, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            job=SimpleNamespace(id=uuid4()),
+            created=True,
+        )
+
+    monkeypatch.setattr(worker, "enqueue_cbr_finorg_check", enqueue)
+    summary = worker.schedule_cbr_finorg_master_sweep(
+        Session(), raw_root=tmp_path, now=NOW, max_companies=2
+    )
+
+    assert summary.cohort_inns == ("7700000001", "7700000002")
+    assert summary.created_jobs == 2
+    assert len(calls) == 2
+    assert all(item["execution_mode"] == "scheduled_master_sweep" for item in calls)
+    assert dataset.coverage["scheduled_master_sweep"]["bounded_master_limit"] == 100
+    assert dataset.next_expected_update_at == summary.next_expected_update_at
+    with pytest.raises(ValueError, match="between 1 and 100"):
+        worker.schedule_cbr_finorg_master_sweep(
+            Session(), raw_root=tmp_path, now=NOW, max_companies=101
+        )
+
+
 def test_provider_failures_keep_worker_retry_classification(tmp_path):
     class BrokenProvider:
         def check_inn_with_raw(self, _inn):
@@ -243,7 +287,19 @@ def test_postgresql_atomic_idempotent_cache_and_exact_ogrn(worker_db, tmp_path, 
         session.add(Company(inn=inn, ogrn=ogrn, name="Exact", entity_type="legal"))
         session.flush()
 
-        claim = SimpleNamespace(schedule_metadata=FakeContext(tmp_path, inn=inn).schedule_metadata)
+        dataset.auto_update_status = "configured"
+        dataset.coverage = {
+            "scheduled_master_sweep": {
+                "sweep_id": "cbr_finorg:2026-09-25:master:1",
+                "job_ids": ["job-1"],
+            }
+        }
+        claim = SimpleNamespace(
+            schedule_metadata={
+                **FakeContext(tmp_path, inn=inn).schedule_metadata,
+                "execution_mode": "scheduled_master_sweep",
+            }
+        )
         first = worker.publish_cbr_finorg_worker_result(session, claim, result)
         second = worker.publish_cbr_finorg_worker_result(session, claim, result)
 
@@ -252,6 +308,8 @@ def test_postgresql_atomic_idempotent_cache_and_exact_ogrn(worker_db, tmp_path, 
         assert second.change_summary.unchanged_facts == 1
         assert second.counters.records_published == 0
         assert dataset.coverage["change_summary"]["unchanged_facts"] == 1
+        assert dataset.coverage["scheduled_master_sweep"]["job_ids"] == ["job-1"]
+        assert dataset.coverage["scheduled"] is True
         assert session.scalar(
             sa.select(sa.func.count()).select_from(CbrFinorgCheck).where(
                 CbrFinorgCheck.dataset_id == dataset.id,
