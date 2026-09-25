@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
+from http.client import IncompleteRead
 import json
 import os
 from pathlib import Path
@@ -42,7 +43,7 @@ from app.worker.execution import JobCreation, create_job, register_handler
 from app.worker.registry import HandlerRegistry
 
 
-HANDLER_VERSION = "roskomnadzor-official-bulk-v1"
+HANDLER_VERSION = "roskomnadzor-official-bulk-v2"
 CHECK_INTERVAL = timedelta(days=1)
 
 
@@ -97,7 +98,7 @@ def _fetch(url: str) -> tuple[bytes, dict[str, str]]:
         if error.code == 429 or error.code >= 500:
             raise WorkerNetworkError(f"Roskomnadzor returned HTTP {error.code}") from error
         raise SchemaMismatchError(f"Roskomnadzor returned HTTP {error.code}") from error
-    except (URLError, TimeoutError) as error:
+    except (URLError, TimeoutError, OSError, IncompleteRead) as error:
         raise WorkerNetworkError("Roskomnadzor request failed") from error
 
 
