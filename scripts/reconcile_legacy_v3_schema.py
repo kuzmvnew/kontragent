@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "a2b3c4d5e6f7"
+CURRENT_SCHEMA_HEAD = "b3c4d5e6f7a8"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -66,6 +66,9 @@ POST_CANONICAL_TARGET_TABLES = {
     "worker_publication_state",
     "source_change_summaries",
     "admin_action_audit",
+    "source_incidents",
+    "source_incident_actions",
+    "source_automation_policies",
     "fns_tax_debt_publication_generations",
     "fns_tax_debt_pilot_state",
 }

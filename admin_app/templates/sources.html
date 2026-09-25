@@ -15,20 +15,27 @@
   <article><small>PostgreSQL</small><strong class="{{ 'green' if database.available else 'red' }}">{{ database.status }}</strong></article>
   <article><small>Последний backup</small><strong>{{ latest_backup.timestamp if latest_backup else '—' }}</strong><span>{{ latest_backup.sha256[:12] if latest_backup and latest_backup.sha256 else 'SHA недоступен' }} · {{ latest_backup.restore_test.status if latest_backup else 'нет статуса' }}</span></article>
   <article><small>RAW / свободно</small><strong>{{ storage.raw_size|filesize }} / {{ storage.disk_free|filesize }}</strong><span>{{ deployed_sha[:12] if deployed_sha else 'SHA неизвестен' }}</span></article>
+  <article><small>Open incidents</small><strong class="{{ 'red' if snapshot.incidents.open else 'green' }}">{{ snapshot.incidents.open }}</strong></article>
+  <article><small>Auto-repair running</small><strong class="blue">{{ snapshot.incidents.running }}</strong></article>
+  <article><small>Waiting source</small><strong class="amber">{{ snapshot.incidents.waiting_source }}</strong></article>
+  <article><small>Review required</small><strong class="red">{{ snapshot.incidents.review_required }}</strong></article>
+  <article><small>Recovered today</small><strong class="green">{{ snapshot.incidents.recovered_today }}</strong></article>
+  <article><small>Auto-repair exhausted</small><strong class="red">{{ snapshot.incidents.exhausted }}</strong></article>
 </section>
 
 {% if not database.available %}<div class="alert bad">PostgreSQL недоступен. Секретный DSN не отображается.</div>{% endif %}
 <div class="table-shell wide"><table>
-  <thead><tr><th>Источник</th><th>Connected</th><th>Статус</th><th>Enabled</th><th>Freshness</th><th>Дата данных</th><th>Актуально до</th><th>Последняя проверка</th><th>Последний успех</th><th>Публикация</th><th>Следующая</th><th>Retry</th><th>Matched</th><th>Master coverage</th><th>Facts</th><th>+ New</th><th>Δ Changed</th><th>− Removed</th><th>Replayed</th><th>Quarantine</th><th>Generation</th><th>Worker</th><th>Ошибка</th><th>Официально</th></tr></thead>
+  <thead><tr><th>Источник</th><th>Connected</th><th>Статус</th><th>AUTO-REPAIR</th><th>Enabled</th><th>Freshness</th><th>Дата данных</th><th>Актуально до</th><th>Последняя проверка</th><th>Последний успех</th><th>Публикация</th><th>Следующая</th><th>Retry</th><th>Matched</th><th>Master coverage</th><th>Facts</th><th>+ New</th><th>Δ Changed</th><th>− Removed</th><th>Replayed</th><th>Quarantine</th><th>Generation</th><th>Worker</th><th>Ошибка</th><th>Официально</th></tr></thead>
   <tbody>{% for item in snapshot.sources %}<tr>
     <td><a class="source-link" href="/admin/sources/{{ item.source_id }}">{{ item.source_name }}</a><small>{{ item.source_id }} · {{ item.fact_family }}</small></td>
     <td><span class="yesno {{ 'yes' if item.connected else 'no' }}">{{ 'YES' if item.connected else 'NO' }}</span></td>
     <td><span class="status {{ item.stage|lower|replace(' ','-') }}">{{ item.stage }}</span></td>
+    <td>{% if item.open_incident_id %}<a class="status {{ item.auto_repair|lower|replace(' ','-') }}" href="/admin/incidents/{{ item.open_incident_id }}">{{ item.auto_repair }}</a>{% else %}<span class="status {{ item.auto_repair|lower|replace(' ','-') }}">{{ item.auto_repair }}</span>{% endif %}</td>
     <td>{{ 'YES' if item.enabled else 'NO' }}</td><td>{{ item.freshness }}</td>
     <td>{{ item.source_data_date or '—' }}</td><td>{{ item.official_actual_until or '—' }}</td><td>{{ item.last_check or '—' }}</td><td>{{ item.last_successful_run or '—' }}</td><td>{{ item.last_publication or '—' }}</td><td>{{ item.next_scheduled_check or '—' }}</td><td>{{ item.retry_at or '—' }}</td>
     <td>{{ item.matched_companies if item.matched_companies is not none else 'N/A' }}</td><td>{{ '%.1f%%'|format(item.master_coverage) if item.master_coverage is not none else 'N/A' }}</td><td>{{ item.current_fact_count if item.current_fact_count is not none else 'N/A' }}</td>
     <td>{{ item.new_facts if item.new_facts is not none else 'N/A' }}</td><td>{{ item.changed_facts if item.changed_facts is not none else 'N/A' }}</td><td>{{ item.removed_facts if item.removed_facts is not none else 'N/A' }}</td><td>{{ item.replayed_facts if item.replayed_facts is not none else 'N/A' }}</td><td>{{ item.quarantined_records if item.quarantined_records is not none else 'N/A' }}</td><td>{{ item.publication_generation if item.publication_generation is not none else '—' }}</td>
     <td>{{ item.worker_status }}{% if item.active_lease %}<small>active lease</small>{% endif %}</td><td class="error-cell">{{ item.last_error or '—' }}</td><td>{% if item.official_url %}<a target="_blank" rel="noopener noreferrer" href="{{ item.official_url }}">Открыть ↗</a>{% else %}—{% endif %}</td>
-  </tr>{% else %}<tr><td colspan="24" class="empty">Нет доступных operational-источников</td></tr>{% endfor %}</tbody>
+  </tr>{% else %}<tr><td colspan="25" class="empty">Нет доступных operational-источников</td></tr>{% endfor %}</tbody>
 </table></div>
 {% endblock %}

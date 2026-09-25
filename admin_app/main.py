@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from admin_app import service
 from admin_app.system import (
     ADMIN_SERVICE,
+    INCIDENT_SERVICE,
     WORKER_SERVICE,
     deployed_git_sha,
     invoke_fixed_helper,
@@ -135,6 +136,7 @@ def _empty_snapshot() -> dict:
             )
         },
         "master": {"total": 0, "legal": 0, "ip": 0},
+        "incidents": {"open": 0, "running": 0, "waiting_source": 0, "review_required": 0, "recovered_today": 0, "exhausted": 0},
         "latest_run": None,
     }
 
@@ -243,6 +245,83 @@ async def audit_page(request: Request):
     return _render(request, "audit.html", {"actions": service.audit_rows()})
 
 
+@app.get("/admin/incidents", response_class=HTMLResponse, include_in_schema=False)
+async def incidents_page(request: Request):
+    return _render(request, "incidents.html", service.incident_rows())
+
+
+@app.get("/admin/incidents/{incident_id}", response_class=HTMLResponse, include_in_schema=False)
+async def incident_page(request: Request, incident_id: UUID):
+    incident = service.incident_detail(incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return _render(request, "incident_detail.html", {"incident": incident})
+
+
+@app.get("/admin/incidents/{incident_id}/confirm/{action}", response_class=HTMLResponse, include_in_schema=False)
+async def confirm_incident_action(request: Request, incident_id: UUID, action: str):
+    incident = service.incident_detail(incident_id)
+    if incident is None or action not in service.INCIDENT_ACTION_LABELS:
+        raise HTTPException(status_code=404, detail="action not found")
+    return _render(
+        request,
+        "incident_confirm.html",
+        {"incident": incident, "action": action, "action_label": service.INCIDENT_ACTION_LABELS[action]},
+    )
+
+
+@app.post("/admin/incidents/{incident_id}/actions/{action}", include_in_schema=False)
+async def incident_action(request: Request, incident_id: UUID, action: str):
+    await _require_csrf(request)
+    try:
+        service.perform_incident_action(incident_id, action)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="incident not found")
+    except Exception as error:
+        return _render(
+            request,
+            "action_result.html",
+            {"title": "Действие не выполнено", "message": service.safe_error_message(error), "return_url": f"/admin/incidents/{incident_id}"},
+            status_code=400,
+        )
+    return RedirectResponse(f"/admin/incidents/{incident_id}", status_code=303)
+
+
+@app.get("/admin/automation", response_class=HTMLResponse, include_in_schema=False)
+async def automation_page(request: Request):
+    return _render(request, "automation.html", service.automation_rows())
+
+
+@app.get("/admin/automation/{source_id}/confirm", response_class=HTMLResponse, include_in_schema=False)
+async def confirm_automation_policy(request: Request, source_id: str):
+    context = service.automation_rows()
+    policy = next((row for row in context["rows"] if row["source_id"] == source_id), None)
+    if policy is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    return _render(request, "automation_confirm.html", {**context, "policy": policy})
+
+
+@app.post("/admin/automation/{source_id}/update", include_in_schema=False)
+async def automation_policy_update(request: Request, source_id: str):
+    form = await _require_csrf(request)
+    try:
+        service.perform_policy_update(
+            source_id=source_id,
+            auto_heal_enabled=form.get("auto_heal") == "on",
+            auto_code_repair_enabled=form.get("auto_code_repair") == "on",
+            max_attempts=int(str(form.get("max_attempts", ""))),
+            cooldown_seconds=int(str(form.get("cooldown_seconds", ""))),
+        )
+    except Exception as error:
+        return _render(
+            request,
+            "action_result.html",
+            {"title": "Политика не обновлена", "message": service.safe_error_message(error), "return_url": "/admin/automation"},
+            status_code=400,
+        )
+    return RedirectResponse("/admin/automation", status_code=303)
+
+
 def _system_context() -> dict:
     try:
         snapshot = service.console_snapshot()
@@ -251,6 +330,7 @@ def _system_context() -> dict:
     return {
         "worker": systemd_status(WORKER_SERVICE),
         "admin_service": systemd_status(ADMIN_SERVICE),
+        "incident_service": systemd_status(INCIDENT_SERVICE),
         "database": service.postgres_health(),
         "storage": storage_status(),
         "snapshot": snapshot,

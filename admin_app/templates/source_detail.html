@@ -20,6 +20,22 @@
   <article class="panel"><h2>Master</h2><dl><dt>Applicable</dt><dd>{{ val(source.applicable_companies) }}</dd><dt>Matched</dt><dd>{{ val(source.matched_companies) }}</dd><dt>Not found</dt><dd>{{ val(source.not_found) }}</dd><dt>Not applicable</dt><dd>{{ val(source.not_applicable) }}</dd><dt>Conflicts</dt><dd>{{ val(source.conflicts) }}</dd></dl></article>
   <article class="panel"><h2>Что изменилось</h2><dl><dt>Current facts</dt><dd>{{ val(source.current_fact_count) }}</dd><dt>New</dt><dd>{{ val(source.new_facts) }}</dd><dt>Changed</dt><dd>{{ val(source.changed_facts) }}</dd><dt>Removed / expired</dt><dd>{{ val(source.removed_facts) }}</dd><dt>Replayed</dt><dd>{{ val(source.replayed_facts) }}</dd><dt>Quarantined</dt><dd>{{ val(source.quarantined_records) }}</dd></dl></article>
 </section>
+{% if source.automation %}
+<section class="panel"><h2>AUTOMATIC RECOVERY</h2><dl>
+  <dt>Auto-heal</dt><dd>{{ 'ON' if source.automation.auto_heal else 'OFF' }}</dd>
+  <dt>Auto-code-repair</dt><dd>{{ source.automation.auto_code_repair }}</dd>
+  {% if source.automation.incident %}
+  <dt>Open incident</dt><dd><a href="/admin/incidents/{{ source.automation.incident.id }}">{{ source.automation.incident.incident_code }}</a></dd>
+  <dt>Category / owner</dt><dd>{{ source.automation.incident.category }} · {{ source.automation.incident.owner_domain }}</dd>
+  <dt>Detected</dt><dd>{{ source.automation.incident.detected_at }}</dd>
+  <dt>Attempts</dt><dd>{{ source.automation.incident.attempt_count }} / {{ source.automation.incident.max_attempts }}</dd>
+  <dt>Next attempt</dt><dd>{{ source.automation.incident.next_attempt_at or '—' }}</dd>
+  <dt>Last action</dt><dd>{{ source.automation.incident.last_action or '—' }} · {{ source.automation.incident.last_action_result or '—' }}</dd>
+  <dt>Repair / PR / CI</dt><dd>{{ source.automation.incident.repair_branch or '—' }} · {{ source.automation.incident.repair_pr_number or '—' }} · {{ source.automation.incident.repair_ci_status or '—' }}</dd>
+  <dt>Recovery status</dt><dd>{{ source.automation.incident.status }}</dd>
+  {% else %}<dt>Open incident</dt><dd>—</dd>{% endif %}
+</dl></section>
+{% endif %}
 {% if source.last_error %}<div class="alert bad"><strong>Последняя ошибка:</strong> {{ source.last_error }}</div>{% endif %}
 
 <h2>Последние 50 запусков</h2><div class="table-shell"><table><thead><tr><th>Run</th><th>Job</th><th>Type</th><th>Status</th><th>Started</th><th>Finished</th><th>Duration</th><th>Seen</th><th>Matched</th><th>Published</th><th>New</th><th>Changed</th><th>Removed</th><th>Quarantine</th><th>Error</th><th>Retry</th></tr></thead><tbody>

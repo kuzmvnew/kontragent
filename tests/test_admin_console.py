@@ -56,6 +56,9 @@ def _snapshot(*, stage="OPERATIONAL"):
         "raw_identity": "file://…/source.zip",
         "normalized_identity": "file://…/normalized.json",
         "active_checksum": "a" * 64,
+        "auto_repair": "ON",
+        "open_incident_id": None,
+        "open_incident_code": None,
         "description": "Официальный набор",
         "not_found": 50,
         "not_applicable": 0,
@@ -77,6 +80,7 @@ def _snapshot(*, stage="OPERATIONAL"):
             "active_leases": 0,
         },
         "master": {"total": 100, "legal": 100, "ip": 0},
+        "incidents": {"open": 0, "running": 0, "waiting_source": 0, "review_required": 0, "recovered_today": 0, "exhausted": 0},
         "latest_run": None,
     }
 
@@ -269,8 +273,133 @@ def test_backup_helper_has_fixed_argv_and_no_shell(monkeypatch):
     assert calls == [(
         ["/opt/nextcompany/current/deploy/scripts/backup_operational.sh"],
         120,
-        ("DATABASE_URL", "OPERATIONS_BACKUP_DIR", "OPERATIONS_RESTORE_TEST_DATABASE_URL"),
+        ("DATABASE_URL", "OPERATIONS_BACKUP_DIR", "OPERATIONS_RESTORE_TEST_DATABASE_URL", "OPERATIONS_RESTORE_TEST_DATABASE"),
     )]
     assert "shell" not in inspect.signature(system._run).parameters
     with pytest.raises(ValueError, match="unsupported"):
         system.invoke_fixed_helper("/bin/sh")
+
+
+def _incident():
+    incident_id = uuid4()
+    return {
+        "id": str(incident_id),
+        "incident_code": "INC-20260925-ABCDEF12",
+        "source_id": "fns_tax_regime",
+        "dataset_code": "fns_tax_regime",
+        "run_id": None,
+        "job_id": None,
+        "severity": "HIGH",
+        "category": "SOURCE_SCHEMA_VIOLATION",
+        "owner_domain": "SOURCE_OWNED",
+        "status": "WAITING_SOURCE",
+        "detected_at": NOW,
+        "updated_at": NOW,
+        "resolved_at": None,
+        "error_code": "schema_mismatch",
+        "safe_error_message": "Official artifact failed XML/XSD validation",
+        "failure_fingerprint": "a" * 64,
+        "auto_heal_enabled": True,
+        "auto_code_repair_enabled": False,
+        "remediation_level": 2,
+        "attempt_count": 1,
+        "max_attempts": 3,
+        "next_attempt_at": NOW,
+        "cooldown_until": NOW,
+        "last_action": "SOURCE_REDISCOVERY",
+        "last_action_result": "FAILED",
+        "repair_branch": None,
+        "repair_pr_number": None,
+        "repair_commit_sha": None,
+        "repair_ci_status": "NOT_RUN",
+        "resolution": None,
+        "resolution_evidence": {"last_success_preserved": True},
+        "actions": [],
+    }
+
+
+def test_incidents_and_automation_pages_show_safe_state(client, monkeypatch):
+    incident = _incident()
+    agent = SimpleNamespace(available=False, status="AGENT_UNAVAILABLE", agent_type=None)
+    monkeypatch.setattr(service, "incident_rows", lambda: {
+        "rows": [incident],
+        "summary": {"open": 1, "running": 0, "waiting_source": 1, "review_required": 0, "recovered_today": 0, "exhausted": 0},
+        "agent": agent,
+        "notification_status": "NOTIFICATION CHANNEL NOT CONFIGURED",
+    })
+    monkeypatch.setattr(service, "incident_detail", lambda incident_id: incident if str(incident_id) == incident["id"] else None)
+    monkeypatch.setattr(service, "automation_rows", lambda: {
+        "rows": [{
+            "source_id": "fns_tax_regime", "dataset_code": "fns_tax_regime",
+            "auto_heal_enabled": True, "auto_code_repair_enabled": False,
+            "remediation_level": 2, "max_attempts": 3, "cooldown_seconds": 3600,
+            "paused": False, "circuit_breaker": "1/3", "current_incident": incident,
+        }],
+        "agent": agent,
+        "notification_status": "NOTIFICATION CHANNEL NOT CONFIGURED",
+        "max_attempt_values": tuple(range(1, 11)),
+        "cooldown_values": (60, 300, 900, 3600, 21600, 86400),
+    })
+    incidents = client.get("/admin/incidents")
+    assert incidents.status_code == 200
+    assert "SOURCE_SCHEMA_VIOLATION" in incidents.text
+    assert "SOURCE_OWNED" in incidents.text
+    assert "AGENT_UNAVAILABLE" in incidents.text
+    detail = client.get(f"/admin/incidents/{incident['id']}")
+    assert detail.status_code == 200
+    assert "Official artifact failed XML/XSD validation" in detail.text
+    automation = client.get("/admin/automation")
+    assert automation.status_code == 200
+    assert "NOTIFICATION CHANNEL NOT CONFIGURED" in automation.text
+    assert "1/3" in automation.text
+
+
+def test_incident_actions_require_csrf_confirmation_and_audit_boundary(client, monkeypatch):
+    incident = _incident()
+    monkeypatch.setattr(service, "incident_detail", lambda incident_id: incident if str(incident_id) == incident["id"] else None)
+    called = []
+    monkeypatch.setattr(service, "perform_incident_action", lambda incident_id, action: called.append((str(incident_id), action)))
+    path = f"/admin/incidents/{incident['id']}"
+    assert client.get(f"{path}/actions/run-auto-heal").status_code == 405
+    assert client.post(f"{path}/actions/run-auto-heal", data={"_csrf": "bad"}).status_code == 403
+    confirmation = client.get(f"{path}/confirm/run-auto-heal")
+    token = re.search(r'name="_csrf" value="([^"]+)"', confirmation.text).group(1)
+    response = client.post(
+        f"{path}/actions/run-auto-heal",
+        data={"_csrf": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert called == [(incident["id"], "run-auto-heal")]
+
+
+def test_automation_policy_post_is_csrf_protected_and_predefined(client, monkeypatch):
+    agent = SimpleNamespace(available=False, status="AGENT_UNAVAILABLE", agent_type=None)
+    context = {
+        "rows": [{
+            "source_id": "fns_tax_regime", "dataset_code": "fns_tax_regime",
+            "auto_heal_enabled": True, "auto_code_repair_enabled": False,
+            "remediation_level": 2, "max_attempts": 3, "cooldown_seconds": 3600,
+            "paused": False, "circuit_breaker": "CLOSED", "current_incident": None,
+        }],
+        "agent": agent,
+        "notification_status": "NOTIFICATION CHANNEL NOT CONFIGURED",
+        "max_attempt_values": tuple(range(1, 11)),
+        "cooldown_values": (60, 300, 900, 3600, 21600, 86400),
+    }
+    monkeypatch.setattr(service, "automation_rows", lambda: context)
+    called = []
+    monkeypatch.setattr(service, "perform_policy_update", lambda **kwargs: called.append(kwargs))
+    assert client.post("/admin/automation/fns_tax_regime/update", data={"_csrf": "bad"}).status_code == 403
+    confirmation = client.get("/admin/automation/fns_tax_regime/confirm")
+    token = re.search(r'name="_csrf" value="([^"]+)"', confirmation.text).group(1)
+    response = client.post(
+        "/admin/automation/fns_tax_regime/update",
+        data={"_csrf": token, "auto_heal": "on", "max_attempts": "3", "cooldown_seconds": "3600"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert called == [{
+        "source_id": "fns_tax_regime", "auto_heal_enabled": True,
+        "auto_code_repair_enabled": False, "max_attempts": 3, "cooldown_seconds": 3600,
+    }]

@@ -15,7 +15,8 @@ from typing import Any
 
 WORKER_SERVICE = "nextcompany-source-worker.service"
 ADMIN_SERVICE = "nextcompany-admin.service"
-_ALLOWED_SERVICES = frozenset({WORKER_SERVICE, ADMIN_SERVICE})
+INCIDENT_SERVICE = "nextcompany-incident-controller.service"
+_ALLOWED_SERVICES = frozenset({WORKER_SERVICE, ADMIN_SERVICE, INCIDENT_SERVICE})
 _BACKUP_NAME = re.compile(r"^nextcompany_operational_\d{8}T\d{6}Z\.dump$")
 
 
@@ -233,6 +234,7 @@ def invoke_fixed_helper(kind: str) -> dict[str, Any]:
                 "DATABASE_URL",
                 "OPERATIONS_BACKUP_DIR",
                 "OPERATIONS_RESTORE_TEST_DATABASE_URL",
+                "OPERATIONS_RESTORE_TEST_DATABASE",
             ),
         )
     except (OSError, subprocess.SubprocessError) as error:

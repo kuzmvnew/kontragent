@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.contracts.data_readiness import AutoUpdateStatus
 from app.database.postgres import SessionLocal
 from app.models.admin import AdminActionAudit, SourceChangeSummary
+from app.models.incident import SourceAutomationPolicy, SourceIncident, SourceIncidentAction
 from app.models.company import Company
 from app.models.source import DataSet, DataSource
 from app.models.worker import (
@@ -34,6 +35,12 @@ from app.services.data_readiness_scheduler import (
 )
 from app.services.data_readiness_service import effective_status, safe_error_message
 from app.worker.execution import retry_job_now
+from app.incidents.controller import (
+    record_action,
+    update_policy,
+)
+from app.incidents.engineering import detect_agent_runtime
+from app.incidents.safe import safe_value
 
 
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
@@ -41,6 +48,7 @@ DATASET_CODES = tuple(sorted(SCHEDULED_SOURCE_DATASET_CODES))
 SOURCE_IDS = tuple(
     DATASET_WORKER_SOURCE_IDS.get(code, code) for code in DATASET_CODES
 )
+TERMINAL_INCIDENT_STATUSES = {"RESOLVED", "CANCELLED"}
 SECRET_KEY = re.compile(r"(?i)(password|secret|token|cookie|authorization|api[_-]?key|dsn|database_url)")
 ACTION_LABELS = {
     "check-now": "Проверить сейчас",
@@ -48,6 +56,14 @@ ACTION_LABELS = {
     "pause": "Приостановить расписание",
     "resume": "Возобновить расписание",
     "retry": "Повторить неудачную задачу",
+}
+INCIDENT_ACTION_LABELS = {
+    "run-auto-heal": "Запустить auto-heal сейчас",
+    "pause-auto-repair": "Приостановить авто-восстановление",
+    "resume-auto-repair": "Возобновить авто-восстановление",
+    "mark-source-owned": "Отметить как проблему официального источника",
+    "request-engineering": "Подготовить engineering repair",
+    "cancel-pending": "Отменить ожидающее авто-восстановление",
 }
 
 
@@ -174,6 +190,73 @@ def _connected_sources(session) -> set[str]:
     }
 
 
+def _incident_row(incident: SourceIncident) -> dict[str, Any]:
+    return {
+        "id": str(incident.id),
+        "incident_code": incident.incident_code,
+        "source_id": incident.source_id,
+        "dataset_code": incident.dataset_code,
+        "run_id": str(incident.run_id) if incident.run_id else None,
+        "job_id": str(incident.job_id) if incident.job_id else None,
+        "severity": incident.severity,
+        "category": incident.category,
+        "owner_domain": incident.owner_domain,
+        "status": incident.status,
+        "detected_at": incident.detected_at,
+        "updated_at": incident.updated_at,
+        "resolved_at": incident.resolved_at,
+        "error_code": incident.error_code,
+        "safe_error_message": safe_error_message(incident.safe_error_message) if incident.safe_error_message else None,
+        "failure_fingerprint": incident.failure_fingerprint,
+        "auto_heal_enabled": incident.auto_heal_enabled,
+        "auto_code_repair_enabled": incident.auto_code_repair_enabled,
+        "remediation_level": incident.remediation_level,
+        "attempt_count": incident.attempt_count,
+        "max_attempts": incident.max_attempts,
+        "next_attempt_at": incident.next_attempt_at,
+        "cooldown_until": incident.cooldown_until,
+        "last_action": incident.last_action,
+        "last_action_result": incident.last_action_result,
+        "repair_branch": incident.repair_branch,
+        "repair_pr_number": incident.repair_pr_number,
+        "repair_commit_sha": incident.repair_commit_sha,
+        "repair_ci_status": incident.repair_ci_status,
+        "resolution": incident.resolution,
+        "resolution_evidence": safe_value(incident.resolution_evidence),
+    }
+
+
+def _auto_repair_status(
+    policy: SourceAutomationPolicy | None,
+    incident: SourceIncident | None,
+) -> str:
+    if incident is not None:
+        return {
+            "AUTO_HEAL_RUNNING": "RUNNING",
+            "WAITING_SOURCE": "WAITING SOURCE",
+            "AWAITING_ENGINEERING_REVIEW": "REVIEW REQUIRED",
+            "REVIEW_REQUIRED": "REVIEW REQUIRED",
+            "AGENT_UNAVAILABLE": "AGENT UNAVAILABLE",
+            "AUTO_REPAIR_EXHAUSTED": "EXHAUSTED",
+        }.get(incident.status, "ON")
+    if policy is None or policy.paused or not policy.auto_heal_enabled:
+        return "OFF"
+    return "ON"
+
+
+def _incident_counts(session, *, now: datetime) -> dict[str, int]:
+    rows = list(session.scalars(select(SourceIncident)))
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "open": sum(row.status not in TERMINAL_INCIDENT_STATUSES for row in rows),
+        "running": sum(row.status == "AUTO_HEAL_RUNNING" for row in rows),
+        "waiting_source": sum(row.status == "WAITING_SOURCE" for row in rows),
+        "review_required": sum(row.status in {"AWAITING_ENGINEERING_REVIEW", "REVIEW_REQUIRED"} for row in rows),
+        "recovered_today": sum(row.status == "RESOLVED" and row.resolved_at is not None and row.resolved_at >= start for row in rows),
+        "exhausted": sum(row.status == "AUTO_REPAIR_EXHAUSTED" for row in rows),
+    }
+
+
 def _stage(
     dataset: DataSet,
     *,
@@ -251,6 +334,18 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
             )
         )
     }
+    policies = {
+        item.source_id: item
+        for item in session.scalars(select(SourceAutomationPolicy))
+    }
+    active_incidents = _latest_by_source(
+        session.scalars(
+            select(SourceIncident)
+            .where(SourceIncident.status.not_in(("RESOLVED", "CANCELLED")))
+            .order_by(SourceIncident.detected_at.desc())
+        ).all(),
+        lambda item: item.source_id,
+    )
 
     rows: list[dict[str, Any]] = []
     for dataset, source in datasets:
@@ -261,6 +356,8 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
         publication = publications.get(worker_source_id)
         change = latest_changes.get(worker_source_id)
         coverage = dict(dataset.coverage or {})
+        policy = policies.get(worker_source_id)
+        incident = active_incidents.get(worker_source_id)
         freshness = effective_status(dataset, now=now)
         stage = _stage(
             dataset,
@@ -327,6 +424,9 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
                 "raw_identity": None,
                 "normalized_identity": safe_identity(publication.active_pointer) if publication else None,
                 "active_checksum": redact((publication.validation_metadata or {}).get("checksum")) if publication else None,
+                "auto_repair": _auto_repair_status(policy, incident),
+                "open_incident_id": str(incident.id) if incident else None,
+                "open_incident_code": incident.incident_code if incident else None,
             }
         )
     return rows
@@ -341,6 +441,7 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
         retries = int(session.scalar(select(func.count()).select_from(WorkerJob).where(WorkerJob.status == "retry_scheduled")) or 0)
         leases = int(session.scalar(select(func.count()).select_from(WorkerLease).where(WorkerLease.expires_at > now)) or 0)
         stages = Counter(row["stage"] for row in rows)
+        incident_counts = _incident_counts(session, now=now)
         latest_run = session.execute(
             select(WorkerRun, WorkerJob)
             .join(WorkerJob, WorkerRun.job_id == WorkerJob.id)
@@ -363,6 +464,7 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
                 "active_leases": leases,
             },
             "master": master,
+            "incidents": incident_counts,
             "latest_run": {
                 "id": str(latest_run[0].id),
                 "source_id": latest_run[1].source_id,
@@ -407,6 +509,25 @@ def source_detail(source_id: str, *, now: datetime | None = None) -> dict[str, A
         )
         source["conflicts"] = _int((dataset.coverage or {}).get("conflicts")) if dataset else None
         source["runs"] = [_run_row(run, job, change) for run, job, change in run_rows]
+        policy = session.get(SourceAutomationPolicy, source_id)
+        incident = session.scalar(
+            select(SourceIncident)
+            .where(
+                SourceIncident.source_id == source_id,
+                SourceIncident.status.not_in(("RESOLVED", "CANCELLED")),
+            )
+            .order_by(SourceIncident.detected_at.desc())
+            .limit(1)
+        )
+        runtime = detect_agent_runtime()
+        source["automation"] = {
+            "auto_heal": bool(policy and policy.auto_heal_enabled and not policy.paused),
+            "auto_code_repair": (
+                "ON" if policy and policy.auto_code_repair_enabled and runtime.available
+                else "AGENT UNAVAILABLE" if not runtime.available else "OFF"
+            ),
+            "incident": _incident_row(incident) if incident else None,
+        }
         return source
 
 
@@ -614,6 +735,215 @@ def audit_rows(*, limit: int = 100) -> list[dict[str, Any]]:
                 select(AdminActionAudit).order_by(AdminActionAudit.timestamp.desc()).limit(limit)
             )
         ]
+
+
+def incident_rows(*, limit: int = 200) -> dict[str, Any]:
+    now = utc_now()
+    with SessionLocal() as session:
+        rows = list(
+            session.scalars(
+                select(SourceIncident)
+                .order_by(SourceIncident.detected_at.desc())
+                .limit(limit)
+            )
+        )
+        return {
+            "rows": [_incident_row(row) for row in rows],
+            "summary": _incident_counts(session, now=now),
+            "agent": detect_agent_runtime(),
+            "notification_status": "NOTIFICATION CHANNEL NOT CONFIGURED",
+        }
+
+
+def incident_detail(incident_id: UUID) -> dict[str, Any] | None:
+    with SessionLocal() as session:
+        incident = session.get(SourceIncident, incident_id)
+        if incident is None:
+            return None
+        result = _incident_row(incident)
+        result["actions"] = [
+            {
+                "id": str(action.id),
+                "action_type": action.action_type,
+                "started_at": action.started_at,
+                "finished_at": action.finished_at,
+                "result": action.result,
+                "safe_message": safe_error_message(action.safe_message) if action.safe_message else None,
+                "metadata_safe": safe_value(action.metadata_safe),
+            }
+            for action in session.scalars(
+                select(SourceIncidentAction)
+                .where(SourceIncidentAction.incident_id == incident.id)
+                .order_by(SourceIncidentAction.started_at, SourceIncidentAction.id)
+            )
+        ]
+        return result
+
+
+def automation_rows() -> dict[str, Any]:
+    runtime = detect_agent_runtime()
+    with SessionLocal() as session:
+        policies = list(
+            session.scalars(
+                select(SourceAutomationPolicy).order_by(SourceAutomationPolicy.dataset_code)
+            )
+        )
+        active = _latest_by_source(
+            session.scalars(
+                select(SourceIncident)
+                .where(SourceIncident.status.not_in(TERMINAL_INCIDENT_STATUSES))
+                .order_by(SourceIncident.detected_at.desc())
+            ).all(),
+            lambda item: item.source_id,
+        )
+        return {
+            "agent": runtime,
+            "notification_status": "NOTIFICATION CHANNEL NOT CONFIGURED",
+            "max_attempt_values": tuple(range(1, 11)),
+            "cooldown_values": (60, 300, 900, 3600, 21600, 86400),
+            "rows": [
+                {
+                    "source_id": policy.source_id,
+                    "dataset_code": policy.dataset_code,
+                    "auto_heal_enabled": policy.auto_heal_enabled,
+                    "auto_code_repair_enabled": policy.auto_code_repair_enabled,
+                    "remediation_level": policy.remediation_level,
+                    "max_attempts": policy.max_attempts,
+                    "cooldown_seconds": policy.cooldown_seconds,
+                    "paused": policy.paused,
+                    "circuit_breaker": (
+                        "EXHAUSTED" if active.get(policy.source_id) and active[policy.source_id].status == "AUTO_REPAIR_EXHAUSTED"
+                        else f"{active[policy.source_id].attempt_count}/{active[policy.source_id].max_attempts}" if active.get(policy.source_id)
+                        else "CLOSED"
+                    ),
+                    "current_incident": _incident_row(active[policy.source_id]) if active.get(policy.source_id) else None,
+                }
+                for policy in policies
+            ],
+        }
+
+
+def perform_incident_action(incident_id: UUID, action: str) -> dict[str, Any]:
+    if action not in INCIDENT_ACTION_LABELS:
+        raise ValueError("unsupported incident action")
+    before: dict[str, Any] = {}
+    source_id: str | None = None
+    job_id: UUID | None = None
+    try:
+        with SessionLocal() as session:
+            incident = session.get(SourceIncident, incident_id, with_for_update=True)
+            if incident is None:
+                raise LookupError("incident not found")
+            source_id = incident.source_id
+            job_id = incident.job_id
+            before = _incident_row(incident)
+            policy = session.get(SourceAutomationPolicy, incident.source_id)
+            if action == "run-auto-heal":
+                if incident.status in {"RESOLVED", "CANCELLED", "AUTO_REPAIR_EXHAUSTED"}:
+                    raise ValueError("incident is not eligible for auto-heal")
+                incident.status = "OPEN"
+                incident.next_attempt_at = utc_now()
+                record_action(session, incident, "AUTO_HEAL_REQUESTED", result="QUEUED")
+            elif action == "pause-auto-repair":
+                if policy is None:
+                    raise ValueError("automation policy is missing")
+                policy.paused = True
+                incident.auto_heal_enabled = False
+                incident.auto_code_repair_enabled = False
+                record_action(session, incident, "AUTO_REPAIR_PAUSED", result="SUCCESS")
+            elif action == "resume-auto-repair":
+                if policy is None:
+                    raise ValueError("automation policy is missing")
+                policy.paused = False
+                policy.auto_heal_enabled = True
+                incident.auto_heal_enabled = True
+                incident.auto_code_repair_enabled = policy.auto_code_repair_enabled
+                if incident.status == "CANCELLED":
+                    incident.status = "OPEN"
+                incident.next_attempt_at = utc_now()
+                record_action(session, incident, "AUTO_REPAIR_RESUMED", result="SUCCESS")
+            elif action == "mark-source-owned":
+                incident.owner_domain = "SOURCE_OWNED"
+                incident.status = "WAITING_SOURCE"
+                incident.next_attempt_at = utc_now()
+                record_action(session, incident, "CLASSIFIED", result="SUCCESS", metadata={"owner_domain": "SOURCE_OWNED"})
+            elif action == "request-engineering":
+                if incident.owner_domain != "OUR_CODE":
+                    raise ValueError("engineering repair is allowed only for OUR_CODE incidents")
+                evidence = dict(incident.resolution_evidence or {})
+                evidence["engineering_requested_at"] = utc_now().isoformat()
+                incident.resolution_evidence = safe_value(evidence)
+                incident.status = "OPEN"
+                incident.next_attempt_at = utc_now()
+                record_action(session, incident, "ENGINEERING_REPAIR_REQUESTED", result="QUEUED")
+            elif action == "cancel-pending":
+                if incident.status in {"RESOLVED", "CANCELLED", "AUTO_HEAL_RUNNING"}:
+                    raise ValueError("incident is not cancellable")
+                incident.status = "CANCELLED"
+                incident.next_attempt_at = None
+                record_action(session, incident, "CANCELLED", result="SUCCESS")
+            session.commit()
+            after = _incident_row(incident)
+        audit_action(
+            action=f"incident:{action}", source_id=source_id, job_id=job_id,
+            previous_state=before, new_state=after, result="success",
+        )
+        return after
+    except Exception as error:
+        audit_action(
+            action=f"incident:{action}", source_id=source_id, job_id=job_id,
+            previous_state=before, new_state={}, result="failed", detail=str(error),
+        )
+        raise
+
+
+def perform_policy_update(
+    *,
+    source_id: str,
+    auto_heal_enabled: bool,
+    auto_code_repair_enabled: bool,
+    max_attempts: int,
+    cooldown_seconds: int,
+) -> dict[str, Any]:
+    before: dict[str, Any] = {}
+    try:
+        with SessionLocal() as session:
+            existing = session.get(SourceAutomationPolicy, source_id)
+            if existing:
+                before = {
+                    "auto_heal_enabled": existing.auto_heal_enabled,
+                    "auto_code_repair_enabled": existing.auto_code_repair_enabled,
+                    "max_attempts": existing.max_attempts,
+                    "cooldown_seconds": existing.cooldown_seconds,
+                    "paused": existing.paused,
+                }
+            policy = update_policy(
+                session,
+                source_id=source_id,
+                auto_heal_enabled=auto_heal_enabled,
+                auto_code_repair_enabled=auto_code_repair_enabled,
+                max_attempts=max_attempts,
+                cooldown_seconds=cooldown_seconds,
+            )
+            session.commit()
+            after = {
+                "auto_heal_enabled": policy.auto_heal_enabled,
+                "auto_code_repair_enabled": policy.auto_code_repair_enabled,
+                "max_attempts": policy.max_attempts,
+                "cooldown_seconds": policy.cooldown_seconds,
+                "paused": policy.paused,
+            }
+        audit_action(
+            action="automation-policy-update", source_id=source_id, job_id=None,
+            previous_state=before, new_state=after, result="success",
+        )
+        return after
+    except Exception as error:
+        audit_action(
+            action="automation-policy-update", source_id=source_id, job_id=None,
+            previous_state=before, new_state={}, result="failed", detail=str(error),
+        )
+        raise
 
 
 def postgres_health() -> dict[str, Any]:
