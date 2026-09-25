@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import logging
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from sqlalchemy import or_, select
@@ -18,20 +18,42 @@ from sqlalchemy.orm import Session
 from app.contracts.data_readiness import retry_delay
 from app.database.postgres import SessionLocal
 from app.incidents.classification import Classification, classify_failure, fingerprint
-from app.incidents.engineering import EngineeringAdapter, branch_name, create_repair_package, detect_agent_runtime
+from app.incidents.engineering import (
+    EngineeringAdapter,
+    branch_name,
+    create_repair_package,
+    detect_agent_runtime,
+)
 from app.incidents.notifications import DEFAULT_NOTIFIER, NotificationAdapter
 from app.incidents.safe import safe_text, safe_value
-from app.models.incident import SourceAutomationPolicy, SourceIncident, SourceIncidentAction
+from app.models.incident import (
+    SourceAutomationPolicy,
+    SourceIncident,
+    SourceIncidentAction,
+)
 from app.models.source import DataSet
-from app.models.worker import WorkerJob, WorkerLease, WorkerPublicationState, WorkerRawManifest, WorkerRun
-from app.services.data_readiness_scheduler import SCHEDULED_SOURCE_DATASET_CODES, run_due_updates
+from app.models.worker import (
+    WorkerJob,
+    WorkerPublicationState,
+    WorkerRawManifest,
+    WorkerRun,
+)
+from app.services.data_readiness_scheduler import (
+    SCHEDULED_SOURCE_DATASET_CODES,
+    run_due_updates,
+)
 from app.services.data_readiness_service import effective_status
 from app.worker.execution import RetryPolicy, recover_stale_runs, retry_job_now
-
 
 logger = logging.getLogger("nextcompany.incidents")
 TERMINAL_STATUSES = {"RESOLVED", "CANCELLED"}
 ACTIONABLE_STATUSES = {"OPEN", "RETRY_SCHEDULED", "WAITING_SOURCE"}
+SOURCE_WAIT_CATEGORIES = {
+    "SOURCE_UNAVAILABLE",
+    "SOURCE_STALE",
+    "SOURCE_INVALID_ARTIFACT",
+    "SOURCE_SCHEMA_VIOLATION",
+}
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
 WORKER_DATASET_SOURCE_IDS = {value: key for key, value in DATASET_WORKER_SOURCE_IDS.items()}
 COOLDOWN_VALUES = {60, 300, 900, 3600, 21600, 86400}
@@ -423,6 +445,10 @@ def process_incident(
         return incident
     if incident.status not in ACTIONABLE_STATUSES:
         return incident
+    source_owned_wait = (
+        incident.owner_domain == "SOURCE_OWNED"
+        and incident.category in SOURCE_WAIT_CATEGORIES
+    )
     evidence = dict(incident.resolution_evidence or {})
     if evidence.get("engineering_requested_at"):
         request_engineering_repair(session, incident, now=now)
@@ -430,7 +456,7 @@ def process_incident(
         evidence.pop("engineering_requested_at", None)
         incident.resolution_evidence = safe_value(evidence)
         return incident
-    if incident.attempt_count >= incident.max_attempts:
+    if not source_owned_wait and incident.attempt_count >= incident.max_attempts:
         incident.status = "AUTO_REPAIR_EXHAUSTED"
         record_action(session, incident, "EXHAUSTED", result="FAILED", message="automatic remediation attempt limit reached", now=now)
         notifier.notify("repair_exhausted", {"incident": incident.incident_code, "source": incident.source_id})
@@ -441,7 +467,8 @@ def process_incident(
         evidence["baseline"] = _baseline(session, incident)
         incident.resolution_evidence = safe_value(evidence)
     incident.status = "AUTO_HEAL_RUNNING"
-    incident.attempt_count += 1
+    if not source_owned_wait:
+        incident.attempt_count += 1
     action_type = "OBSERVED"
     result = "NOOP"
     try:
@@ -450,13 +477,32 @@ def process_incident(
         result = "FAILED"
         record_action(session, incident, action_type, result=result, message=str(error), now=now)
     else:
-        record_action(session, incident, action_type, result=result, now=now)
+        action_result = (
+            "SOURCE_STILL_INVALID"
+            if source_owned_wait and result != "SUCCESS"
+            else result
+        )
+        record_action(session, incident, action_type, result=action_result, now=now)
 
     recovered, verification = verify_recovery(session, incident, now=now)
     evidence = dict(incident.resolution_evidence or {})
     evidence["latest_verification"] = safe_value(verification)
     incident.resolution_evidence = evidence
-    record_action(session, incident, "SOURCE_RECHECK", result="SUCCESS" if recovered else "PENDING", metadata=verification, now=now)
+    recheck_result = (
+        "SUCCESS"
+        if recovered
+        else "SOURCE_STILL_INVALID"
+        if source_owned_wait
+        else "PENDING"
+    )
+    record_action(
+        session,
+        incident,
+        "SOURCE_RECHECK",
+        result=recheck_result,
+        metadata=verification,
+        now=now,
+    )
     if recovered:
         incident.status = "RESOLVED"
         incident.resolved_at = now
@@ -466,14 +512,22 @@ def process_incident(
         record_action(session, incident, "RECOVERED", result="SUCCESS", metadata=verification, now=now)
         notifier.notify("auto_repair_recovered", {"incident": incident.incident_code, "source": incident.source_id})
     else:
-        if incident.attempt_count >= incident.max_attempts:
+        if not source_owned_wait and incident.attempt_count >= incident.max_attempts:
             incident.status = "AUTO_REPAIR_EXHAUSTED"
             incident.next_attempt_at = None
             incident.cooldown_until = None
             record_action(session, incident, "EXHAUSTED", result="FAILED", message="automatic remediation attempt limit reached", now=now)
             notifier.notify("repair_exhausted", {"incident": incident.incident_code, "source": incident.source_id})
             return incident
-        delay = retry_delay(incident.attempt_count, base_seconds=policy.cooldown_seconds, maximum_seconds=86400)
+        delay = (
+            timedelta(seconds=policy.cooldown_seconds)
+            if source_owned_wait
+            else retry_delay(
+                incident.attempt_count,
+                base_seconds=policy.cooldown_seconds,
+                maximum_seconds=86400,
+            )
+        )
         scheduled_at = now + delay
         if action_type == "RETRY_SCHEDULED" and incident.job_id:
             job = session.get(WorkerJob, incident.job_id)
@@ -481,9 +535,50 @@ def process_incident(
                 scheduled_at = job.next_attempt_at
         incident.cooldown_until = scheduled_at
         incident.next_attempt_at = scheduled_at
-        incident.status = "WAITING_SOURCE" if incident.owner_domain == "SOURCE_OWNED" else "RETRY_SCHEDULED"
-        record_action(session, incident, "RETRY_SCHEDULED", result="PENDING", metadata={"next_attempt_at": incident.next_attempt_at.isoformat()}, now=now)
+        incident.status = "WAITING_SOURCE" if source_owned_wait else "RETRY_SCHEDULED"
+        record_action(
+            session,
+            incident,
+            "SOURCE_RECHECK_SCHEDULED" if source_owned_wait else "RETRY_SCHEDULED",
+            result="PENDING",
+            metadata={"next_attempt_at": incident.next_attempt_at.isoformat()},
+            now=now,
+        )
     return incident
+
+
+def normalize_source_owned_waits(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    only_source: str | None = None,
+) -> list[SourceIncident]:
+    """Repair legacy exhaustion state for persistent official-source failures."""
+
+    now = now or utc_now()
+    query = select(SourceIncident).where(
+        SourceIncident.owner_domain == "SOURCE_OWNED",
+        SourceIncident.category.in_(SOURCE_WAIT_CATEGORIES),
+        SourceIncident.status == "AUTO_REPAIR_EXHAUSTED",
+    )
+    if only_source:
+        query = query.where(SourceIncident.source_id == only_source)
+    rows = list(session.scalars(query.with_for_update(skip_locked=True)))
+    for incident in rows:
+        incident.status = "WAITING_SOURCE"
+        incident.next_attempt_at = now
+        incident.cooldown_until = None
+        incident.resolution = None
+        record_action(
+            session,
+            incident,
+            "SOURCE_RECHECK_SCHEDULED",
+            result="PENDING",
+            message="official source checks continue without circuit-breaker exhaustion",
+            metadata={"next_attempt_at": now.isoformat()},
+            now=now,
+        )
+    return rows
 
 
 def process_due_incidents(
@@ -559,11 +654,18 @@ def run_controller_once(*, now: datetime | None = None, only_source: str | None 
             session.rollback()
             detected = detect_dataset_incidents(session, now=now, only_source=only_source)
             session.commit()
+        normalized = normalize_source_owned_waits(session, now=now, only_source=only_source)
+        session.commit()
         resolved = verify_active_incidents(session, now=now, only_source=only_source)
         session.commit()
         processed = process_due_incidents(session, now=now, only_source=only_source)
         session.commit()
-        return {"detected": len(detected), "recovered": len(resolved), "processed": len(processed)}
+        return {
+            "detected": len(detected),
+            "normalized": len(normalized),
+            "recovered": len(resolved),
+            "processed": len(processed),
+        }
 
 
 def controller_loop(*, poll_seconds: int = 60) -> None:

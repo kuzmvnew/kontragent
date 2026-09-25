@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Запрос принят — NEXT Company{% endblock %}
+{% block content %}
+<section class="confirm panel result-panel">
+  <span class="status waiting-source">ЗАПРОС ПРИНЯТ</span>
+  <h1>Проверка источника поставлена в очередь</h1>
+  <dl>
+    <dt>Источник</dt><dd>{{ source_name }}<small>{{ incident.source_id }}</small></dd>
+    <dt>Действие</dt><dd>Внеочередная проверка официального источника</dd>
+    <dt>Статус</dt><dd>Ожидает выполнения</dd>
+    <dt>Контроллер</dt><dd>{{ 'активен' if controller.active else 'недоступен' }}</dd>
+    <dt>Ожидаемое время</dt><dd>До {{ poll_seconds }} секунд</dd>
+  </dl>
+  <p class="muted">Текущие успешные данные и публикация не удаляются. Ход проверки появится в ленте инцидента.</p>
+  <a class="button primary" href="/admin/incidents/{{ incident.id }}">Открыть инцидент</a>
+</section>
+{% endblock %}

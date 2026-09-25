@@ -2,22 +2,32 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 from typing import Any
-from uuid import UUID
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.contracts.data_readiness import AutoUpdateStatus
 from app.database.postgres import SessionLocal
+from app.incidents.controller import (
+    record_action,
+    update_policy,
+)
+from app.incidents.engineering import detect_agent_runtime
+from app.incidents.safe import safe_value
 from app.models.admin import AdminActionAudit, SourceChangeSummary
-from app.models.incident import SourceAutomationPolicy, SourceIncident, SourceIncidentAction
 from app.models.company import Company
+from app.models.incident import (
+    SourceAutomationPolicy,
+    SourceIncident,
+    SourceIncidentAction,
+)
 from app.models.source import DataSet, DataSource
 from app.models.worker import (
     WorkerHandlerRegistration,
@@ -35,13 +45,6 @@ from app.services.data_readiness_scheduler import (
 )
 from app.services.data_readiness_service import effective_status, safe_error_message
 from app.worker.execution import retry_job_now
-from app.incidents.controller import (
-    record_action,
-    update_policy,
-)
-from app.incidents.engineering import detect_agent_runtime
-from app.incidents.safe import safe_value
-
 
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
 DATASET_CODES = tuple(sorted(SCHEDULED_SOURCE_DATASET_CODES))
@@ -58,12 +61,28 @@ ACTION_LABELS = {
     "retry": "Повторить неудачную задачу",
 }
 INCIDENT_ACTION_LABELS = {
-    "run-auto-heal": "Запустить auto-heal сейчас",
-    "pause-auto-repair": "Приостановить авто-восстановление",
-    "resume-auto-repair": "Возобновить авто-восстановление",
+    "check-source-now": "Проверить источник сейчас",
+    "run-auto-heal": "Запустить восстановление сейчас",
+    "pause-auto-repair": "Приостановить автоматику",
+    "resume-auto-repair": "Возобновить автоматику",
     "mark-source-owned": "Отметить как проблему официального источника",
-    "request-engineering": "Подготовить engineering repair",
-    "cancel-pending": "Отменить ожидающее авто-восстановление",
+    "request-engineering": "Запустить инженерное исправление",
+    "prepare-repair-package": "Подготовить пакет для исправления",
+    "cancel-pending": "Отменить ожидающее действие",
+}
+SOURCE_WAIT_CATEGORIES = {
+    "SOURCE_UNAVAILABLE",
+    "SOURCE_STALE",
+    "SOURCE_INVALID_ARTIFACT",
+    "SOURCE_SCHEMA_VIOLATION",
+}
+CANCELLABLE_INCIDENT_STATUSES = {
+    "OPEN",
+    "RETRY_SCHEDULED",
+    "WAITING_SOURCE",
+    "AGENT_UNAVAILABLE",
+    "AWAITING_ENGINEERING_REVIEW",
+    "REVIEW_REQUIRED",
 }
 
 
@@ -226,11 +245,63 @@ def _incident_row(incident: SourceIncident) -> dict[str, Any]:
     }
 
 
+def _value(item: Any, name: str, default: Any = None) -> Any:
+    return item.get(name, default) if isinstance(item, dict) else getattr(item, name, default)
+
+
+def available_incident_actions(
+    incident: SourceIncident | dict[str, Any],
+    automation_policy: SourceAutomationPolicy | None,
+    agent_runtime: Any,
+) -> tuple[str, ...]:
+    """Return the only owner actions the server will accept for this incident."""
+
+    status = str(_value(incident, "status", ""))
+    owner = str(_value(incident, "owner_domain", "UNKNOWN"))
+    category = str(_value(incident, "category", "UNKNOWN"))
+    if status in TERMINAL_INCIDENT_STATUSES:
+        return ()
+
+    paused = bool(automation_policy and automation_policy.paused)
+    enabled = bool(automation_policy and automation_policy.auto_heal_enabled and not paused)
+    actions: list[str] = []
+
+    if owner == "SOURCE_OWNED" and category in SOURCE_WAIT_CATEGORIES:
+        if enabled:
+            actions.append("check-source-now")
+        actions.append("resume-auto-repair" if paused else "pause-auto-repair")
+        return tuple(actions)
+
+    if owner == "OUR_CODE":
+        actions.append(
+            "request-engineering" if bool(getattr(agent_runtime, "available", False))
+            else "prepare-repair-package"
+        )
+    elif owner == "OUR_INFRASTRUCTURE" and status != "AUTO_HEAL_RUNNING" and enabled:
+        actions.append("run-auto-heal")
+    elif owner == "UNKNOWN":
+        if enabled:
+            actions.append("run-auto-heal")
+        actions.append("mark-source-owned")
+
+    if automation_policy is not None:
+        actions.append("resume-auto-repair" if paused else "pause-auto-repair")
+    if status in CANCELLABLE_INCIDENT_STATUSES and owner not in {"SOURCE_OWNED", "ACCESS_REQUIRED"}:
+        actions.append("cancel-pending")
+    return tuple(actions)
+
+
 def _auto_repair_status(
     policy: SourceAutomationPolicy | None,
     incident: SourceIncident | None,
 ) -> str:
     if incident is not None:
+        if (
+            incident.owner_domain == "SOURCE_OWNED"
+            and incident.category in SOURCE_WAIT_CATEGORIES
+            and incident.status == "AUTO_REPAIR_EXHAUSTED"
+        ):
+            return "WAITING SOURCE"
         return {
             "AUTO_HEAL_RUNNING": "RUNNING",
             "WAITING_SOURCE": "WAITING SOURCE",
@@ -242,6 +313,37 @@ def _auto_repair_status(
     if policy is None or policy.paused or not policy.auto_heal_enabled:
         return "OFF"
     return "ON"
+
+
+def _missing_reason(row: dict[str, Any], field: str) -> str:
+    stage = row.get("stage")
+    if stage == "ACCESS REQUIRED":
+        return "Нет данных: для источника ещё не настроен доступ."
+    if stage in {"FIRST RUN", "CHECK PENDING"}:
+        return "Нет данных: первый рабочий цикл ещё не завершён."
+    if stage in {"ERROR", "SOURCE BLOCKED"} and not row.get("last_successful_run"):
+        return "Нет данных: последний запуск закончился ошибкой до первой успешной публикации."
+    if not row.get("last_successful_run"):
+        return "Нет данных: источник ещё не завершал успешную обработку."
+    if field == "retry_at":
+        return "Нет данных: повтор не запланирован."
+    if field == "next_scheduled_check":
+        return "Нет данных: следующая автоматическая проверка не запланирована."
+    if field == "last_check":
+        return "Нет данных: источник ещё не проверялся."
+    if field == "last_publication":
+        return "Нет данных: источник ещё не публиковал факты."
+    if field == "official_actual_until":
+        return "Нет данных: официальный источник не сообщает срок актуальности."
+    if field == "source_data_date":
+        return "Нет данных: официальный источник не сообщает дату сведений."
+    if field in {"new_facts", "changed_facts", "removed_facts", "replayed_facts", "quarantined_records"}:
+        return "Нет данных: этот WorkerRun не сохранял метрику изменения публикации."
+    if field in {"matched_companies", "master_coverage"}:
+        return "Нет данных: обработчик этого источника пока не публикует метрику сопоставления с Master."
+    if field == "publication_generation":
+        return "Нет данных: для источника ещё нет атомарной версии публикации."
+    return "Нет данных: обработчик источника пока не публикует эту метрику."
 
 
 def _incident_counts(session, *, now: datetime) -> dict[str, int]:
@@ -389,8 +491,7 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
             applicable = master["ip"]
         if dataset.code == "fns_tax_debt" and _int(coverage.get("cohort_size")) is not None:
             applicable = int(coverage["cohort_size"])
-        rows.append(
-            {
+        row = {
                 "source_name": dataset.name,
                 "source_group": source.name,
                 "source_id": worker_source_id,
@@ -436,7 +537,18 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
                 "open_incident_id": str(incident.id) if incident else None,
                 "open_incident_code": incident.incident_code if incident else None,
             }
-        )
+        row["missing_reasons"] = {
+            field: _missing_reason(row, field)
+            for field in (
+                "source_data_date", "official_actual_until", "last_check",
+                "last_successful_run", "last_publication", "next_scheduled_check",
+                "retry_at",
+                "matched_companies", "master_coverage", "current_fact_count",
+                "new_facts", "changed_facts", "removed_facts", "replayed_facts",
+                "quarantined_records", "publication_generation",
+            )
+        }
+        rows.append(row)
     return rows
 
 
@@ -763,12 +875,55 @@ def incident_rows(*, limit: int = 200) -> dict[str, Any]:
         }
 
 
+def _incident_problem(incident: SourceIncident) -> str:
+    if incident.category == "SOURCE_SCHEMA_VIOLATION":
+        return "Официальный файл не проходит обязательную проверку схемы."
+    if incident.category == "SOURCE_STALE":
+        return "Официальный источник не обновил данные в ожидаемый срок."
+    if incident.category == "SOURCE_ACCESS_REQUIRED":
+        return "Для получения официальных данных требуется настроить доступ."
+    if incident.category == "LEASE_STUCK":
+        return "Задача worker перестала обновлять служебную блокировку."
+    if incident.category == "WORKER_NOT_RUNNING":
+        return "Фоновый процесс обработки источников остановлен."
+    return safe_error_message(incident.safe_error_message or incident.category)
+
+
+def _incident_system_action(incident: SourceIncident) -> str:
+    if incident.status == "RESOLVED":
+        return "Работа восстановлена и проверена."
+    if incident.owner_domain == "SOURCE_OWNED":
+        return "Ждёт исправленный официальный файл и проверяет источник автоматически."
+    if incident.owner_domain == "ACCESS_REQUIRED":
+        return "Сохраняет инцидент до настройки требуемого доступа."
+    if incident.owner_domain == "OUR_CODE":
+        return "Сохраняет диагностику и готовит безопасный пакет для исправления кода."
+    return "Выполняет разрешённый сценарий восстановления и проверяет результат."
+
+
+def _incident_owner_action(incident: SourceIncident, runtime: Any) -> str:
+    if incident.status == "RESOLVED":
+        return "Ничего делать не требуется."
+    if incident.owner_domain == "SOURCE_OWNED":
+        return "Ничего делать не требуется. При необходимости можно запросить внеочередную проверку."
+    if incident.owner_domain == "ACCESS_REQUIRED":
+        return "Нужно настроить доступ к официальному источнику."
+    if incident.owner_domain == "OUR_CODE" and not runtime.available:
+        return "Coding-agent на HOME WORKER не настроен; диагностический пакет можно подготовить вручную."
+    return "Следите за результатом автоматического восстановления."
+
+
 def incident_detail(incident_id: UUID) -> dict[str, Any] | None:
     with SessionLocal() as session:
         incident = session.get(SourceIncident, incident_id)
         if incident is None:
             return None
         result = _incident_row(incident)
+        action_models = list(session.scalars(
+            select(SourceIncidentAction)
+            .where(SourceIncidentAction.incident_id == incident.id)
+            .order_by(SourceIncidentAction.started_at, SourceIncidentAction.id)
+        ))
         result["actions"] = [
             {
                 "id": str(action.id),
@@ -779,12 +934,21 @@ def incident_detail(incident_id: UUID) -> dict[str, Any] | None:
                 "safe_message": safe_error_message(action.safe_message) if action.safe_message else None,
                 "metadata_safe": safe_value(action.metadata_safe),
             }
-            for action in session.scalars(
-                select(SourceIncidentAction)
-                .where(SourceIncidentAction.incident_id == incident.id)
-                .order_by(SourceIncidentAction.started_at, SourceIncidentAction.id)
-            )
+            for action in action_models
         ]
+        policy = session.get(SourceAutomationPolicy, incident.source_id)
+        runtime = detect_agent_runtime()
+        result["available_actions"] = available_incident_actions(incident, policy, runtime)
+        result["automation_paused"] = bool(policy and policy.paused)
+        source_checks = [action for action in action_models if action.action_type == "SOURCE_RECHECK"]
+        last_check = source_checks[-1] if source_checks else None
+        result["source_check_count"] = len(source_checks)
+        result["last_source_check"] = last_check.started_at if last_check else None
+        result["last_source_check_result"] = last_check.result if last_check else None
+        result["problem_summary"] = _incident_problem(incident)
+        result["system_action_summary"] = _incident_system_action(incident)
+        result["owner_action_summary"] = _incident_owner_action(incident, runtime)
+        result["agent_available"] = runtime.available
         return result
 
 
@@ -820,7 +984,8 @@ def automation_rows() -> dict[str, Any]:
                     "cooldown_seconds": policy.cooldown_seconds,
                     "paused": policy.paused,
                     "circuit_breaker": (
-                        "EXHAUSTED" if active.get(policy.source_id) and active[policy.source_id].status == "AUTO_REPAIR_EXHAUSTED"
+                        "НЕ ПРИМЕНЯЕТСЯ" if active.get(policy.source_id) and active[policy.source_id].owner_domain == "SOURCE_OWNED"
+                        else "EXHAUSTED" if active.get(policy.source_id) and active[policy.source_id].status == "AUTO_REPAIR_EXHAUSTED"
                         else f"{active[policy.source_id].attempt_count}/{active[policy.source_id].max_attempts}" if active.get(policy.source_id)
                         else "CLOSED"
                     ),
@@ -846,9 +1011,23 @@ def perform_incident_action(incident_id: UUID, action: str) -> dict[str, Any]:
             job_id = incident.job_id
             before = _incident_row(incident)
             policy = session.get(SourceAutomationPolicy, incident.source_id)
-            if action == "run-auto-heal":
-                if incident.status in {"RESOLVED", "CANCELLED", "AUTO_REPAIR_EXHAUSTED"}:
-                    raise ValueError("incident is not eligible for auto-heal")
+            runtime = detect_agent_runtime()
+            eligible = available_incident_actions(incident, policy, runtime)
+            if action not in eligible:
+                raise ValueError("action is not applicable to this incident")
+            if action == "check-source-now":
+                incident.status = "WAITING_SOURCE"
+                incident.auto_heal_enabled = True
+                incident.next_attempt_at = utc_now()
+                incident.cooldown_until = None
+                record_action(
+                    session,
+                    incident,
+                    "MANUAL_SOURCE_RECHECK_REQUESTED",
+                    result="QUEUED",
+                    metadata={"expected_within_seconds": 10},
+                )
+            elif action == "run-auto-heal":
                 incident.status = "OPEN"
                 incident.next_attempt_at = utc_now()
                 record_action(session, incident, "AUTO_HEAL_REQUESTED", result="QUEUED")
@@ -875,7 +1054,7 @@ def perform_incident_action(incident_id: UUID, action: str) -> dict[str, Any]:
                 incident.status = "WAITING_SOURCE"
                 incident.next_attempt_at = utc_now()
                 record_action(session, incident, "CLASSIFIED", result="SUCCESS", metadata={"owner_domain": "SOURCE_OWNED"})
-            elif action == "request-engineering":
+            elif action in {"request-engineering", "prepare-repair-package"}:
                 if incident.owner_domain != "OUR_CODE":
                     raise ValueError("engineering repair is allowed only for OUR_CODE incidents")
                 evidence = dict(incident.resolution_evidence or {})
@@ -883,10 +1062,14 @@ def perform_incident_action(incident_id: UUID, action: str) -> dict[str, Any]:
                 incident.resolution_evidence = safe_value(evidence)
                 incident.status = "OPEN"
                 incident.next_attempt_at = utc_now()
-                record_action(session, incident, "ENGINEERING_REPAIR_REQUESTED", result="QUEUED")
+                record_action(
+                    session,
+                    incident,
+                    "ENGINEERING_REPAIR_REQUESTED",
+                    result="QUEUED",
+                    metadata={"package_only": action == "prepare-repair-package"},
+                )
             elif action == "cancel-pending":
-                if incident.status in {"RESOLVED", "CANCELLED", "AUTO_HEAL_RUNNING"}:
-                    raise ValueError("incident is not cancellable")
                 incident.status = "CANCELLED"
                 incident.next_attempt_at = None
                 record_action(session, incident, "CANCELLED", result="SUCCESS")

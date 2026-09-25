@@ -1,44 +1,45 @@
 {% extends "base.html" %}
+{% from "_ui.html" import help, missing %}
 {% block title %}{{ source.source_name }} — Источники{% endblock %}
-{% macro val(value) %}{{ value if value is not none else 'N/A — not reported' }}{% endmacro %}
+{% macro val(value, reason='Нет данных: обработчик источника пока не публикует эту метрику.') %}{{ value if value is not none else missing(reason) }}{% endmacro %}
 {% block content %}
 <div class="breadcrumbs"><a href="/admin/sources">Источники</a> / {{ source.source_id }}</div>
-<div class="page-head"><div><h1>{{ source.source_name }}</h1><p>{{ source.source_id }} · {{ source.fact_family }}</p></div><span class="status {{ source.stage|lower|replace(' ','-') }}">{{ source.stage }}</span></div>
+<div class="page-head"><div><h1>{{ source.source_name }}</h1><p>{{ source.source_id }} · {{ source.fact_family }}</p></div><span class="status {{ source.stage|lower|replace(' ','-') }}">{{ source.stage|status_ru }}</span></div>
 <div class="actions">
-  <a class="button primary" href="/admin/sources/{{ source.source_id }}/confirm/check-now">CHECK NOW</a>
-  {% if source.enabled %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/pause">PAUSE SCHEDULE</a>{% else %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/{{ 'resume' if source.last_successful_run else 'activate' }}">{{ 'RESUME SCHEDULE' if source.last_successful_run else 'ACTIVATE SCHEDULE' }}</a>{% endif %}
-  {% if source.retryable %}<a class="button danger" href="/admin/sources/{{ source.source_id }}/confirm/retry">RETRY FAILED JOB</a>{% endif %}
-  {% if source.latest_run_id %}<a class="button" href="/admin/runs/{{ source.latest_run_id }}">VIEW LATEST RUN</a>{% endif %}
-  {% if source.latest_run_id %}<a class="button" href="/admin/runs/{{ source.latest_run_id }}#raw-manifest">VIEW RAW MANIFEST</a>{% endif %}
-  <a class="button" href="/admin/sources/{{ source.source_id }}/changes">VIEW CHANGES</a>
-  {% if source.official_url %}<a class="button" target="_blank" rel="noopener noreferrer" href="{{ source.official_url }}">VIEW OFFICIAL SOURCE ↗</a>{% endif %}
+  <a class="button primary" href="/admin/sources/{{ source.source_id }}/confirm/check-now">Проверить сейчас</a>
+  {% if source.enabled %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/pause">Приостановить расписание</a>{% else %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/{{ 'resume' if source.last_successful_run else 'activate' }}">{{ 'Возобновить расписание' if source.last_successful_run else 'Включить расписание' }}</a>{% endif %}
+  {% if source.retryable %}<a class="button danger" href="/admin/sources/{{ source.source_id }}/confirm/retry">Повторить неудачный запуск</a>{% endif %}
+  {% if source.latest_run_id %}<a class="button" href="/admin/runs/{{ source.latest_run_id }}">Последний запуск</a>{% endif %}
+  {% if source.latest_run_id %}<a class="button" href="/admin/runs/{{ source.latest_run_id }}#raw-manifest">RAW-манифест</a>{% endif %}
+  <a class="button" href="/admin/sources/{{ source.source_id }}/changes">История изменений</a>
+  {% if source.official_url %}<a class="button" target="_blank" rel="noopener noreferrer" href="{{ source.official_url }}">Официальный источник ↗</a>{% endif %}
 </div>
 
 <section class="detail-grid">
-  <article class="panel"><h2>Источник</h2><dl><dt>Official source</dt><dd>{{ source.source_group }}</dd><dt>Access channel</dt><dd>{{ source.access_channel }}</dd><dt>Назначение</dt><dd>{{ source.description or source.fact_family }}</dd><dt>Частота</dt><dd>{{ source.frequency }}</dd><dt>Connected</dt><dd>{{ 'YES' if source.connected else 'NO' }}</dd><dt>Enabled</dt><dd>{{ 'YES' if source.enabled else 'NO' }}</dd></dl></article>
-  <article class="panel"><h2>Публикация</h2><dl><dt>Дата данных</dt><dd>{{ source.source_data_date or '—' }}</dd><dt>Actual until</dt><dd>{{ source.official_actual_until or '—' }}</dd><dt>Last retrieval/check</dt><dd>{{ source.last_check or '—' }}</dd><dt>Last publication</dt><dd>{{ source.last_publication or '—' }}</dd><dt>Generation</dt><dd>{{ val(source.publication_generation) }}</dd><dt>Checksum</dt><dd class="mono">{{ source.active_checksum or '—' }}</dd><dt>RAW identity</dt><dd class="mono">{{ source.raw_identity or '—' }}</dd><dt>Normalized identity</dt><dd class="mono">{{ source.normalized_identity or '—' }}</dd></dl></article>
-  <article class="panel"><h2>Master</h2><dl><dt>Applicable</dt><dd>{{ val(source.applicable_companies) }}</dd><dt>Matched</dt><dd>{{ val(source.matched_companies) }}</dd><dt>Not found</dt><dd>{{ val(source.not_found) }}</dd><dt>Not applicable</dt><dd>{{ val(source.not_applicable) }}</dd><dt>Conflicts</dt><dd>{{ val(source.conflicts) }}</dd></dl></article>
-  <article class="panel"><h2>Что изменилось</h2><dl><dt>Current facts</dt><dd>{{ val(source.current_fact_count) }}</dd><dt>New</dt><dd>{{ val(source.new_facts) }}</dd><dt>Changed</dt><dd>{{ val(source.changed_facts) }}</dd><dt>Removed / expired</dt><dd>{{ val(source.removed_facts) }}</dd><dt>Replayed</dt><dd>{{ val(source.replayed_facts) }}</dd><dt>Quarantined</dt><dd>{{ val(source.quarantined_records) }}</dd></dl></article>
+  <article class="panel"><h2>Источник</h2><dl><dt>Официальный источник</dt><dd>{{ source.source_group }}</dd><dt>Канал получения</dt><dd>{{ source.access_channel }}</dd><dt>Назначение</dt><dd>{{ source.description or source.fact_family }}</dd><dt>Частота</dt><dd>{{ source.frequency }}</dd><dt>Подключён</dt><dd>{{ 'ДА' if source.connected else 'НЕТ' }}</dd><dt>Расписание</dt><dd>{{ 'ВКЛЮЧЕНО' if source.enabled else 'ОТКЛЮЧЕНО' }}</dd></dl></article>
+  <article class="panel"><h2>Публикация</h2><dl><dt>Дата данных</dt><dd>{{ source.source_data_date|date_ru }}</dd><dt>Актуально до</dt><dd>{{ source.official_actual_until|date_ru }}</dd><dt>Последняя проверка</dt><dd>{{ source.last_check|datetime_ru }}</dd><dt>Последняя публикация</dt><dd>{{ source.last_publication|datetime_ru }}</dd><dt>Версия публикации</dt><dd>{{ val(source.publication_generation, source.missing_reasons.publication_generation) }}</dd><dt>Контрольная сумма</dt><dd class="mono">{{ source.active_checksum or '—' }}</dd><dt>RAW-идентификатор</dt><dd class="mono">{{ source.raw_identity or '—' }}</dd><dt>Нормализованный идентификатор</dt><dd class="mono">{{ source.normalized_identity or '—' }}</dd></dl></article>
+  <article class="panel"><h2>Master</h2><dl><dt>Применимых компаний</dt><dd>{{ val(source.applicable_companies) }}</dd><dt>Совпадений</dt><dd>{{ val(source.matched_companies, source.missing_reasons.matched_companies) }}</dd><dt>Не найдено</dt><dd>{{ val(source.not_found, source.missing_reasons.matched_companies) }}</dd><dt>Не применяется</dt><dd>{{ val(source.not_applicable, 'Не применяется к этому типу компании или источника.') }}</dd><dt>Конфликтов</dt><dd>{{ val(source.conflicts) }}</dd></dl></article>
+  <article class="panel"><h2>Что изменилось</h2><dl><dt>Текущих фактов</dt><dd>{{ val(source.current_fact_count, source.missing_reasons.current_fact_count) }}</dd><dt>Новых</dt><dd>{{ val(source.new_facts, source.missing_reasons.new_facts) }}</dd><dt>Изменённых</dt><dd>{{ val(source.changed_facts, source.missing_reasons.changed_facts) }}</dd><dt>Удалённых / истёкших</dt><dd>{{ val(source.removed_facts, source.missing_reasons.removed_facts) }}</dd><dt>Повторно обработано</dt><dd>{{ val(source.replayed_facts, source.missing_reasons.replayed_facts) }}</dd><dt>В карантине</dt><dd>{{ val(source.quarantined_records, source.missing_reasons.quarantined_records) }}</dd></dl></article>
 </section>
 {% if source.automation %}
-<section class="panel"><h2>AUTOMATIC RECOVERY</h2><dl>
-  <dt>Auto-heal</dt><dd>{{ 'ON' if source.automation.auto_heal else 'OFF' }}</dd>
-  <dt>Auto-code-repair</dt><dd>{{ source.automation.auto_code_repair }}</dd>
+<section class="panel"><h2>Автоматическое восстановление</h2><dl>
+  <dt>Автовосстановление</dt><dd>{{ ('ON' if source.automation.auto_heal else 'OFF')|status_ru }}</dd>
+  <dt>Автоисправление кода</dt><dd>{{ source.automation.auto_code_repair|status_ru }}</dd>
   {% if source.automation.incident %}
-  <dt>Open incident</dt><dd><a href="/admin/incidents/{{ source.automation.incident.id }}">{{ source.automation.incident.incident_code }}</a></dd>
-  <dt>Category / owner</dt><dd>{{ source.automation.incident.category }} · {{ source.automation.incident.owner_domain }}</dd>
-  <dt>Detected</dt><dd>{{ source.automation.incident.detected_at }}</dd>
-  <dt>Attempts</dt><dd>{{ source.automation.incident.attempt_count }} / {{ source.automation.incident.max_attempts }}</dd>
-  <dt>Next attempt</dt><dd>{{ source.automation.incident.next_attempt_at or '—' }}</dd>
-  <dt>Last action</dt><dd>{{ source.automation.incident.last_action or '—' }} · {{ source.automation.incident.last_action_result or '—' }}</dd>
-  <dt>Repair / PR / CI</dt><dd>{{ source.automation.incident.repair_branch or '—' }} · {{ source.automation.incident.repair_pr_number or '—' }} · {{ source.automation.incident.repair_ci_status or '—' }}</dd>
-  <dt>Recovery status</dt><dd>{{ source.automation.incident.status }}</dd>
-  {% else %}<dt>Open incident</dt><dd>—</dd>{% endif %}
+  <dt>Открытый инцидент</dt><dd><a href="/admin/incidents/{{ source.automation.incident.id }}">{{ source.automation.incident.incident_code }}</a></dd>
+  <dt>Проблема / сторона</dt><dd>{{ source.automation.incident.category|category_ru }} · {{ source.automation.incident.owner_domain|owner_ru }}</dd>
+  <dt>Обнаружен</dt><dd>{{ source.automation.incident.detected_at|datetime_ru }}</dd>
+  <dt>Попытки восстановления</dt><dd>{{ source.automation.incident.attempt_count }} / {{ source.automation.incident.max_attempts }}</dd>
+  <dt>Следующая проверка</dt><dd>{{ source.automation.incident.next_attempt_at|datetime_ru }}</dd>
+  <dt>Последнее действие</dt><dd>{{ source.automation.incident.last_action|action_ru if source.automation.incident.last_action else 'Нет данных' }} · {{ source.automation.incident.last_action_result|status_ru if source.automation.incident.last_action_result else 'Нет данных' }}</dd>
+  <dt>Branch / PR / CI</dt><dd>{{ source.automation.incident.repair_branch or '—' }} · {{ source.automation.incident.repair_pr_number or '—' }} · {{ source.automation.incident.repair_ci_status or '—' }}</dd>
+  <dt>Состояние восстановления</dt><dd>{{ source.automation.incident.status|status_ru }}</dd>
+  {% else %}<dt>Открытый инцидент</dt><dd>Нет</dd>{% endif %}
 </dl></section>
 {% endif %}
 {% if source.last_error %}<div class="alert bad"><strong>Последняя ошибка:</strong> {{ source.last_error }}</div>{% endif %}
 
-<h2>Последние 50 запусков</h2><div class="table-shell"><table><thead><tr><th>Run</th><th>Job</th><th>Type</th><th>Status</th><th>Started</th><th>Finished</th><th>Duration</th><th>Seen</th><th>Matched</th><th>Published</th><th>New</th><th>Changed</th><th>Removed</th><th>Quarantine</th><th>Error</th><th>Retry</th></tr></thead><tbody>
-{% for run in source.runs %}<tr><td><a href="/admin/runs/{{ run.run_id }}">{{ run.run_id[:8] }}</a></td><td class="mono">{{ run.job_id[:8] }}</td><td>{{ run.type }}</td><td>{{ run.status }}</td><td>{{ run.started_at }}</td><td>{{ run.finished_at or '—' }}</td><td>{{ run.duration_ms if run.duration_ms is not none else '—' }}</td><td>{{ run.records_seen }}</td><td>{{ run.matched if run.matched is not none else ('N/A — legacy run' if run.legacy else 'N/A') }}</td><td>{{ run.published }}</td><td>{{ run.new_facts if run.new_facts is not none else ('N/A — legacy run' if run.legacy else 'N/A') }}</td><td>{{ run.changed_facts if run.changed_facts is not none else 'N/A' }}</td><td>{{ run.removed_facts if run.removed_facts is not none else 'N/A' }}</td><td>{{ run.quarantine if run.quarantine is not none else 'N/A' }}</td><td class="error-cell">{{ run.error_code or '' }} {{ run.error_message or '—' }}</td><td>{{ run.retry_time or '—' }}</td></tr>{% else %}<tr><td colspan="16" class="empty">Запусков пока нет</td></tr>{% endfor %}
+<h2>Последние 50 запусков</h2><div class="table-shell"><table><thead><tr><th>Run</th><th>Job</th><th>Тип</th><th>Состояние</th><th>Начало</th><th>Завершение</th><th>Длительность</th><th>Прочитано</th><th>Совпадений</th><th>Опубликовано</th><th>Новых</th><th>Изменённых</th><th>Удалённых</th><th>Карантин</th><th>Ошибка</th><th>Повтор</th></tr></thead><tbody>
+{% for run in source.runs %}<tr><td><a href="/admin/runs/{{ run.run_id }}">{{ run.run_id[:8] }}</a></td><td class="mono">{{ run.job_id[:8] }}</td><td>{{ run.type }}</td><td>{{ run.status|status_ru }}</td><td>{{ run.started_at|datetime_ru }}</td><td>{{ run.finished_at|datetime_ru }}</td><td>{{ run.duration_ms if run.duration_ms is not none else '—' }}</td><td>{{ run.records_seen }}</td><td>{{ run.matched if run.matched is not none else missing('Нет данных: старый WorkerRun не сохранял эту метрику.' if run.legacy else 'Нет данных: обработчик пока не публикует эту метрику.') }}</td><td>{{ run.published }}</td><td>{{ run.new_facts if run.new_facts is not none else missing('Нет данных: старый WorkerRun не сохранял эту метрику.' if run.legacy else 'Нет данных: обработчик пока не публикует эту метрику.') }}</td><td>{{ run.changed_facts if run.changed_facts is not none else missing('Нет данных: старый WorkerRun не сохранял эту метрику.' if run.legacy else 'Нет данных: обработчик пока не публикует эту метрику.') }}</td><td>{{ run.removed_facts if run.removed_facts is not none else missing('Нет данных: старый WorkerRun не сохранял эту метрику.' if run.legacy else 'Нет данных: обработчик пока не публикует эту метрику.') }}</td><td>{{ run.quarantine if run.quarantine is not none else missing('Нет данных: старый WorkerRun не сохранял эту метрику.' if run.legacy else 'Нет данных: обработчик пока не публикует эту метрику.') }}</td><td class="error-cell">{{ run.error_code or '' }} {{ run.error_message or '—' }}</td><td>{{ run.retry_time|datetime_ru }}</td></tr>{% else %}<tr><td colspan="16" class="empty">Запусков пока нет</td></tr>{% endfor %}
 </tbody></table></div>
 {% endblock %}

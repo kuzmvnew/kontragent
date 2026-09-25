@@ -16,6 +16,14 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from admin_app import service
+from admin_app.presentation import (
+    action_label,
+    category_label,
+    format_date,
+    format_datetime,
+    owner_label,
+    status_label,
+)
 from admin_app.system import (
     ADMIN_SERVICE,
     INCIDENT_SERVICE,
@@ -26,7 +34,6 @@ from admin_app.system import (
     storage_status,
     systemd_status,
 )
-
 
 ROOT = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
@@ -47,6 +54,12 @@ def _filesize(value: int | None) -> str:
 
 
 templates.env.filters["filesize"] = _filesize
+templates.env.filters["datetime_ru"] = format_datetime
+templates.env.filters["date_ru"] = format_date
+templates.env.filters["status_ru"] = status_label
+templates.env.filters["owner_ru"] = owner_label
+templates.env.filters["category_ru"] = category_label
+templates.env.filters["action_ru"] = action_label
 
 app = FastAPI(
     title="NEXT Company Source Operations Console",
@@ -231,7 +244,7 @@ async def source_action(request: Request, source_id: str, action: str):
             request,
             "action_result.html",
             {
-                "title": "Действие не выполнено",
+                "title": "Не удалось выполнить действие",
                 "message": service.safe_error_message(error),
                 "return_url": f"/admin/sources/{source_id}",
             },
@@ -255,13 +268,25 @@ async def incident_page(request: Request, incident_id: UUID):
     incident = service.incident_detail(incident_id)
     if incident is None:
         raise HTTPException(status_code=404, detail="incident not found")
-    return _render(request, "incident_detail.html", {"incident": incident})
+    return _render(
+        request,
+        "incident_detail.html",
+        {
+            "incident": incident,
+            "controller": systemd_status(INCIDENT_SERVICE),
+            "incident_action_labels": service.INCIDENT_ACTION_LABELS,
+        },
+    )
 
 
 @app.get("/admin/incidents/{incident_id}/confirm/{action}", response_class=HTMLResponse, include_in_schema=False)
 async def confirm_incident_action(request: Request, incident_id: UUID, action: str):
     incident = service.incident_detail(incident_id)
-    if incident is None or action not in service.INCIDENT_ACTION_LABELS:
+    if (
+        incident is None
+        or action not in service.INCIDENT_ACTION_LABELS
+        or action not in incident.get("available_actions", ())
+    ):
         raise HTTPException(status_code=404, detail="action not found")
     return _render(
         request,
@@ -274,15 +299,27 @@ async def confirm_incident_action(request: Request, incident_id: UUID, action: s
 async def incident_action(request: Request, incident_id: UUID, action: str):
     await _require_csrf(request)
     try:
-        service.perform_incident_action(incident_id, action)
+        result = service.perform_incident_action(incident_id, action)
     except LookupError:
         raise HTTPException(status_code=404, detail="incident not found")
     except Exception as error:
         return _render(
             request,
             "action_result.html",
-            {"title": "Действие не выполнено", "message": service.safe_error_message(error), "return_url": f"/admin/incidents/{incident_id}"},
+            {"title": "Не удалось выполнить действие", "message": service.safe_error_message(error), "return_url": f"/admin/incidents/{incident_id}"},
             status_code=400,
+        )
+    if action == "check-source-now":
+        source = service.source_detail(result["source_id"])
+        return _render(
+            request,
+            "manual_recheck_result.html",
+            {
+                "incident": result,
+                "source_name": source["source_name"] if source else result["source_id"],
+                "controller": systemd_status(INCIDENT_SERVICE),
+                "poll_seconds": 10,
+            },
         )
     return RedirectResponse(f"/admin/incidents/{incident_id}", status_code=303)
 
@@ -316,7 +353,7 @@ async def automation_policy_update(request: Request, source_id: str):
         return _render(
             request,
             "action_result.html",
-            {"title": "Политика не обновлена", "message": service.safe_error_message(error), "return_url": "/admin/automation"},
+            {"title": "Не удалось обновить политику", "message": service.safe_error_message(error), "return_url": "/admin/automation"},
             status_code=400,
         )
     return RedirectResponse("/admin/automation", status_code=303)
@@ -367,5 +404,5 @@ async def create_backup(request: Request):
         service.audit_action(action="create-backup", source_id=None, job_id=None, previous_state=before, new_state=after, result="success")
     except Exception as error:
         service.audit_action(action="create-backup", source_id=None, job_id=None, previous_state=before, new_state={"latest": list_backups(limit=1)}, result="failed", detail=str(error))
-        return _render(request, "action_result.html", {"title": "Backup не создан", "message": service.safe_error_message(error), "return_url": "/admin/backups"}, status_code=400)
+        return _render(request, "action_result.html", {"title": "Резервная копия не создана", "message": service.safe_error_message(error), "return_url": "/admin/backups"}, status_code=400)
     return RedirectResponse("/admin/backups", status_code=303)
