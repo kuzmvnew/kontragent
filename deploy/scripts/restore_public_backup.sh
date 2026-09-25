@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+app_root="${NEXTCOMPANY_APP_ROOT:-/opt/nextcompany}"
+[[ "$app_root" == /* ]] || {
+  echo "NEXTCOMPANY_APP_ROOT must be absolute" >&2
+  exit 2
+}
+
 backup_file=""
 confirmation=""
 while (($#)); do
@@ -26,7 +32,7 @@ case "$PUBLIC_IMPORT_DATABASE_URL" in
   *) echo "PUBLIC_IMPORT_DATABASE_URL must be a PostgreSQL URL" >&2; exit 2 ;;
 esac
 
-/opt/nextcompany/current/deploy/scripts/backup_public.sh
+"${app_root}/current/deploy/scripts/backup_public.sh"
 systemctl stop nextcompany-public.service
 restore_status=0
 pg_restore --clean --if-exists --no-owner --no-acl --dbname="$libpq_url" "$backup_file" || restore_status=$?

@@ -22,12 +22,18 @@ groupadd --system nextcompany
 useradd --system --user-group --groups nextcompany --home /nonexistent --shell /usr/sbin/nologin nextcompany-web
 useradd --system --user-group --groups nextcompany --home /nonexistent --shell /usr/sbin/nologin nextcompany-importer
 install -d -o root -g nextcompany -m 0750 /opt/nextcompany
+install -d -o root -g nextcompany -m 0750 /opt/nextcompany/shared
 install -d -o nextcompany-importer -g nextcompany -m 0750 /var/lib/nextcompany/incoming
 install -d -o postgres -g postgres -m 0700 /var/backups/nextcompany
 install -d -m 0755 /var/www/letsencrypt
 ```
 
-Install `uv` from its verified upstream package and make it available to root. Application releases remain root-owned and read-only to both runtime identities.
+Install `uv` from its verified upstream package and make it available to root. The
+deploy script sets `UV_PYTHON_INSTALL_DIR` to
+`/opt/nextcompany/shared/python`, with the UV cache, configuration home, and
+temporary UV home also under `/opt/nextcompany/shared/`. It never uses root's
+default home for managed Python. Application releases and the shared managed
+Python remain root-owned and non-writable by both runtime identities.
 
 ## 3. Isolated database and roles
 
@@ -70,6 +76,14 @@ systemctl daemon-reload
 systemctl enable nextcompany-public.service nextcompany-backup.timer
 ```
 
+`nextcompany-backup.service` runs as `postgres:postgres` with
+`SupplementaryGroups=nextcompany`. That canonical supplementary group is
+required to traverse the root-owned application release and execute the backup
+helper; no manual drop-in is required. Keep the environment files at `0640`
+with their documented private groups. systemd reads `EnvironmentFile=` before
+starting the restricted service, so the importer secret does not need broader
+file permissions. The backup directory stays `postgres:postgres` at `0700`.
+
 For first certificate issuance, serve `/.well-known/acme-challenge/` on HTTP, point temporary validation DNS to the VPS if required by the provider, then run:
 
 ```bash
@@ -89,12 +103,37 @@ The script validates that an existing `/opt/nextcompany/current` is an absolute,
 direct symlink to a concrete directory under `/opt/nextcompany/releases/`. It
 takes a pre-deploy backup when an existing release is present, syncs
 dependencies, runs only `public_alembic.ini`, changes the symlink atomically,
-restarts the application, checks loopback health, validates Nginx, and only then
-reloads Nginx. A failed health check atomically restores the validated exact
-prior release. If that prior directory has become invalid or disappeared, the
-failed release is left inactive and deployment exits with an explicit error;
-the script never creates `current -> current` or a link outside the releases
-directory.
+restarts the application, then waits up to 45 seconds for an exact HTTP 200 from
+the loopback `/api/health` endpoint. The one-second polling loop tolerates
+initial connection refusals, resets, and other transient startup responses, but
+stops immediately if systemd reports the unit failed and never waits beyond the
+bounded startup window. Only after health succeeds does it validate and reload
+Nginx. A terminal service failure or expired health window atomically restores
+the validated exact prior release. If that prior directory has become invalid
+or disappeared, the failed release is left inactive and deployment exits with
+an explicit error; the script never creates `current -> current` or a link
+outside the releases directory.
+
+After every deploy, verify the runtime interpreter and both runtime identities:
+
+```bash
+runtime_python="$(readlink -f /opt/nextcompany/current/.venv/bin/python)"
+printf '%s\n' "$runtime_python"
+case "$runtime_python" in /root|/root/*|/home/root|/home/root/*) exit 1 ;; esac
+sudo -u nextcompany-web /opt/nextcompany/current/.venv/bin/python -c 'import sys; print(sys.executable)'
+sudo -u nextcompany-importer /bin/bash -c '
+  set -a; source /etc/nextcompany/importer.env; set +a
+  exec /opt/nextcompany/current/.venv/bin/alembic -c /opt/nextcompany/current/public_alembic.ini current
+'
+systemctl show nextcompany-backup.service -p User -p Group -p SupplementaryGroups
+systemctl start nextcompany-backup.service
+```
+
+The resolved Python path must never be below `/root` or `/home/root`; a managed
+interpreter should resolve below `/opt/nextcompany/shared/python`. The backup
+unit must report `User=postgres`, `Group=postgres`, and
+`SupplementaryGroups=nextcompany`, and must create a dump plus its SHA256 file
+without a server-only drop-in.
 
 ## 6. Outbound-only 40-card publication
 
