@@ -62,7 +62,7 @@ from app.worker.registry import HandlerRegistry
 
 
 SOURCE_ID = DATASET_CODE = "firmoteka"
-HANDLER_VERSION = "firmoteka-authorized-public-catalog-v1"
+HANDLER_VERSION = "firmoteka-authorized-public-catalog-v2"
 BASE_URL = "https://firmoteka.ru/"
 ROBOTS_URL = urljoin(BASE_URL, "robots.txt")
 SITEMAP_URL = urljoin(BASE_URL, "sitemap.xml")
@@ -137,6 +137,17 @@ def _extract_company_links(content: bytes, base_url: str) -> tuple[tuple[str, st
     return tuple(rows)
 
 
+def _decoded_source_body(content: bytes) -> bytes:
+    """Decode a gzip HTTP body for parsing while retaining the wire bytes in RAW."""
+
+    if not content.startswith(b"\x1f\x8b"):
+        return content
+    try:
+        return gzip.decompress(content)
+    except OSError as error:
+        raise SchemaMismatchError("Firmoteka returned an invalid gzip body") from error
+
+
 def _write_once(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -181,7 +192,9 @@ def _fetch(url: str, *, not_before: datetime | None) -> tuple[bytes, int, dict[s
         raise SchemaMismatchError(f"Firmoteka public surface returned HTTP {error.code}") from error
     except (URLError, TimeoutError) as error:
         raise WorkerNetworkError("Firmoteka public surface request failed") from error
-    head = content[:100_000].decode("utf-8", errors="ignore").casefold()
+    head = _decoded_source_body(content)[:100_000].decode(
+        "utf-8", errors="ignore"
+    ).casefold()
     if any(marker in head for marker in CHALLENGE_MARKERS):
         raise LegalBlockError("Firmoteka challenge/protection page detected")
     return content, status, headers, utc_now()
@@ -265,12 +278,13 @@ def firmoteka_worker_handler(context: HandlerContext) -> HandlerResult:
             )
             artifacts.append(artifact)
             observations.append({"url": url, "manifest": manifest})
+            decoded = _decoded_source_body(content)
             if url == ROBOTS_URL:
-                text = content.decode("utf-8", errors="replace")
+                text = decoded.decode("utf-8", errors="replace")
                 if "Sitemap: https://firmoteka.ru/sitemap.xml" not in text:
                     raise SchemaMismatchError("Firmoteka robots no longer advertises pinned sitemap")
             else:
-                discovered.extend(_extract_locs(content))
+                discovered.extend(_extract_locs(decoded))
         validation = {
             "phase": phase,
             "crawl_run_id": str(crawl_id),
@@ -291,8 +305,9 @@ def firmoteka_worker_handler(context: HandlerContext) -> HandlerResult:
             status=status, headers=headers, retrieved_at=retrieved_at,
         )
         artifacts.append(artifact)
-        locs = _extract_locs(content) if urlparse(url).path.endswith(".xml") else ()
-        companies = list(_extract_company_links(content, url))
+        decoded = _decoded_source_body(content)
+        locs = _extract_locs(decoded) if urlparse(url).path.endswith(".xml") else ()
+        companies = list(_extract_company_links(decoded, url))
         for loc in locs:
             inn = _company_inn_from_url(loc)
             if inn:
@@ -331,7 +346,10 @@ def firmoteka_worker_handler(context: HandlerContext) -> HandlerResult:
             )
             artifacts.append(artifact)
             projection = parse_firmoteka_page(
-                content, requested_inn=inn, url=url, fetched_at=retrieved_at
+                _decoded_source_body(content),
+                requested_inn=inn,
+                url=url,
+                fetched_at=retrieved_at,
             )
             content_hash = sha256(
                 json.dumps(projection, ensure_ascii=False, sort_keys=True).encode()
