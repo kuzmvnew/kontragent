@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import multiprocessing
 from threading import Event, Thread
 import time
@@ -22,6 +23,7 @@ from app.models.worker import (
     WorkerRawManifest,
     WorkerRun,
 )
+from app.models.registry_master import MasterReplaySignal
 from app.worker.contracts import (
     ExecutionCounters,
     HandlerContext,
@@ -29,6 +31,7 @@ from app.worker.contracts import (
     StagingResult,
 )
 from app.worker.errors import (
+    AccessRequiredError,
     HandlerNotRegisteredError,
     IdempotencyConflictError,
     InvalidDataError,
@@ -140,6 +143,25 @@ def create_job(
         raise ValueError(f"required worker job fields are empty: {', '.join(missing)}")
     if max_attempts <= 0 or timeout_seconds <= 0:
         raise ValueError("max_attempts and timeout_seconds must be positive")
+    metadata = dict(schedule_metadata or {})
+    replay_ids = tuple(session.scalars(
+        select(MasterReplaySignal.id)
+        .where(
+            MasterReplaySignal.target_source_id == source_id,
+            MasterReplaySignal.status == "pending",
+        )
+        .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
+    ))
+    if replay_ids:
+        replay_token = sha256(
+            "\n".join(str(value) for value in replay_ids).encode("ascii")
+        ).hexdigest()[:20]
+        idempotency_key = f"{idempotency_key}:master-replay:{replay_token}"
+        metadata["master_replay_signal_ids"] = [str(value) for value in replay_ids]
+    if len(idempotency_key) > 255:
+        digest = sha256(idempotency_key.encode("utf-8")).hexdigest()
+        idempotency_key = f"{source_id}:job:{digest}"
+
     existing = session.scalar(
         select(WorkerJob).where(WorkerJob.idempotency_key == idempotency_key)
     )
@@ -156,7 +178,7 @@ def create_job(
         source_id=source_id,
         job_type=job_type,
         handler_version=handler_version,
-        schedule_metadata=schedule_metadata or {},
+        schedule_metadata=metadata,
         idempotency_key=idempotency_key,
         status="queued",
         max_attempts=max_attempts,
@@ -182,6 +204,15 @@ def create_job(
                 "idempotency key already belongs to a different worker job"
             ) from error
         return JobCreation(job=existing, created=False)
+    if replay_ids:
+        session.execute(
+            update(MasterReplaySignal)
+            .where(
+                MasterReplaySignal.id.in_(replay_ids),
+                MasterReplaySignal.status == "pending",
+            )
+            .values(status="scheduled", scheduled_at=now, last_error=None)
+        )
     return JobCreation(job=job, created=True)
 
 
@@ -553,6 +584,16 @@ def complete_run_success(
     job.status = "succeeded"
     job.next_attempt_at = None
     job.updated_at = now
+    replay_ids = tuple(job.schedule_metadata.get("master_replay_signal_ids") or ())
+    if replay_ids:
+        session.execute(
+            update(MasterReplaySignal)
+            .where(
+                MasterReplaySignal.id.in_(replay_ids),
+                MasterReplaySignal.target_source_id == claim.source_id,
+            )
+            .values(status="complete", completed_at=now, last_error=None)
+        )
     session.execute(
         delete(WorkerLease).where(
             WorkerLease.source_id == claim.source_id,
@@ -633,6 +674,16 @@ def complete_run_failure(
         now + retry_policy.delay(run.attempt_no) if should_retry else None
     )
     job.updated_at = now
+    replay_ids = tuple(job.schedule_metadata.get("master_replay_signal_ids") or ())
+    if replay_ids and not should_retry:
+        session.execute(
+            update(MasterReplaySignal)
+            .where(
+                MasterReplaySignal.id.in_(replay_ids),
+                MasterReplaySignal.target_source_id == claim.source_id,
+            )
+            .values(status="failed", completed_at=now, last_error=str(error)[:2000])
+        )
     session.execute(
         delete(WorkerLease).where(
             WorkerLease.source_id == claim.source_id,
@@ -790,6 +841,7 @@ def _normalize_error(error: Exception) -> WorkerFoundationError:
 
 def _error_from_envelope(kind: str, message: str) -> WorkerFoundationError:
     error_types: dict[str, type[WorkerFoundationError]] = {
+        "access_required": AccessRequiredError,
         "timeout": WorkerTimeoutError,
         "network_failure": WorkerNetworkError,
         "temporary_infrastructure": TemporaryInfrastructureError,

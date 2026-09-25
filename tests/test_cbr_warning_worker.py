@@ -179,6 +179,8 @@ def test_daily_schedule_is_idempotent_and_uses_existing_worker_foundation(
 
 def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
     expected = {
+        "fns_egrul",
+        "fns_egrip",
         "fns_tax_offence",
         "fns_revenue_expenses",
         "fns_tax_debt",
@@ -189,6 +191,8 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "fns_tax_regime",
         "fns_sme_support",
         "fns_disqualified",
+        "mintrans_ted_registry",
+        "girbo_accounting",
         "erknm_inspections",
         "cbr_finorg",
         "roszdrav_pharma_licenses",
@@ -201,6 +205,8 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "erknm_inspections",
         "cbr_finorg",
         *scheduler.ROSZDRAV_LICENSE_DATASET_CODES,
+        "mintrans_ted_registry",
+        "girbo_accounting",
     }
     assert scheduler.SCHEDULED_SOURCE_DATASET_CODES == expected
     calls = []
@@ -214,6 +220,8 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
     result = scheduler.run_due_updates(due_codes=reversed(sorted(expected)))
 
     assert calls == [
+        "fns_egrul",
+        "fns_egrip",
         "fns_tax_offence",
         "fns_revenue_expenses",
         "fns_tax_debt",
@@ -229,6 +237,8 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "roszdrav_pharma_licenses",
         "roszdrav_narcotics_licenses",
         "roszdrav_medical_device_maintenance_licenses",
+        "mintrans_ted_registry",
+        "girbo_accounting",
     ]
     assert set(result) == expected
     assert set(result.values()) == {"success"}

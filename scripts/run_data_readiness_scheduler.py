@@ -18,6 +18,9 @@ from app.ingestion.fns_tax_debt_pipeline import (
 from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
 from app.ingestion.fns_tax_payment import register_fns_tax_payment_worker
 from app.ingestion.fns_tax_regime import register_fns_tax_regime_worker
+from app.ingestion.fns_registry_master import register_fns_registry_workers
+from app.ingestion.girbo_worker import register_girbo_worker
+from app.ingestion.mintrans_ted_worker import register_mintrans_ted_worker
 from app.ingestion.roszdrav_license_worker import register_roszdrav_license_workers
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
@@ -28,6 +31,7 @@ from app.services.fns_sme_support_registry_service import (
 )
 from app.services.erknm_registry_service import ensure_erknm_dataset
 from app.services.source_service import ensure_default_dataset
+from app.services.source_factory_registry_service import ensure_source_factory_datasets
 from app.services.roszdrav_registry_service import ensure_roszdrav_datasets
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
@@ -47,6 +51,9 @@ from app.worker.registry import HandlerRegistry
 def build_registry() -> HandlerRegistry:
     registry = HandlerRegistry()
     with SessionLocal() as session:
+        # Metadata registration is idempotent and never activates schedules.
+        # This also makes all adapters visible in the operations console.
+        ensure_source_factory_datasets(session)
         # Sources are deliberately registered in scheduler priority order.
         # Each retains an independent source id, lease, job namespace and
         # publication generation.
@@ -65,6 +72,9 @@ def build_registry() -> HandlerRegistry:
         register_fns_tax_regime_worker(session, registry)
         register_fns_sme_support_worker(session, registry)
         register_fns_disqualified_worker(session, registry)
+        register_fns_registry_workers(session, registry)
+        register_mintrans_ted_worker(session, registry)
+        register_girbo_worker(session, registry)
         register_erknm_worker(session, registry)
         register_roszdrav_license_workers(session, registry)
         session.commit()
@@ -107,6 +117,12 @@ def ensure_activation_datasets(dataset_codes: list[str]) -> None:
         ensure_erknm_dataset()
     if set(dataset_codes) & ROSZDRAV_LICENSE_DATASET_CODES:
         ensure_roszdrav_datasets()
+    if set(dataset_codes) & {
+        "fns_egrul", "fns_egrip", "mintrans_ted_registry", "girbo_accounting"
+    }:
+        with SessionLocal() as session:
+            ensure_source_factory_datasets(session)
+            session.commit()
 
 
 def main() -> None:

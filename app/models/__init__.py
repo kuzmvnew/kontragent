@@ -44,6 +44,12 @@ from app.models.fns_sme_support import (
 from app.models.headcount import (
     CompanyHeadcount,
 )
+from app.models.girbo import GirboAccountingReport
+from app.models.registry_master import (
+    CompanyRegistryChange,
+    MasterReplaySignal,
+    RegistrySourceCheckpoint,
+)
 from app.models.legal_event import (
     CompanyLegalEvent,
 )
@@ -124,6 +130,7 @@ __all__ = [
     "CompanyLegalEvent",
     "CompanyIdentifier",
     "CompanyManager",
+    "CompanyRegistryChange",
     "CompanyMspProfile",
     "CompanyRevenueExpenseSnapshot",
     "CompanyRiskAssessment",
@@ -149,16 +156,19 @@ __all__ = [
     "DisqualifiedPersonSnapshot",
     "ErknmInspection",
     "FnsSmeSupportEntry",
+    "GirboAccountingReport",
     "IngestionRun",
     "MintransTedEntry",
     "MintransTedQuarantineRow",
     "MintransTedRawArtifact",
+    "MasterReplaySignal",
     "NpdStatusCheck",
     "NoprizMemberCheck",
     "NostroyMemberCheck",
     "RoskomnadzorCompanyFact",
     "RoskomnadzorPdOperatorCheck",
     "RoskomnadzorPrivatePersonRecord",
+    "RegistrySourceCheckpoint",
     "SroPersonRegistryRecord",
     "SourceChangeSummary",
     "SourceAutomationPolicy",
