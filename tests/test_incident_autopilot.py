@@ -236,6 +236,37 @@ def test_recovery_verification_requires_all_invariants(incident_db):
         assert controller.verify_recovery(session, incident, now=NOW)[0] is False
 
 
+def test_active_incident_recovers_without_waiting_for_cooldown(incident_db):
+    with incident_db() as session:
+        dataset = _dataset(session, "fns_headcount", status="current")
+        publication = WorkerPublicationState(
+            source_id="fns_headcount",
+            active_pointer="fixture://accepted/current",
+            generation=2,
+            last_fencing_token=2,
+        )
+        session.add(publication)
+        incident, _ = controller.upsert_incident(
+            session,
+            source_id="fns_headcount",
+            dataset=dataset.code,
+            classification=Classification("TIMEOUT", "OUR_INFRASTRUCTURE", "MEDIUM", 1),
+            error_code="timeout",
+            message="timeout",
+            now=NOW,
+        )
+        incident.resolution_evidence = {"baseline": controller._baseline(session, incident)}
+        incident.status = "RETRY_SCHEDULED"
+        incident.next_attempt_at = NOW + timedelta(hours=6)
+        resolved = controller.verify_active_incidents(session, now=NOW + timedelta(minutes=1))
+        assert resolved == [incident]
+        assert incident.status == "RESOLVED"
+        assert incident.next_attempt_at is None
+        session.flush()
+        actions = list(session.scalars(sa.select(SourceIncidentAction).where(SourceIncidentAction.incident_id == incident.id)))
+        assert [action.action_type for action in actions][-2:] == ["SOURCE_RECHECK", "RECOVERED"]
+
+
 def test_worker_restart_playbook_is_fixed_argv_and_allowlisted(monkeypatch):
     calls = []
 
