@@ -656,6 +656,9 @@ def publish_registry_result(session: Session, claim: Any, result: HandlerResult,
                 setattr(company, field, value)
         company.master_dataset_id = dataset.id
         company.master_data_date = row_source_date
+        company.master_authority = "official"
+        company.master_source = spec.source_id
+        company.official_registry_verified = True
         company.source = "fns"
         company.source_updated_at = now
         if events:
@@ -690,14 +693,17 @@ def publish_registry_result(session: Session, claim: Any, result: HandlerResult,
                         company_id=company.id, full_name=leader["full_name"], position=leader.get("position"),
                         is_current=True, source="fns", source_dataset_id=dataset.id,
                         source_data_date=row_source_date, source_record_key=row["source_record_key"], observed_at=now,
+                        official_registry_verified=True,
                     ))
                     leaders_changed += 1
                 else:
                     manager.position = leader.get("position")
+                    manager.source = "fns"
                     manager.source_dataset_id = dataset.id
                     manager.source_data_date = row_source_date
                     manager.source_record_key = row["source_record_key"]
                     manager.observed_at = now
+                    manager.official_registry_verified = True
             if previous_leaders != incoming_leaders:
                 _emit_change_and_replays(
                     session, claim=claim, spec=spec, company=company,

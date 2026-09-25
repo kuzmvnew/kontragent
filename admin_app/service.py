@@ -28,7 +28,7 @@ from app.models.incident import (
     SourceIncident,
     SourceIncidentAction,
 )
-from app.models.source import DataSet, DataSource
+from app.models.source import CompanySourceData, DataSet, DataSource
 from app.models.worker import (
     WorkerHandlerRegistration,
     WorkerJob,
@@ -163,7 +163,7 @@ def _int(value: Any) -> int | None:
     return None
 
 
-def _master_counts(session) -> dict[str, int]:
+def _master_counts(session) -> dict[str, Any]:
     total, legal, individual = session.execute(
         select(
             func.count(Company.id),
@@ -178,7 +178,55 @@ def _master_counts(session) -> dict[str, int]:
             ),
         )
     ).one()
-    return {"total": int(total or 0), "legal": int(legal or 0), "ip": int(individual or 0)}
+    today = utc_now().date()
+    authority = session.execute(
+        select(
+            func.count(Company.id).filter(Company.official_registry_verified.is_(True)),
+            func.count(Company.id).filter(
+                Company.master_source == "firmoteka",
+                Company.official_registry_verified.is_(False),
+            ),
+            func.count(Company.id).filter(Company.official_registry_verified.is_(False)),
+            func.count(Company.id).filter(func.date(Company.created_at) == today),
+            func.count(Company.id).filter(func.date(Company.updated_at) == today),
+        )
+    ).one()
+    source_counts = (
+        select(
+            CompanySourceData.company_id.label("company_id"),
+            func.count(func.distinct(CompanySourceData.source_id)).label("source_count"),
+        )
+        .group_by(CompanySourceData.company_id)
+        .subquery()
+    )
+    enriched = session.execute(
+        select(
+            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 1),
+            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 3),
+            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 5),
+            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 10),
+            func.avg(source_counts.c.source_count),
+            func.percentile_cont(0.5).within_group(source_counts.c.source_count),
+        )
+    ).one()
+    enriched_one = int(enriched[0] or 0)
+    return {
+        "total": int(total or 0),
+        "legal": int(legal or 0),
+        "ip": int(individual or 0),
+        "official_verified": int(authority[0] or 0),
+        "firmoteka_provisional": int(authority[1] or 0),
+        "pending_official_verification": int(authority[2] or 0),
+        "new_today": int(authority[3] or 0),
+        "changed_today": int(authority[4] or 0),
+        "enriched_1": enriched_one,
+        "enriched_3": int(enriched[1] or 0),
+        "enriched_5": int(enriched[2] or 0),
+        "enriched_10": int(enriched[3] or 0),
+        "average_source_snapshots": float(enriched[4] or 0),
+        "median_source_snapshots": float(enriched[5] or 0),
+        "zero_source_snapshots": max(0, int(total or 0) - enriched_one),
+    }
 
 
 def _latest_by_source(rows, source_getter):
@@ -485,9 +533,13 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
             "fns_headcount",
             "fns_egrul",
             "girbo_accounting",
+            "nostroy_sro_members_on_demand",
+            "nopriz_sro_members_on_demand",
+            "prime_corporate_disclosure",
+            "rkn_personal_data_operators",
         }:
             applicable = master["legal"]
-        if dataset.code == "fns_egrip":
+        if dataset.code in {"fns_egrip", "fns_npd"}:
             applicable = master["ip"]
         if dataset.code == "fns_tax_debt" and _int(coverage.get("cohort_size")) is not None:
             applicable = int(coverage["cohort_size"])
@@ -536,6 +588,7 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
                 "auto_repair": _auto_repair_status(policy, incident),
                 "open_incident_id": str(incident.id) if incident else None,
                 "open_incident_code": incident.incident_code if incident else None,
+                "progress": redact(coverage),
             }
         row["missing_reasons"] = {
             field: _missing_reason(row, field)

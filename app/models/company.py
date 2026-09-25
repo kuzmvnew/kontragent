@@ -13,6 +13,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -197,6 +198,26 @@ class Company(Base):
         index=True,
     )
 
+    # Authority and provenance are deliberately independent from
+    # ``master_dataset_id``.  A secondary donor may create a provisional
+    # company, while an official EGRUL/EGRIP publication later supersedes
+    # identity fields without deleting the secondary evidence.
+    master_authority: Mapped[str | None] = mapped_column(
+        String(30), nullable=True, index=True
+    )
+
+    master_source: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
+    )
+
+    official_registry_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+    master_provenance: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
+
     # -----------------------------------------------------
     # LEGACY / COMPATIBILITY SOURCE
     # -----------------------------------------------------
@@ -330,6 +351,10 @@ class CompanyManager(Base):
     source_record_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    official_registry_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

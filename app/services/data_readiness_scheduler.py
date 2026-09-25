@@ -185,6 +185,94 @@ def _enqueue_mintrans_ted() -> object:
         return creation
 
 
+def _enqueue_firmoteka() -> object:
+    from app.ingestion.firmoteka_worker import schedule_firmoteka_check
+
+    with SessionLocal() as session:
+        creation = schedule_firmoteka_check(
+            session, raw_root=_non_fns_raw_root()
+        )
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"Firmoteka crawl job is terminal: {creation.job.id}")
+        return creation
+
+
+def _enqueue_exact_source(source_id: str) -> object:
+    from app.ingestion.exact_source_workers import schedule_exact_source_sweep
+
+    with SessionLocal() as session:
+        creations = schedule_exact_source_sweep(
+            session, source_id=source_id, raw_root=_non_fns_raw_root()
+        )
+        session.commit()
+        return creations
+
+
+def _enqueue_npd() -> object:
+    return _enqueue_exact_source("fns_npd")
+
+
+def _enqueue_nostroy() -> object:
+    return _enqueue_exact_source("nostroy_sro_members_on_demand")
+
+
+def _enqueue_nopriz() -> object:
+    return _enqueue_exact_source("nopriz_sro_members_on_demand")
+
+
+def _enqueue_prime_disclosure() -> object:
+    return _enqueue_exact_source("prime_corporate_disclosure")
+
+
+def _enqueue_rkn_pd() -> object:
+    return _enqueue_exact_source("rkn_personal_data_operators")
+
+
+def _enqueue_rkn_bulk(source_id: str) -> object:
+    from app.ingestion.roskomnadzor_bulk_worker import schedule_rkn_bulk_check
+
+    with SessionLocal() as session:
+        creation = schedule_rkn_bulk_check(
+            session, source_id=source_id, raw_root=_non_fns_raw_root()
+        )
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"{source_id} bulk job is terminal: {creation.job.id}")
+        return creation
+
+
+def _enqueue_rkn_communications() -> object:
+    return _enqueue_rkn_bulk("rkn_communications_licenses")
+
+
+def _enqueue_rkn_broadcast() -> object:
+    return _enqueue_rkn_bulk("rkn_broadcast_licenses")
+
+
+def _enqueue_rkn_media() -> object:
+    return _enqueue_rkn_bulk("rkn_registered_media")
+
+
+def _enqueue_rkn_information_distributors() -> object:
+    return _enqueue_rkn_bulk("rkn_information_distributors")
+
+
+def _enqueue_rkn_hosting() -> object:
+    return _enqueue_rkn_bulk("rkn_hosting_providers")
+
+
+def _enqueue_eis_rnp() -> object:
+    from app.ingestion.exact_source_workers import schedule_eis_rnp_check
+
+    with SessionLocal() as session:
+        creation = schedule_eis_rnp_check(
+            session, raw_root=_non_fns_raw_root()
+        )
+        session.commit()
+        return creation
+
+
 def _enqueue_girbo() -> object:
     from app.ingestion.girbo_worker import schedule_girbo_check
 
@@ -258,6 +346,18 @@ def _enqueue_roszdrav_medical_device_maintenance() -> object:
 # Production handlers are explicit and non-empty.  They only discover and
 # enqueue into Worker Foundation; execution remains lease/fencing controlled.
 HANDLERS: dict[str, UpdateHandler] = {
+    "firmoteka": _enqueue_firmoteka,
+    "fns_npd": _enqueue_npd,
+    "nostroy_sro_members_on_demand": _enqueue_nostroy,
+    "nopriz_sro_members_on_demand": _enqueue_nopriz,
+    "prime_corporate_disclosure": _enqueue_prime_disclosure,
+    "rkn_personal_data_operators": _enqueue_rkn_pd,
+    "rkn_communications_licenses": _enqueue_rkn_communications,
+    "rkn_broadcast_licenses": _enqueue_rkn_broadcast,
+    "rkn_registered_media": _enqueue_rkn_media,
+    "rkn_information_distributors": _enqueue_rkn_information_distributors,
+    "rkn_hosting_providers": _enqueue_rkn_hosting,
+    "eis_rnp": _enqueue_eis_rnp,
     "fns_egrul": _enqueue_egrul,
     "fns_egrip": _enqueue_egrip,
     "fns_tax_offence": _enqueue_tax_offence,
@@ -510,25 +610,37 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
     results: dict[str, str] = {}
     codes = list(due_codes if due_codes is not None else due_dataset_codes())
     priority = {
-        "fns_egrul": 0,
-        "fns_egrip": 1,
-        "fns_tax_offence": 2,
-        "fns_revenue_expenses": 3,
-        "fns_tax_debt": 4,
-        "fns_tax_paid": 5,
-        "cbr_warning_list": 6,
-        "fns_headcount": 7,
-        "fns_msp": 8,
-        "fns_tax_regime": 9,
-        "fns_sme_support": 10,
-        "fns_disqualified": 11,
-        "erknm_inspections": 12,
-        "cbr_finorg": 13,
-        "roszdrav_pharma_licenses": 14,
-        "roszdrav_narcotics_licenses": 15,
-        "roszdrav_medical_device_maintenance_licenses": 16,
-        "mintrans_ted_registry": 17,
-        "girbo_accounting": 18,
+        "firmoteka": 0,
+        "fns_npd": 20,
+        "nostroy_sro_members_on_demand": 21,
+        "nopriz_sro_members_on_demand": 22,
+        "prime_corporate_disclosure": 23,
+        "eis_rnp": 24,
+        "rkn_personal_data_operators": 25,
+        "rkn_communications_licenses": 26,
+        "rkn_broadcast_licenses": 27,
+        "rkn_registered_media": 28,
+        "rkn_information_distributors": 29,
+        "rkn_hosting_providers": 30,
+        "fns_egrul": 1,
+        "fns_egrip": 2,
+        "fns_tax_offence": 3,
+        "fns_revenue_expenses": 4,
+        "fns_tax_debt": 5,
+        "fns_tax_paid": 6,
+        "cbr_warning_list": 7,
+        "fns_headcount": 8,
+        "fns_msp": 9,
+        "fns_tax_regime": 10,
+        "fns_sme_support": 11,
+        "fns_disqualified": 12,
+        "erknm_inspections": 13,
+        "cbr_finorg": 14,
+        "roszdrav_pharma_licenses": 15,
+        "roszdrav_narcotics_licenses": 16,
+        "roszdrav_medical_device_maintenance_licenses": 17,
+        "mintrans_ted_registry": 18,
+        "girbo_accounting": 19,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

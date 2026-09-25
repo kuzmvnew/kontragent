@@ -21,6 +21,9 @@
   <article class="panel"><h2>Master</h2><dl><dt>Применимых компаний</dt><dd>{{ val(source.applicable_companies) }}</dd><dt>Совпадений</dt><dd>{{ val(source.matched_companies, source.missing_reasons.matched_companies) }}</dd><dt>Не найдено</dt><dd>{{ val(source.not_found, source.missing_reasons.matched_companies) }}</dd><dt>Не применяется</dt><dd>{{ val(source.not_applicable, 'Не применяется к этому типу компании или источника.') }}</dd><dt>Конфликтов</dt><dd>{{ val(source.conflicts) }}</dd></dl></article>
   <article class="panel"><h2>Что изменилось</h2><dl><dt>Текущих фактов</dt><dd>{{ val(source.current_fact_count, source.missing_reasons.current_fact_count) }}</dd><dt>Новых</dt><dd>{{ val(source.new_facts, source.missing_reasons.new_facts) }}</dd><dt>Изменённых</dt><dd>{{ val(source.changed_facts, source.missing_reasons.changed_facts) }}</dd><dt>Удалённых / истёкших</dt><dd>{{ val(source.removed_facts, source.missing_reasons.removed_facts) }}</dd><dt>Повторно обработано</dt><dd>{{ val(source.replayed_facts, source.missing_reasons.replayed_facts) }}</dd><dt>В карантине</dt><dd>{{ val(source.quarantined_records, source.missing_reasons.quarantined_records) }}</dd></dl></article>
 </section>
+{% if source.source_id == 'firmoteka' %}
+<section class="panel"><h2>FIRMOTEKA CRAWL CHECKPOINT</h2><pre class="mono">{{ source.progress|tojson(indent=2) }}</pre></section>
+{% endif %}
 {% if source.automation %}
 <section class="panel"><h2>Автоматическое восстановление</h2><dl>
   <dt>Автовосстановление</dt><dd>{{ ('ON' if source.automation.auto_heal else 'OFF')|status_ru }}</dd>

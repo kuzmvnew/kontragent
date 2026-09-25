@@ -20,6 +20,7 @@ from app.services.erknm_service import (
 from app.services.fns_sme_support_service import (
     get_fns_sme_support_check_for_inn,
 )
+from app.services.firmoteka_service import get_cached_firmoteka_check
 from app.services.npd_service import (
     get_cached_npd_check_for_inn,
 )
@@ -300,6 +301,17 @@ def enrich_company_with_sro(company):
     return result
 
 
+def enrich_company_with_firmoteka(company):
+    if company is None:
+        return None
+    result = _copy_company(company)
+    check = get_cached_firmoteka_check(result.get("inn"))
+    result["firmoteka_check"] = check
+    if check.get("result") == "found":
+        _append_source_once(result, "firmoteka")
+    return result
+
+
 def get_company_for_web(
     inn: str,
 ):
@@ -331,5 +343,6 @@ def get_company_for_web(
     company = enrich_company_with_roszdrav(company)
     company = enrich_company_with_roskomnadzor(company)
     company = enrich_company_with_sro(company)
+    company = enrich_company_with_firmoteka(company)
     company = enrich_company_with_corporate_disclosure(company)
     return enrich_company_with_stage15_on_demand_checks(company)

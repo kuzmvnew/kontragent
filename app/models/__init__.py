@@ -41,6 +41,14 @@ from app.models.erknm import (
 from app.models.fns_sme_support import (
     FnsSmeSupportEntry,
 )
+from app.models.firmoteka import (
+    FirmotekaCatalogPage,
+    FirmotekaCompanySnapshot,
+    FirmotekaCrawlItem,
+    FirmotekaCrawlRun,
+    FirmotekaQuarantineRecord,
+    FirmotekaRawArtifact,
+)
 from app.models.headcount import (
     CompanyHeadcount,
 )
@@ -156,6 +164,12 @@ __all__ = [
     "DisqualifiedPersonSnapshot",
     "ErknmInspection",
     "FnsSmeSupportEntry",
+    "FirmotekaCatalogPage",
+    "FirmotekaCompanySnapshot",
+    "FirmotekaCrawlItem",
+    "FirmotekaCrawlRun",
+    "FirmotekaQuarantineRecord",
+    "FirmotekaRawArtifact",
     "GirboAccountingReport",
     "IngestionRun",
     "MintransTedEntry",
