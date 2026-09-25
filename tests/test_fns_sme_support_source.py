@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -188,7 +188,13 @@ def test_stream_requires_koldok_for_full_snapshot_semantics():
 
 
 def test_complete_snapshot_absence_is_not_found(monkeypatch):
-    dataset = SimpleNamespace(id=10, enabled=True, last_data_date=date(2026, 9, 15))
+    dataset = SimpleNamespace(
+        id=10,
+        enabled=True,
+        last_data_date=date(2026, 9, 15),
+        operational_status="current",
+        official_actual_until=date(2026, 10, 15),
+    )
     run = SimpleNamespace(
         id=20,
         data_date=date(2026, 9, 15),
@@ -222,7 +228,13 @@ def test_complete_snapshot_absence_is_not_found(monkeypatch):
 
 
 def test_incomplete_snapshot_is_unavailable_not_false(monkeypatch):
-    dataset = SimpleNamespace(id=10, enabled=True, last_data_date=None)
+    dataset = SimpleNamespace(
+        id=10,
+        enabled=True,
+        last_data_date=None,
+        operational_status="unavailable",
+        official_actual_until=None,
+    )
     session = FakeSession(
         [
             FakeDbResult(scalar=dataset),
@@ -238,6 +250,27 @@ def test_incomplete_snapshot_is_unavailable_not_false(monkeypatch):
     assert check["result"] == "unavailable"
     assert check["checked"] is False
     assert check["is_support_recipient"] is None
+
+
+def test_expired_official_release_blocks_support_clean_negative(monkeypatch):
+    dataset = SimpleNamespace(
+        id=10,
+        enabled=True,
+        last_data_date=date(2026, 9, 15),
+        operational_status="current",
+        official_actual_until=date(2026, 10, 15),
+    )
+    session = FakeSession([FakeDbResult(scalar=dataset)])
+    monkeypatch.setattr(fns_sme_support_service, "get_session", lambda: session)
+
+    check = fns_sme_support_service.get_fns_sme_support_check_for_inn(
+        "7701234567",
+        now=datetime(2026, 10, 16, tzinfo=timezone.utc),
+    )
+
+    assert check["result"] == "unavailable"
+    assert check["checked"] is False
+    assert check["reason"] == "dataset_stale"
 
 
 def test_product_aggregator_adds_support_source_only_after_checked_snapshot(monkeypatch):

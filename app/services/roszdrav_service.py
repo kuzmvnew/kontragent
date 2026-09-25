@@ -20,6 +20,7 @@ from app.providers.roszdrav_provider import (
     normalize_inn,
 )
 from app.services.check_result import build_check_result
+from app.services.data_readiness_service import clean_negative_blocker
 from app.services.roszdrav_registry_service import (
     CLINICAL_ORG_DATASET,
     LICENSE_DATASETS,
@@ -71,6 +72,42 @@ def get_roszdrav_bulk_license_check_for_inn(inn: str) -> dict:
                 record_count=None, dataset_dates={}, matching_method="inn_exact",
                 interpretation_note="Лицензия подтверждает только опубликованный вид деятельности и статус на дату snapshot.",
                 coverage_note="Частично загруженные категории не трактуются как отсутствие лицензии.",
+            )
+        blockers = {
+            code: blocker
+            for code, dataset in by_code.items()
+            if (blocker := clean_negative_blocker(dataset)) is not None
+        }
+        if blockers:
+            reason = (
+                "dataset_stale"
+                if "dataset_stale" in blockers.values()
+                else sorted(blockers.values())[0]
+            )
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=None,
+                dataset_code="roszdrav_bulk_licenses",
+                source=SOURCE_CODE,
+                reason=reason,
+                blocked_datasets=blockers,
+                records=[],
+                record_count=None,
+                dataset_dates={
+                    code: dataset.last_data_date
+                    for code, dataset in by_code.items()
+                },
+                matching_method="inn_exact",
+                interpretation_note=(
+                    "Лицензия подтверждает только опубликованный вид деятельности "
+                    "и статус на дату snapshot."
+                ),
+                coverage_note=(
+                    "Устаревшая, ошибочная или неоперационная категория не даёт "
+                    "чистой отрицательной семантики."
+                ),
             )
         dataset_dates = {code: by_code[code].last_data_date for code in LICENSE_DATASETS.values()}
         if len(set(dataset_dates.values())) != 1:

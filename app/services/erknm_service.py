@@ -4,6 +4,7 @@ from app.database.postgres import get_session
 from app.models.erknm import ErknmInspection
 from app.models.source import DataSet
 from app.services.check_result import build_check_result
+from app.services.data_readiness_service import clean_negative_blocker
 
 
 DATASET_CODE = "erknm_inspections"
@@ -144,6 +145,24 @@ def get_erknm_check_for_company(
                 record_count=0,
                 records=[],
                 matching_method="inn_exact_ogrn_fallback_exact",
+            )
+
+        blocker = clean_negative_blocker(dataset)
+        if blocker is not None:
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=dataset.last_data_date,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason=blocker,
+                has_records=False,
+                record_count=0,
+                records=[],
+                matching_method=(
+                    "inn_exact_ogrn_fallback_only_when_source_inn_missing"
+                ),
             )
 
         data_date = (
@@ -288,7 +307,9 @@ def get_erknm_check_for_company(
             "status_counts": status_counts,
             "kind_counts": kind_counts,
             "coverage_periods": coverage_periods,
-            "matching_method": "inn_exact_ogrn_fallback_exact",
+            "matching_method": (
+                "inn_exact_ogrn_fallback_only_when_source_inn_missing"
+            ),
             "coverage_note": (
                 "Отсутствие записи означает только отсутствие совпадения "
                 "в уже загруженных периодах ЕРКНМ."

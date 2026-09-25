@@ -1,4 +1,6 @@
-from datetime import date
+from datetime import date, datetime, timezone
+import os
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -6,6 +8,7 @@ from app.database.postgres import get_session
 from app.ingestion.cbr_finorg import (
     save_cbr_finorg_attempt,
 )
+from app.ingestion.cbr_finorg_worker import enqueue_cbr_finorg_check
 from app.models.cbr_finorg import CbrFinorgCheck
 from app.providers.cbr_finorg_provider import (
     CbrFinorgProvider,
@@ -20,6 +23,68 @@ from app.services.check_result import build_check_result
 
 DATASET_CODE = "cbr_finorg"
 SOURCE_CODE = "cbr_finorg"
+
+
+def _default_worker_raw_root() -> Path:
+    configured = os.environ.get("NEXTCOMPANY_RAW_ROOT")
+    if configured:
+        return Path(configured).resolve()
+    fns_root = Path(os.environ.get("FNS_RAW_ROOT", "var/raw/fns")).resolve()
+    return fns_root.parent if fns_root.name == "fns" else fns_root
+
+
+def request_cbr_finorg_check_for_inn(
+    inn,
+    *,
+    raw_root: Path | None = None,
+    request_date=None,
+    now=None,
+):
+    """Queue one durable, idempotent official CBR check.
+
+    The same per-INN job is shared by the bounded daily Master sweep and the
+    on-demand API. Ordinary companies and entrepreneurs are not classified as
+    NOT_APPLICABLE before the official service answers for their exact INN.
+    """
+
+    clean_inn = normalize_inn(inn)
+    request_date = request_date or date.today()
+    now = now or datetime.now(timezone.utc)
+    if len(clean_inn) not in {10, 12}:
+        return _unavailable_result(
+            inn=clean_inn,
+            request_date=request_date,
+            reason="invalid_inn",
+            message="Для проверки Банка России нужен ИНН из 10 или 12 цифр",
+        )
+
+    session = get_session()
+    try:
+        creation = enqueue_cbr_finorg_check(
+            session,
+            inn=clean_inn,
+            request_date=request_date,
+            raw_root=raw_root or _default_worker_raw_root(),
+            now=now,
+        )
+        session.commit()
+        return {
+            "checked": False,
+            "applicable": True,
+            "result": "queued",
+            "dataset_code": DATASET_CODE,
+            "source": SOURCE_CODE,
+            "inn": clean_inn,
+            "request_date": request_date,
+            "job_id": str(creation.job.id),
+            "created": creation.created,
+            "matching_method": "inn_exact_with_ogrn_consistency",
+        }
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def _empty_payload():
@@ -118,18 +183,15 @@ def _serialize_success(row, *, cached):
         "cached": cached,
     }
 
+    is_participant = bool(row.is_participant)
     return build_check_result(
         checked=True,
-        applicable=True,
-        result=(
-            "found"
-            if row.is_participant
-            else "not_found"
-        ),
+        applicable=is_participant,
+        result=("found" if is_participant else "not_applicable"),
         data_date=row.request_date,
         dataset_code=DATASET_CODE,
         source=SOURCE_CODE,
-        reason=None,
+        reason=(None if is_participant else "official_exact_inn_no_participant"),
         **common,
     )
 

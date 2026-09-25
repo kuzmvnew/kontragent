@@ -52,6 +52,7 @@ def canonical_check(check):
 def validate_cached_case(check, expected):
     require(check.get('checked') is True, 'Source was not successfully checked')
     require(check.get('result') == expected, f'Expected {expected}; got {check.get("result")}')
+    require(check.get('applicable') is (expected == 'found'), 'Applicability differs from official result')
     require(check.get('matching_method') == 'inn_exact', 'Exact-INN proof missing')
     require(check.get('is_participant') is (expected == 'found'), 'Inconsistent participant state')
     if expected == 'found':
@@ -264,7 +265,7 @@ def main():
         request_date = date.today()
         client = EvidenceClient(output) if args.live else None
         cases = []
-        for inn, expected in ((FOUND_INN, 'found'), (ABSENT_INN, 'not_found')):
+        for inn, expected in ((FOUND_INN, 'found'), (ABSENT_INN, 'not_applicable')):
             refreshed = None
             if client:
                 print(f'W1-002: официальный запрос {inn}, затем независимое чтение PostgreSQL', flush=True)
@@ -279,7 +280,7 @@ def main():
         gates['2'] = 'PASS'
         report['state_semantics'] = {
             'found': 'exact-INN participant found; not a universal license/compliance verdict',
-            'not_found': 'no exact-INN participant in successful dated CBR response; not safe/unsafe',
+            'not_applicable': 'successful exact-INN response proves this entity is not a CBR financial-market participant; not safe/unsafe',
             'not_applicable': 'N/A for valid company/IP INNs; business-specific license applicability not inferred',
             'unavailable': 'not checked or source failure; never proof of absence',
             'failure_checks': 'automated provider/cache regression, not induced against user DB'}
@@ -288,7 +289,7 @@ def main():
         gates['6'] = 'PASS'
         if args.browser:
             require(date.today() == request_date, 'Local date changed; cards use current-day cache')
-            print('W1-002: реальные карточки found/not_found в Chromium', flush=True)
+            print('W1-002: реальные карточки found/not_applicable в Chromium', flush=True)
             report['browser'] = browser_check(cases, output)
             require(date.today() == request_date, 'Local date changed during browser acceptance')
             gates['5'] = 'PASS'

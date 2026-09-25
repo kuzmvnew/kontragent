@@ -99,6 +99,8 @@ class FnsBulkSourceSpec:
             "tax_payment",
             "headcount",
             "msp",
+            "sme_support",
+            "disqualified",
             "tax_regime",
         }:
             raise ValueError(f"unsupported FNS bulk source kind: {self.kind}")

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree as ET
@@ -135,6 +135,25 @@ def fixture_acceptance():
     assert imported["eligible_records"] == 1
     assert imported["excluded_npd_records"] == 1
     assert imported["persisted_records"] == 1
+
+    # The legacy fixture importer proves parser/storage behavior but does not
+    # perform the canonical Worker publisher's independent freshness update.
+    # Make that fixture state explicit so product assertions exercise a fresh,
+    # complete publication rather than bypassing fail-closed semantics.
+    with get_session() as session:
+        dataset = session.scalar(
+            select(DataSet).where(DataSet.code == "fns_sme_support")
+        )
+        checked_at = datetime.now(timezone.utc)
+        dataset.enabled = True
+        dataset.operational_status = "current"
+        dataset.auto_update_status = "configured"
+        dataset.official_actual_until = checked_at.date() + timedelta(days=1)
+        dataset.checked_at = checked_at
+        dataset.retrieved_at = checked_at
+        dataset.published_at = checked_at
+        dataset.record_count = imported["persisted_records"]
+        session.commit()
 
     found1 = get_fns_sme_support_check_for_inn(FOUND_INN)
     found2 = get_fns_sme_support_check_for_inn(FOUND_INN)

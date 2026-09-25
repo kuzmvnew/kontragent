@@ -31,7 +31,11 @@ def build_cbr_finorg_dataset_spec(source_id: int) -> dict:
         "domain": "financial_market_participants",
         "update_mode": "api",
         "data_format": "soap_xml",
-        "refresh_schedule": "on_demand",
+        "refresh_schedule": "daily",
+        "dataset_kind": "scheduled_and_on_demand_api",
+        "freshness_policy": "daily",
+        "operational_status": "not_configured",
+        "auto_update_status": "not_configured",
         "priority": 10,
         "enabled": True,
         "source_url": (
@@ -82,12 +86,17 @@ def ensure_cbr_finorg_dataset() -> None:
         dataset_statement = insert(DataSet).values(
             **dataset_values
         )
+        readiness_fields = {
+            "enabled",
+            "operational_status",
+            "auto_update_status",
+        }
         dataset_statement = dataset_statement.on_conflict_do_update(
             index_elements=[DataSet.code],
             set_={
                 key: value
                 for key, value in dataset_values.items()
-                if key != "code"
+                if key != "code" and key not in readiness_fields
             },
         )
 

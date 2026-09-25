@@ -12,6 +12,7 @@ from app.database.postgres import get_session
 from app.ingestion.fns_sme_support_xml import parse_support_records
 from app.ingestion.fns_sme_support_integrity import audit_archive, verify_counts, sha256_file, POLICY
 from app.models.fns_sme_support import FnsSmeSupportEntry
+from app.models.company import Company
 from app.models.source import DataSet, IngestionRun
 
 DATASET_CODE = "fns_sme_support"
@@ -391,3 +392,515 @@ def cleanup_old_snapshots(*, dataset_id, keep_run_id):
             FnsSmeSupportEntry.ingestion_run_id.in_(old_runs)))
         session.commit()
         return int(result.rowcount or 0)
+
+
+# ---------------------------------------------------------------------------
+# Worker Foundation adapter
+# ---------------------------------------------------------------------------
+
+SOURCE_ID = DATASET_CODE
+SOURCE_PAGE_URL = "https://www.nalog.gov.ru/opendata/7707329152-rsmppp/"
+HANDLER_VERSION = "sme-support-official-v1"
+
+
+def _worker_spec():
+    from app.ingestion.fns_bulk_worker import FnsBulkSourceSpec
+
+    return FnsBulkSourceSpec(
+        source_id=SOURCE_ID,
+        dataset_code=DATASET_CODE,
+        source_page_url=SOURCE_PAGE_URL,
+        source_path="7707329152-rsmppp",
+        handler_version=HANDLER_VERSION,
+        kind="sme_support",
+        api_projection="fns_sme_support_check",
+        card_projection="company_card.fns_sme_support",
+        check_frequency="daily",
+    )
+
+
+def iter_worker_xml_records(xml_file):
+    """Yield every support fact while marking NPD-only rows non-projectable.
+
+    The immutable normalized snapshot remains complete.  Publication stores
+    only facts whose recipient INN exactly matches a legal entity or IP in the
+    Master registry; no person-name matching exists in this path.
+    """
+
+    provider_inn = None
+    root = None
+    try:
+        for event, element in ET.iterparse(xml_file, events=("start", "end")):
+            tag = local_name(element.tag)
+            if event == "start" and root is None:
+                if tag != "Файл":
+                    raise ValueError("Ожидался корневой элемент Файл")
+                root = element
+            if event != "end":
+                continue
+            if tag == "ИдОтпр":
+                provider_inn = _provider_inn_from_sender(element)
+                element.clear()
+                continue
+            if tag != "Документ":
+                continue
+            snapshot_date = parse_date(element.get("ДатаСост"))
+            if snapshot_date is None:
+                # Compatibility fixtures use the fact-level information date.
+                snapshot_date = parse_date(element.get("ДатаСвед"))
+            if snapshot_date is None:
+                raise ValueError("У документа ФНС отсутствует дата состояния")
+            for record in parse_support_records(
+                element,
+                data_date=snapshot_date,
+                provider_inn=provider_inn,
+                legacy_parser=parse_support_document,
+            ):
+                yield {
+                    **record,
+                    "eligible_for_company_projection": (
+                        record["recipient_kind"] != "npd_individual"
+                    ),
+                }
+            if root is not None:
+                root.remove(element)
+            element.clear()
+    except ET.ParseError as error:
+        raise ValueError(f"Некорректный XML ФНС: {error}") from error
+
+
+def _discover_worker_release(*, now=None, provider=None):
+    from app.ingestion.fns_bulk_worker import FnsRelease, _utc, utc_now
+    from app.providers.fns_sme_support_provider import FnsSmeSupportProvider
+
+    observed_at = _utc(now or utc_now())
+    discovered = (provider or FnsSmeSupportProvider()).discover_release()
+    if discovered.modified_date is None or not discovered.structure_url:
+        from app.worker.errors import SchemaMismatchError
+
+        raise SchemaMismatchError(
+            "official SME-support passport has no release date or structure"
+        )
+    return FnsRelease(
+        source_page_url=SOURCE_PAGE_URL,
+        artifact_url=discovered.data_url,
+        xsd_url=discovered.structure_url,
+        source_data_date=discovered.modified_date,
+        actual_until=discovered.data_date,
+        discovered_at=observed_at,
+        provenance=(
+            "Дата последнего внесения изменений "
+            f"{discovered.modified_date.isoformat()}"
+        ),
+    )
+
+
+def fns_sme_support_worker_handler(context):
+    from app.ingestion.fns_bulk_worker import run_bulk_handler
+
+    return run_bulk_handler(
+        context,
+        spec=_worker_spec(),
+        iterator=iter_worker_xml_records,
+    )
+
+
+def _support_signature(value):
+    return (
+        value["provider_inn"],
+        value["recipient_inn"],
+        value["recipient_kind"],
+        value.get("recipient_ogrn"),
+        value["information_date"],
+        value["support_until"],
+        value["decision_date"],
+        value.get("termination_date"),
+        value.get("violation_code"),
+        value.get("support_form_code"),
+        value.get("support_form_name"),
+        value.get("support_type_code"),
+        value.get("support_type_name"),
+        tuple(sorted((item.get("value"), item.get("unit_code")) for item in value.get("amounts") or ())),
+    )
+
+
+def _support_row_values(row, *, dataset_id, ingestion_run_id):
+    def parsed(name):
+        return date.fromisoformat(row[name]) if row.get(name) else None
+
+    return {
+        "dataset_id": dataset_id,
+        "ingestion_run_id": ingestion_run_id,
+        "data_date": parsed("data_date"),
+        "source_record_key": row["source_record_key"],
+        "source_document_id": row["source_document_id"],
+        "provider_inn": row.get("provider_inn"),
+        "recipient_inn": row["recipient_inn"],
+        "recipient_kind": row["recipient_kind"],
+        "recipient_ogrn": row.get("recipient_ogrn"),
+        "information_date": parsed("information_date"),
+        "support_until": parsed("support_until"),
+        "decision_date": parsed("decision_date"),
+        "termination_date": parsed("termination_date"),
+        "violation_code": row.get("violation_code"),
+        "support_form_code": row.get("support_form_code"),
+        "support_form_name": row.get("support_form_name"),
+        "support_type_code": row.get("support_type_code"),
+        "support_type_name": row.get("support_type_name"),
+        "amounts": list(row.get("amounts") or ()),
+        "violations": list(row.get("violations") or ()),
+        "regulatory_document_ids": list(row.get("regulatory_document_ids") or ()),
+    }
+
+
+def _project_worker_support(
+    session,
+    *,
+    dataset,
+    ingestion_run,
+    staging_path,
+    replay,
+):
+    from app.ingestion.fns_bulk_worker import _iter_jsonl
+
+    matched = unmatched = excluded_npd = inserted = 0
+    matched_company_ids = set()
+    signatures = {}
+    for batch in _iter_jsonl(staging_path):
+        eligible = [
+            row for row in batch if row.get("eligible_for_company_projection")
+        ]
+        excluded_npd += len(batch) - len(eligible)
+        inns = {str(row["recipient_inn"]) for row in eligible}
+        companies = {
+            inn: (company_id, entity_type)
+            for inn, company_id, entity_type in session.execute(
+                select(Company.inn, Company.id, Company.entity_type).where(
+                    Company.inn.in_(inns)
+                )
+            )
+        }
+        values = []
+        for row in eligible:
+            company = companies.get(str(row["recipient_inn"]))
+            expected_type = (
+                "legal"
+                if row["recipient_kind"] == "legal"
+                else "individual_entrepreneur"
+            )
+            if company is None or str(company[1]) != expected_type:
+                unmatched += 1
+                continue
+            matched += 1
+            matched_company_ids.add(int(company[0]))
+            value = _support_row_values(
+                row,
+                dataset_id=dataset.id,
+                ingestion_run_id=ingestion_run.id,
+            )
+            signatures[value["source_record_key"]] = _support_signature(value)
+            values.append(value)
+        if not values:
+            continue
+        statement = insert(FnsSmeSupportEntry).values(values)
+        if replay:
+            statement = statement.on_conflict_do_nothing(
+                constraint="uq_fns_sme_support_run_record_key"
+            )
+        inserted += len(
+            session.scalars(statement.returning(FnsSmeSupportEntry.id)).all()
+        )
+    return {
+        "matched": matched,
+        "unmatched": unmatched,
+        "excluded_npd": excluded_npd,
+        "source_records": matched + unmatched + excluded_npd,
+        "inserted": inserted,
+        "matched_company_ids": matched_company_ids,
+        "signatures": signatures,
+    }
+
+
+def publish_fns_sme_support_worker_result(session, claim, result):
+    from dataclasses import replace
+    from datetime import time
+
+    from app.contracts.data_readiness import AutoUpdateStatus
+    from app.ingestion.fns_bulk_worker import (
+        _accepted_replay_path,
+        _apply_successful_check,
+        _claim_actual_until,
+        _file_path,
+        utc_now,
+    )
+    from app.models.worker import WorkerPublicationState
+    from app.worker.contracts import ExecutionCounters, SourceChangeSummary
+    from app.worker.errors import InvalidDataError
+
+    spec = _worker_spec()
+    dataset = session.scalar(
+        select(DataSet).where(DataSet.code == DATASET_CODE).with_for_update()
+    )
+    if dataset is None:
+        raise InvalidDataError(f"dataset is not registered: {DATASET_CODE}")
+    now = utc_now()
+    source_date = date.fromisoformat(str(claim.schedule_metadata["source_data_date"]))
+    previous_source_date = dataset.last_data_date
+    actual_until = _claim_actual_until(claim)
+
+    if claim.schedule_metadata.get("check_only"):
+        state = session.get(WorkerPublicationState, SOURCE_ID)
+        validation = dict(state.validation_metadata or {}) if state else {}
+        legacy_run_id = (validation.get("validation") or {}).get(
+            "legacy_ingestion_run_id"
+        )
+        ingestion_run = session.get(IngestionRun, legacy_run_id)
+        if ingestion_run is None or ingestion_run.status != "success":
+            raise InvalidDataError("accepted SME-support publication run is unavailable")
+        replay_path = _accepted_replay_path(session, claim=claim, spec=spec)
+        projected = _project_worker_support(
+            session,
+            dataset=dataset,
+            ingestion_run=ingestion_run,
+            staging_path=replay_path,
+            replay=True,
+        )
+        published = int(
+            session.scalar(
+                select(func.count()).select_from(FnsSmeSupportEntry).where(
+                    FnsSmeSupportEntry.ingestion_run_id == ingestion_run.id
+                )
+            )
+            or 0
+        )
+        ingestion_run.rows_inserted = published
+        ingestion_run.records_written = published
+        ingestion_run.details = {
+            **(ingestion_run.details or {}),
+            "eligible_records": published,
+            "source_eligible_records": projected["matched"] + projected["unmatched"],
+            "excluded_npd_records": projected["excluded_npd"],
+        }
+        dataset.record_count = published
+        status = _apply_successful_check(
+            dataset,
+            actual_until=actual_until,
+            now=now,
+            check_interval=spec.check_interval,
+        )
+        summary = SourceChangeSummary(
+            matched_companies=len(projected["matched_company_ids"]),
+            new_facts=projected["inserted"],
+            changed_facts=0,
+            removed_or_expired_facts=0,
+            unchanged_facts=published - projected["inserted"],
+            replayed_facts=projected["inserted"],
+            quarantined_records=0,
+            source_records=projected["source_records"],
+            source_data_date=source_date,
+            previous_source_data_date=previous_source_date,
+        )
+        coverage = dict(dataset.coverage or {})
+        coverage["last_replay"] = {
+            "checked_at": now.isoformat(),
+            "matched": projected["matched"],
+            "unmatched": projected["unmatched"],
+            "new_facts": projected["inserted"],
+        }
+        coverage["published_facts"] = published
+        coverage["change_summary"] = summary.as_dict()
+        dataset.coverage = coverage
+        return replace(
+            result,
+            staging_result=None,
+            checksum_metadata={
+                **result.checksum_metadata,
+                "freshness": status.value,
+                "official_actual_until": actual_until.isoformat()
+                if actual_until
+                else None,
+            },
+            counters=ExecutionCounters(
+                records_seen=projected["source_records"],
+                records_written=projected["inserted"],
+                records_published=projected["inserted"],
+            ),
+            change_summary=summary,
+        )
+
+    if result.staging_result is None:
+        raise InvalidDataError("SME-support publisher requires normalized staging")
+    staging_path = _file_path(result.staging_result.staging_pointer)
+    previous_run = session.scalar(
+        select(IngestionRun)
+        .where(IngestionRun.dataset_id == dataset.id, IngestionRun.status == "success")
+        .order_by(IngestionRun.finished_at.desc().nullslast(), IngestionRun.id.desc())
+        .limit(1)
+    )
+    previous = {}
+    if previous_run is not None:
+        for row in session.scalars(
+            select(FnsSmeSupportEntry).where(
+                FnsSmeSupportEntry.ingestion_run_id == previous_run.id
+            )
+        ):
+            previous[row.source_record_key] = _support_signature(row.__dict__)
+
+    ingestion_run = IngestionRun(
+        dataset_id=dataset.id,
+        status="running",
+        data_date=source_date,
+        source_file_name=Path(staging_path).name,
+        source_url=str(claim.schedule_metadata["artifact_url"]),
+        file_checksum=str(result.checksum_metadata.get("artifact_sha256") or ""),
+        run_uuid=str(claim.run_id),
+        trigger="worker",
+        source_as_of=datetime.combine(source_date, time.min, tzinfo=timezone.utc),
+        retrieved_at=now,
+        version=str(claim.schedule_metadata.get("release_identity") or ""),
+    )
+    session.add(ingestion_run)
+    session.flush()
+    projected = _project_worker_support(
+        session,
+        dataset=dataset,
+        ingestion_run=ingestion_run,
+        staging_path=staging_path,
+        replay=False,
+    )
+    published = projected["inserted"]
+    current = projected["signatures"]
+    shared = set(previous) & set(current)
+    changed = sum(previous[key] != current[key] for key in shared)
+    unchanged = len(shared) - changed
+    new = len(set(current) - set(previous))
+    removed = len(set(previous) - set(current))
+    ingestion_run.status = "success"
+    ingestion_run.finished_at = now
+    ingestion_run.rows_read = projected["source_records"]
+    ingestion_run.rows_inserted = published
+    ingestion_run.rows_skipped = projected["unmatched"] + projected["excluded_npd"]
+    ingestion_run.records_seen = projected["source_records"]
+    ingestion_run.records_written = published
+    ingestion_run.details = {
+        "complete_snapshot": True,
+        "person_rows_persisted": False,
+        "matching_method": "inn_exact",
+        "source_records": projected["source_records"],
+        "eligible_records": published,
+        "source_eligible_records": projected["matched"] + projected["unmatched"],
+        "excluded_npd_records": projected["excluded_npd"],
+    }
+    dataset.enabled = True
+    dataset.auto_update_status = AutoUpdateStatus.CONFIGURED
+    dataset.last_success_at = now
+    dataset.last_data_date = source_date
+    dataset.source_as_of = datetime.combine(source_date, time.min, tzinfo=timezone.utc)
+    dataset.retrieved_at = now
+    dataset.published_at = now
+    dataset.record_count = published
+    status = _apply_successful_check(
+        dataset,
+        actual_until=actual_until,
+        now=now,
+        check_interval=spec.check_interval,
+    )
+    summary = SourceChangeSummary(
+        matched_companies=len(projected["matched_company_ids"]),
+        new_facts=new,
+        changed_facts=changed,
+        removed_or_expired_facts=removed,
+        unchanged_facts=unchanged,
+        replayed_facts=0,
+        quarantined_records=0,
+        source_records=projected["source_records"],
+        source_data_date=source_date,
+        previous_source_data_date=previous_source_date,
+        unavailable_reasons=(
+            {"previous_source_data_date": "first accepted publication"}
+            if previous_source_date is None
+            else {}
+        ),
+    )
+    dataset.coverage = {
+        "source_records": projected["source_records"],
+        "source_eligible_records": projected["matched"] + projected["unmatched"],
+        "excluded_npd_records": projected["excluded_npd"],
+        "matched": projected["matched"],
+        "unmatched": projected["unmatched"],
+        "published_facts": published,
+        "risk_summary_candidate_companies": len(projected["matched_company_ids"]),
+        "api_projection": spec.api_projection,
+        "card_projection": spec.card_projection,
+        "release_identity": claim.schedule_metadata.get("release_identity"),
+        "change_summary": summary.as_dict(),
+    }
+    validation = replace(
+        result.staging_result.validation,
+        metadata={
+            **result.staging_result.validation.metadata,
+            "legacy_ingestion_run_id": ingestion_run.id,
+            "matched": projected["matched"],
+            "unmatched": projected["unmatched"],
+            "published_facts": published,
+            "api_projection": spec.api_projection,
+            "card_projection": spec.card_projection,
+            "freshness": status.value,
+            "official_actual_until": actual_until.isoformat()
+            if actual_until
+            else None,
+        },
+    )
+    return replace(
+        result,
+        staging_result=replace(result.staging_result, validation=validation),
+        counters=ExecutionCounters(
+            records_seen=projected["source_records"],
+            records_written=result.counters.records_written if result.counters else 0,
+            records_published=published,
+        ),
+        change_summary=summary,
+    )
+
+
+def register_fns_sme_support_worker(session, registry):
+    from app.ingestion.fns_bulk_worker import register_bulk_handler
+
+    return register_bulk_handler(
+        session,
+        registry,
+        spec=_worker_spec(),
+        handler=fns_sme_support_worker_handler,
+        publisher=publish_fns_sme_support_worker_result,
+    )
+
+
+def schedule_fns_sme_support_check(
+    session,
+    *,
+    raw_root,
+    now=None,
+    provider=None,
+):
+    from app.ingestion.fns_bulk_worker import enqueue_bulk_release
+    from app.models.worker import WorkerPublicationState
+
+    release = _discover_worker_release(now=now, provider=provider)
+    state = session.get(WorkerPublicationState, SOURCE_ID)
+    validation = dict(state.validation_metadata or {}) if state else {}
+    same_release = (
+        (validation.get("validation") or {}).get("release_identity")
+        == release.identity
+    )
+    return enqueue_bulk_release(
+        session,
+        spec=_worker_spec(),
+        release=release,
+        raw_root=Path(raw_root),
+        check_only=same_release,
+        replay_pointer=state.active_pointer if same_release and state else None,
+        replay_checksum=str(validation.get("checksum") or "")
+        if same_release
+        else None,
+        scheduled_for=release.discovered_at.date(),
+    )

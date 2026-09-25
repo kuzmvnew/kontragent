@@ -198,7 +198,25 @@ def test_mass_address_is_context_only_with_value_and_rule_version():
 
 def test_disqualified_record_preserves_identity_uncertainty():
     result = build_risk_assessment(company(disqualified_check=check("found", "fns_disqualified")), datasets=datasets(), now=NOW)
-    assert "не доказывает" in signal(result, "management.disqualified_record").explanation
+    item = signal(result, "management.disqualified_record")
+    assert item.status == "UNAVAILABLE"
+    assert "не доказывает" in item.explanation
+
+
+def test_disqualified_current_manager_dual_match_is_a_risk_signal():
+    result = build_risk_assessment(
+        company(disqualified_check=check(
+            "found",
+            "fns_disqualified",
+            matching_state="MATCHED",
+            matching_method="current_manager_full_name_exact_and_company_inn",
+        )),
+        datasets=datasets(),
+        now=NOW,
+    )
+    item = signal(result, "management.disqualified_record")
+    assert item.status == "WARNING"
+    assert "текущего руководителя" in item.explanation
 
 
 def test_profiles_and_applicability_are_resolved_before_context_checks():

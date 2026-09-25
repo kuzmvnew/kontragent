@@ -15,7 +15,7 @@ from app.aggregators.company_product_aggregator import (
     get_company_for_web,
 )
 from app.services.cbr_finorg_service import (
-    refresh_cbr_finorg_check_for_inn,
+    request_cbr_finorg_check_for_inn,
 )
 from app.services.corporate_disclosure_service import refresh_corporate_disclosure_check
 from app.services.arbitration_court_service import refresh_arbitration_court_check
@@ -401,7 +401,7 @@ async def company_cbr_finorg_check(
 ):
     clean_inn = validate_company_inn(inn)
 
-    refresh_cbr_finorg_check_for_inn(
+    request_cbr_finorg_check_for_inn(
         clean_inn
     )
 
@@ -508,7 +508,7 @@ async def api_company_cbr_finorg_check(
 ):
     clean_inn = validate_company_inn(inn)
 
-    return refresh_cbr_finorg_check_for_inn(
+    return request_cbr_finorg_check_for_inn(
         clean_inn
     )
 

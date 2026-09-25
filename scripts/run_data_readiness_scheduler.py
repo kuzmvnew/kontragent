@@ -4,9 +4,13 @@ import argparse
 import json
 
 from app.database.postgres import SessionLocal
+from app.ingestion.cbr_finorg_worker import register_cbr_finorg_worker
 from app.ingestion.cbr_warning_worker import register_cbr_warning_worker
+from app.ingestion.erknm_worker import register_erknm_worker
 from app.ingestion.fns_headcount import register_fns_headcount_worker
+from app.ingestion.fns_disqualified import register_fns_disqualified_worker
 from app.ingestion.fns_msp import register_fns_msp_worker
+from app.ingestion.fns_sme_support import register_fns_sme_support_worker
 from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
 from app.ingestion.fns_tax_debt_pipeline import (
     register_fns_tax_debt_controlled_live_handler,
@@ -14,12 +18,20 @@ from app.ingestion.fns_tax_debt_pipeline import (
 from app.ingestion.fns_tax_offence import register_fns_tax_offence_worker
 from app.ingestion.fns_tax_payment import register_fns_tax_payment_worker
 from app.ingestion.fns_tax_regime import register_fns_tax_regime_worker
+from app.ingestion.roszdrav_license_worker import register_roszdrav_license_workers
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
 )
+from app.services.cbr_finorg_registry_service import ensure_cbr_finorg_dataset
+from app.services.fns_sme_support_registry_service import (
+    ensure_fns_sme_support_dataset,
+)
+from app.services.erknm_registry_service import ensure_erknm_dataset
 from app.services.source_service import ensure_default_dataset
+from app.services.roszdrav_registry_service import ensure_roszdrav_datasets
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
+    ROSZDRAV_LICENSE_DATASET_CODES,
     SCHEDULED_SOURCE_DATASET_CODES,
     configure_fns_bulk_schedules,
     configure_source_schedules,
@@ -46,10 +58,15 @@ def build_registry() -> HandlerRegistry:
         except HandlerNotRegisteredError:
             pass
         register_fns_tax_payment_worker(session, registry)
+        register_cbr_finorg_worker(session, registry)
         register_cbr_warning_worker(session, registry)
         register_fns_headcount_worker(session, registry)
         register_fns_msp_worker(session, registry)
         register_fns_tax_regime_worker(session, registry)
+        register_fns_sme_support_worker(session, registry)
+        register_fns_disqualified_worker(session, registry)
+        register_erknm_worker(session, registry)
+        register_roszdrav_license_workers(session, registry)
         session.commit()
     return registry
 
@@ -78,8 +95,18 @@ def ensure_activation_datasets(dataset_codes: list[str]) -> None:
 
     if "cbr_warning_list" in dataset_codes:
         ensure_cbr_warning_list_dataset()
+    if "cbr_finorg" in dataset_codes:
+        ensure_cbr_finorg_dataset()
     if "fns_tax_regime" in dataset_codes:
         ensure_default_dataset("fns_tax_regime")
+    if "fns_sme_support" in dataset_codes:
+        ensure_fns_sme_support_dataset()
+    if "fns_disqualified" in dataset_codes:
+        ensure_default_dataset("fns_disqualified")
+    if "erknm_inspections" in dataset_codes:
+        ensure_erknm_dataset()
+    if set(dataset_codes) & ROSZDRAV_LICENSE_DATASET_CODES:
+        ensure_roszdrav_datasets()
 
 
 def main() -> None:
@@ -108,12 +135,43 @@ def main() -> None:
         metavar="SOURCE_ID",
         help="Disable one source schedule; repeat to disable more than one",
     )
+    parser.add_argument(
+        "--activate-roszdrav-licenses",
+        action="store_true",
+        help="Enable the three distinct Roszdrav licence schedules as one family",
+    )
+    parser.add_argument(
+        "--deactivate-roszdrav-licenses",
+        action="store_true",
+        help="Disable the three distinct Roszdrav licence schedules as one family",
+    )
     args = parser.parse_args()
     overlap = set(args.activate) & set(args.deactivate)
     if overlap:
         parser.error("cannot activate and deactivate the same source: " + ", ".join(sorted(overlap)))
-    if args.activate_s03_s04 and (args.activate or args.deactivate):
+    if args.activate_s03_s04 and (
+        args.activate
+        or args.deactivate
+        or args.activate_roszdrav_licenses
+        or args.deactivate_roszdrav_licenses
+    ):
         parser.error("--activate-s03-s04 cannot be combined with source-scoped gates")
+    if args.activate_roszdrav_licenses and args.deactivate_roszdrav_licenses:
+        parser.error("cannot activate and deactivate Roszdrav licence family together")
+    family_overlap = set(args.activate) & ROSZDRAV_LICENSE_DATASET_CODES
+    if family_overlap and (
+        args.activate_roszdrav_licenses or args.deactivate_roszdrav_licenses
+    ):
+        parser.error(
+            "Roszdrav family gate cannot be combined with individual Roszdrav sources"
+        )
+    family_overlap = set(args.deactivate) & ROSZDRAV_LICENSE_DATASET_CODES
+    if family_overlap and (
+        args.activate_roszdrav_licenses or args.deactivate_roszdrav_licenses
+    ):
+        parser.error(
+            "Roszdrav family gate cannot be combined with individual Roszdrav sources"
+        )
     registry = build_registry()
     if args.activate_s03_s04:
         configure_fns_bulk_schedules(
@@ -127,8 +185,17 @@ def main() -> None:
         # scoped upsert never enables the child projection datasets.
         ensure_activation_datasets(args.activate)
         configure_source_schedules(enabled=True, dataset_codes=args.activate)
+    if args.activate_roszdrav_licenses:
+        family_codes = sorted(ROSZDRAV_LICENSE_DATASET_CODES)
+        ensure_activation_datasets(family_codes)
+        configure_source_schedules(enabled=True, dataset_codes=family_codes)
     if args.deactivate:
         configure_source_schedules(enabled=False, dataset_codes=args.deactivate)
+    if args.deactivate_roszdrav_licenses:
+        configure_source_schedules(
+            enabled=False,
+            dataset_codes=sorted(ROSZDRAV_LICENSE_DATASET_CODES),
+        )
     if args.loop:
         worker_loop(
             poll_seconds=args.poll_seconds,

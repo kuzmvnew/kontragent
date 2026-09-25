@@ -456,12 +456,29 @@ def build_risk_assessment(
     signals.append(_registration_signal(company, datasets, now, rules["REGISTRATION_STATUS"]))
 
     disqualified = company.get("disqualified_check")
+    if (
+        disqualified
+        and disqualified.get("result") == "found"
+        and disqualified.get("matching_state") != "MATCHED"
+    ):
+        # Compatibility inputs predating the dual-identity product contract
+        # may report an organization-only hit as ``found``.  That evidence is
+        # not sufficient for a risk signal about current management.
+        disqualified = {
+            **disqualified,
+            "checked": False,
+            "result": "unavailable",
+            "reason": (
+                "Совпадение только по ИНН организации не доказывает "
+                "дисквалификацию текущего руководителя."
+            ),
+        }
     signals.append(_generic_check_signal(
         now=now, category=RiskCategory.OWNERSHIP_MANAGEMENT, check_code="management.disqualified_record",
         check=disqualified, dataset_code="fns_disqualified", source_code="fns",
         datasets=datasets, rule=rules["PROTECTED_REGULATORY_CHECK"],
-        found_title="Организация указана в записи о дисквалифицированном лице",
-        found_explanation="Связь с организацией не доказывает, что лицо является текущим директором; сильный вывод без надёжной identity link запрещён.",
+        found_title="Текущий руководитель найден в реестре дисквалифицированных лиц",
+        found_explanation="Подтверждено точное совпадение ИНН организации и ФИО текущего руководителя при действующем периоде дисквалификации.",
         found_severity=RiskSeverity.MEDIUM,
     ))
     address_facts = [
