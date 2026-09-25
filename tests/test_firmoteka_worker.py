@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import gzip
+from hashlib import sha256
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -84,6 +86,54 @@ def test_content_addressed_raw_is_immutable_and_deduplicated(tmp_path):
     )
     assert first.checksum == second.checksum == manifest["response_sha256"]
     assert first.artifact_reference == second.artifact_reference
+
+
+def test_gzip_sitemap_is_decoded_for_discovery_but_raw_keeps_wire_bytes(
+    monkeypatch, tmp_path
+):
+    sitemap = b"""<?xml version="1.0"?><sitemapindex>
+    <sitemap><loc>https://firmoteka.ru/sitemap-catalogs.xml</loc></sitemap>
+    </sitemapindex>"""
+    compressed = gzip.compress(sitemap)
+    responses = iter(
+        (
+            (
+                b"User-agent: *\nAllow: /\nSitemap: https://firmoteka.ru/sitemap.xml\n",
+                200,
+                {"content-type": "text/plain"},
+                NOW,
+            ),
+            (
+                compressed,
+                200,
+                {"content-type": "text/xml; charset=utf-8"},
+                NOW,
+            ),
+        )
+    )
+    monkeypatch.setattr(worker, "_fetch", lambda *_args, **_kwargs: next(responses))
+
+    class Context:
+        schedule_metadata = {
+            "phase": "discovery",
+            "crawl_run_id": str(uuid4()),
+            "raw_root": str(tmp_path),
+            "not_before": NOW.isoformat(),
+        }
+
+        def report_counters(self, _counters):
+            return None
+
+        def heartbeat(self):
+            return None
+
+    result = worker.firmoteka_worker_handler(Context())
+    validation = result.staging_result.validation.metadata
+
+    assert "https://firmoteka.ru/sitemap-catalogs.xml" in validation["documents"]
+    assert result.raw_artifacts[-1].checksum == sha256(compressed).hexdigest()
+    raw_path = result.raw_artifacts[-1].artifact_reference.removeprefix("file://")
+    assert gzip.open(raw_path, "rb").read() == compressed
 
 
 def test_provisional_master_never_overwrites_official_identity():
