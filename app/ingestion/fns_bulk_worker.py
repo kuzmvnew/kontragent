@@ -13,11 +13,13 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import md5, sha256
 from html import unescape
+from http.client import IncompleteRead
 import json
 import os
 from pathlib import Path
 import re
 import tempfile
+import time
 from typing import Any, Callable, Iterable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
@@ -61,6 +63,8 @@ CHECK_INTERVAL = timedelta(days=1)
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 MULTIPART_RANGE_PART_SIZE = 8 * 1024 * 1024
 MULTIPART_RANGE_MIN_SIZE = 64 * 1024 * 1024
+MULTIPART_RANGE_MAX_ATTEMPTS = 3
+MULTIPART_RANGE_RETRY_BASE_SECONDS = 0.25
 _MULTIPART_ETAG = re.compile(
     r'^"?(?P<digest>[0-9a-fA-F]{32})-(?P<part_count>[1-9][0-9]*)"?$'
 )
@@ -430,41 +434,72 @@ def _read_verified_range(
     plan: _MultipartDownloadPlan,
 ) -> bytes:
     expected_size = end - start + 1
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "next.company-source-worker/1.0",
-            "Range": f"bytes={start}-{end}",
-            "If-Match": plan.etag,
-        },
-    )
-    with urlopen(request, timeout=120) as response:
-        headers = dict(response.headers.items())
-        if _response_status(response) != 206:
-            raise InvalidDataError("multipart range request did not return HTTP 206")
-        if _header(headers, "content-range") != f"bytes {start}-{end}/{plan.size}":
-            raise InvalidDataError("multipart response Content-Range differs")
-        if _header(headers, "content-length") != str(expected_size):
-            raise InvalidDataError("multipart response Content-Length differs")
-        if _header(headers, "etag") != plan.etag:
-            raise InvalidDataError("multipart response ETag changed during download")
-        response_sha256 = _header(headers, "x-amz-meta-sha256")
-        if plan.advertised_sha256 is not None and (
-            response_sha256 is None
-            or response_sha256.strip().lower() != plan.advertised_sha256
-        ):
-            raise InvalidDataError(
-                "multipart response official SHA256 changed during download"
+    last_transport_error = "multipart range body is shorter than declared"
+    for attempt in range(1, MULTIPART_RANGE_MAX_ATTEMPTS + 1):
+        request = Request(
+            url,
+            headers={
+                "User-Agent": "next.company-source-worker/1.0",
+                "Range": f"bytes={start}-{end}",
+                "If-Match": plan.etag,
+            },
+        )
+        try:
+            with urlopen(request, timeout=120) as response:
+                headers = dict(response.headers.items())
+                if _response_status(response) != 206:
+                    raise InvalidDataError(
+                        "multipart range request did not return HTTP 206"
+                    )
+                if _header(headers, "content-range") != (
+                    f"bytes {start}-{end}/{plan.size}"
+                ):
+                    raise InvalidDataError(
+                        "multipart response Content-Range differs"
+                    )
+                if _header(headers, "content-length") != str(expected_size):
+                    raise InvalidDataError(
+                        "multipart response Content-Length differs"
+                    )
+                if _header(headers, "etag") != plan.etag:
+                    raise InvalidDataError(
+                        "multipart response ETag changed during download"
+                    )
+                response_sha256 = _header(headers, "x-amz-meta-sha256")
+                if plan.advertised_sha256 is not None and (
+                    response_sha256 is None
+                    or response_sha256.strip().lower()
+                    != plan.advertised_sha256
+                ):
+                    raise InvalidDataError(
+                        "multipart response official SHA256 changed during download"
+                    )
+
+                content = bytearray()
+                while chunk := response.read(DOWNLOAD_CHUNK_SIZE):
+                    content.extend(chunk)
+                    if len(content) > expected_size:
+                        raise InvalidDataError(
+                            "multipart range body is longer than declared"
+                        )
+                if len(content) == expected_size:
+                    return bytes(content)
+                last_transport_error = (
+                    "multipart range body is shorter than declared"
+                )
+        except (HTTPError, URLError, TimeoutError, OSError, IncompleteRead) as error:
+            last_transport_error = str(error) or error.__class__.__name__
+
+        if attempt < MULTIPART_RANGE_MAX_ATTEMPTS:
+            time.sleep(
+                MULTIPART_RANGE_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
             )
 
-        content = bytearray()
-        while chunk := response.read(DOWNLOAD_CHUNK_SIZE):
-            content.extend(chunk)
-            if len(content) > expected_size:
-                raise InvalidDataError("multipart range body is longer than declared")
-        if len(content) != expected_size:
-            raise InvalidDataError("multipart range body is shorter than declared")
-        return bytes(content)
+    raise WorkerNetworkError(
+        "multipart range transport failed after "
+        f"{MULTIPART_RANGE_MAX_ATTEMPTS} attempts for bytes "
+        f"{start}-{end}: {last_transport_error}"
+    )
 
 
 def _download_verified_multipart(
@@ -533,7 +568,7 @@ def _download_temp(url: str, root: Path) -> tuple[Path, dict[str, str]]:
         if multipart_plan is not None:
             _download_verified_multipart(url, path, plan=multipart_plan)
         return path, headers
-    except InvalidDataError:
+    except (InvalidDataError, WorkerNetworkError):
         path.unlink(missing_ok=True)
         raise
     except (HTTPError, URLError, TimeoutError, OSError) as error:
