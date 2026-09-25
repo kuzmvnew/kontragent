@@ -506,6 +506,41 @@ def process_due_incidents(
     return incidents
 
 
+def verify_active_incidents(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    only_source: str | None = None,
+    notifier: NotificationAdapter = DEFAULT_NOTIFIER,
+) -> list[SourceIncident]:
+    """Resolve externally recovered incidents without waiting for cooldown."""
+
+    now = now or utc_now()
+    query = select(SourceIncident).where(
+        SourceIncident.status.not_in(TERMINAL_STATUSES)
+    ).order_by(SourceIncident.detected_at)
+    if only_source:
+        query = query.where(SourceIncident.source_id == only_source)
+    resolved: list[SourceIncident] = []
+    for incident in session.scalars(query.with_for_update(skip_locked=True)):
+        recovered, evidence = verify_recovery(session, incident, now=now)
+        if not recovered:
+            continue
+        state = dict(incident.resolution_evidence or {})
+        state["latest_verification"] = safe_value(evidence)
+        incident.resolution_evidence = state
+        incident.status = "RESOLVED"
+        incident.resolved_at = now
+        incident.next_attempt_at = None
+        incident.cooldown_until = None
+        incident.resolution = "Recovery verification passed"
+        record_action(session, incident, "SOURCE_RECHECK", result="SUCCESS", metadata=evidence, now=now)
+        record_action(session, incident, "RECOVERED", result="SUCCESS", metadata=evidence, now=now)
+        notifier.notify("auto_repair_recovered", {"incident": incident.incident_code, "source": incident.source_id})
+        resolved.append(incident)
+    return resolved
+
+
 def run_controller_once(*, now: datetime | None = None, only_source: str | None = None) -> dict[str, int]:
     now = now or utc_now()
     with SessionLocal() as session:
@@ -524,9 +559,11 @@ def run_controller_once(*, now: datetime | None = None, only_source: str | None 
             session.rollback()
             detected = detect_dataset_incidents(session, now=now, only_source=only_source)
             session.commit()
+        resolved = verify_active_incidents(session, now=now, only_source=only_source)
+        session.commit()
         processed = process_due_incidents(session, now=now, only_source=only_source)
         session.commit()
-        return {"detected": len(detected), "processed": len(processed)}
+        return {"detected": len(detected), "recovered": len(resolved), "processed": len(processed)}
 
 
 def controller_loop(*, poll_seconds: int = 60) -> None:
