@@ -176,34 +176,19 @@ class FakeSession:
 def test_headcount_service_returns_latest_value(
     monkeypatch,
 ):
-    headcount = SimpleNamespace(
-        employee_count=125,
-        year=2025,
-        source_document_id="DOC-125",
-        source_document_date=date(
-            2025,
-            12,
-            31,
-        ),
-    )
-
-    dataset = SimpleNamespace(
-        id=7,
-        code="fns_headcount",
-        priority=10,
-    )
-
-    session = FakeSession(
-        (
-            headcount,
-            dataset,
-        )
-    )
-
     monkeypatch.setattr(
         headcount_service,
-        "get_session",
-        lambda: session,
+        "get_headcount_check_for_company",
+        lambda company_id, now=None: {
+            "result": "found",
+            "employee_count": 125,
+            "year": 2025,
+            "dataset_id": 7,
+            "dataset_code": "fns_headcount",
+            "priority": 10,
+            "source_document_id": "DOC-125",
+            "source_document_date": date(2025, 12, 31),
+        },
     )
 
     result = (
@@ -231,20 +216,14 @@ def test_headcount_service_returns_latest_value(
         ),
     }
 
-    assert session.closed is True
-
 
 def test_headcount_service_returns_none_when_missing(
     monkeypatch,
 ):
-    session = FakeSession(
-        None
-    )
-
     monkeypatch.setattr(
         headcount_service,
-        "get_session",
-        lambda: session,
+        "get_headcount_check_for_company",
+        lambda company_id, now=None: {"result": "unavailable"},
     )
 
     result = (
@@ -255,7 +234,6 @@ def test_headcount_service_returns_none_when_missing(
     )
 
     assert result is None
-    assert session.closed is True
 
 
 # =========================================================

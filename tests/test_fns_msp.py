@@ -273,42 +273,24 @@ def test_msp_category_names():
 def test_msp_service_returns_profile(
     monkeypatch,
 ):
-    profile = SimpleNamespace(
-        data_date=date(
-            2026,
-            9,
-            10,
-        ),
-        inclusion_date=date(
-            2024,
-            8,
-            1,
-        ),
-        subject_type_code="1",
-        category_code="2",
-        is_new_code="2",
-        social_enterprise_code="1",
-        employee_count=21,
-        source_document_id="MSP-DOC-1",
-    )
-
-    dataset = SimpleNamespace(
-        id=8,
-        code="fns_msp",
-        priority=10,
-    )
-
-    session = FakeSession(
-        (
-            profile,
-            dataset,
-        )
-    )
-
     monkeypatch.setattr(
         msp_service,
-        "get_session",
-        lambda: session,
+        "get_msp_check_for_company",
+        lambda company_id, now=None: {
+            "result": "found",
+            "dataset_id": 8,
+            "dataset_code": "fns_msp",
+            "priority": 10,
+            "data_date": date(2026, 9, 10),
+            "inclusion_date": date(2024, 8, 1),
+            "subject_type_code": "1",
+            "category_code": "2",
+            "category_name": "Малое предприятие",
+            "is_new_code": "2",
+            "social_enterprise_code": "1",
+            "employee_count": 21,
+            "source_document_id": "MSP-DOC-1",
+        },
     )
 
     result = (
@@ -338,20 +320,14 @@ def test_msp_service_returns_profile(
         1,
     )
 
-    assert session.closed is True
-
 
 def test_msp_service_returns_none_when_missing(
     monkeypatch,
 ):
-    session = FakeSession(
-        None
-    )
-
     monkeypatch.setattr(
         msp_service,
-        "get_session",
-        lambda: session,
+        "get_msp_check_for_company",
+        lambda company_id, now=None: {"result": "unavailable"},
     )
 
     result = (
@@ -362,7 +338,6 @@ def test_msp_service_returns_none_when_missing(
     )
 
     assert result is None
-    assert session.closed is True
 
 
 def test_structured_domain_data_contains_msp(
@@ -377,16 +352,32 @@ def test_structured_domain_data_contains_msp(
 
     monkeypatch.setattr(
         company_aggregator,
-        "get_msp_profile_for_company",
-        lambda company_id: (
-            msp_profile
-        ),
+        "get_headcount_check_for_company",
+        lambda company_id: {"result": "not_found"},
     )
-
     monkeypatch.setattr(
         company_aggregator,
-        "get_tax_regime_profile_for_company",
-        lambda company_id: None,
+        "get_msp_check_for_company",
+        lambda company_id: {
+            "result": "found",
+            "dataset_id": 8,
+            "dataset_code": "fns_msp",
+            "priority": 10,
+            "data_date": date(2026, 9, 10),
+            "inclusion_date": None,
+            "subject_type_code": "1",
+            "category_code": "1",
+            "category_name": "Микропредприятие",
+            "is_new_code": None,
+            "social_enterprise_code": None,
+            "employee_count": None,
+            "source_document_id": None,
+        },
+    )
+    monkeypatch.setattr(
+        company_aggregator,
+        "get_tax_regime_check_for_company",
+        lambda company_id: {"result": "unavailable"},
     )
 
     monkeypatch.setattr(
@@ -450,12 +441,9 @@ def test_structured_domain_data_contains_msp(
         )
     )
 
-    assert (
-        result[
-            "msp_profile"
-        ]
-        == msp_profile
-    )
+    assert result["msp_profile"]["dataset_code"] == "fns_msp"
+    assert result["msp_profile"]["category_name"] == "Микропредприятие"
+    assert result["msp_check"]["result"] == "found"
 
 
 def test_aggregate_company_adds_msp_source(
@@ -513,6 +501,7 @@ def test_aggregate_company_adds_msp_source(
             "msp_profile": (
                 msp_profile
             ),
+            "msp_check": {"result": "found"},
             "tax_regime_profile": None,
             "revenue_expense_check": None,
             "tax_debt": None,

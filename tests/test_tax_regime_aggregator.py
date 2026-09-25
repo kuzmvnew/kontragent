@@ -44,18 +44,35 @@ def test_structured_domain_data_contains_tax_regime(
         ],
         "dataset_id": 21,
         "dataset_code": "fns_snr",
+        "source_document_id": None,
+        "source_document_date": None,
+    }
+
+    unavailable_check = {
+        "result": "unavailable",
+        "source": None,
     }
 
     monkeypatch.setattr(
         company_aggregator,
-        "get_msp_profile_for_company",
-        lambda company_id: None,
+        "get_headcount_check_for_company",
+        lambda company_id: unavailable_check,
     )
 
     monkeypatch.setattr(
         company_aggregator,
-        "get_tax_regime_profile_for_company",
-        lambda company_id: expected_profile,
+        "get_msp_check_for_company",
+        lambda company_id: unavailable_check,
+    )
+
+    monkeypatch.setattr(
+        company_aggregator,
+        "get_tax_regime_check_for_company",
+        lambda company_id: {
+            **expected_profile,
+            "result": "found",
+            "member_dataset_code": "fns_snr",
+        },
     )
 
     monkeypatch.setattr(

@@ -55,6 +55,22 @@
 
 </section>
 
+{% elif company.tax_regime_check %}
+
+<section class="card">
+
+    <h2>Налоговый режим</h2>
+
+    {% if company.tax_regime_check["result"] == "not_found" %}
+        <p>ИНН не найден в актуальном официальном наборе применимых специальных режимов.</p>
+    {% elif company.tax_regime_check["result"] == "not_applicable" %}
+        <p>Проверка налогового режима не применяется к этому типу сущности.</p>
+    {% else %}
+        <p>Проверка налогового режима временно недоступна: актуальность источника не подтверждена.</p>
+    {% endif %}
+
+</section>
+
 {% endif %}
 
 {% include "partials/disqualified.html" %}

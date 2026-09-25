@@ -97,6 +97,22 @@
 
 </section>
 
+{% elif company.msp_check %}
+
+<section class="card">
+
+    <h2>Реестр малого и среднего предпринимательства</h2>
+
+    {% if company.msp_check["result"] == "not_found" %}
+        <p>ИНН не найден в актуальном официальном реестре МСП.</p>
+    {% elif company.msp_check["result"] == "not_applicable" %}
+        <p>Проверка реестра МСП не применяется к этому типу сущности.</p>
+    {% else %}
+        <p>Проверка реестра МСП временно недоступна: актуальность источника не подтверждена.</p>
+    {% endif %}
+
+</section>
+
 {% endif %}
 
 {% include "partials/fns_sme_support.html" %}
