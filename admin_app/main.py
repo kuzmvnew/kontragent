@@ -127,7 +127,10 @@ async def _require_csrf(request: Request) -> dict:
     if content_type != "application/x-www-form-urlencoded":
         raise HTTPException(status_code=415, detail="form content type required")
     origin = request.headers.get("origin")
-    if origin and urlsplit(origin).netloc != request.headers.get("host"):
+    # Chromium may serialize a same-page HTML form origin as ``null`` under the
+    # console's strict no-referrer policy. The double-submit token and strict
+    # SameSite cookie remain authoritative; concrete foreign origins are denied.
+    if origin and origin != "null" and urlsplit(origin).netloc != request.headers.get("host"):
         raise HTTPException(status_code=403, detail="origin mismatch")
     form = dict(await request.form())
     cookie = request.cookies.get("admin_csrf", "")
