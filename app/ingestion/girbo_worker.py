@@ -610,6 +610,17 @@ def publish_girbo_result(
         dataset.next_expected_update_at = now + CHECK_INTERVAL
         dataset.last_error = None
         dataset.last_error_at = None
+        coverage = dict(dataset.coverage or {})
+        successful_checks = max(
+            1, int(coverage.get("successful_scheduled_checks") or 0)
+        ) + 1
+        coverage.update(
+            {
+                "successful_scheduled_checks": successful_checks,
+                "operational_accepted": successful_checks >= 2,
+            }
+        )
+        dataset.coverage = coverage
         return replace(result, change_summary=summary)
 
     previous_date = dataset.last_data_date
@@ -734,6 +745,9 @@ def publish_girbo_result(
         )
         or 0
     )
+    successful_checks = int(
+        (dataset.coverage or {}).get("successful_scheduled_checks") or 0
+    ) + 1
     dataset.coverage = {
         "source_records": source_records,
         "normalized_reports": int(validation["normalized_reports"]),
@@ -745,6 +759,8 @@ def publish_girbo_result(
         "api_projection": "girbo_accounting_reports",
         "card_projection": "company_card.accounting_reports",
         "change_summary": summary.as_dict(),
+        "successful_scheduled_checks": successful_checks,
+        "operational_accepted": successful_checks >= 2,
     }
     dataset.next_expected_update_at = now + CHECK_INTERVAL
     return replace(

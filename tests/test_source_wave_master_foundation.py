@@ -261,6 +261,8 @@ def test_postgresql_mintrans_same_release_replays_new_master_idempotently(wave_d
         again = mintrans.publish_mintrans_ted_result(session, claim, HandlerResult(checksum_metadata={"check_only": True}))
         assert checked.change_summary.replayed_facts == 1
         assert again.change_summary.replayed_facts == 0
+        assert dataset.coverage["successful_scheduled_checks"] == 3
+        assert dataset.coverage["operational_accepted"] is True
         assert session.scalar(sa.select(sa.func.count()).select_from(TransportForwardingRegistryListing).where(TransportForwardingRegistryListing.dataset_id == dataset.id)) == 2
         proxy = SimpleNamespace(
             scalar=session.scalar, scalars=session.scalars, close=lambda: None
