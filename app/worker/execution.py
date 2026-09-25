@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import multiprocessing
+from threading import Event, Thread
 import time
 from typing import Any
 from uuid import UUID
@@ -833,7 +834,13 @@ class WorkerExecutor:
 
         self._shutdown.set()
 
-    def _heartbeat(self, claim: ClaimedExecution, deadline_at: datetime) -> None:
+    def _heartbeat(
+        self,
+        claim: ClaimedExecution,
+        deadline_at: datetime,
+        *,
+        stage: str = "handler",
+    ) -> None:
         now = self.clock()
         if now >= deadline_at:
             raise WorkerTimeoutError("worker execution deadline exceeded")
@@ -842,10 +849,39 @@ class WorkerExecutor:
                 session,
                 claim,
                 lease_ttl=self.lease_ttl,
-                stage="handler",
+                stage=stage,
                 now=now,
             )
             session.commit()
+
+    def _start_publisher_heartbeat(
+        self,
+        claim: ClaimedExecution,
+        deadline_at: datetime,
+    ) -> tuple[Event, Thread, list[Exception]]:
+        stop = Event()
+        errors: list[Exception] = []
+        heartbeat_period = max(
+            0.001,
+            min(1.0, self.lease_ttl.total_seconds() / 3),
+        )
+
+        def maintain_lease() -> None:
+            while not stop.wait(heartbeat_period):
+                try:
+                    self._heartbeat(claim, deadline_at, stage="publication")
+                except Exception as error:
+                    errors.append(error)
+                    stop.set()
+                    return
+
+        thread = Thread(
+            target=maintain_lease,
+            name=f"worker-publisher-heartbeat-{claim.run_id}",
+            daemon=True,
+        )
+        thread.start()
+        return stop, thread, errors
 
     def _report_counters(
         self,
@@ -986,18 +1022,45 @@ class WorkerExecutor:
         try:
             result = self._run_isolated(claim, deadline_at=deadline_at)
             with self.session_factory() as session:
+                heartbeat_stop: Event | None = None
+                heartbeat_thread: Thread | None = None
+                heartbeat_errors: list[Exception] = []
                 try:
                     if claim.handler.publisher is not None:
+                        (
+                            heartbeat_stop,
+                            heartbeat_thread,
+                            heartbeat_errors,
+                        ) = self._start_publisher_heartbeat(claim, deadline_at)
                         result = claim.handler.publisher(session, claim, result)
                         if not isinstance(result, HandlerResult):
                             raise InvalidDataError(
                                 "publisher must return HandlerResult"
                             )
-                    complete_run_success(session, claim, result, now=self.clock())
+                        heartbeat_stop.set()
+                        heartbeat_thread.join()
+                        if heartbeat_errors:
+                            raise heartbeat_errors[0]
+                    completed_at = self.clock()
+                    if completed_at >= deadline_at:
+                        raise WorkerTimeoutError(
+                            "worker execution deadline exceeded"
+                        )
+                    complete_run_success(
+                        session,
+                        claim,
+                        result,
+                        now=completed_at,
+                    )
                     session.commit()
                 except Exception:
                     session.rollback()
                     raise
+                finally:
+                    if heartbeat_stop is not None:
+                        heartbeat_stop.set()
+                    if heartbeat_thread is not None:
+                        heartbeat_thread.join()
             return claim.run_id
         except Exception as raw_error:
             error = _normalize_error(raw_error)

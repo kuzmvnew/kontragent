@@ -130,6 +130,28 @@ def _publication_handler(context):
     )
 
 
+def _slow_publication_publisher(_session, _claim, result):
+    time.sleep(1.2)
+    return result
+
+
+def _slow_mutating_publisher(session, claim, result):
+    time.sleep(0.8)
+    session.add(
+        WorkerPublicationState(
+            source_id=claim.source_id,
+            active_pointer="staging://must-roll-back",
+            rollback_pointer=None,
+            generation=1,
+            last_fencing_token=claim.fencing_token,
+            published_by_run_id=claim.run_id,
+            validation_metadata={"uncommitted": True},
+        )
+    )
+    session.flush()
+    return result
+
+
 def _accepted_publication_handler(_context):
     return HandlerResult(
         staging_result=StagingResult(
@@ -184,7 +206,15 @@ def _identity(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
 
 
-def _register_fixture(factory, registry, source_id, handler, *, version="fixture-v1"):
+def _register_fixture(
+    factory,
+    registry,
+    source_id,
+    handler,
+    *,
+    version="fixture-v1",
+    publisher=None,
+):
     with factory() as session:
         register_handler(
             session,
@@ -192,6 +222,7 @@ def _register_fixture(factory, registry, source_id, handler, *, version="fixture
             source_id=source_id,
             version=version,
             handler=handler,
+            publisher=publisher,
             approved=True,
             fixture=True,
             metadata={"task": "DEV-008"},
@@ -790,6 +821,98 @@ def test_publication_pointer_transition_is_atomic_and_keeps_rollback(worker_db):
         assert state.rollback_pointer == f"staging://snapshot/{first_job_id}"
         assert state.generation == 2
         assert state.validation_metadata["validation"] == {"schema": "fixture-v1"}
+
+
+def test_long_publisher_renews_lease_until_final_fencing_assertion(
+    worker_db,
+    monkeypatch,
+):
+    registry = HandlerRegistry()
+    source_id = _identity("source")
+    _register_fixture(
+        worker_db,
+        registry,
+        source_id,
+        _publication_handler,
+        publisher=_slow_publication_publisher,
+    )
+    job_id = _create(
+        worker_db,
+        source_id,
+        timeout_seconds=5,
+        now=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    executor = WorkerExecutor(
+        session_factory=worker_db,
+        registry=registry,
+        worker_id="slow-publisher",
+        lease_ttl=timedelta(seconds=0.5),
+    )
+    heartbeat_stages = []
+    original_heartbeat = executor._heartbeat
+
+    def recording_heartbeat(claim, deadline_at, *, stage="handler"):
+        heartbeat_stages.append(stage)
+        return original_heartbeat(claim, deadline_at, stage=stage)
+
+    monkeypatch.setattr(executor, "_heartbeat", recording_heartbeat)
+
+    run_id = executor.run_once()
+
+    assert heartbeat_stages.count("publication") >= 2
+    with worker_db() as session:
+        assert session.get(WorkerJob, job_id).status == "succeeded"
+        assert session.get(WorkerRun, run_id).status == "succeeded"
+        state = session.get(WorkerPublicationState, source_id)
+        assert state.active_pointer == f"staging://snapshot/{job_id}"
+
+
+def test_publisher_heartbeat_loss_rolls_back_uncommitted_state(
+    worker_db,
+    monkeypatch,
+):
+    registry = HandlerRegistry()
+    source_id = _identity("source")
+    _register_fixture(
+        worker_db,
+        registry,
+        source_id,
+        _publication_handler,
+        publisher=_slow_mutating_publisher,
+    )
+    job_id = _create(
+        worker_db,
+        source_id,
+        timeout_seconds=5,
+        max_attempts=1,
+        now=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    executor = WorkerExecutor(
+        session_factory=worker_db,
+        registry=registry,
+        worker_id="fenced-publisher",
+        lease_ttl=timedelta(seconds=0.5),
+    )
+    original_heartbeat = executor._heartbeat
+
+    def lose_publication_lease(claim, deadline_at, *, stage="handler"):
+        if stage == "publication":
+            raise LeaseLostError("forced publication fence loss")
+        return original_heartbeat(claim, deadline_at, stage=stage)
+
+    monkeypatch.setattr(executor, "_heartbeat", lose_publication_lease)
+
+    with pytest.raises(LeaseLostError, match="forced publication fence loss"):
+        executor.run_once()
+
+    with worker_db() as session:
+        job = session.get(WorkerJob, job_id)
+        run = session.scalar(sa.select(WorkerRun).where(WorkerRun.job_id == job_id))
+        assert job.status == "failed"
+        assert run.status == "failed"
+        assert run.errors[0]["kind"] == "temporary_infrastructure"
+        assert session.get(WorkerPublicationState, source_id) is None
+        assert session.get(WorkerLease, source_id) is None
 
 
 def test_rejected_staging_result_does_not_move_publication_pointer(worker_db):
