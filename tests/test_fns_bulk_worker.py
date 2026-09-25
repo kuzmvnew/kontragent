@@ -80,6 +80,46 @@ def test_official_discovery_extracts_current_zip_xsd_and_separate_source_date():
     assert release.source_data_date.isoformat() not in release.artifact_url
 
 
+def test_official_discovery_falls_back_to_unambiguous_artifact_source_date():
+    spec = taxoffence._worker_spec()
+    html = f"""
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-10092026-structure-12052026.zip">ZIP</a>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052026.xsd">XSD</a>
+      <td property="dc:provenance">Обновление набора</td>
+      <td property="dc:valid" content="10.10.2026">10.10.2026</td>
+    """.encode()
+
+    release = bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
+
+    assert release.source_data_date == date(2026, 9, 10)
+    assert release.actual_until == date(2026, 10, 10)
+    assert release.provenance == "Обновление набора"
+
+
+def test_official_discovery_rejects_invalid_artifact_source_date():
+    spec = taxoffence._worker_spec()
+    html = f"""
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-31022026-structure-12052026.zip">ZIP</a>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052026.xsd">XSD</a>
+      <td property="dc:provenance">Обновление набора</td>
+    """.encode()
+
+    with pytest.raises(bulk.SchemaMismatchError, match="invalid source data date"):
+        bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
+
+
+def test_official_discovery_rejects_ambiguous_artifact_source_date():
+    spec = taxoffence._worker_spec()
+    html = f"""
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-10092026-11092026-structure-12052026.zip">ZIP</a>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052026.xsd">XSD</a>
+      <td property="dc:provenance">Обновление набора</td>
+    """.encode()
+
+    with pytest.raises(bulk.SchemaMismatchError, match="no source data date"):
+        bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
+
+
 def test_paytax_parser_preserves_items_and_computes_totals():
     document = taxpayment.ET.fromstring(
         """
