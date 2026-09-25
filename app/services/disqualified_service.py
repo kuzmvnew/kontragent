@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import func, select
 
@@ -8,6 +8,7 @@ from app.models.disqualified_person import (
 )
 from app.models.source import DataSet
 from app.services.check_result import build_check_result
+from app.services.data_readiness_service import clean_negative_blocker
 
 
 DATASET_CODE = "fns_disqualified"
@@ -61,15 +62,10 @@ def _serialize_record(
     return {
         "register_number": row.register_number,
         "full_name": row.full_name,
-        "birth_date": row.birth_date,
-        "birth_place": row.birth_place,
         "organization_name": row.organization_name,
         "organization_inn": row.organization_inn,
         "position": row.position,
         "offence_article": row.offence_article,
-        "protocol_authority": row.protocol_authority,
-        "judge_name": row.judge_name,
-        "judge_position": row.judge_position,
         "disqualification_term": row.disqualification_term,
         "start_date": row.start_date,
         "end_date": row.end_date,
@@ -78,12 +74,16 @@ def _serialize_record(
             row.end_date,
             data_date,
         ),
+        "matching_state": "organization_inn_exact",
+        "name_only_matching_used": False,
     }
 
 
 def get_disqualified_check_for_inn(
     inn: str,
     limit: int = 50,
+    *,
+    now: datetime | None = None,
 ):
     """
     Проверяет только точное совпадение по ИНН организации.
@@ -95,7 +95,25 @@ def get_disqualified_check_for_inn(
 
     clean_inn = str(inn or "").strip()
 
-    if len(clean_inn) not in {10, 12} or not clean_inn.isdigit():
+    if len(clean_inn) == 12 and clean_inn.isdigit():
+        return build_check_result(
+            checked=True,
+            applicable=False,
+            result="not_applicable",
+            data_date=None,
+            dataset_code=DATASET_CODE,
+            source=SOURCE_CODE,
+            reason="legal_entities_only",
+            has_records=False,
+            record_count=0,
+            active_record_count=0,
+            records=[],
+            matching_method="organization_inn_exact",
+            matching_state="not_applicable_entity_type",
+            name_only_matching_used=False,
+        )
+
+    if len(clean_inn) != 10 or not clean_inn.isdigit():
         return build_check_result(
             checked=False,
             applicable=True,
@@ -109,6 +127,8 @@ def get_disqualified_check_for_inn(
             active_record_count=0,
             records=[],
             matching_method="organization_inn_exact",
+            matching_state="invalid_organization_inn",
+            name_only_matching_used=False,
         )
 
     session = get_session()
@@ -148,6 +168,45 @@ def get_disqualified_check_for_inn(
                 active_record_count=0,
                 records=[],
                 matching_method="organization_inn_exact",
+                matching_state="dataset_unavailable",
+                name_only_matching_used=False,
+            )
+
+        if not dataset.enabled:
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=data_date,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason="dataset_disabled",
+                has_records=False,
+                record_count=0,
+                active_record_count=0,
+                records=[],
+                matching_method="organization_inn_exact",
+                matching_state="dataset_unavailable",
+                name_only_matching_used=False,
+            )
+
+        blocker = clean_negative_blocker(dataset, now=now)
+        if blocker is not None:
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=data_date,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason=blocker,
+                has_records=False,
+                record_count=0,
+                active_record_count=0,
+                records=[],
+                matching_method="organization_inn_exact",
+                matching_state="dataset_unavailable",
+                name_only_matching_used=False,
             )
 
         base_query = (
@@ -213,6 +272,12 @@ def get_disqualified_check_for_inn(
             "records": records,
             "records_limited": total_count > len(records),
             "matching_method": "organization_inn_exact",
+            "matching_state": (
+                "organization_inn_exact"
+                if total_count
+                else "organization_inn_exact_not_found"
+            ),
+            "name_only_matching_used": False,
             "coverage_note": (
                 "В части записей реестра ФНС ИНН организации "
                 "не заполнен. Отсутствие совпадения по ИНН не "

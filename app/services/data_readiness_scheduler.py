@@ -131,6 +131,19 @@ def _enqueue_sme_support() -> object:
         return creation
 
 
+def _enqueue_disqualified() -> object:
+    from app.ingestion.fns_disqualified import schedule_fns_disqualified_check
+
+    with SessionLocal() as session:
+        creation = schedule_fns_disqualified_check(session, raw_root=_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(
+                f"Disqualified release job is terminal: {creation.job.id}"
+            )
+        return creation
+
+
 # Production handlers are explicit and non-empty.  They only discover and
 # enqueue into Worker Foundation; execution remains lease/fencing controlled.
 HANDLERS: dict[str, UpdateHandler] = {
@@ -143,6 +156,7 @@ HANDLERS: dict[str, UpdateHandler] = {
     "fns_msp": _enqueue_msp,
     "fns_tax_regime": _enqueue_tax_regime,
     "fns_sme_support": _enqueue_sme_support,
+    "fns_disqualified": _enqueue_disqualified,
 }
 FNS_BULK_DATASET_CODES = frozenset(
     {
@@ -154,6 +168,7 @@ FNS_BULK_DATASET_CODES = frozenset(
         "fns_msp",
         "fns_tax_regime",
         "fns_sme_support",
+        "fns_disqualified",
     }
 )
 SCHEDULED_SOURCE_DATASET_CODES = frozenset(HANDLERS)
@@ -361,6 +376,7 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
         "fns_msp": 6,
         "fns_tax_regime": 7,
         "fns_sme_support": 8,
+        "fns_disqualified": 9,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

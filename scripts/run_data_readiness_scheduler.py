@@ -6,6 +6,7 @@ import json
 from app.database.postgres import SessionLocal
 from app.ingestion.cbr_warning_worker import register_cbr_warning_worker
 from app.ingestion.fns_headcount import register_fns_headcount_worker
+from app.ingestion.fns_disqualified import register_fns_disqualified_worker
 from app.ingestion.fns_msp import register_fns_msp_worker
 from app.ingestion.fns_sme_support import register_fns_sme_support_worker
 from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
@@ -55,6 +56,7 @@ def build_registry() -> HandlerRegistry:
         register_fns_msp_worker(session, registry)
         register_fns_tax_regime_worker(session, registry)
         register_fns_sme_support_worker(session, registry)
+        register_fns_disqualified_worker(session, registry)
         session.commit()
     return registry
 
@@ -87,6 +89,8 @@ def ensure_activation_datasets(dataset_codes: list[str]) -> None:
         ensure_default_dataset("fns_tax_regime")
     if "fns_sme_support" in dataset_codes:
         ensure_fns_sme_support_dataset()
+    if "fns_disqualified" in dataset_codes:
+        ensure_default_dataset("fns_disqualified")
 
 
 def main() -> None:

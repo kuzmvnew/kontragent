@@ -188,6 +188,7 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "fns_msp",
         "fns_tax_regime",
         "fns_sme_support",
+        "fns_disqualified",
     }
     assert set(scheduler.HANDLERS) == expected
     assert scheduler.FNS_BULK_DATASET_CODES == expected - {"cbr_warning_list"}
@@ -212,6 +213,7 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "fns_msp",
         "fns_tax_regime",
         "fns_sme_support",
+        "fns_disqualified",
     ]
     assert set(result) == expected
     assert set(result.values()) == {"success"}
