@@ -1,0 +1,29 @@
+[Unit]
+Description=NEXT Company source scheduler and worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mikhail
+Group=mikhail
+WorkingDirectory=/opt/nextcompany/current
+EnvironmentFile=/etc/nextcompany/operational.env
+ExecStart=/opt/nextcompany/current/.venv/bin/python -m scripts.run_data_readiness_scheduler --loop --poll-seconds 60 --max-jobs 2
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/nextcompany/raw
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

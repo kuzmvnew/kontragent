@@ -533,6 +533,15 @@ def complete_run_success(
     if result.counters is not None:
         for name, value in result.counters.as_dict().items():
             setattr(run, name, value)
+    from app.services.source_change_service import persist_source_change_summary
+
+    persist_source_change_summary(
+        session,
+        source_id=claim.source_id,
+        run_id=run.id,
+        result=result,
+        created_at=now,
+    )
     run.retryable = False
     job.status = "succeeded"
     job.next_attempt_at = None
@@ -544,6 +553,42 @@ def complete_run_success(
             WorkerLease.fencing_token == claim.fencing_token,
         )
     )
+
+
+def retry_job_now(
+    session: Session,
+    *,
+    job_id: UUID,
+    now: datetime | None = None,
+) -> WorkerJob:
+    """Make an already-approved automatic retry immediately claimable.
+
+    This deliberately cannot resurrect terminal failures, successful or
+    cancelled jobs, nor a source with an active lease.
+    """
+
+    now = now or utc_now()
+    job = session.scalar(
+        select(WorkerJob).where(WorkerJob.id == job_id).with_for_update()
+    )
+    if job is None:
+        raise LookupError(f"worker job not found: {job_id}")
+    if job.status != "retry_scheduled":
+        raise ValueError("job is not retry-scheduled")
+    latest_run = session.scalar(
+        select(WorkerRun)
+        .where(WorkerRun.job_id == job.id)
+        .order_by(WorkerRun.attempt_no.desc(), WorkerRun.started_at.desc())
+        .limit(1)
+    )
+    if latest_run is None or not latest_run.retryable:
+        raise ValueError("latest worker run is not retryable")
+    lease = session.get(WorkerLease, job.source_id)
+    if lease is not None and lease.expires_at > now:
+        raise LeaseConflictError(f"source lease is held: {job.source_id}")
+    job.next_attempt_at = now
+    job.updated_at = now
+    return job
 
 
 def complete_run_failure(

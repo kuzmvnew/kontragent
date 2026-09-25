@@ -1,0 +1,12 @@
+[Unit]
+Description=Backup NEXT Company operational PostgreSQL
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/mikhail/nextcompany-runtime/current
+EnvironmentFile=/home/mikhail/nextcompany-operational/runtime/worker.env
+Environment=OPERATIONS_BACKUP_DIR=/home/mikhail/nextcompany-operational/backups
+ExecStart=/home/mikhail/nextcompany-runtime/current/deploy/scripts/backup_operational.sh
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077

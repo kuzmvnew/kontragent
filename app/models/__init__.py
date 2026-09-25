@@ -1,6 +1,7 @@
 from app.models.cbr_finorg import (
     CbrFinorgCheck,
 )
+from app.models.admin import AdminActionAudit, SourceChangeSummary
 from app.models.cbr_warning_list import (
     CbrWarningListEntry,
 )
@@ -106,6 +107,7 @@ from app.models.worker import (
 
 
 __all__ = [
+    "AdminActionAudit",
     "ArbitrationCourtCheck",
     "CbrFinorgCheck",
     "CbrWarningListEntry",
@@ -157,6 +159,7 @@ __all__ = [
     "RoskomnadzorPdOperatorCheck",
     "RoskomnadzorPrivatePersonRecord",
     "SroPersonRegistryRecord",
+    "SourceChangeSummary",
     "TransportForwardingRegistryListing",
     "WorkerHandlerRegistration",
     "WorkerJob",

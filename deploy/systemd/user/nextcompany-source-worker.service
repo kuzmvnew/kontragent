@@ -1,0 +1,26 @@
+[Unit]
+Description=NEXT Company source scheduler and Worker Foundation executor
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mikhail/nextcompany-runtime/current
+Environment=PYTHONPATH=.
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/mikhail/nextcompany-operational/runtime/worker.env
+ExecStart=/home/mikhail/nextcompany-runtime/current/.venv/bin/python -m scripts.run_data_readiness_scheduler --loop --poll-seconds 60 --max-jobs 2
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=60s
+KillMode=mixed
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
