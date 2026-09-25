@@ -367,7 +367,9 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
             latest_run=run,
             now=now,
         )
-        matched_companies = _int(coverage.get("risk_summary_candidate_companies"))
+        matched_companies = _int(coverage.get("matched_companies"))
+        if matched_companies is None:
+            matched_companies = _int(coverage.get("risk_summary_candidate_companies"))
         if dataset.code == "fns_tax_debt" and matched_companies is None:
             matched_companies = _int(coverage.get("projected_facts"))
         applicable = master["total"]
@@ -377,8 +379,12 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
             "fns_tax_paid",
             "fns_tax_debt",
             "fns_headcount",
+            "fns_egrul",
+            "girbo_accounting",
         }:
             applicable = master["legal"]
+        if dataset.code == "fns_egrip":
+            applicable = master["ip"]
         if dataset.code == "fns_tax_debt" and _int(coverage.get("cohort_size")) is not None:
             applicable = int(coverage["cohort_size"])
         rows.append(

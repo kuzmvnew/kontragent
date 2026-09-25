@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class FailureKind(StrEnum):
+    ACCESS_REQUIRED = "access_required"
     TIMEOUT = "timeout"
     NETWORK = "network_failure"
     TEMPORARY_INFRASTRUCTURE = "temporary_infrastructure"
@@ -17,6 +18,12 @@ class FailureKind(StrEnum):
 class WorkerFoundationError(RuntimeError):
     kind = FailureKind.HANDLER_FAILURE
     retryable = False
+
+
+class AccessRequiredError(WorkerFoundationError):
+    """Official transport exists but owner credentials are not configured."""
+
+    kind = FailureKind.ACCESS_REQUIRED
 
 
 class WorkerTimeoutError(WorkerFoundationError):

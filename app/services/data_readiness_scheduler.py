@@ -18,6 +18,7 @@ from app.database.postgres import SessionLocal
 from app.models.source import DataSet
 from app.models.worker import WorkerJob, WorkerRun
 from app.services.data_readiness_service import due_dataset_codes, safe_error_message
+from app.worker.errors import AccessRequiredError
 
 
 logger = logging.getLogger("kontragent.data_readiness.scheduler")
@@ -152,6 +153,49 @@ def _enqueue_disqualified() -> object:
         return creation
 
 
+def _enqueue_fns_registry(source_id: str) -> object:
+    from app.ingestion.fns_registry_master import schedule_fns_registry_check
+
+    with SessionLocal() as session:
+        creation = schedule_fns_registry_check(
+            session, source_id=source_id, raw_root=_raw_root()
+        )
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"{source_id} registry job is terminal: {creation.job.id}")
+        return creation
+
+
+def _enqueue_egrul() -> object:
+    return _enqueue_fns_registry("fns_egrul")
+
+
+def _enqueue_egrip() -> object:
+    return _enqueue_fns_registry("fns_egrip")
+
+
+def _enqueue_mintrans_ted() -> object:
+    from app.ingestion.mintrans_ted_worker import schedule_mintrans_ted_check
+
+    with SessionLocal() as session:
+        creation = schedule_mintrans_ted_check(session, raw_root=_non_fns_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"Mintrans TED job is terminal: {creation.job.id}")
+        return creation
+
+
+def _enqueue_girbo() -> object:
+    from app.ingestion.girbo_worker import schedule_girbo_check
+
+    with SessionLocal() as session:
+        creation = schedule_girbo_check(session, raw_root=_non_fns_raw_root())
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"GIRBO job is terminal: {creation.job.id}")
+        return creation
+
+
 def _enqueue_erknm() -> object:
     from app.ingestion.erknm_worker import schedule_erknm_check
 
@@ -214,6 +258,8 @@ def _enqueue_roszdrav_medical_device_maintenance() -> object:
 # Production handlers are explicit and non-empty.  They only discover and
 # enqueue into Worker Foundation; execution remains lease/fencing controlled.
 HANDLERS: dict[str, UpdateHandler] = {
+    "fns_egrul": _enqueue_egrul,
+    "fns_egrip": _enqueue_egrip,
     "fns_tax_offence": _enqueue_tax_offence,
     "fns_revenue_expenses": _enqueue_revenue_expense,
     "cbr_warning_list": _enqueue_cbr_warning,
@@ -224,6 +270,8 @@ HANDLERS: dict[str, UpdateHandler] = {
     "fns_tax_regime": _enqueue_tax_regime,
     "fns_sme_support": _enqueue_sme_support,
     "fns_disqualified": _enqueue_disqualified,
+    "mintrans_ted_registry": _enqueue_mintrans_ted,
+    "girbo_accounting": _enqueue_girbo,
     "erknm_inspections": _enqueue_erknm,
     "cbr_finorg": _enqueue_cbr_finorg,
     "roszdrav_pharma_licenses": _enqueue_roszdrav_pharma,
@@ -243,6 +291,8 @@ FNS_BULK_DATASET_CODES = frozenset(
         "fns_tax_regime",
         "fns_sme_support",
         "fns_disqualified",
+        "fns_egrul",
+        "fns_egrip",
     }
 )
 SCHEDULED_SOURCE_DATASET_CODES = frozenset(HANDLERS)
@@ -367,9 +417,15 @@ def _record_schedule_failure(dataset_code: str, error: Exception) -> None:
         dataset.checked_at = now
         dataset.last_error = safe_error_message(error)
         dataset.last_error_at = now
-        dataset.operational_status = OperationalStatus.ERROR
-        dataset.retry_count = int(dataset.retry_count or 0) + 1
-        dataset.next_retry_at = now + retry_delay(dataset.retry_count)
+        if isinstance(error, AccessRequiredError):
+            dataset.operational_status = OperationalStatus.ACCESS_PENDING
+            dataset.auto_update_status = AutoUpdateStatus.ACCESS_PENDING
+            dataset.next_retry_at = None
+            dataset.next_expected_update_at = None
+        else:
+            dataset.operational_status = OperationalStatus.ERROR
+            dataset.retry_count = int(dataset.retry_count or 0) + 1
+            dataset.next_retry_at = now + retry_delay(dataset.retry_count)
         session.commit()
 
 
@@ -432,13 +488,19 @@ def sync_worker_failure_signals() -> int:
             message = errors[-1].get("message") if errors else "worker execution failed"
             dataset.last_error = safe_error_message(message)
             dataset.last_error_at = run.finished_at
-            dataset.operational_status = OperationalStatus.ERROR
-            dataset.retry_count = int(dataset.retry_count or 0) + 1
-            dataset.next_retry_at = (
-                job.next_attempt_at
-                if job.status == "retry_scheduled"
-                else run.finished_at + retry_delay(dataset.retry_count)
-            )
+            if errors and errors[-1].get("kind") == "access_required":
+                dataset.operational_status = OperationalStatus.ACCESS_PENDING
+                dataset.auto_update_status = AutoUpdateStatus.ACCESS_PENDING
+                dataset.next_retry_at = None
+                dataset.next_expected_update_at = None
+            else:
+                dataset.operational_status = OperationalStatus.ERROR
+                dataset.retry_count = int(dataset.retry_count or 0) + 1
+                dataset.next_retry_at = (
+                    job.next_attempt_at
+                    if job.status == "retry_scheduled"
+                    else run.finished_at + retry_delay(dataset.retry_count)
+                )
             changed += 1
         session.commit()
     return changed
@@ -448,21 +510,25 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
     results: dict[str, str] = {}
     codes = list(due_codes if due_codes is not None else due_dataset_codes())
     priority = {
-        "fns_tax_offence": 0,
-        "fns_revenue_expenses": 1,
-        "fns_tax_debt": 2,
-        "fns_tax_paid": 3,
-        "cbr_warning_list": 4,
-        "fns_headcount": 5,
-        "fns_msp": 6,
-        "fns_tax_regime": 7,
-        "fns_sme_support": 8,
-        "fns_disqualified": 9,
-        "erknm_inspections": 10,
-        "cbr_finorg": 11,
-        "roszdrav_pharma_licenses": 12,
-        "roszdrav_narcotics_licenses": 13,
-        "roszdrav_medical_device_maintenance_licenses": 14,
+        "fns_egrul": 0,
+        "fns_egrip": 1,
+        "fns_tax_offence": 2,
+        "fns_revenue_expenses": 3,
+        "fns_tax_debt": 4,
+        "fns_tax_paid": 5,
+        "cbr_warning_list": 6,
+        "fns_headcount": 7,
+        "fns_msp": 8,
+        "fns_tax_regime": 9,
+        "fns_sme_support": 10,
+        "fns_disqualified": 11,
+        "erknm_inspections": 12,
+        "cbr_finorg": 13,
+        "roszdrav_pharma_licenses": 14,
+        "roszdrav_narcotics_licenses": 15,
+        "roszdrav_medical_device_maintenance_licenses": 16,
+        "mintrans_ted_registry": 17,
+        "girbo_accounting": 18,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

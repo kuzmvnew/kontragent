@@ -44,6 +44,10 @@ from app.services.tax_payment_service import (
     get_latest_tax_payment_for_company,
     get_tax_payment_history,
 )
+from app.services.source_factory_projection_service import (
+    get_girbo_accounting_check_for_company,
+    get_mintrans_ted_check_for_company,
+)
 
 
 # =========================================================
@@ -770,6 +774,12 @@ def load_structured_domain_data(
     legal_events = get_legal_events_for_company(
         company_id=company_id,
     )
+    mintrans_ted_check = get_mintrans_ted_check_for_company(
+        company_id=company_id
+    )
+    girbo_accounting_check = get_girbo_accounting_check_for_company(
+        company_id=company_id
+    )
 
     return {
         "headcount_check": headcount_check,
@@ -827,6 +837,10 @@ def load_structured_domain_data(
         ),
 
         "legal_events": legal_events,
+
+        "mintrans_ted_check": mintrans_ted_check,
+
+        "girbo_accounting_check": girbo_accounting_check,
     }
 
 
@@ -1498,6 +1512,12 @@ def aggregate_company(
                 ),
             )
 
+        if check_used_source(structured.get("mintrans_ted_check")):
+            append_source_once(result=result, source_code="mintrans_ted_registry")
+
+        if check_used_source(structured.get("girbo_accounting_check")):
+            append_source_once(result=result, source_code="girbo_accounting")
+
     else:
 
         result["headcount_check"] = None
@@ -1553,6 +1573,10 @@ def aggregate_company(
         result[
             "tax_payment_history"
         ] = []
+
+        result["mintrans_ted_check"] = None
+
+        result["girbo_accounting_check"] = None
 
         result["legal_events"] = []
 

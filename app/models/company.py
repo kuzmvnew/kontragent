@@ -321,6 +321,16 @@ class CompanyManager(Base):
         nullable=True,
     )
 
+    source_dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("data_sets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    source_data_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    source_record_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
