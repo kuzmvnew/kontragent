@@ -5,10 +5,9 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
 
 SCHEMA_VERSION = "public-projection-v1"
 REQUIRED_SOURCE_CODES = ("REVEXP", "PAYTAX", "DEBTAM", "TAXOFFENCE")
@@ -192,7 +191,7 @@ class PublicSourceBlock(PublicModel):
         return value
 
     @model_validator(mode="after")
-    def enforce_limiting_semantics(self) -> "PublicSourceBlock":
+    def enforce_limiting_semantics(self) -> PublicSourceBlock:
         if self.freshness == Freshness.STALE and self.state != PublicState.STALE_DATA:
             raise ValueError("stale evidence must use STALE_DATA")
         if self.state in {
@@ -217,7 +216,7 @@ class PublicProjection(PublicModel):
     sources: tuple[PublicSourceBlock, ...] = Field(min_length=4, max_length=4)
 
     @model_validator(mode="after")
-    def validate_projection(self) -> "PublicProjection":
+    def validate_projection(self) -> PublicProjection:
         codes = tuple(source.code for source in self.sources)
         if set(codes) != set(REQUIRED_SOURCE_CODES) or len(codes) != len(set(codes)):
             raise ValueError("projection must contain each required source exactly once")
@@ -228,6 +227,9 @@ class PublicProjection(PublicModel):
 class ManifestEntity(PublicModel):
     inn: str
     entity_type: str = Field(pattern=r"^legal$")
+    master_dataset: Literal["fns_egrul"]
+    source: Literal["fns"]
+    usable_source_coverage: tuple[str, ...] = ()
 
     @field_validator("inn")
     @classmethod
@@ -238,17 +240,37 @@ class ManifestEntity(PublicModel):
 
 
 class CanonicalManifest(PublicModel):
-    manifest_version: int = Field(ge=1, le=1)
+    schema_version: Literal["canonical-public-cohort-v1"]
+    manifest_version: Literal[2]
     release_name: str = Field(min_length=1, max_length=120)
+    created_at: datetime
+    source_main_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    source_database: Literal["nextcompany_operational"]
+    production_eligibility: Literal["VERIFIED_OPERATIONAL"]
+    selection_policy: dict[str, Any]
+    supersedes_release_id: str | None = Field(default=None, max_length=120)
     entities: tuple[ManifestEntity, ...] = Field(min_length=40, max_length=40)
 
+    @field_validator("created_at")
+    @classmethod
+    def created_at_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("canonical manifest created_at must include a timezone")
+        return value
+
     @model_validator(mode="after")
-    def exactly_40_unique_legal_entities(self) -> "CanonicalManifest":
+    def exactly_40_unique_legal_entities(self) -> CanonicalManifest:
         inns = tuple(entity.inn for entity in self.entities)
         if len(inns) != 40:
             raise ValueError("first public release requires exactly 40 entities")
         if len(set(inns)) != 40:
             raise ValueError("manifest contains duplicate INNs")
+        if inns != tuple(sorted(inns)):
+            raise ValueError("manifest entities must be sorted by INN")
+        if self.selection_policy.get("risk_outcome_used") is not False:
+            raise ValueError("canonical cohort selection must not use risk outcome")
+        if not self.selection_policy.get("version"):
+            raise ValueError("canonical cohort selection policy version is required")
         return self
 
 
@@ -256,6 +278,9 @@ class ReleaseManifest(PublicModel):
     schema_version: str = Field(pattern=r"^public-projection-v1$")
     release_id: str = Field(min_length=8, max_length=120, pattern=r"^[a-zA-Z0-9._-]+$")
     source_main_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    cohort_manifest_path: str = Field(pattern=r"^docs/releases/[a-zA-Z0-9._-]+\.json$")
+    cohort_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    cohort_source_main_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     previous_release_id: str | None = Field(default=None, max_length=120)
     created_at: datetime
     result_date: date

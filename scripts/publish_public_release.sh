@@ -3,7 +3,7 @@ set -euo pipefail
 
 ssh_target="${PUBLIC_SSH_TARGET:?Set PUBLIC_SSH_TARGET to the authorized public VPS SSH target}"
 output_root="${PUBLIC_RELEASE_OUTPUT_ROOT:-$PWD/public_releases}"
-manifest="${PUBLIC_RELEASE_MANIFEST:-config/public_release_40.json}"
+manifest="${PUBLIC_RELEASE_MANIFEST:-docs/releases/public-v1-cohort-40.json}"
 source_sha="$(git rev-parse HEAD)"
 mkdir -p "$output_root"
 
