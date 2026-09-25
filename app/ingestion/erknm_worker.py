@@ -498,7 +498,7 @@ def _download_release(
         zip_content, zip_headers, zip_status = fetch(release.source_url)
         zip_checksum = _hash_bytes(zip_content)
         zip_size = len(zip_content)
-    artifact_dir = raw_root / SOURCE_ID / f"{release.identity}-{zip_checksum}"
+    artifact_dir = raw_root / SOURCE_ID / zip_checksum
     artifact_dir.mkdir(parents=True, exist_ok=True)
     zip_path = artifact_dir / Path(urlparse(release.source_url).path).name
     xsd_path = artifact_dir / Path(urlparse(release.xsd_url).path).name

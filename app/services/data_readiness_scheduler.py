@@ -152,6 +152,20 @@ def _enqueue_disqualified() -> object:
         return creation
 
 
+def _enqueue_erknm() -> object:
+    from app.ingestion.erknm_worker import schedule_erknm_check
+
+    with SessionLocal() as session:
+        creation = schedule_erknm_check(
+            session,
+            raw_root=_non_fns_raw_root(),
+        )
+        session.commit()
+        if creation.job.status in {"failed", "cancelled"}:
+            raise RuntimeError(f"ERKNM release job is terminal: {creation.job.id}")
+        return creation
+
+
 def _enqueue_roszdrav_license(category: str) -> object:
     from app.ingestion.roszdrav_license_worker import (
         SPECS,
@@ -198,6 +212,7 @@ HANDLERS: dict[str, UpdateHandler] = {
     "fns_tax_regime": _enqueue_tax_regime,
     "fns_sme_support": _enqueue_sme_support,
     "fns_disqualified": _enqueue_disqualified,
+    "erknm_inspections": _enqueue_erknm,
     "roszdrav_pharma_licenses": _enqueue_roszdrav_pharma,
     "roszdrav_narcotics_licenses": _enqueue_roszdrav_narcotics,
     "roszdrav_medical_device_maintenance_licenses": (
@@ -430,9 +445,10 @@ def run_due_updates(*, due_codes: Iterable[str] | None = None) -> dict[str, str]
         "fns_tax_regime": 7,
         "fns_sme_support": 8,
         "fns_disqualified": 9,
-        "roszdrav_pharma_licenses": 10,
-        "roszdrav_narcotics_licenses": 11,
-        "roszdrav_medical_device_maintenance_licenses": 12,
+        "erknm_inspections": 10,
+        "roszdrav_pharma_licenses": 11,
+        "roszdrav_narcotics_licenses": 12,
+        "roszdrav_medical_device_maintenance_licenses": 13,
     }
     codes.sort(key=lambda code: (priority.get(code, 100), code))
     for dataset_code in codes:

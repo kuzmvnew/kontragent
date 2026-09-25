@@ -189,6 +189,7 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "fns_tax_regime",
         "fns_sme_support",
         "fns_disqualified",
+        "erknm_inspections",
         "roszdrav_pharma_licenses",
         "roszdrav_narcotics_licenses",
         "roszdrav_medical_device_maintenance_licenses",
@@ -196,6 +197,7 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
     assert set(scheduler.HANDLERS) == expected
     assert scheduler.FNS_BULK_DATASET_CODES == expected - {
         "cbr_warning_list",
+        "erknm_inspections",
         *scheduler.ROSZDRAV_LICENSE_DATASET_CODES,
     }
     assert scheduler.SCHEDULED_SOURCE_DATASET_CODES == expected
@@ -220,6 +222,7 @@ def test_scheduler_preserves_all_operational_sources_and_priority(monkeypatch):
         "fns_tax_regime",
         "fns_sme_support",
         "fns_disqualified",
+        "erknm_inspections",
         "roszdrav_pharma_licenses",
         "roszdrav_narcotics_licenses",
         "roszdrav_medical_device_maintenance_licenses",
