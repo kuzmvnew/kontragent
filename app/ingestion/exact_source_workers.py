@@ -536,6 +536,18 @@ def schedule_exact_source_sweep(
     approval = session.get(WorkerHandlerRegistration, (source_id, HANDLER_VERSION))
     if approval is None or not approval.approved or not approval.enabled or approval.live_mode:
         raise HandlerNotRegisteredError(f"durable handler approval is missing: {source_id}@{HANDLER_VERSION}")
+    active_job = session.scalar(
+        select(WorkerJob)
+        .where(
+            WorkerJob.source_id == source_id,
+            WorkerJob.status.in_(("queued", "running", "retry_scheduled")),
+        )
+        .order_by(WorkerJob.created_at, WorkerJob.id)
+        .with_for_update(skip_locked=True)
+        .limit(1)
+    )
+    if active_job is not None:
+        return (JobCreation(job=active_job, created=False),)
     companies = tuple(
         session.scalars(
             select(Company)
@@ -571,7 +583,11 @@ def schedule_exact_source_sweep(
         coverage = dict(dataset.coverage or {})
         coverage["scheduled_sweep"] = {"sweep_id": sweep_id, "cohort_size": len(companies), "request_date": request_date.isoformat()}
         dataset.coverage = coverage
-        dataset.next_expected_update_at = now
+        # The durable jobs and their own retry policy own this sweep until it
+        # reaches terminal state.  Do not keep the scheduler immediately due:
+        # Master growth during a running sweep must not fan out another full
+        # cohort on every poll.
+        dataset.next_expected_update_at = now + CHECK_INTERVAL
     return tuple(creations)
 
 
