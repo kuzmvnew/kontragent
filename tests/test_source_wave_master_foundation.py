@@ -105,6 +105,29 @@ def test_mintrans_current_xlsx_headers_stream_and_drop_unneeded_personal_data(tm
     assert "name" not in row and "address" not in row and "Фамилия" not in output.read_text()
 
 
+def test_mintrans_official_discovery_uses_document_results_and_russian_date():
+    html = """<div class="document-list-item">
+      <span class="date-span"> 7 Июля 2026</span>
+      <div class="document-download">
+        <a class="download-item xlsx" download href="/file/564924">
+          <p>Реестр уведомлений о транспортно-экспедиционной деятельности</p>
+        </a>
+      </div>
+    </div>""".encode()
+    provider = mintrans.MintransOfficialProvider()
+    requested = []
+    provider._fetch = lambda url: (requested.append(url) or html, {  # type: ignore[method-assign]
+        "content-type": "text/html; charset=UTF-8"
+    })
+
+    release = provider.discover(max_pages=1)
+
+    assert release.artifact_id == "564924"
+    assert release.source_data_date == date(2026, 7, 7)
+    assert "search_type=2" in requested[0]
+    assert "check_name=1" in requested[0]
+
+
 def test_girbo_parser_requires_identity_and_preserves_statement_values():
     xml = """<?xml version='1.0' encoding='utf-8'?>
     <Файл ВерсФорм='5.11'><Документ ОКЕИ='384'><СвНП ИННЮЛ='7700009911'/>
