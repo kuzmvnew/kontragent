@@ -1,0 +1,25 @@
+[Unit]
+Description=NEXT Company source incident autopilot
+After=network-online.target nextcompany-source-worker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mikhail/nextcompany-runtime/current
+EnvironmentFile=/home/mikhail/nextcompany-operational/runtime/worker.env
+Environment=PYTHONPATH=.
+Environment=PYTHONUNBUFFERED=1
+Environment=INCIDENT_ROOT=/home/mikhail/nextcompany-operational/incidents
+Environment=INCIDENT_REPOSITORY=/home/mikhail/nextcompany-runtime/current
+ExecStart=/home/mikhail/nextcompany-runtime/current/.venv/bin/python -m scripts.run_incident_controller --loop --poll-seconds 60
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
