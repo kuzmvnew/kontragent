@@ -1,0 +1,564 @@
+{
+  "created_at": "2026-09-25T06:09:56.790653Z",
+  "entities": [
+    {
+      "entity_type": "legal",
+      "inn": "0100000614",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0100000639",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0100004175",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0100004680",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0100006207",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0101007676",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0102004910",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0104010268",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0104013156",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0104014512",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0104015153",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "DEBTAM",
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0105015999",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0105035201",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0105043900",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0105066778",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0105079569",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0106001445",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0107002699",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0107023258",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0107034852",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0201015712",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0201015945",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0208006509",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0219008530",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0220025402",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0223005482",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0224010750",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0224956956",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0229950436",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0231008208",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0234006350",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0234009672",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0236005190",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0239004406",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0242009940",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0242010470",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0242011192",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0242013601",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0245003190",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    },
+    {
+      "entity_type": "legal",
+      "inn": "0245025588",
+      "master_dataset": "fns_egrul",
+      "source": "fns",
+      "usable_source_coverage": [
+        "HEADCOUNT",
+        "MSP",
+        "PAYTAX",
+        "REVEXP",
+        "TAXOFFENCE"
+      ]
+    }
+  ],
+  "manifest_version": 2,
+  "production_eligibility": "VERIFIED_OPERATIONAL",
+  "release_name": "nextcompany-canonical-operational-cohort-40",
+  "schema_version": "canonical-public-cohort-v1",
+  "selection_policy": {
+    "candidate_filter": [
+      "current operational Master",
+      "legal entity only",
+      "official fns_egrul master provenance",
+      "valid INN and OGRN",
+      "production build_projection passes"
+    ],
+    "coverage_sources": [
+      "DEBTAM",
+      "HEADCOUNT",
+      "MSP",
+      "PAYTAX",
+      "REVEXP",
+      "TAXOFFENCE"
+    ],
+    "ranking": [
+      "usable persisted source coverage DESC",
+      "INN ASC"
+    ],
+    "risk_outcome_used": false,
+    "version": "public-cohort-selection-v1"
+  },
+  "source_database": "nextcompany_operational",
+  "source_main_sha": "6dc86fdd2911d3e681a085fdd10e5665b0bcf855",
+  "supersedes_release_id": "public-v1-20260925T030601Z-ec8a39b4"
+}

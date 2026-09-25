@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,7 @@ from psycopg.rows import dict_row
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from public_app.contracts import (  # noqa: E402
+from public_app.contracts import (
     SCHEMA_VERSION,
     CanonicalManifest,
     CompanyInfo,
@@ -36,8 +37,7 @@ from public_app.contracts import (  # noqa: E402
     ReleaseManifest,
     strongest_state,
 )
-from scripts.public_release_common import canonical_json, write_checksums  # noqa: E402
-
+from scripts.public_release_common import canonical_json, write_checksums
 
 SOURCE_NAMES = {
     "REVEXP": "Доходы и расходы по данным ФНС",
@@ -56,6 +56,7 @@ SOURCE_CHECK_CODES = {
     "DEBTAM": "tax_debt",
     "TAXOFFENCE": "tax_offence",
 }
+CANONICAL_COHORT_PATH = "docs/releases/public-v1-cohort-40.json"
 
 
 def _json_default(value: Any):
@@ -79,9 +80,9 @@ def _date(value) -> date | None:
 
 def _aware(value) -> datetime:
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    parsed = datetime.fromisoformat(str(value))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _money(value) -> str:
@@ -420,9 +421,16 @@ def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicPr
     )
 
 
+def release_id_for(now: datetime, source_sha: str, cohort_sha256: str) -> str:
+    return (
+        f"public-v1-{now.strftime('%Y%m%dT%H%M%SZ')}-"
+        f"{source_sha[:8]}-{cohort_sha256[:8]}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, default=ROOT / "config/public_release_40.json")
+    parser.add_argument("--manifest", type=Path, default=ROOT / CANONICAL_COHORT_PATH)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
     parser.add_argument("--source-main-sha")
@@ -431,16 +439,24 @@ def main() -> int:
     args = parser.parse_args()
     if not args.database_url:
         parser.error("DATABASE_URL or --database-url is required")
-    manifest = CanonicalManifest.model_validate_json(args.manifest.read_bytes())
+    manifest_bytes = args.manifest.read_bytes()
+    manifest = CanonicalManifest.model_validate_json(manifest_bytes)
+    cohort_manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    checksum_sidecar = args.manifest.with_suffix(args.manifest.suffix + ".sha256")
+    if checksum_sidecar.is_file():
+        recorded = checksum_sidecar.read_text(encoding="utf-8").split()[0]
+        if recorded != cohort_manifest_sha256:
+            raise ValueError("canonical cohort manifest checksum mismatch")
     source_sha = args.source_main_sha or subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
     ).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise ValueError("source main SHA must be a full Git SHA")
-    now = datetime.now(timezone.utc)
-    release_id = args.release_id or f"public-v1-{now.strftime('%Y%m%dT%H%M%SZ')}-{source_sha[:8]}"
+    now = datetime.now(UTC)
+    release_id = args.release_id or release_id_for(now, source_sha, cohort_manifest_sha256)
+    if release_id in {args.previous_release_id, manifest.supersedes_release_id}:
+        raise ValueError("new cohort requires a new release ID")
     bundle_dir = args.output_root / release_id
-    bundle_dir.mkdir(parents=True, exist_ok=False)
     base_publication = PublicationInfo(
         schema_version=SCHEMA_VERSION, release_id=release_id, published_at=now,
         result_date=now.date(), content_updated_at=now, index_eligible=False,
@@ -452,12 +468,16 @@ def main() -> int:
             projections = [build_projection(cursor, entity.inn, base_publication) for entity in manifest.entities]
     if len(projections) != 40:
         raise ValueError("export did not produce exactly 40 projections")
+    bundle_dir.mkdir(parents=True, exist_ok=False)
     content_updated_at = max(item.publication.content_updated_at for item in projections)
     with gzip.open(bundle_dir / "companies.jsonl.gz", "wt", encoding="utf-8", newline="\n") as stream:
         for projection in projections:
             stream.write(canonical_json(projection.model_dump(mode="json")).decode("utf-8") + "\n")
     release_manifest = ReleaseManifest(
         schema_version=SCHEMA_VERSION, release_id=release_id, source_main_sha=source_sha,
+        cohort_manifest_path=CANONICAL_COHORT_PATH,
+        cohort_manifest_sha256=cohort_manifest_sha256,
+        cohort_source_main_sha=manifest.source_main_sha,
         previous_release_id=args.previous_release_id, created_at=now,
         result_date=max(item.publication.result_date for item in projections),
         content_updated_at=content_updated_at, record_count=40, companies_file="companies.jsonl.gz",

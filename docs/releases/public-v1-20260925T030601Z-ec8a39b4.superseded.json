@@ -1,0 +1,19 @@
+{
+  "schema_version": "public-release-forensic-status-v1",
+  "release_id": "public-v1-20260925T030601Z-ec8a39b4",
+  "status": "SUPERSEDED_NOT_PRODUCTION_ELIGIBLE",
+  "classification": "SYNTHETIC_OR_DISPOSABLE_PUBLIC_TEST_COHORT",
+  "cohort_manifest_path": "docs/releases/superseded/public-v1-20260925T030601Z-ec8a39b4-cohort.json",
+  "cohort_manifest_sha256": "9b1f471be7789d6cc8a6387b600ba4cc3ce9623e6706b3293d6730afe5f9c0f8",
+  "evidence": {
+    "origin_commit": "f82f5cf6a3b62f69c2129f42a479c4df54357154",
+    "origin_merge_commit": "ec8a39b471303816a59cdfac0d028fc55fb964ad",
+    "golden_40_artifact_commit": "66ec59d540feeff2733da1c4bbcdfd4e388b3be4",
+    "golden_40_set_intersection": "40/40",
+    "operational_backups_checked": 8,
+    "operational_backup_presence": "0/40 in every checked backup",
+    "current_operational_presence": "0/40",
+    "reason": "The manifest reused the historical Product Recovery Golden-40 acceptance cohort. No checked operational Master backup contains any member, so the cohort is not production-operational provenance."
+  },
+  "replacement_manifest_path": "docs/releases/public-v1-cohort-40.json"
+}

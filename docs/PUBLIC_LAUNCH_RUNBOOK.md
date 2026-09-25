@@ -91,7 +91,12 @@ export PUBLIC_SSH_TARGET='<ssh-alias-or-user@public-ip>'
 scripts/publish_public_release.sh
 ```
 
-The command reads `nextcompany_operational`, exports only the 40 INNs in `config/public_release_40.json`, uploads the versioned bundle over SSH/SFTP, invokes the public importer, and checks three cards. The public host never contacts the operational database.
+The command reads `nextcompany_operational`, verifies the immutable checksum for
+`docs/releases/public-v1-cohort-40.json`, exports only those 40 INNs, uploads the
+versioned bundle over SSH/SFTP, invokes the public importer, and checks three
+cards. The public host never contacts the operational database. A cohort change
+requires a new canonical manifest and a new release ID; superseded cohort
+evidence remains under `docs/releases/`.
 
 ## 7. Pre-cutover acceptance
 

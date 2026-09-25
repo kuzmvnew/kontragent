@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import gzip
-import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import psycopg
@@ -14,7 +13,6 @@ from scripts.import_public_release import import_release
 from scripts.public_release_common import canonical_json, write_checksums
 from scripts.rollback_public_release import rollback_release
 from tests.public_test_support import forty_projections
-
 
 TEST_URL = os.getenv("PUBLIC_TEST_DATABASE_URL")
 WEB_TEST_URL = os.getenv("PUBLIC_TEST_WEB_DATABASE_URL")
@@ -28,10 +26,13 @@ def bundle(tmp_path: Path, release_id: str, previous: str | None = None) -> Path
     with gzip.open(path / "companies.jsonl.gz", "wt", encoding="utf-8", newline="\n") as stream:
         for item in projections:
             stream.write(canonical_json(item.model_dump(mode="json")).decode() + "\n")
-    now = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
     manifest = ReleaseManifest(
         schema_version="public-projection-v1", release_id=release_id,
         source_main_sha="9b00e84ac5c81ae405e191e614a29ac35182c6c3",
+        cohort_manifest_path="docs/releases/public-v1-cohort-40.json",
+        cohort_manifest_sha256="1" * 64,
+        cohort_source_main_sha="6dc86fdd2911d3e681a085fdd10e5665b0bcf855",
         previous_release_id=previous, created_at=now, result_date=now.date(),
         content_updated_at=now, record_count=40, companies_file="companies.jsonl.gz",
     )
