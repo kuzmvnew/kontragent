@@ -56,6 +56,12 @@ Copy `deploy/env/public.env.example` to `/etc/nextcompany/public.env`; it contai
 
 Copy `deploy/env/importer.env.example` to `/etc/nextcompany/importer.env`; it contains only the write DSN. Set owner `root:nextcompany-importer` and mode `0640`. The web user is not a member of the importer user's private group and cannot read this credential. No secret belongs in Git.
 
+Both DSNs must use the explicit SQLAlchemy psycopg 3 dialect prefix
+`postgresql+psycopg://`. The deploy script validates both files before changing
+the active release. Backup and restore scripts convert that prefix internally
+when invoking the libpq command-line tools; no second credential or DSN is
+required.
+
 Copy the systemd files to `/etc/systemd/system/`, and the Nginx file to `/etc/nginx/sites-available/nextcompany.pro`. Enable the site and services:
 
 ```bash
@@ -79,7 +85,16 @@ Upload a clean Git checkout at the approved SHA to a staging directory, then run
 sudo deploy/scripts/deploy_public.sh /path/to/staged/checkout
 ```
 
-The script takes a pre-deploy backup when an existing release is present, syncs dependencies, runs only `public_alembic.ini`, changes the `/opt/nextcompany/current` symlink atomically, restarts the application, checks loopback health, validates Nginx, and only then reloads Nginx.
+The script validates that an existing `/opt/nextcompany/current` is an absolute,
+direct symlink to a concrete directory under `/opt/nextcompany/releases/`. It
+takes a pre-deploy backup when an existing release is present, syncs
+dependencies, runs only `public_alembic.ini`, changes the symlink atomically,
+restarts the application, checks loopback health, validates Nginx, and only then
+reloads Nginx. A failed health check atomically restores the validated exact
+prior release. If that prior directory has become invalid or disappeared, the
+failed release is left inactive and deployment exits with an explicit error;
+the script never creates `current -> current` or a link outside the releases
+directory.
 
 ## 6. Outbound-only 40-card publication
 

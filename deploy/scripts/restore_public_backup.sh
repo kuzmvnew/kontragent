@@ -20,11 +20,16 @@ if [[ -z "${PUBLIC_IMPORT_DATABASE_URL:-}" ]]; then
   set +a
 fi
 : "${PUBLIC_IMPORT_DATABASE_URL:?PUBLIC_IMPORT_DATABASE_URL is required}"
+case "$PUBLIC_IMPORT_DATABASE_URL" in
+  postgresql+psycopg://*) libpq_url="postgresql://${PUBLIC_IMPORT_DATABASE_URL#postgresql+psycopg://}" ;;
+  postgresql://*) libpq_url="$PUBLIC_IMPORT_DATABASE_URL" ;;
+  *) echo "PUBLIC_IMPORT_DATABASE_URL must be a PostgreSQL URL" >&2; exit 2 ;;
+esac
 
 /opt/nextcompany/current/deploy/scripts/backup_public.sh
 systemctl stop nextcompany-public.service
 restore_status=0
-pg_restore --clean --if-exists --no-owner --no-acl --dbname="$PUBLIC_IMPORT_DATABASE_URL" "$backup_file" || restore_status=$?
+pg_restore --clean --if-exists --no-owner --no-acl --dbname="$libpq_url" "$backup_file" || restore_status=$?
 systemctl start nextcompany-public.service
 (( restore_status == 0 )) || exit "$restore_status"
 curl --fail --silent --show-error http://127.0.0.1:8000/api/ready
