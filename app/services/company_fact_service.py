@@ -21,7 +21,7 @@ def upsert_company_public_fact(
     source_code: str, source_identifier: str, source_url: str,
     publication_date=None, effective_from=None, effective_to=None,
     currentness="observed", confidence="source_asserted", evidence=None,
-    observed_at=None,
+    observed_at=None, session=None,
 ) -> None:
     observed_at = observed_at or datetime.now(timezone.utc)
     values = {
@@ -32,21 +32,25 @@ def upsert_company_public_fact(
         "currentness": currentness, "confidence": confidence, "evidence": evidence or {},
         "observed_at": observed_at,
     }
-    session = get_session()
+    owned_session = session is None
+    session = session or get_session()
     try:
         session.execute(insert(CompanyPublicFact).values(**values).on_conflict_do_update(
             constraint="uq_company_public_fact_evidence",
             set_={k: v for k, v in values.items() if k not in {"company_id", "fact_type", "value_hash", "source_code", "source_identifier"}},
         ))
-        session.commit()
+        if owned_session:
+            session.commit()
     except Exception:
-        session.rollback()
+        if owned_session:
+            session.rollback()
         raise
     finally:
-        session.close()
+        if owned_session:
+            session.close()
 
 
-def sync_disclosure_profile_facts(*, company_id: int, dataset_id: int, inn: str, profile: dict, source_url: str) -> None:
+def sync_disclosure_profile_facts(*, company_id: int, dataset_id: int, inn: str, profile: dict, source_url: str, session=None) -> None:
     for fact_type, key, kind in (
         ("registered_address", "legal_address", "registered/legal address disclosed by issuer"),
         ("postal_address", "postal_address", "postal address disclosed by issuer"),
@@ -60,6 +64,7 @@ def sync_disclosure_profile_facts(*, company_id: int, dataset_id: int, inn: str,
             source_identifier=f"{inn}:{key}", source_url=source_url,
             currentness="observed_unverified_current", confidence="source_asserted",
             evidence={"matching_method": "inn_exact", "issuer_inn": inn, "field": key},
+            session=session,
         )
 
 

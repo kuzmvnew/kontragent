@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import re
 
 from sqlalchemy import func, select
 
 from app.database.postgres import get_session
+from app.contracts.data_readiness import is_dataset_stale
 from app.ingestion.roskomnadzor import save_pd_operator_check
 from app.models.roskomnadzor import RoskomnadzorCompanyFact, RoskomnadzorPdOperatorCheck
 from app.models.source import DataSet
@@ -33,6 +34,13 @@ def get_roskomnadzor_bulk_check_for_inn(inn, channel):
         dataset = session.scalar(select(DataSet).where(DataSet.code == code))
         if dataset is None or dataset.last_data_date is None:
             return build_check_result(checked=False, applicable=True, result="unavailable", data_date=None, dataset_code=code, source=SOURCE_CODE, reason="dataset_not_loaded", matching_method="inn_exact", records=[], record_count=None)
+        if dataset.operational_status in {"stale", "error", "unavailable"} or is_dataset_stale(
+            now=datetime.now(timezone.utc),
+            freshness_policy=dataset.freshness_policy,
+            source_as_of=dataset.source_as_of,
+            last_success_at=dataset.last_success_at,
+        ):
+            return build_check_result(checked=False, applicable=True, result="unavailable", data_date=dataset.last_data_date, dataset_code=code, source=SOURCE_CODE, reason="dataset_stale", matching_method="inn_exact", records=[], record_count=None)
         total = session.scalar(select(func.count()).select_from(RoskomnadzorCompanyFact).where(RoskomnadzorCompanyFact.dataset_id == dataset.id))
         if not total:
             return build_check_result(checked=False, applicable=True, result="unavailable", data_date=dataset.last_data_date, dataset_code=code, source=SOURCE_CODE, reason="dataset_snapshot_missing", matching_method="inn_exact", records=[], record_count=None)
@@ -63,6 +71,14 @@ def get_cached_pd_operator_check(inn, request_date=None):
         return build_check_result(checked=True, applicable=False, result="not_applicable", data_date=None, dataset_code=DATASETS["pd_operators"], source=SOURCE_CODE, reason="company_layer_requires_legal_entity_inn10", matching_method=None, records=[], record_count=0)
     session = get_session()
     try:
+        dataset = session.scalar(select(DataSet).where(DataSet.code == DATASETS["pd_operators"]))
+        if dataset is None or dataset.operational_status in {"stale", "error", "unavailable"} or is_dataset_stale(
+            now=datetime.now(timezone.utc),
+            freshness_policy=dataset.freshness_policy,
+            source_as_of=dataset.source_as_of,
+            last_success_at=dataset.last_success_at,
+        ):
+            return build_check_result(checked=False, applicable=True, result="unavailable", data_date=getattr(dataset, "last_data_date", None), dataset_code=DATASETS["pd_operators"], source=SOURCE_CODE, reason="dataset_stale_or_unavailable", matching_method="inn_exact", records=[], record_count=None)
         row = session.scalar(select(RoskomnadzorPdOperatorCheck).where(RoskomnadzorPdOperatorCheck.inn == inn, RoskomnadzorPdOperatorCheck.request_date == request_date))
         if row is None:
             return build_check_result(checked=False, applicable=True, result="unavailable", data_date=None, dataset_code=DATASETS["pd_operators"], source=SOURCE_CODE, reason="not_checked", request_date=request_date, cached=False, matching_method="inn_exact", records=[], record_count=None)
