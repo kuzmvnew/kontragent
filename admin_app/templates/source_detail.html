@@ -22,7 +22,7 @@
   <article class="panel"><h2>Что изменилось</h2><dl><dt>Текущих фактов</dt><dd>{{ val(source.current_fact_count, source.missing_reasons.current_fact_count) }}</dd><dt>Новых</dt><dd>{{ val(source.new_facts, source.missing_reasons.new_facts) }}</dd><dt>Изменённых</dt><dd>{{ val(source.changed_facts, source.missing_reasons.changed_facts) }}</dd><dt>Удалённых / истёкших</dt><dd>{{ val(source.removed_facts, source.missing_reasons.removed_facts) }}</dd><dt>Повторно обработано</dt><dd>{{ val(source.replayed_facts, source.missing_reasons.replayed_facts) }}</dd><dt>В карантине</dt><dd>{{ val(source.quarantined_records, source.missing_reasons.quarantined_records) }}</dd></dl></article>
 </section>
 {% if source.source_id == 'firmoteka' %}
-<section class="panel"><h2>FIRMOTEKA CRAWL CHECKPOINT</h2><pre class="mono">{{ source.progress|tojson(indent=2) }}</pre></section>
+<section class="panel"><h2>Контрольная точка обхода Firmoteka</h2><details><summary>Показать технические данные</summary><pre class="mono">{{ source.progress|tojson(indent=2) }}</pre></details></section>
 {% endif %}
 {% if source.automation %}
 <section class="panel"><h2>Автоматическое восстановление</h2><dl>
