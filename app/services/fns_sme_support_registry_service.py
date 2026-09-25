@@ -16,7 +16,9 @@ def build_fns_sme_support_source_spec() -> dict:
         "name": "ФНС России",
         "source_type": "official",
         "priority": 10,
-        "enabled": True,
+        # Registration must never activate the durable schedule. Activation is
+        # an explicit, source-scoped operator action.
+        "enabled": False,
         "website_url": "https://www.nalog.gov.ru/",
         "description": "Официальные данные Федеральной налоговой службы",
     }

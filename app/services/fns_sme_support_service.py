@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -5,6 +7,7 @@ from app.database.postgres import get_session
 from app.models.fns_sme_support import FnsSmeSupportEntry
 from app.models.source import DataSet, IngestionRun
 from app.services.check_result import build_check_result
+from app.services.data_readiness_service import clean_negative_blocker
 
 
 DATASET_CODE = "fns_sme_support"
@@ -64,7 +67,12 @@ def _serialize(row) -> dict:
     }
 
 
-def get_fns_sme_support_check_for_inn(inn: str, limit: int = 20) -> dict:
+def get_fns_sme_support_check_for_inn(
+    inn: str,
+    limit: int = 20,
+    *,
+    now: datetime | None = None,
+) -> dict:
     clean_inn = normalize_inn(inn)
     if not clean_inn:
         return build_check_result(
@@ -92,6 +100,20 @@ def get_fns_sme_support_check_for_inn(inn: str, limit: int = 20) -> dict:
                 checked=False, applicable=True, result="unavailable",
                 data_date=dataset.last_data_date, dataset_code=DATASET_CODE,
                 source=SOURCE_CODE, reason="dataset_disabled", **_empty_payload(),
+            )
+
+        blocker = clean_negative_blocker(dataset, now=now)
+        if blocker is not None:
+            return build_check_result(
+                checked=False,
+                applicable=True,
+                result="unavailable",
+                data_date=dataset.last_data_date,
+                dataset_code=DATASET_CODE,
+                source=SOURCE_CODE,
+                reason=blocker,
+                source_data_date=dataset.last_data_date,
+                **_empty_payload(),
             )
 
         run = session.execute(

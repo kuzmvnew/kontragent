@@ -7,6 +7,7 @@ from app.database.postgres import SessionLocal
 from app.ingestion.cbr_warning_worker import register_cbr_warning_worker
 from app.ingestion.fns_headcount import register_fns_headcount_worker
 from app.ingestion.fns_msp import register_fns_msp_worker
+from app.ingestion.fns_sme_support import register_fns_sme_support_worker
 from app.ingestion.fns_revenue_expense import register_fns_revenue_expense_worker
 from app.ingestion.fns_tax_debt_pipeline import (
     register_fns_tax_debt_controlled_live_handler,
@@ -16,6 +17,9 @@ from app.ingestion.fns_tax_payment import register_fns_tax_payment_worker
 from app.ingestion.fns_tax_regime import register_fns_tax_regime_worker
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
+)
+from app.services.fns_sme_support_registry_service import (
+    ensure_fns_sme_support_dataset,
 )
 from app.services.source_service import ensure_default_dataset
 from app.services.data_readiness_scheduler import (
@@ -50,6 +54,7 @@ def build_registry() -> HandlerRegistry:
         register_fns_headcount_worker(session, registry)
         register_fns_msp_worker(session, registry)
         register_fns_tax_regime_worker(session, registry)
+        register_fns_sme_support_worker(session, registry)
         session.commit()
     return registry
 
@@ -80,6 +85,8 @@ def ensure_activation_datasets(dataset_codes: list[str]) -> None:
         ensure_cbr_warning_list_dataset()
     if "fns_tax_regime" in dataset_codes:
         ensure_default_dataset("fns_tax_regime")
+    if "fns_sme_support" in dataset_codes:
+        ensure_fns_sme_support_dataset()
 
 
 def main() -> None:
