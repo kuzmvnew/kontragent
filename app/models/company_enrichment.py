@@ -147,13 +147,19 @@ class CompanySourceCoverage(Base):
             name="uq_company_source_coverage_run_source",
         ),
         CheckConstraint(
-            "mode IN ('local_bulk_replay','point_check')",
+            "mode IN ('local_bulk_replay','local_snapshot_lookup','point_check')",
             name="ck_company_source_coverage_mode",
         ),
         CheckConstraint(
-            "status IN ('pending','queued','running','retry_scheduled',"
-            "'succeeded','failed','cancelled')",
+            "status IN ('PENDING','RUNNING','FOUND','NOT_FOUND','NOT_APPLICABLE',"
+            "'SOURCE_UNAVAILABLE','TIMEOUT','PARSING_ERROR','STALE_DATA',"
+            "'ACCESS_REQUIRED')",
             name="ck_company_source_coverage_status",
+        ),
+        CheckConstraint(
+            "execution_status IN ('pending','queued','running','retry_scheduled',"
+            "'succeeded','failed','cancelled')",
+            name="ck_company_source_coverage_execution_status",
         ),
         CheckConstraint(
             "attempt_count >= 0 AND max_attempts > 0",
@@ -196,6 +202,9 @@ class CompanySourceCoverage(Base):
     )
     mode: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="PENDING", server_default=text("'PENDING'")
+    )
+    execution_status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="pending", server_default=text("'pending'")
     )
     source_snapshot: Mapped[dict[str, Any]] = mapped_column(
@@ -228,6 +237,12 @@ class CompanySourceCoverage(Base):
     )
     max_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, default=3, server_default=text("3")
+    )
+    fact_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(

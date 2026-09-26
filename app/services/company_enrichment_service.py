@@ -1,9 +1,9 @@
 """Canonical, restartable company enrichment orchestration.
 
-This module is deliberately not wired into a live scheduler.  It is a
-transactional service entry point that turns accepted Master replay signals
-into existing Worker Foundation jobs and advances Risk/Summary only after the
-frozen source denominator is complete.
+The service is called by the existing Worker Foundation supervisor.  It turns
+accepted Master replay signals (and Master rows which predate those signals)
+into bounded work and advances Risk/Summary only after the frozen operational
+source denominator has semantic, current outcomes.
 """
 
 from __future__ import annotations
@@ -23,10 +23,19 @@ from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
 from app.contracts.risk_v3 import UnsupportedSubjectOutcome
 from app.database.postgres import SessionLocal
 from app.models.company import Company
+from app.models.cbr_warning_list import CbrWarningListEntry
 from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
+from app.models.fns_sme_support import FnsSmeSupportEntry
+from app.models.headcount import CompanyHeadcount
+from app.models.msp import CompanyMspProfile
 from app.models.registry_master import MasterReplaySignal
+from app.models.revenue_expense import CompanyRevenueExpenseSnapshot
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
+from app.models.roskomnadzor import RoskomnadzorCompanyFact
 from app.models.source import DataSet
+from app.models.tax_offence import CompanyTaxOffence
+from app.models.tax_payment import CompanyTaxPaymentSnapshot
+from app.models.tax_regime import CompanyTaxRegimeSnapshot
 from app.models.worker import (
     WorkerHandlerRegistration,
     WorkerJob,
@@ -56,13 +65,27 @@ LEGAL_ONLY_DATASET_CODES = frozenset(
         "nopriz_sro_members_on_demand",
         "prime_corporate_disclosure",
         "rkn_personal_data_operators",
+        "rkn_communications_licenses",
+        "rkn_broadcast_licenses",
+        "rkn_registered_media",
     }
 )
 IP_ONLY_DATASET_CODES = frozenset({"fns_egrip", "fns_npd"})
-ACTIVE_COVERAGE_STATUSES = frozenset(
+ACTIVE_EXECUTION_STATUSES = frozenset(
     {"pending", "queued", "running", "retry_scheduled"}
 )
-TERMINAL_FAILURE_STATUSES = frozenset({"failed", "cancelled"})
+SUCCESSFUL_COVERAGE_STATUSES = frozenset({"FOUND", "NOT_FOUND", "NOT_APPLICABLE"})
+TRANSIENT_COVERAGE_STATUSES = frozenset(
+    {"SOURCE_UNAVAILABLE", "TIMEOUT", "PARSING_ERROR", "STALE_DATA", "ACCESS_REQUIRED"}
+)
+LOCAL_SNAPSHOT_SOURCES = frozenset(
+    {
+        "cbr_warning_list",
+        "rkn_communications_licenses",
+        "rkn_broadcast_licenses",
+        "rkn_registered_media",
+    }
+)
 
 
 def utc_now() -> datetime:
@@ -180,7 +203,13 @@ def _source_plan(
         or registration_metadata.get("mode")
         == "bounded_daily_master_exact_inn_sweep"
     )
-    mode = "point_check" if point_source else "local_bulk_replay"
+    mode = (
+        "point_check"
+        if point_source
+        else "local_snapshot_lookup"
+        if dataset.code in LOCAL_SNAPSHOT_SOURCES
+        else "local_bulk_replay"
+    )
     state = session.get(WorkerPublicationState, worker_source_id)
     producer = _producer_job(session, state)
     handler_version = (
@@ -317,7 +346,8 @@ def create_enrichment_run(
                 source_id=plan.source_id,
                 worker_source_id=plan.worker_source_id,
                 mode=plan.mode,
-                status="pending",
+                status="PENDING",
+                execution_status="pending",
                 source_snapshot=plan.snapshot,
                 handler_version=plan.handler_version,
                 publication_generation=plan.publication_generation,
@@ -347,9 +377,131 @@ def _digest(values: Sequence[str]) -> str:
 def _coverage_error(
     coverage: CompanySourceCoverage, error: object, *, now: datetime
 ) -> None:
-    coverage.status = "failed"
+    coverage.status = "SOURCE_UNAVAILABLE"
+    coverage.execution_status = "failed"
     coverage.last_error = safe_error_message(error)
     coverage.finished_at = now
+    coverage.updated_at = now
+
+
+def _complete_replay_signals(
+    session: Session, coverage: CompanySourceCoverage, *, now: datetime
+) -> None:
+    signal_ids = _uuid_values(coverage.master_replay_signal_ids)
+    if not signal_ids:
+        return
+    session.execute(
+        update(MasterReplaySignal)
+        .where(
+            MasterReplaySignal.id.in_(signal_ids),
+            MasterReplaySignal.target_source_id == coverage.source_id,
+            MasterReplaySignal.status.in_(("pending", "scheduled")),
+        )
+        .values(status="complete", completed_at=now, last_error=None)
+    )
+
+
+def _frozen_snapshot_is_current(
+    session: Session, coverage: CompanySourceCoverage
+) -> bool:
+    state = session.get(WorkerPublicationState, coverage.worker_source_id)
+    if state is None:
+        return False
+    validation = dict(state.validation_metadata or {})
+    return bool(
+        state.generation == coverage.publication_generation
+        and state.active_pointer
+        and state.active_pointer == coverage.replay_pointer
+        and str(validation.get("checksum") or "") == str(coverage.replay_checksum or "")
+    )
+
+
+def _coverage_fact_count(session: Session, coverage: CompanySourceCoverage) -> int:
+    """Count facts from the accepted frozen snapshot using exact identity."""
+
+    if coverage.source_id == "fns_tax_offence":
+        statement = select(func.count()).select_from(CompanyTaxOffence).where(
+            CompanyTaxOffence.company_id == coverage.company_id,
+            CompanyTaxOffence.dataset_id == coverage.dataset_id,
+        )
+    elif coverage.source_id == "fns_revenue_expenses":
+        statement = select(func.count()).select_from(CompanyRevenueExpenseSnapshot).where(
+            CompanyRevenueExpenseSnapshot.company_id == coverage.company_id,
+            CompanyRevenueExpenseSnapshot.dataset_id == coverage.dataset_id,
+        )
+    elif coverage.source_id == "fns_tax_paid":
+        statement = select(func.count()).select_from(CompanyTaxPaymentSnapshot).where(
+            CompanyTaxPaymentSnapshot.company_id == coverage.company_id,
+            CompanyTaxPaymentSnapshot.dataset_id == coverage.dataset_id,
+        )
+    elif coverage.source_id == "fns_headcount":
+        statement = select(func.count()).select_from(CompanyHeadcount).where(
+            CompanyHeadcount.company_id == coverage.company_id,
+            CompanyHeadcount.dataset_id == coverage.dataset_id,
+        )
+    elif coverage.source_id == "fns_msp":
+        statement = select(func.count()).select_from(CompanyMspProfile).where(
+            CompanyMspProfile.company_id == coverage.company_id,
+            CompanyMspProfile.dataset_id == coverage.dataset_id,
+        )
+    elif coverage.source_id == "fns_tax_regime":
+        statement = select(func.count()).select_from(CompanyTaxRegimeSnapshot).where(
+            CompanyTaxRegimeSnapshot.company_id == coverage.company_id,
+            CompanyTaxRegimeSnapshot.data_date == coverage.source_data_date,
+        )
+    elif coverage.source_id == "fns_sme_support":
+        inn = session.scalar(select(Company.inn).where(Company.id == coverage.company_id))
+        statement = select(func.count()).select_from(FnsSmeSupportEntry).where(
+            FnsSmeSupportEntry.dataset_id == coverage.dataset_id,
+            FnsSmeSupportEntry.recipient_inn == inn,
+        )
+    elif coverage.source_id == "cbr_warning_list":
+        inn = session.scalar(select(Company.inn).where(Company.id == coverage.company_id))
+        statement = select(func.count()).select_from(CbrWarningListEntry).where(
+            CbrWarningListEntry.dataset_id == coverage.dataset_id,
+            CbrWarningListEntry.inn == inn,
+        )
+    elif coverage.source_id in {
+        "rkn_communications_licenses",
+        "rkn_broadcast_licenses",
+        "rkn_registered_media",
+    }:
+        inn = session.scalar(select(Company.inn).where(Company.id == coverage.company_id))
+        statement = select(func.count()).select_from(RoskomnadzorCompanyFact).where(
+            RoskomnadzorCompanyFact.dataset_id == coverage.dataset_id,
+            RoskomnadzorCompanyFact.inn == inn,
+        )
+    else:
+        run = _latest_worker_run(session, coverage.worker_job_id) if coverage.worker_job_id else None
+        return int((run.records_published or run.records_written or 0) if run else 0)
+    return int(session.scalar(statement) or 0)
+
+
+def _resolve_successful_coverage(
+    session: Session, coverage: CompanySourceCoverage, *, now: datetime
+) -> None:
+    if (
+        coverage.mode != "point_check"
+        and not _frozen_snapshot_is_current(session, coverage)
+    ):
+        coverage.status = "STALE_DATA"
+        coverage.last_error = "Frozen accepted source generation is no longer current"
+        coverage.checked_at = now
+        coverage.finished_at = now
+        return
+    coverage.fact_count = _coverage_fact_count(session, coverage)
+    coverage.status = "FOUND" if coverage.fact_count else "NOT_FOUND"
+    coverage.last_error = None
+    coverage.checked_at = now
+    coverage.finished_at = now
+    _complete_replay_signals(session, coverage, now=now)
+
+
+def _resolve_local_snapshot_coverage(
+    session: Session, coverage: CompanySourceCoverage, *, now: datetime
+) -> None:
+    coverage.execution_status = "succeeded"
+    _resolve_successful_coverage(session, coverage, now=now)
     coverage.updated_at = now
 
 
@@ -536,7 +688,7 @@ def enqueue_enrichment_work(
             select(CompanySourceCoverage)
             .where(
                 CompanySourceCoverage.enrichment_run_id.in_(requested),
-                CompanySourceCoverage.status == "pending",
+                CompanySourceCoverage.execution_status == "pending",
             )
             .order_by(CompanySourceCoverage.source_id, CompanySourceCoverage.id)
             .with_for_update(skip_locked=True)
@@ -546,7 +698,12 @@ def enqueue_enrichment_work(
     bulk_groups: dict[tuple[Any, ...], list[CompanySourceCoverage]] = defaultdict(list)
     point_rows: list[CompanySourceCoverage] = []
     for row in pending:
-        if row.mode == "local_bulk_replay":
+        if row.mode == "local_snapshot_lookup":
+            try:
+                _resolve_local_snapshot_coverage(session, row, now=now)
+            except Exception as error:
+                _coverage_error(row, error, now=now)
+        elif row.mode == "local_bulk_replay":
             bulk_groups[
                 (
                     row.source_id,
@@ -570,7 +727,8 @@ def enqueue_enrichment_work(
         jobs_created += int(creation.created)
         for row in rows:
             row.worker_job_id = creation.job.id
-            row.status = creation.job.status
+            row.execution_status = creation.job.status
+            row.status = "RUNNING"
             row.updated_at = now
 
     for row in point_rows:
@@ -584,7 +742,8 @@ def enqueue_enrichment_work(
             continue
         jobs_created += int(creation.created)
         row.worker_job_id = creation.job.id
-        row.status = creation.job.status
+        row.execution_status = creation.job.status
+        row.status = "RUNNING"
         row.updated_at = now
 
     for run in runs.values():
@@ -603,15 +762,34 @@ def consume_master_replay_signals(
     now = now or utc_now()
     if limit <= 0:
         raise ValueError("limit must be positive")
+    candidate_companies = tuple(
+        session.scalars(
+            select(MasterReplaySignal.company_id)
+            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+            .where(
+                MasterReplaySignal.status == "pending",
+                DataSet.enabled.is_(True),
+                DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
+                DataSet.operational_status == OperationalStatus.CURRENT,
+                DataSet.last_success_at.is_not(None),
+                DataSet.coverage["operational_accepted"].as_boolean().is_(True),
+            )
+            .group_by(MasterReplaySignal.company_id)
+            .order_by(func.min(MasterReplaySignal.created_at), MasterReplaySignal.company_id)
+            .limit(limit)
+        )
+    )
     signals = tuple(
         session.scalars(
             select(MasterReplaySignal)
-            .where(MasterReplaySignal.status == "pending")
+            .where(
+                MasterReplaySignal.status == "pending",
+                MasterReplaySignal.company_id.in_(candidate_companies),
+            )
             .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
-            .limit(limit)
             .with_for_update(skip_locked=True)
         )
-    )
+    ) if candidate_companies else ()
     grouped: dict[int, list[MasterReplaySignal]] = defaultdict(list)
     for signal in signals:
         grouped[signal.company_id].append(signal)
@@ -626,14 +804,12 @@ def consume_master_replay_signals(
         by_source: dict[str, list[UUID]] = defaultdict(list)
         for signal in company_signals:
             by_source[signal.target_source_id].append(signal.id)
-        plans = freeze_operational_sources(
-            session, company, source_ids=tuple(by_source), now=now
-        )
+        plans = freeze_operational_sources(session, company, now=now)
         eligible_sources = {plan.source_id for plan in plans}
         if not eligible_sources:
             continue
         source_signal_ids = {
-            source_id: tuple(by_source[source_id])
+            source_id: tuple(by_source.get(source_id, ()))
             for source_id in sorted(eligible_sources)
         }
         eligible_signal_ids = tuple(
@@ -641,10 +817,8 @@ def consume_master_replay_signals(
             for source_id in sorted(source_signal_ids)
             for signal_id in source_signal_ids[source_id]
         )
-        key = (
-            f"master-replay:{company_id}:"
-            f"{_digest([str(value) for value in eligible_signal_ids])}"
-        )
+        trigger_ids = eligible_signal_ids or tuple(signal.id for signal in company_signals)
+        key = f"master-replay:{company_id}:{_digest([str(value) for value in trigger_ids])}"
         creation = create_enrichment_run(
             session,
             company_id=company_id,
@@ -702,9 +876,21 @@ def _sync_coverage_from_job(
         "failed": "failed",
         "cancelled": "cancelled",
     }
-    coverage.status = mapped[job.status]
+    coverage.execution_status = mapped[job.status]
     coverage.updated_at = now
-    if coverage.status in {"succeeded", "failed", "cancelled"}:
+    if coverage.execution_status in {"queued", "running", "retry_scheduled"}:
+        coverage.status = "RUNNING"
+    elif coverage.execution_status == "succeeded":
+        _resolve_successful_coverage(session, coverage, now=now)
+    elif coverage.execution_status in {"failed", "cancelled"}:
+        error_kind = str((run.errors[-1] or {}).get("kind") or "") if run and run.errors else ""
+        if "timeout" in error_kind:
+            coverage.status = "TIMEOUT"
+        elif error_kind in {"invalid_data", "schema_mismatch", "parser"}:
+            coverage.status = "PARSING_ERROR"
+        else:
+            coverage.status = "SOURCE_UNAVAILABLE"
+    if coverage.execution_status in {"succeeded", "failed", "cancelled"}:
         coverage.finished_at = (
             run.finished_at if run is not None and run.finished_at is not None else now
         )
@@ -727,9 +913,15 @@ def _refresh_run_state(
     )
     for row in rows:
         _sync_coverage_from_job(session, row, now=now)
-    succeeded = sum(row.status == "succeeded" for row in rows)
-    failed = sum(row.status in TERMINAL_FAILURE_STATUSES for row in rows)
-    active = [row for row in rows if row.status in ACTIVE_COVERAGE_STATUSES]
+    succeeded = sum(row.status in SUCCESSFUL_COVERAGE_STATUSES for row in rows)
+    failed = sum(
+        row.status in TRANSIENT_COVERAGE_STATUSES
+        and row.execution_status in {"failed", "cancelled", "succeeded"}
+        for row in rows
+    )
+    active = [
+        row for row in rows if row.execution_status in ACTIVE_EXECUTION_STATUSES
+    ]
     run.completed_source_count = succeeded
     run.failed_source_count = failed
     run.updated_at = now
@@ -744,7 +936,7 @@ def _refresh_run_state(
     if active:
         run.status = (
             "retry_scheduled"
-            if any(row.status == "retry_scheduled" for row in active)
+            if any(row.execution_status == "retry_scheduled" for row in active)
             else "waiting_sources"
         )
         return run
@@ -878,7 +1070,10 @@ def restart_enrichment_run(
     run.last_error = None
     run.updated_at = now
     for row in rows:
-        if row.status not in TERMINAL_FAILURE_STATUSES:
+        if not (
+            row.status in TRANSIENT_COVERAGE_STATUSES
+            or row.execution_status in {"failed", "cancelled"}
+        ):
             continue
         signal_ids = _uuid_values(row.master_replay_signal_ids)
         if signal_ids:
@@ -895,7 +1090,8 @@ def restart_enrichment_run(
                     last_error=None,
                 )
             )
-        row.status = "pending"
+        row.status = "PENDING"
+        row.execution_status = "pending"
         row.worker_job_id = None
         row.worker_run_id = None
         row.attempt_count = 0
@@ -1055,6 +1251,58 @@ def canonical_enrichment_metrics(session: Session) -> dict[str, Any]:
     }
 
 
+def seed_existing_master_enrichment(
+    session: Session,
+    *,
+    limit: int = 100,
+    now: datetime | None = None,
+) -> tuple[int, int]:
+    """Enroll Master rows which existed before durable replay signals.
+
+    Official/original Master rows are intentionally ordered before provisional
+    Firmoteka rows; current replay signals continue to provide the new-company
+    fast path.  Each company is idempotent and freezes the full operational
+    denominator at creation.
+    """
+
+    now = now or utc_now()
+    if limit <= 0:
+        return 0, 0
+    existing = select(CompanyEnrichmentRun.company_id)
+    company_ids = tuple(
+        session.scalars(
+            select(Company.id)
+            .where(~Company.id.in_(existing))
+            .order_by(
+                Company.official_registry_verified.desc(),
+                (Company.master_source == "firmoteka").asc(),
+                Company.created_at,
+                Company.id,
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+    )
+    run_ids: list[UUID] = []
+    created = 0
+    for company_id in company_ids:
+        try:
+            creation = create_enrichment_run(
+                session,
+                company_id=company_id,
+                trigger="existing_master_bootstrap",
+                idempotency_key=f"existing-master:{WORKFLOW_VERSION}:{company_id}",
+                now=now,
+            )
+        except ValueError as error:
+            if "no applicable operational sources" not in str(error):
+                raise
+            continue
+        run_ids.append(creation.run.id)
+        created += int(creation.created)
+    return created, enqueue_enrichment_work(session, run_ids, now=now)
+
+
 def run_company_enrichment_cycle(
     session: Session,
     *,
@@ -1066,6 +1314,9 @@ def run_company_enrichment_cycle(
 
     now = now or utc_now()
     consumption = consume_master_replay_signals(session, limit=signal_limit, now=now)
+    bootstrap_runs, bootstrap_jobs = seed_existing_master_enrichment(
+        session, limit=signal_limit, now=now
+    )
     run_ids = tuple(
         session.scalars(
             select(CompanyEnrichmentRun.id)
@@ -1088,6 +1339,8 @@ def run_company_enrichment_cycle(
         "signals_scheduled": consumption.signals_scheduled,
         "runs_created": consumption.runs_created,
         "jobs_created": consumption.jobs_created,
+        "bootstrap_runs_created": bootstrap_runs,
+        "bootstrap_jobs_created": bootstrap_jobs,
         "runs_reconciled": len(run_ids),
         "run_statuses": dict(sorted(statuses.items())),
     }
@@ -1099,7 +1352,7 @@ def run_company_enrichment_cycle_once(
     reconcile_limit: int = 100,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Commit one bounded cycle.  It is intentionally not auto-registered."""
+    """Commit one bounded cycle for the persistent Worker supervisor."""
 
     with SessionLocal() as session:
         result = run_company_enrichment_cycle(

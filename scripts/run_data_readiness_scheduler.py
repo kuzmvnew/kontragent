@@ -40,6 +40,7 @@ from app.services.fns_sme_support_registry_service import (
 from app.services.erknm_registry_service import ensure_erknm_dataset
 from app.services.source_service import ensure_default_dataset
 from app.services.source_factory_registry_service import ensure_source_factory_datasets
+from app.services.company_enrichment_service import run_company_enrichment_cycle
 from app.services.roszdrav_registry_service import ensure_roszdrav_datasets
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
@@ -113,6 +114,13 @@ def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
             stale_after=timedelta(minutes=2),
             retry_policy=RetryPolicy(),
         )
+        # Consume a bounded Master slice in the same supervised process.  This
+        # is durable DB work: a restart simply resumes pending coverage/jobs.
+        run_company_enrichment_cycle(
+            session,
+            signal_limit=max(10, max_jobs * 25),
+            reconcile_limit=max(50, max_jobs * 50),
+        )
         session.commit()
     executor = WorkerExecutor(
         session_factory=SessionLocal,
@@ -129,6 +137,15 @@ def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
         if run_id is None:
             break
         completed.append(str(run_id))
+    # A completed Worker job can satisfy the last frozen source expectation;
+    # reconcile immediately instead of waiting for the next polling minute.
+    with SessionLocal() as session:
+        run_company_enrichment_cycle(
+            session,
+            signal_limit=max(10, max_jobs * 25),
+            reconcile_limit=max(50, max_jobs * 50),
+        )
+        session.commit()
     return completed
 
 

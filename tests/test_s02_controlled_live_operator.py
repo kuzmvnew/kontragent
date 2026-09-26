@@ -983,6 +983,7 @@ def test_missing_and_malformed_cohort_errors_are_secret_safe(
 def test_missing_artifact_and_xsd_errors_are_secret_safe(
     source_files, monkeypatch, capsys, kind, missing_path
 ):
+    monkeypatch.setattr(operator, "_utc_now", lambda: NOW)
     monkeypatch.setattr(
         operator, "session_factory", lambda _database_url: lambda: _FailingSession()
     )
@@ -996,6 +997,7 @@ def test_missing_artifact_and_xsd_errors_are_secret_safe(
 def test_hash_rediscovery_and_provider_failures_are_secret_safe(
     source_files, monkeypatch, capsys, hash_kind
 ):
+    monkeypatch.setattr(operator, "_utc_now", lambda: NOW)
     monkeypatch.setattr(
         operator, "session_factory", lambda _database_url: lambda: _FailingSession()
     )

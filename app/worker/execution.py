@@ -148,14 +148,9 @@ def create_job(
     metadata = dict(schedule_metadata or {})
     replay_target_source_id = master_replay_target_source_id or source_id
     if master_replay_signal_ids is None:
-        replay_ids = tuple(session.scalars(
-            select(MasterReplaySignal.id)
-            .where(
-                MasterReplaySignal.target_source_id == replay_target_source_id,
-                MasterReplaySignal.status == "pending",
-            )
-            .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
-        ))
+        # Replay ownership is explicit.  Ordinary scheduled source checks must
+        # never sweep the global Master backlog as an incidental side effect.
+        replay_ids = ()
     else:
         requested_replay_ids = tuple(dict.fromkeys(master_replay_signal_ids))
         replay_rows = tuple(session.scalars(

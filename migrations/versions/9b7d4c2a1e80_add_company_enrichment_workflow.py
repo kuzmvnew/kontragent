@@ -150,7 +150,10 @@ def upgrade() -> None:
         sa.Column("source_id", sa.String(120), nullable=False),
         sa.Column("worker_source_id", sa.String(120), nullable=False),
         sa.Column("mode", sa.String(30), nullable=False),
-        sa.Column("status", sa.String(30), nullable=False, server_default="pending"),
+        sa.Column("status", sa.String(30), nullable=False, server_default="PENDING"),
+        sa.Column(
+            "execution_status", sa.String(30), nullable=False, server_default="pending"
+        ),
         sa.Column(
             "source_snapshot",
             postgresql.JSONB(),
@@ -180,6 +183,8 @@ def upgrade() -> None:
         ),
         sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("max_attempts", sa.Integer(), nullable=False, server_default="3"),
+        sa.Column("fact_count", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("checked_at", sa.DateTime(timezone=True)),
         sa.Column("last_error", sa.Text()),
         sa.Column("started_at", sa.DateTime(timezone=True)),
         sa.Column("finished_at", sa.DateTime(timezone=True)),
@@ -201,13 +206,19 @@ def upgrade() -> None:
             name="uq_company_source_coverage_run_source",
         ),
         sa.CheckConstraint(
-            "mode IN ('local_bulk_replay','point_check')",
+            "mode IN ('local_bulk_replay','local_snapshot_lookup','point_check')",
             name="ck_company_source_coverage_mode",
         ),
         sa.CheckConstraint(
-            "status IN ('pending','queued','running','retry_scheduled',"
-            "'succeeded','failed','cancelled')",
+            "status IN ('PENDING','RUNNING','FOUND','NOT_FOUND','NOT_APPLICABLE',"
+            "'SOURCE_UNAVAILABLE','TIMEOUT','PARSING_ERROR','STALE_DATA',"
+            "'ACCESS_REQUIRED')",
             name="ck_company_source_coverage_status",
+        ),
+        sa.CheckConstraint(
+            "execution_status IN ('pending','queued','running','retry_scheduled',"
+            "'succeeded','failed','cancelled')",
+            name="ck_company_source_coverage_execution_status",
         ),
         sa.CheckConstraint(
             "attempt_count >= 0 AND max_attempts > 0",
