@@ -250,6 +250,82 @@ def test_active_crawl_applies_new_lane_config_between_jobs(tmp_path):
         connection.close()
 
 
+def test_scale_config_can_advance_at_publisher_job_boundary(tmp_path):
+    connection, transaction, factory = _factory()
+    try:
+        with factory() as session:
+            crawl = _crawl(
+                phase="companies", catalog_concurrency=1, company_concurrency=1
+            )
+            session.add(crawl)
+            session.flush()
+
+            worker._apply_scale_config(
+                session,
+                crawl,
+                worker.FirmotekaScaleConfig(
+                    catalog_concurrency=2,
+                    company_concurrency=4,
+                    min_request_gap_seconds=4,
+                    backpressure_threshold=3000,
+                    daily_refresh_horizon_days=5,
+                    daily_refresh_budget=11,
+                ),
+            )
+
+            assert crawl.catalog_concurrency == 2
+            assert crawl.company_concurrency == 4
+            assert crawl.concurrency == 4
+            assert crawl.request_delay_seconds == 4
+            assert crawl.backpressure_threshold == 3000
+            assert crawl.daily_refresh_horizon_days == 5
+            assert crawl.daily_refresh_budget == 11
+    finally:
+        transaction.rollback()
+        connection.close()
+
+
+def test_run_benchmark_metrics_persist_exact_status_latency_and_raw_growth():
+    result = worker.HandlerResult(
+        raw_artifacts=(
+            worker.RawArtifactReference(
+                artifact_reference="file:///raw/a",
+                checksum="a" * 64,
+                manifest={"response_size": 11},
+            ),
+            worker.RawArtifactReference(
+                artifact_reference="file:///raw/b",
+                checksum="b" * 64,
+                manifest={"response_size": 13},
+            ),
+        ),
+        counters=worker.ExecutionCounters(records_rejected=1),
+    )
+
+    metrics = worker._run_benchmark_metrics(
+        {
+            "lane_count": 2,
+            "request_metrics": [
+                {"http_status": 200, "latency_ms": 100},
+                {"http_status": 200, "latency_ms": 200},
+                {"http_status": 429, "latency_ms": 900},
+            ],
+        },
+        result,
+    )
+
+    assert metrics == {
+        "concurrency": 2,
+        "requests": 3,
+        "http_status_counts": {"200": 2, "429": 1},
+        "latency_ms_p50": 200,
+        "latency_ms_p95": 900,
+        "latency_ms_max": 900,
+        "raw_bytes": 24,
+        "parser_rejected": 1,
+    }
+
+
 def test_backpressure_claims_company_batch_once_with_job_identity(tmp_path):
     connection, transaction, factory = _factory()
     try:
