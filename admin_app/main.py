@@ -237,6 +237,17 @@ def _empty_publication() -> dict:
     }
 
 
+def _publication_snapshot_or_empty() -> dict:
+    """Keep publication diagnostics from taking the source catalog down."""
+
+    try:
+        return service.public_publication_snapshot()
+    except Exception:
+        publication = _empty_publication()
+        publication["last_error"] = "Сводка публикации временно недоступна."
+        return publication
+
+
 @app.get("/", include_in_schema=False)
 async def root():
     return RedirectResponse("/admin/sources", status_code=307)
@@ -310,15 +321,14 @@ async def sources_page(
     public_sync = systemd_status(PUBLIC_SYNC_SERVICE)
     try:
         snapshot = service.console_snapshot() if database["available"] else _empty_snapshot()
-        publication = (
-            service.public_publication_snapshot()
-            if database["available"]
-            else _empty_publication()
-        )
     except Exception:
         database = {"available": False, "status": "UNAVAILABLE"}
         snapshot = _empty_snapshot()
-        publication = _empty_publication()
+    publication = (
+        _publication_snapshot_or_empty()
+        if database["available"]
+        else _empty_publication()
+    )
     all_rows = list(snapshot["sources"])
     families = sorted({str(row["fact_family"]) for row in all_rows})
     snapshot["sources"] = service.filter_catalog_rows(
@@ -347,9 +357,12 @@ async def sources_page(
 @app.get("/admin/publications", response_class=HTMLResponse, include_in_schema=False)
 async def publications_page(request: Request):
     database = service.postgres_health()
-    rows = service.public_publication_history(limit=100) if database["available"] else []
+    try:
+        rows = service.public_publication_history(limit=100) if database["available"] else []
+    except Exception:
+        rows = []
     publication = (
-        service.public_publication_snapshot()
+        _publication_snapshot_or_empty()
         if database["available"]
         else _empty_publication()
     )
