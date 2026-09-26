@@ -466,8 +466,9 @@ def main() -> int:
         connection.execute("SET TRANSACTION READ ONLY")
         with connection.cursor() as cursor:
             projections = [build_projection(cursor, entity.inn, base_publication) for entity in manifest.entities]
-    if len(projections) != 40:
-        raise ValueError("export did not produce exactly 40 projections")
+    expected_count = len(manifest.entities)
+    if len(projections) != expected_count:
+        raise ValueError("export did not produce the exact accepted cohort")
     bundle_dir.mkdir(parents=True, exist_ok=False)
     content_updated_at = max(item.publication.content_updated_at for item in projections)
     with gzip.open(bundle_dir / "companies.jsonl.gz", "wt", encoding="utf-8", newline="\n") as stream:
@@ -480,11 +481,12 @@ def main() -> int:
         cohort_source_main_sha=manifest.source_main_sha,
         previous_release_id=args.previous_release_id, created_at=now,
         result_date=max(item.publication.result_date for item in projections),
-        content_updated_at=content_updated_at, record_count=40, companies_file="companies.jsonl.gz",
+        content_updated_at=content_updated_at, record_count=expected_count,
+        companies_file="companies.jsonl.gz",
     )
     (bundle_dir / "manifest.json").write_bytes(canonical_json(release_manifest.model_dump(mode="json")) + b"\n")
     write_checksums(bundle_dir)
-    print(json.dumps({"release_id": release_id, "record_count": 40, "bundle": str(bundle_dir)}, ensure_ascii=False))
+    print(json.dumps({"release_id": release_id, "record_count": expected_count, "bundle": str(bundle_dir)}, ensure_ascii=False))
     return 0
 
 

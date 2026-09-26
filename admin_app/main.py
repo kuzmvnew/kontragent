@@ -27,6 +27,7 @@ from admin_app.presentation import (
 from admin_app.system import (
     ADMIN_SERVICE,
     INCIDENT_SERVICE,
+    PUBLIC_SYNC_SERVICE,
     WORKER_SERVICE,
     deployed_git_sha,
     invoke_fixed_helper,
@@ -175,6 +176,22 @@ def _empty_snapshot() -> dict:
     }
 
 
+def _empty_publication() -> dict:
+    return {
+        "site_ready": False,
+        "site_error": "UNAVAILABLE",
+        "active_release": None,
+        "record_count": 0,
+        "last_publication": None,
+        "dirty_count": 0,
+        "public_ready_count": 0,
+        "enriching_count": 0,
+        "status": "ОШИБКА",
+        "last_error": None,
+        "outbox": {"pending": 0, "coalesced": 0, "failed": 0, "published": 0},
+    }
+
+
 @app.get("/", include_in_schema=False)
 async def root():
     return RedirectResponse("/admin/sources", status_code=307)
@@ -193,11 +210,18 @@ async def health():
 async def sources_page(request: Request):
     database = service.postgres_health()
     worker = systemd_status(WORKER_SERVICE)
+    public_sync = systemd_status(PUBLIC_SYNC_SERVICE)
     try:
         snapshot = service.console_snapshot() if database["available"] else _empty_snapshot()
+        publication = (
+            service.public_publication_snapshot()
+            if database["available"]
+            else _empty_publication()
+        )
     except Exception:
         database = {"available": False, "status": "UNAVAILABLE"}
         snapshot = _empty_snapshot()
+        publication = _empty_publication()
     backups = list_backups(limit=1)
     return _render(
         request,
@@ -206,9 +230,32 @@ async def sources_page(request: Request):
             "snapshot": snapshot,
             "database": database,
             "worker": worker,
+            "public_sync": public_sync,
+            "publication": publication,
             "storage": storage_status(),
             "latest_backup": backups[0] if backups else None,
             "deployed_sha": deployed_git_sha(),
+        },
+    )
+
+
+@app.get("/admin/publications", response_class=HTMLResponse, include_in_schema=False)
+async def publications_page(request: Request):
+    database = service.postgres_health()
+    rows = service.public_publication_history(limit=100) if database["available"] else []
+    publication = (
+        service.public_publication_snapshot()
+        if database["available"]
+        else _empty_publication()
+    )
+    return _render(
+        request,
+        "publications.html",
+        {
+            "rows": rows,
+            "publication": publication,
+            "public_sync": systemd_status(PUBLIC_SYNC_SERVICE),
+            "database": database,
         },
     )
 
@@ -389,6 +436,7 @@ def _system_context() -> dict:
         "worker": systemd_status(WORKER_SERVICE),
         "admin_service": systemd_status(ADMIN_SERVICE),
         "incident_service": systemd_status(INCIDENT_SERVICE),
+        "public_sync_service": systemd_status(PUBLIC_SYNC_SERVICE),
         "database": service.postgres_health(),
         "storage": storage_status(),
         "snapshot": snapshot,

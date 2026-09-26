@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "e6f7a8b9c0d2"
+CURRENT_SCHEMA_HEAD = "f0a1b2c3d4e5"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -83,6 +83,8 @@ POST_CANONICAL_TARGET_TABLES = {
     "firmoteka_raw_artifacts",
     "firmoteka_company_snapshots",
     "firmoteka_quarantine_records",
+    "public_projection_publications",
+    "public_publication_requests",
 }
 DEV009_EXTENSION_TABLES = {
     "fns_tax_debt_raw_artifacts",

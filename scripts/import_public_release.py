@@ -30,7 +30,7 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
         )
         existing = cursor.fetchone()
         if existing:
-            if existing["manifest_sha256"] != manifest_sha or existing["record_count"] != 40:
+            if existing["manifest_sha256"] != manifest_sha or existing["record_count"] != manifest.record_count:
                 raise ValueError("release_id already exists with different content")
             cursor.execute(
                 "SELECT inn, payload_sha256 FROM public_company_projections WHERE release_id=%s",
@@ -46,7 +46,7 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
             state = cursor.fetchone()
             return {
                 "release_id": manifest.release_id,
-                "record_count": 40,
+                "record_count": manifest.record_count,
                 "idempotent": True,
                 "active": bool(state and state["active_release_id"] == manifest.release_id),
             }
@@ -95,7 +95,8 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
             (manifest.release_id, manifest.release_id),
         )
         validation = cursor.fetchone()
-        if tuple(validation.values()) != (40, 40, 40):
+        expected_count = manifest.record_count
+        if tuple(validation.values()) != (expected_count, expected_count, expected_count):
             raise ValueError("staged release failed database validation")
 
         cursor.execute(
@@ -129,7 +130,7 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
         )
     return {
         "release_id": manifest.release_id,
-        "record_count": 40,
+        "record_count": manifest.record_count,
         "previous_release_id": active_release_id,
         "idempotent": False,
         "active": True,

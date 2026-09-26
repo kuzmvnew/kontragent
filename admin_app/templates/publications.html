@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><div><h1>Публикации сайта</h1><p>Полные immutable release · accepted public cohort</p></div><span class="badge {{ 'ok' if public_sync.active else 'bad' }}">Public Sync {{ 'РАБОТАЕТ' if public_sync.active else 'ОСТАНОВЛЕН' }}</span></div>
+
+<section class="metrics">
+  <article><small>Сайт</small><strong class="{{ 'green' if publication.site_ready else 'red' }}">{{ 'РАБОТАЕТ' if publication.site_ready else 'НЕДОСТУПЕН' }}</strong><span>{{ publication.active_release or 'release неизвестен' }}</span></article>
+  <article><small>Карточек</small><strong>{{ publication.record_count }}</strong><span>активный accepted cohort</span></article>
+  <article><small>Ожидают</small><strong class="{{ 'amber' if publication.dirty_count else 'green' }}">{{ publication.dirty_count }}</strong><span>semantic public changes</span></article>
+  <article><small>Статус</small><strong>{{ publication.status }}</strong><span>durable outbox</span></article>
+</section>
+
+{% if publication.last_error %}<div class="alert bad"><strong>Последняя ошибка:</strong> {{ publication.last_error }}</div>{% endif %}
+
+<div class="table-shell"><table>
+  <thead><tr><th>Release</th><th>Создан</th><th>Причина</th><th>Изменённые компании</th><th>Карточек</th><th>Предыдущий release</th><th>Build</th><th>Upload</th><th>Import</th><th>HTTPS</th><th>Rollback</th><th>Статус</th></tr></thead>
+  <tbody>{% for row in rows %}<tr>
+    <td class="mono">{{ row.release_id or '—' }}</td>
+    <td>{{ row.created_at|datetime_ru }}</td>
+    <td>{{ row.trigger }}</td>
+    <td>{{ row.changed_company_count }}{% if row.changed_companies %}<small>{{ row.changed_companies|join(', ') }}</small>{% endif %}</td>
+    <td>{{ row.company_count }}</td>
+    <td class="mono">{{ row.previous_release_id or '—' }}</td>
+    <td>{{ row.build_at|datetime_ru if row.build_at else '—' }}</td>
+    <td>{{ row.upload_at|datetime_ru if row.upload_at else '—' }}</td>
+    <td>{{ row.import_at|datetime_ru if row.import_at else '—' }}</td>
+    <td>{{ row.verify_at|datetime_ru if row.verify_at else '—' }}</td>
+    <td>{{ row.rollback_at|datetime_ru if row.rollback_at else '—' }}</td>
+    <td><span class="status {{ row.status|lower|replace('_','-') }}">{{ row.status }}</span>{% if row.last_error %}<small class="error-cell">{{ row.last_error }}</small>{% endif %}</td>
+  </tr>{% else %}<tr><td colspan="12" class="empty">История публикаций пока пуста</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}
