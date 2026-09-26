@@ -78,6 +78,7 @@ def test_content_addressed_raw_is_immutable_and_deduplicated(tmp_path):
         raw_root=tmp_path, content=_page(), kind="company",
         url=f"https://firmoteka.ru/{INN}", status=200,
         headers={"content-type": "text/html"}, retrieved_at=NOW,
+        latency_ms=125,
     )
     second, _ = worker._store_raw(
         raw_root=tmp_path, content=_page(), kind="company",
@@ -86,6 +87,8 @@ def test_content_addressed_raw_is_immutable_and_deduplicated(tmp_path):
     )
     assert first.checksum == second.checksum == manifest["response_sha256"]
     assert first.artifact_reference == second.artifact_reference
+    assert manifest["http_status"] == 200
+    assert manifest["latency_ms"] == 125
 
 
 def test_same_body_keeps_each_retrieval_as_an_immutable_observation(tmp_path):

@@ -1,6 +1,6 @@
 """Transactional job, lease, execution, retry and publication foundation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -128,6 +128,8 @@ def create_job(
     max_attempts: int = 3,
     timeout_seconds: int = 300,
     now: datetime | None = None,
+    master_replay_signal_ids: Sequence[UUID] | None = None,
+    master_replay_target_source_id: str | None = None,
 ) -> JobCreation:
     """Create a durable job or return the equivalent idempotent request."""
 
@@ -144,20 +146,36 @@ def create_job(
     if max_attempts <= 0 or timeout_seconds <= 0:
         raise ValueError("max_attempts and timeout_seconds must be positive")
     metadata = dict(schedule_metadata or {})
-    replay_ids = tuple(session.scalars(
-        select(MasterReplaySignal.id)
-        .where(
-            MasterReplaySignal.target_source_id == source_id,
-            MasterReplaySignal.status == "pending",
-        )
-        .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
-    ))
+    replay_target_source_id = master_replay_target_source_id or source_id
+    if master_replay_signal_ids is None:
+        # Replay ownership is explicit.  Ordinary scheduled source checks must
+        # never sweep the global Master backlog as an incidental side effect.
+        replay_ids = ()
+    else:
+        requested_replay_ids = tuple(dict.fromkeys(master_replay_signal_ids))
+        replay_rows = tuple(session.scalars(
+            select(MasterReplaySignal)
+            .where(MasterReplaySignal.id.in_(requested_replay_ids))
+            .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
+        )) if requested_replay_ids else ()
+        found_ids = {row.id for row in replay_rows}
+        if found_ids != set(requested_replay_ids):
+            raise ValueError("master replay signal does not exist")
+        if any(
+            row.target_source_id != replay_target_source_id
+            for row in replay_rows
+        ):
+            raise ValueError("master replay signal belongs to another source")
+        if any(row.status not in {"pending", "scheduled"} for row in replay_rows):
+            raise ValueError("master replay signal is already terminal")
+        replay_ids = tuple(row.id for row in replay_rows)
     if replay_ids:
         replay_token = sha256(
             "\n".join(str(value) for value in replay_ids).encode("ascii")
         ).hexdigest()[:20]
         idempotency_key = f"{idempotency_key}:master-replay:{replay_token}"
         metadata["master_replay_signal_ids"] = [str(value) for value in replay_ids]
+        metadata["master_replay_target_source_id"] = replay_target_source_id
     if len(idempotency_key) > 255:
         digest = sha256(idempotency_key.encode("utf-8")).hexdigest()
         idempotency_key = f"{source_id}:job:{digest}"
@@ -209,6 +227,7 @@ def create_job(
             update(MasterReplaySignal)
             .where(
                 MasterReplaySignal.id.in_(replay_ids),
+                MasterReplaySignal.target_source_id == replay_target_source_id,
                 MasterReplaySignal.status == "pending",
             )
             .values(status="scheduled", scheduled_at=now, last_error=None)
@@ -586,11 +605,15 @@ def complete_run_success(
     job.updated_at = now
     replay_ids = tuple(job.schedule_metadata.get("master_replay_signal_ids") or ())
     if replay_ids:
+        replay_target_source_id = str(
+            job.schedule_metadata.get("master_replay_target_source_id")
+            or claim.source_id
+        )
         session.execute(
             update(MasterReplaySignal)
             .where(
                 MasterReplaySignal.id.in_(replay_ids),
-                MasterReplaySignal.target_source_id == claim.source_id,
+                MasterReplaySignal.target_source_id == replay_target_source_id,
             )
             .values(status="complete", completed_at=now, last_error=None)
         )
@@ -676,11 +699,15 @@ def complete_run_failure(
     job.updated_at = now
     replay_ids = tuple(job.schedule_metadata.get("master_replay_signal_ids") or ())
     if replay_ids and not should_retry:
+        replay_target_source_id = str(
+            job.schedule_metadata.get("master_replay_target_source_id")
+            or claim.source_id
+        )
         session.execute(
             update(MasterReplaySignal)
             .where(
                 MasterReplaySignal.id.in_(replay_ids),
-                MasterReplaySignal.target_source_id == claim.source_id,
+                MasterReplaySignal.target_source_id == replay_target_source_id,
             )
             .values(status="failed", completed_at=now, last_error=str(error)[:2000])
         )

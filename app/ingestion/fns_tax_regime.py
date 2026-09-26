@@ -1154,7 +1154,7 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
 
     from sqlalchemy import func, select
 
-    from app.contracts.data_readiness import AutoUpdateStatus
+    from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
     from app.ingestion.fns_bulk_worker import (
         _accepted_replay_path,
         _apply_successful_check,
@@ -1187,6 +1187,9 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
         raise InvalidDataError("tax-regime child datasets are not registered")
 
     check_only = bool(claim.schedule_metadata.get("check_only"))
+    enrichment_replay = bool(
+        claim.schedule_metadata.get("company_enrichment_run_ids")
+    )
     if check_only:
         descriptor_path = _accepted_replay_path(
             session, claim=claim, spec=family_spec
@@ -1252,24 +1255,29 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
             dataset.retrieved_at = now
             dataset.published_at = now
         dataset.record_count = published
-        child_status = _apply_successful_check(
-            dataset,
-            actual_until=release.actual_until,
-            now=now,
-            check_interval=spec.check_interval,
+        child_status = (
+            OperationalStatus.CURRENT
+            if enrichment_replay
+            else _apply_successful_check(
+                dataset,
+                actual_until=release.actual_until,
+                now=now,
+                check_interval=spec.check_interval,
+            )
         )
-        # Child datasets are projections owned by the one family schedule.
-        dataset.auto_update_status = AutoUpdateStatus.NOT_CONFIGURED
-        dataset.next_expected_update_at = None
-        dataset.coverage = {
-            "managed_by_source_id": SOURCE_ID,
-            "source_records": int((member.get("coverage") or {}).get("records_seen") or 0),
-            "matched": matched,
-            "unmatched": unmatched,
-            "published_facts": published,
-            "freshness": child_status.value,
-            "release_identity": release.identity,
-        }
+        if not enrichment_replay:
+            # Child datasets are projections owned by the one family schedule.
+            dataset.auto_update_status = AutoUpdateStatus.NOT_CONFIGURED
+            dataset.next_expected_update_at = None
+            dataset.coverage = {
+                "managed_by_source_id": SOURCE_ID,
+                "source_records": int((member.get("coverage") or {}).get("records_seen") or 0),
+                "matched": matched,
+                "unmatched": unmatched,
+                "published_facts": published,
+                "freshness": child_status.value,
+                "release_identity": release.identity,
+            }
         member_coverage[name] = dict(dataset.coverage)
 
     if not check_only:
@@ -1283,23 +1291,28 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
         family.retrieved_at = now
         family.published_at = now
     family.record_count = totals["published"]
-    status = _apply_successful_check(
-        family,
-        actual_until=bundle.actual_until,
-        now=now,
-        check_interval=family_spec.check_interval,
+    status = (
+        OperationalStatus.CURRENT
+        if enrichment_replay
+        else _apply_successful_check(
+            family,
+            actual_until=bundle.actual_until,
+            now=now,
+            check_interval=family_spec.check_interval,
+        )
     )
-    family.coverage = {
-        "source_records": totals["matched"] + totals["unmatched"],
-        "matched": totals["matched"],
-        "unmatched": totals["unmatched"],
-        "published_facts": totals["published"],
-        "risk_summary_candidate_companies": len(matched_companies),
-        "api_projection": family_spec.api_projection,
-        "card_projection": family_spec.card_projection,
-        "release_identity": bundle.identity,
-        "members": member_coverage,
-    }
+    if not enrichment_replay:
+        family.coverage = {
+            "source_records": totals["matched"] + totals["unmatched"],
+            "matched": totals["matched"],
+            "unmatched": totals["unmatched"],
+            "published_facts": totals["published"],
+            "risk_summary_candidate_companies": len(matched_companies),
+            "api_projection": family_spec.api_projection,
+            "card_projection": family_spec.card_projection,
+            "release_identity": bundle.identity,
+            "members": member_coverage,
+        }
     counters = ExecutionCounters(
         records_seen=totals["matched"] + totals["unmatched"],
         records_written=(totals["changed"] if check_only else totals["matched"]),

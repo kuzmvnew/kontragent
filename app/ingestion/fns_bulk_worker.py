@@ -1326,6 +1326,9 @@ def publish_bulk_result(
     now = utc_now()
     actual_until = _claim_actual_until(claim)
     if claim.schedule_metadata.get("check_only"):
+        enrichment_replay = bool(
+            claim.schedule_metadata.get("company_enrichment_run_ids")
+        )
         matched = unmatched = inserted = 0
         matched_companies: set[int] = set()
         if claim.schedule_metadata.get("replay_snapshot"):
@@ -1344,21 +1347,26 @@ def publish_bulk_result(
                 )
                 or 0
             )
-            coverage = dict(dataset.coverage or {})
-            coverage["last_replay"] = {
-                "checked_at": now.isoformat(),
-                "matched": matched,
-                "unmatched": unmatched,
-                "new_facts": inserted,
-                "candidate_companies": len(matched_companies),
-            }
-            coverage["published_facts"] = dataset.record_count
-            dataset.coverage = coverage
-        status = _apply_successful_check(
-            dataset,
-            actual_until=actual_until,
-            now=now,
-            check_interval=spec.check_interval,
+            if not enrichment_replay:
+                coverage = dict(dataset.coverage or {})
+                coverage["last_replay"] = {
+                    "checked_at": now.isoformat(),
+                    "matched": matched,
+                    "unmatched": unmatched,
+                    "new_facts": inserted,
+                    "candidate_companies": len(matched_companies),
+                }
+                coverage["published_facts"] = dataset.record_count
+                dataset.coverage = coverage
+        status = (
+            OperationalStatus.CURRENT
+            if enrichment_replay
+            else _apply_successful_check(
+                dataset,
+                actual_until=actual_until,
+                now=now,
+                check_interval=spec.check_interval,
+            )
         )
         return replace(
             result,

@@ -238,6 +238,108 @@ DATASETS = {
         "operational_status": OperationalStatus.NOT_CONFIGURED,
         "auto_update_status": AutoUpdateStatus.NOT_CONFIGURED,
     },
+    "fedresurs_messages": {
+        "source_code": "fedresurs",
+        "source_name": "Федресурс",
+        "name": "Федресурс: события компаний и банкротство",
+        "domain": "legal_events",
+        "update_mode": "api",
+        "data_format": "json",
+        "refresh_schedule": "daily_check",
+        "priority": 30,
+        "source_url": "https://fedresurs.ru/",
+        "dataset_kind": "access_credential_pending",
+        "freshness_policy": "access_pending",
+        "operational_status": OperationalStatus.ACCESS_PENDING,
+        "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
+        "initialize_access_pending": True,
+        "description": (
+            "Existing legal-event product contract; a permitted machine "
+            "channel and accepted source baseline are still required."
+        ),
+    },
+    "checko_arbitration_cases": {
+        "source_code": "checko",
+        "source_name": "Checko",
+        "source_type": "commercial_aggregator_free_api",
+        "name": "Checko: арбитражные дела",
+        "domain": "arbitration_courts",
+        "update_mode": "api",
+        "data_format": "json",
+        "refresh_schedule": "on_demand",
+        "priority": 30,
+        "source_url": "https://api.checko.ru/v2/legal-cases",
+        "dataset_kind": "access_credential_pending",
+        "freshness_policy": "access_pending",
+        "operational_status": OperationalStatus.ACCESS_PENDING,
+        "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
+        "initialize_access_pending": True,
+        "description": (
+            "Reuses the existing arbitration cache and provider contract; "
+            "CHECKO_API_KEY and accepted API terms are required."
+        ),
+    },
+    "fssp_enforcement": {
+        "source_code": "fssp",
+        "source_name": "ФССП России",
+        "name": "ФССП: исполнительные производства",
+        "domain": "enforcement",
+        "update_mode": "api",
+        "data_format": "json",
+        "refresh_schedule": "on_demand",
+        "priority": 30,
+        "source_url": "https://fssp.gov.ru/",
+        "dataset_kind": "access_credential_pending",
+        "freshness_policy": "access_pending",
+        "operational_status": OperationalStatus.ACCESS_PENDING,
+        "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
+        "initialize_access_pending": True,
+        "description": (
+            "Worker contract only; no permitted stable machine transport has "
+            "yet been accepted, so no clean-negative result is possible."
+        ),
+    },
+    "moscow_general_court_cases": {
+        "source_code": "moscow_courts_official",
+        "source_name": "Суды города Москвы",
+        "source_type": "official_public_service",
+        "name": "Суды общей юрисдикции: деятельность компании",
+        "domain": "general_courts",
+        "update_mode": "api",
+        "data_format": "html",
+        "refresh_schedule": "on_demand",
+        "priority": 30,
+        "source_url": "https://mos-gorsud.ru/search",
+        "dataset_kind": "access_credential_pending",
+        "freshness_policy": "access_pending",
+        "operational_status": OperationalStatus.ACCESS_PENDING,
+        "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
+        "initialize_access_pending": True,
+        "description": (
+            "Reuses the existing region-scoped court cache and routing model; "
+            "a stable permitted machine channel with explicit coverage is pending."
+        ),
+    },
+    "eis_procurements": {
+        "source_code": "eis",
+        "source_name": "ЕИС Закупки",
+        "name": "ЕИС: закупочная деятельность",
+        "domain": "procurement_activity",
+        "update_mode": "soap_archive",
+        "data_format": "xml_zip",
+        "refresh_schedule": "daily_check",
+        "priority": 30,
+        "source_url": "https://int44.zakupki.gov.ru/eis-integration/services/getDocsIP",
+        "dataset_kind": "access_credential_pending",
+        "freshness_policy": "access_pending",
+        "operational_status": OperationalStatus.ACCESS_PENDING,
+        "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
+        "initialize_access_pending": True,
+        "description": (
+            "Procurement-activity process, deliberately separate from EIS/RNP; "
+            "requires EIS_IP_TOKEN and its own accepted archive schema."
+        ),
+    },
 }
 
 
@@ -293,6 +395,19 @@ def ensure_source_factory_datasets(session: Session) -> tuple[DataSet, ...]:
         else:
             for key, value in metadata.items():
                 setattr(existing, key, value)
+            # Disabled catalog placeholders predate their Worker contracts.
+            # Moving only an unconfigured placeholder to ACCESS_PENDING makes
+            # the fail-closed gate truthful without enabling its schedule.
+            if (
+                spec.get("initialize_access_pending", False)
+                and existing.operational_status
+                in (None, OperationalStatus.NOT_CONFIGURED)
+                and spec["operational_status"] == OperationalStatus.ACCESS_PENDING
+            ):
+                existing.dataset_kind = spec["dataset_kind"]
+                existing.freshness_policy = spec["freshness_policy"]
+                existing.operational_status = OperationalStatus.ACCESS_PENDING
+                existing.auto_update_status = AutoUpdateStatus.ACCESS_PENDING
         session.flush()
         result.append(existing)
     return tuple(result)

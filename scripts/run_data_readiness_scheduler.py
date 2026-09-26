@@ -1,6 +1,7 @@
 """Run the data-readiness scheduler once or as a supervised worker."""
 
 import argparse
+from datetime import timedelta
 import json
 
 from app.database.postgres import SessionLocal
@@ -27,6 +28,7 @@ from app.ingestion.exact_source_workers import (
 )
 from app.ingestion.roskomnadzor_bulk_worker import register_rkn_bulk_workers
 from app.ingestion.mintrans_ted_worker import register_mintrans_ted_worker
+from app.ingestion.next_five_source_workers import register_next_five_workers
 from app.ingestion.roszdrav_license_worker import register_roszdrav_license_workers
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
@@ -38,6 +40,7 @@ from app.services.fns_sme_support_registry_service import (
 from app.services.erknm_registry_service import ensure_erknm_dataset
 from app.services.source_service import ensure_default_dataset
 from app.services.source_factory_registry_service import ensure_source_factory_datasets
+from app.services.company_enrichment_service import run_company_enrichment_cycle
 from app.services.roszdrav_registry_service import ensure_roszdrav_datasets
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
@@ -50,7 +53,11 @@ from app.services.data_readiness_scheduler import (
     worker_loop,
 )
 from app.worker.errors import HandlerNotRegisteredError, WorkerFoundationError
-from app.worker.execution import WorkerExecutor
+from app.worker.execution import (
+    RetryPolicy,
+    WorkerExecutor,
+    recover_stale_runs,
+)
 from app.worker.registry import HandlerRegistry
 
 
@@ -64,6 +71,10 @@ def build_registry() -> HandlerRegistry:
         # Each retains an independent source id, lease, job namespace and
         # publication generation.
         register_firmoteka_worker(session, registry)
+        # Registration exposes fail-closed source contracts only.  These five
+        # families have no scheduler handlers until source-specific access and
+        # baselines are accepted explicitly.
+        register_next_five_workers(session, registry)
         register_exact_source_workers(session, registry)
         register_eis_rnp_worker(session, registry)
         register_rkn_bulk_workers(session, registry)
@@ -92,6 +103,25 @@ def build_registry() -> HandlerRegistry:
 
 
 def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
+    # A supervised process can be killed after a job is claimed but before its
+    # normal timeout/failure transaction runs.  Recover those durable rows on
+    # every polling cycle so a service restart cannot strand a source forever
+    # in ``running``.  The normal retry policy remains authoritative and the
+    # fencing token prevents the interrupted process from publishing later.
+    with SessionLocal() as session:
+        recover_stale_runs(
+            session,
+            stale_after=timedelta(minutes=2),
+            retry_policy=RetryPolicy(),
+        )
+        # Consume a bounded Master slice in the same supervised process.  This
+        # is durable DB work: a restart simply resumes pending coverage/jobs.
+        run_company_enrichment_cycle(
+            session,
+            signal_limit=max(10, max_jobs * 25),
+            reconcile_limit=max(50, max_jobs * 50),
+        )
+        session.commit()
     executor = WorkerExecutor(
         session_factory=SessionLocal,
         registry=registry,
@@ -107,6 +137,15 @@ def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
         if run_id is None:
             break
         completed.append(str(run_id))
+    # A completed Worker job can satisfy the last frozen source expectation;
+    # reconcile immediately instead of waiting for the next polling minute.
+    with SessionLocal() as session:
+        run_company_enrichment_cycle(
+            session,
+            signal_limit=max(10, max_jobs * 25),
+            reconcile_limit=max(50, max_jobs * 50),
+        )
+        session.commit()
     return completed
 
 

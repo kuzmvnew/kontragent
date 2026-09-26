@@ -625,7 +625,7 @@ def publish_fns_sme_support_worker_result(session, claim, result):
     from dataclasses import replace
     from datetime import time
 
-    from app.contracts.data_readiness import AutoUpdateStatus
+    from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
     from app.ingestion.fns_bulk_worker import (
         _accepted_replay_path,
         _apply_successful_check,
@@ -649,6 +649,9 @@ def publish_fns_sme_support_worker_result(session, claim, result):
     actual_until = _claim_actual_until(claim)
 
     if claim.schedule_metadata.get("check_only"):
+        enrichment_replay = bool(
+            claim.schedule_metadata.get("company_enrichment_run_ids")
+        )
         state = session.get(WorkerPublicationState, SOURCE_ID)
         validation = dict(state.validation_metadata or {}) if state else {}
         legacy_run_id = (validation.get("validation") or {}).get(
@@ -673,20 +676,25 @@ def publish_fns_sme_support_worker_result(session, claim, result):
             )
             or 0
         )
-        ingestion_run.rows_inserted = published
-        ingestion_run.records_written = published
-        ingestion_run.details = {
-            **(ingestion_run.details or {}),
-            "eligible_records": published,
-            "source_eligible_records": projected["matched"] + projected["unmatched"],
-            "excluded_npd_records": projected["excluded_npd"],
-        }
+        if not enrichment_replay:
+            ingestion_run.rows_inserted = published
+            ingestion_run.records_written = published
+            ingestion_run.details = {
+                **(ingestion_run.details or {}),
+                "eligible_records": published,
+                "source_eligible_records": projected["matched"] + projected["unmatched"],
+                "excluded_npd_records": projected["excluded_npd"],
+            }
         dataset.record_count = published
-        status = _apply_successful_check(
-            dataset,
-            actual_until=actual_until,
-            now=now,
-            check_interval=spec.check_interval,
+        status = (
+            OperationalStatus.CURRENT
+            if enrichment_replay
+            else _apply_successful_check(
+                dataset,
+                actual_until=actual_until,
+                now=now,
+                check_interval=spec.check_interval,
+            )
         )
         summary = SourceChangeSummary(
             matched_companies=len(projected["matched_company_ids"]),
@@ -700,16 +708,17 @@ def publish_fns_sme_support_worker_result(session, claim, result):
             source_data_date=source_date,
             previous_source_data_date=previous_source_date,
         )
-        coverage = dict(dataset.coverage or {})
-        coverage["last_replay"] = {
-            "checked_at": now.isoformat(),
-            "matched": projected["matched"],
-            "unmatched": projected["unmatched"],
-            "new_facts": projected["inserted"],
-        }
-        coverage["published_facts"] = published
-        coverage["change_summary"] = summary.as_dict()
-        dataset.coverage = coverage
+        if not enrichment_replay:
+            coverage = dict(dataset.coverage or {})
+            coverage["last_replay"] = {
+                "checked_at": now.isoformat(),
+                "matched": projected["matched"],
+                "unmatched": projected["unmatched"],
+                "new_facts": projected["inserted"],
+            }
+            coverage["published_facts"] = published
+            coverage["change_summary"] = summary.as_dict()
+            dataset.coverage = coverage
         return replace(
             result,
             staging_result=None,

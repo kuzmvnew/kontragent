@@ -78,6 +78,9 @@ def _snapshot(*, stage="OPERATIONAL"):
     return {
         "sources": [source],
         "source_count": 1,
+        "data_processes": 1,
+        "connected": 1,
+        "source_families": 1,
         "summary": {
             "operational": int(stage == "OPERATIONAL"),
             "first_run": 0,
@@ -90,6 +93,21 @@ def _snapshot(*, stage="OPERATIONAL"):
             "active_leases": 0,
         },
         "master": {"total": 100, "legal": 100, "ip": 0},
+        "enrichment": {
+            "companies_not_started": 90,
+            "companies_in_progress": 5,
+            "companies_complete": 5,
+            "risk_ready_companies": 4,
+            "summary_ready_companies": 3,
+            "public_ready_companies": 2,
+            "coverage_at_least_1": 10,
+            "coverage_at_least_3": 8,
+            "coverage_at_least_5": 6,
+            "coverage_at_least_10": 1,
+            "coverage_100_percent": 5,
+            "average_coverage_percent": 7.5,
+            "median_coverage_percent": 0.0,
+        },
         "incidents": {"open": 0, "running": 0, "waiting_source": 0, "review_required": 0, "recovered_today": 0, "exhausted": 0},
         "latest_run": None,
     }
@@ -113,12 +131,33 @@ def client(monkeypatch):
 def test_dashboard_counters_status_and_official_source_link(client):
     response = client.get("/admin/sources")
     assert response.status_code == 200
-    assert "Работают" in response.text
+    assert "DATA PROCESSES" in response.text
+    assert "CONNECTED" in response.text
+    assert "OPERATIONAL" in response.text
+    assert "SOURCE FAMILIES" in response.text
+    assert "MASTER COMPANIES" in response.text
+    assert "FULLY ENRICHED" in response.text
     assert ">1<" in response.text
     assert "Connected" not in response.text
     assert "ДА" in response.text
     assert "data-tooltip" in response.text
     assert "https://www.nalog.gov.ru/opendata/7707329152-revexp/" in response.text
+
+
+def test_source_inventory_distinguishes_processes_handlers_and_families():
+    counts = service._source_inventory_counts(
+        [
+            {"connected": True, "source_group": "FNS", "fact_family": "tax"},
+            {"connected": False, "source_group": "FNS", "fact_family": "tax"},
+            {"connected": True, "source_group": "FNS", "fact_family": "msp"},
+            {"connected": True, "source_group": "CBR", "fact_family": "warning"},
+        ]
+    )
+    assert counts == {
+        "data_processes": 4,
+        "connected": 3,
+        "source_families": 3,
+    }
 
 
 def test_generic_operational_gate_requires_second_accepted_check():

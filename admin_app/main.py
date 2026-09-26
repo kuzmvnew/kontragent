@@ -144,6 +144,9 @@ def _empty_snapshot() -> dict:
     return {
         "sources": [],
         "source_count": 0,
+        "data_processes": 0,
+        "connected": 0,
+        "source_families": 0,
         "summary": {
             key: 0
             for key in (
@@ -152,6 +155,21 @@ def _empty_snapshot() -> dict:
             )
         },
         "master": {"total": 0, "legal": 0, "ip": 0},
+        "enrichment": {
+            "companies_not_started": 0,
+            "companies_in_progress": 0,
+            "companies_complete": 0,
+            "risk_ready_companies": 0,
+            "summary_ready_companies": 0,
+            "public_ready_companies": 0,
+            "coverage_at_least_1": 0,
+            "coverage_at_least_3": 0,
+            "coverage_at_least_5": 0,
+            "coverage_at_least_10": 0,
+            "coverage_100_percent": 0,
+            "average_coverage_percent": 0.0,
+            "median_coverage_percent": 0.0,
+        },
         "incidents": {"open": 0, "running": 0, "waiting_source": 0, "review_required": 0, "recovered_today": 0, "exhausted": 0},
         "latest_run": None,
     }
