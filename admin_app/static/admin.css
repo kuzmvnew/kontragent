@@ -30,11 +30,11 @@ h3 { font-size: 14px; }
 .no-data { color: var(--muted); white-space: nowrap; }
 .green { color: var(--green); } .amber { color: var(--amber); } .red { color: var(--red); } .blue { color: var(--blue); }
 .badge, .status, .yesno { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; white-space: nowrap; text-decoration: none; }
-.badge.ok, .yesno.yes, .status.operational, .status.on, .status.resolved { background: var(--green-bg); color: var(--green); }
-.badge.bad, .yesno.no, .status.error, .status.source-blocked, .status.access-required, .status.review-required, .status.agent-unavailable, .status.exhausted, .status.auto-repair-exhausted { background: var(--red-bg); color: var(--red); }
-.status.stale, .status.first-run, .status.check-pending, .status.waiting-source, .status.retry-scheduled { background: var(--amber-bg); color: var(--amber); }
+.badge.ok, .yesno.yes, .status.operational, .status.on, .status.resolved, .status.published { background: var(--green-bg); color: var(--green); }
+.badge.bad, .yesno.no, .status.error, .status.failed, .status.source-blocked, .status.access-required, .status.review-required, .status.agent-unavailable, .status.exhausted, .status.auto-repair-exhausted { background: var(--red-bg); color: var(--red); }
+.status.stale, .status.first-run, .status.check-pending, .status.waiting-source, .status.pending, .status.retry-scheduled { background: var(--amber-bg); color: var(--amber); }
 .status.updating, .status.running, .status.auto-heal-running { background: var(--blue-bg); color: var(--blue); }
-.status.disabled, .status.not-configured, .status.off, .status.cancelled { background: var(--gray-bg); color: #59636e; }
+.status.disabled, .status.not-configured, .status.off, .status.cancelled, .status.superseded, .status.coalesced { background: var(--gray-bg); color: #59636e; }
 .table-shell { overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 .table-shell.wide { max-height: calc(100vh - 330px); }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
