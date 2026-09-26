@@ -1,6 +1,7 @@
 """Run the data-readiness scheduler once or as a supervised worker."""
 
 import argparse
+from datetime import timedelta
 import json
 
 from app.database.postgres import SessionLocal
@@ -50,7 +51,11 @@ from app.services.data_readiness_scheduler import (
     worker_loop,
 )
 from app.worker.errors import HandlerNotRegisteredError, WorkerFoundationError
-from app.worker.execution import WorkerExecutor
+from app.worker.execution import (
+    RetryPolicy,
+    WorkerExecutor,
+    recover_stale_runs,
+)
 from app.worker.registry import HandlerRegistry
 
 
@@ -92,6 +97,18 @@ def build_registry() -> HandlerRegistry:
 
 
 def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
+    # A supervised process can be killed after a job is claimed but before its
+    # normal timeout/failure transaction runs.  Recover those durable rows on
+    # every polling cycle so a service restart cannot strand a source forever
+    # in ``running``.  The normal retry policy remains authoritative and the
+    # fencing token prevents the interrupted process from publishing later.
+    with SessionLocal() as session:
+        recover_stale_runs(
+            session,
+            stale_after=timedelta(minutes=2),
+            retry_policy=RetryPolicy(),
+        )
+        session.commit()
     executor = WorkerExecutor(
         session_factory=SessionLocal,
         registry=registry,
