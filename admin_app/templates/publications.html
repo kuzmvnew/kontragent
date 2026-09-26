@@ -3,11 +3,13 @@
 <div class="page-head"><div><h1>Публикации сайта</h1><p>Полные immutable release · accepted public cohort</p></div><span class="badge {{ 'ok' if public_sync.active else 'bad' }}">Public Sync {{ 'РАБОТАЕТ' if public_sync.active else 'ОСТАНОВЛЕН' }}</span></div>
 
 <section class="metrics">
-  <article><small>Сайт</small><strong class="{{ 'green' if publication.site_ready else 'red' }}">{{ 'РАБОТАЕТ' if publication.site_ready else 'НЕДОСТУПЕН' }}</strong><span>{{ publication.active_release or 'release неизвестен' }}</span></article>
+  <article><small>Сайт</small><strong class="{{ 'green' if publication.site_ready else 'amber' }}">{{ 'РАБОТАЕТ' if publication.site_ready else 'ДОСТУПНОСТЬ С HOME НЕ ПОДТВЕРЖДЕНА' }}</strong><span>{{ publication.active_release or 'release не проверен с HOME' }}</span></article>
   <article><small>Карточек</small><strong>{{ publication.record_count }}</strong><span>активный accepted cohort</span></article>
   <article><small>Ожидают</small><strong class="{{ 'amber' if publication.dirty_count else 'green' }}">{{ publication.dirty_count }}</strong><span>semantic public changes</span></article>
   <article><small>Статус</small><strong>{{ publication.status }}</strong><span>durable outbox</span></article>
 </section>
+
+{% if not publication.site_ready %}<div class="alert warn"><strong>Проверка сайта с HOME не выполнена.</strong>{% if publication.site_error %} Техническая причина: {{ publication.site_error }}.{% endif %}</div>{% endif %}
 
 {% if publication.last_error %}<div class="alert bad"><strong>Последняя ошибка:</strong> {{ publication.last_error }}</div>{% endif %}
 

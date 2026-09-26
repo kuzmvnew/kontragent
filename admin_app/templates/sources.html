@@ -35,7 +35,7 @@
 <section class="panel publication-panel">
   <div class="panel-head"><div><h2>ПУБЛИКАЦИЯ САЙТА</h2><p class="muted">Автоматический полный release из принятого публичного cohort.</p></div><a class="button" href="/admin/publications">История публикаций</a></div>
   <div class="metrics publication-metrics">
-    {{ metric('Сайт', 'РАБОТАЕТ' if publication.site_ready else 'НЕДОСТУПЕН', 'Реальный HTTPS /api/ready и точное число карточек.', 'green' if publication.site_ready else 'red') }}
+    {{ metric('Сайт', 'РАБОТАЕТ' if publication.site_ready else 'ДОСТУПНОСТЬ С HOME НЕ ПОДТВЕРЖДЕНА', 'Проверка HTTPS /api/ready выполняется с HOME; таймаут проверки сам по себе не означает недоступность публичного сайта.', 'green' if publication.site_ready else 'amber', publication.site_error or '') }}
     {{ metric('Активный release', publication.active_release or 'Нет данных', 'Release ID, который сейчас обслуживает nextcompany.pro.') }}
     {{ metric('Карточек на сайте', publication.record_count, 'Фактическое число карточек активного release.') }}
     {{ metric('Последняя публикация', publication.last_publication|datetime_ru if publication.last_publication else 'Нет данных', 'Последняя успешно завершённая автоматическая публикация.') }}
@@ -45,6 +45,7 @@
     {{ metric('Статус', publication.status, 'Сводное состояние durable publication outbox.', 'red' if publication.status == 'ОШИБКА' else 'amber' if publication.status != 'АКТУАЛЬНО' else 'green') }}
     {{ metric('Public Sync', 'РАБОТАЕТ' if public_sync.active else 'ОСТАНОВЛЕН', 'nextcompany-public-sync.service: enabled, active, restart-safe.', 'green' if public_sync.active else 'red', 'PID ' ~ (public_sync.pid or '—') ~ ' · рестартов ' ~ (public_sync.restart_count or 0)) }}
   </div>
+  {% if not publication.site_ready %}<div class="alert warn"><strong>Проверка сайта с HOME не выполнена.</strong>{% if publication.site_error %} Техническая причина: {{ publication.site_error }}.{% endif %}</div>{% endif %}
   {% if publication.last_error %}<div class="alert bad"><strong>Последняя ошибка:</strong> {{ publication.last_error }}</div>{% endif %}
 </section>
 

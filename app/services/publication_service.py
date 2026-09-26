@@ -883,6 +883,12 @@ def publication_dashboard(
         )
         release_id = body.get("release_id")
         record_count = int(body.get("record_count") or 0)
+        if not site_ready:
+            site_error = (
+                f"HTTP_{response.status_code}"
+                if response.status_code != 200
+                else "READY_RESPONSE_MISMATCH"
+            )
     except Exception as error:
         site_error = type(error).__name__
     finally:

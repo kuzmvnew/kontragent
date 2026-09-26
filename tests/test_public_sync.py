@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import gzip
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -253,6 +255,178 @@ def test_bootstrap_https_outage_records_incident_without_crashing_loop(
     assert incidents[0]["owner"] == "OUR_INFRASTRUCTURE"
 
 
+def test_normalization_vps_unavailable_rolls_back_without_transport_or_hash_changes(
+    tmp_path, monkeypatch
+):
+    request = _candidate_request("public-v1-current-candidate")
+    request.id = uuid4()
+    request.status = "RETRY_SCHEDULED"
+    request.previous_release_id = "public-v1-last-good"
+    publication = SimpleNamespace(last_published_hash="a" * 64)
+    session = _TransactionalSession(request, publication)
+    incidents = []
+    transport_calls = []
+
+    class Transport:
+        def upload(self, *_args):
+            transport_calls.append("upload")
+
+        def import_release(self, *_args):
+            transport_calls.append("import")
+
+        def rollback(self, *_args):
+            transport_calls.append("rollback")
+
+    def normalize(_session, **_kwargs):
+        request.status = "SUPERSEDED"
+        request.candidate_release_id = None
+        request.previous_release_id = "public-v1-wrong"
+        publication.last_published_hash = "b" * 64
+        raise service.PublicVpsUnavailable("ConnectTimeout")
+
+    monkeypatch.setattr(runner, "engine", _FakeLockEngine())
+    monkeypatch.setattr(runner, "SessionLocal", lambda: session)
+    monkeypatch.setattr(runner, "recover_interrupted_requests", lambda _session: 0)
+    monkeypatch.setattr(runner, "scan_public_ready_changes", lambda _session: {"changed": 0})
+    monkeypatch.setattr(runner, "normalize_publication_queue", normalize)
+    monkeypatch.setattr(
+        runner,
+        "_public_incident",
+        lambda _session, **kwargs: incidents.append(kwargs),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_resolve_public_incidents",
+        lambda *_args, **_kwargs: pytest.fail("incident resolved before normalization"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "claim_next_request",
+        lambda *_args, **_kwargs: pytest.fail("request claimed after timeout"),
+    )
+
+    result = runner.run_once(
+        output_root=tmp_path,
+        transport=Transport(),
+    )
+
+    assert result == {
+        "status": "VPS_UNAVAILABLE",
+        "recovered": 0,
+        "scan": {"changed": 0},
+        "normalization": None,
+    }
+    assert request.status == "RETRY_SCHEDULED"
+    assert request.candidate_release_id == "public-v1-current-candidate"
+    assert request.previous_release_id == "public-v1-last-good"
+    assert publication.last_published_hash == "a" * 64
+    assert transport_calls == []
+    assert len(incidents) == 1
+    assert incidents[0]["category"] == "PUBLIC_VPS_UNAVAILABLE"
+    assert incidents[0]["owner"] == "OUR_INFRASTRUCTURE"
+    assert str(incidents[0]["message"]) == "ConnectTimeout"
+
+
+class _ActiveRowsSession:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self, _query):
+        return iter(self.rows)
+
+
+@pytest.mark.parametrize("failure_point", ["release", "cohort"])
+def test_normalization_live_lookup_timeout_does_not_mutate_request(
+    monkeypatch, failure_point
+):
+    request = _candidate_request("public-v1-preserved")
+    request.status = "RETRY_SCHEDULED"
+    request.previous_release_id = "public-v1-old"
+    request.next_attempt_at = NOW
+    before = (
+        request.status,
+        request.candidate_release_id,
+        request.previous_release_id,
+        request.changed_company_count,
+    )
+    monkeypatch.setattr(
+        service,
+        "accepted_cohort",
+        lambda: (_manifest(["0274101890"]), "c" * 64),
+    )
+    if failure_point == "release":
+        monkeypatch.setattr(
+            service,
+            "fetch_live_release_id",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                service.PublicVpsUnavailable("ConnectTimeout")
+            ),
+        )
+    else:
+        monkeypatch.setattr(
+            service,
+            "fetch_live_release_id",
+            lambda *_args, **_kwargs: "public-v1-live",
+        )
+        monkeypatch.setattr(
+            service,
+            "fetch_live_cohort",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                service.PublicVpsUnavailable("SSL timeout")
+            ),
+        )
+
+    with pytest.raises(service.PublicVpsUnavailable):
+        service.normalize_publication_queue(_ActiveRowsSession([request]))
+
+    assert (
+        request.status,
+        request.candidate_release_id,
+        request.previous_release_id,
+        request.changed_company_count,
+    ) == before
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "expected_owner"),
+    [
+        (service.PublicBuildError("invalid cohort"), "FAILED", "OUR_CODE"),
+        (RuntimeError("unexpected normalization bug"), "FAILED", "OUR_CODE"),
+    ],
+)
+def test_normalization_code_errors_are_bounded_cycle_results(
+    tmp_path, monkeypatch, error, expected_status, expected_owner
+):
+    request = _candidate_request("public-v1-preserved-error")
+    request.id = uuid4()
+    request.status = "RETRY_SCHEDULED"
+    publication = SimpleNamespace(last_published_hash="a" * 64)
+    session = _TransactionalSession(request, publication)
+    incidents = []
+    monkeypatch.setattr(runner, "engine", _FakeLockEngine())
+    monkeypatch.setattr(runner, "SessionLocal", lambda: session)
+    monkeypatch.setattr(runner, "recover_interrupted_requests", lambda _session: 0)
+    monkeypatch.setattr(runner, "scan_public_ready_changes", lambda _session: {"changed": 0})
+    monkeypatch.setattr(
+        runner,
+        "normalize_publication_queue",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_public_incident",
+        lambda _session, **kwargs: incidents.append(kwargs),
+    )
+
+    result = runner.run_once(output_root=tmp_path)
+
+    assert result["status"] == expected_status
+    assert result["normalization"] is None
+    assert request.status == "RETRY_SCHEDULED"
+    assert incidents[0]["category"] == "PUBLIC_BUILD_ERROR"
+    assert incidents[0]["owner"] == expected_owner
+
+
 def test_ssh_transport_uses_explicit_pinned_host_key_and_identity(
     tmp_path, monkeypatch
 ):
@@ -414,6 +588,60 @@ class _FakeSession:
 
     def rollback(self):
         return None
+
+    def get(self, _model, _identifier):
+        return self.request
+
+
+class _ScalarResult:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar(self):
+        return self.value
+
+
+class _FakeLockConnection:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def exec_driver_sql(self, statement, _parameters):
+        return _ScalarResult("pg_try_advisory_lock" in statement)
+
+
+class _FakeLockEngine:
+    def connect(self):
+        return _FakeLockConnection()
+
+
+class _TransactionalSession:
+    def __init__(self, request, publication):
+        self.request = request
+        self.publication = publication
+        self.snapshot = {
+            "status": request.status,
+            "candidate_release_id": request.candidate_release_id,
+            "previous_release_id": request.previous_release_id,
+            "last_published_hash": publication.last_published_hash,
+        }
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def commit(self):
+        return None
+
+    def rollback(self):
+        self.request.status = self.snapshot["status"]
+        self.request.candidate_release_id = self.snapshot["candidate_release_id"]
+        self.request.previous_release_id = self.snapshot["previous_release_id"]
+        self.publication.last_published_hash = self.snapshot["last_published_hash"]
 
     def get(self, _model, _identifier):
         return self.request
@@ -995,3 +1223,185 @@ def test_hashes_are_persisted_only_after_https_verification(tmp_path, monkeypatc
 def test_accepted_public_cohort_manifest_remains_exactly_40():
     manifest, _digest = service.accepted_cohort()
     assert len(manifest.entities) == 40
+
+
+def test_public_vps_incident_deduplicates_across_timeout_messages(monkeypatch):
+    class IncidentSession:
+        incident = None
+
+        def scalar(self, _query):
+            return self.incident
+
+    session = IncidentSession()
+    upserts = []
+
+    def upsert(_session, **kwargs):
+        upserts.append(kwargs)
+        session.incident = SimpleNamespace(
+            updated_at=NOW,
+            safe_error_message=kwargs["message"],
+            resolution_evidence={},
+        )
+        return session.incident, True
+
+    monkeypatch.setattr(runner, "upsert_incident", upsert)
+    monkeypatch.setattr(runner, "utc_now", lambda: NOW)
+
+    runner._public_incident(
+        session,
+        category="PUBLIC_VPS_UNAVAILABLE",
+        message="SSL timeout",
+        owner="OUR_INFRASTRUCTURE",
+    )
+    runner._public_incident(
+        session,
+        category="PUBLIC_VPS_UNAVAILABLE",
+        message="ConnectTimeout",
+        owner="OUR_INFRASTRUCTURE",
+    )
+
+    assert len(upserts) == 1
+    assert upserts[0]["message"] == "HOME public HTTPS verification unavailable"
+    assert session.incident.safe_error_message == "ConnectTimeout"
+    assert session.incident.resolution_evidence["home_verification_error"] == "ConnectTimeout"
+
+
+def test_vps_recovery_resolves_incident_after_successful_normalization(
+    tmp_path, monkeypatch
+):
+    request = _candidate_request("public-v1-recovery-candidate")
+    request.id = uuid4()
+    request.status = "RETRY_SCHEDULED"
+    publication = SimpleNamespace(last_published_hash="a" * 64)
+    session = _TransactionalSession(request, publication)
+    attempts = iter(
+        [
+            service.PublicVpsUnavailable("ConnectTimeout"),
+            service.PublicationQueueNormalization(
+                live_release_id="public-v1-last-good",
+                active_count=1,
+            ),
+        ]
+    )
+    incident_events = []
+
+    def normalize(*_args, **_kwargs):
+        value = next(attempts)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(runner, "engine", _FakeLockEngine())
+    monkeypatch.setattr(runner, "SessionLocal", lambda: session)
+    monkeypatch.setattr(runner, "recover_interrupted_requests", lambda _session: 0)
+    monkeypatch.setattr(runner, "scan_public_ready_changes", lambda _session: {"changed": 0})
+    monkeypatch.setattr(runner, "normalize_publication_queue", normalize)
+    monkeypatch.setattr(runner, "claim_next_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "_public_incident",
+        lambda _session, **kwargs: incident_events.append(("open", kwargs["category"])),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_resolve_public_incidents",
+        lambda *_args, **kwargs: incident_events.append(
+            ("resolve", tuple(sorted(kwargs["categories"])))
+        ),
+    )
+
+    first = runner.run_once(output_root=tmp_path)
+    second = runner.run_once(output_root=tmp_path)
+
+    assert first["status"] == "VPS_UNAVAILABLE"
+    assert second["status"] == "IDLE"
+    assert incident_events == [
+        ("open", "PUBLIC_VPS_UNAVAILABLE"),
+        ("resolve", ("PUBLIC_VPS_UNAVAILABLE",)),
+    ]
+    assert request.status == "RETRY_SCHEDULED"
+    assert request.candidate_release_id == "public-v1-recovery-candidate"
+
+
+def test_persistent_loop_backs_off_then_resets_without_process_exit(tmp_path):
+    results = iter(
+        [
+            {"status": "VPS_UNAVAILABLE"},
+            {"status": "VPS_UNAVAILABLE"},
+            {"status": "IDLE"},
+            {"status": "IDLE"},
+        ]
+    )
+    delays = []
+
+    exit_code = runner._run_loop(
+        once=False,
+        poll_seconds=5,
+        debounce_seconds=0,
+        output_root=tmp_path,
+        cycle=lambda **_kwargs: next(results),
+        sleep=delays.append,
+        max_cycles=4,
+    )
+
+    assert exit_code == 0
+    assert delays == [15, 30, 5]
+
+
+def test_persistent_loop_survives_unexpected_cycle_exception(
+    tmp_path, monkeypatch
+):
+    calls = 0
+    delays = []
+    incidents = []
+
+    def cycle(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("future path failed")
+        return {"status": "IDLE"}
+
+    monkeypatch.setattr(
+        runner,
+        "_record_unexpected_cycle_incident",
+        lambda error: incidents.append(str(error)),
+    )
+
+    exit_code = runner._run_loop(
+        once=False,
+        poll_seconds=5,
+        debounce_seconds=0,
+        output_root=tmp_path,
+        cycle=cycle,
+        sleep=delays.append,
+        max_cycles=3,
+    )
+
+    assert exit_code == 0
+    assert calls == 3
+    assert incidents == ["future path failed"]
+    assert delays == [15, 5]
+
+
+def test_once_returns_nonzero_for_unexpected_cycle_exception(
+    tmp_path, monkeypatch
+):
+    incidents = []
+    monkeypatch.setattr(
+        runner,
+        "_record_unexpected_cycle_incident",
+        lambda error: incidents.append(str(error)),
+    )
+
+    exit_code = runner._run_loop(
+        once=True,
+        poll_seconds=5,
+        debounce_seconds=0,
+        output_root=tmp_path,
+        cycle=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("once failed")),
+        sleep=lambda _delay: pytest.fail("--once must not sleep"),
+    )
+
+    assert exit_code == 1
+    assert incidents == ["once failed"]
