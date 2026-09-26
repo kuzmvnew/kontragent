@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from hashlib import sha256
+from statistics import median
 from typing import Any
 from uuid import UUID
 
@@ -1164,8 +1165,41 @@ def get_company_public_readiness(
     }
 
 
+def _semantic_coverage(
+    statuses: Sequence[str], *, frozen_expected: int, run_status: str
+) -> tuple[int, int, bool, float]:
+    """Summarize one frozen denominator without turning errors into negatives."""
+
+    normalized = [str(status).upper() for status in statuses]
+    # SUCCEEDED is a bounded compatibility bridge for rows written by v1.
+    resolved = sum(
+        status in {"FOUND", "NOT_FOUND", "SUCCEEDED"} for status in normalized
+    )
+    not_applicable = sum(status == "NOT_APPLICABLE" for status in normalized)
+    terminal = resolved + not_applicable
+    expected = max(int(frozen_expected or 0), len(normalized))
+    applicable_expected = max(0, expected - not_applicable)
+    complete = terminal >= expected and (
+        expected > 0 or str(run_status).lower() == "succeeded"
+    )
+    percent = (
+        min(100.0, resolved * 100.0 / applicable_expected)
+        if applicable_expected
+        else 100.0 if complete else 0.0
+    )
+    return resolved, terminal, complete, percent
+
+
 def canonical_enrichment_metrics(session: Session) -> dict[str, Any]:
-    """Admin metrics with explicit company and source-expectation denominators."""
+    """Return canonical Master coverage metrics from each company's latest run.
+
+    ``FOUND`` and ``NOT_FOUND`` resolve an applicable source expectation.
+    ``NOT_APPLICABLE`` resolves the workflow expectation but is excluded from
+    the applicable-source denominator.  Every other semantic status remains
+    fail-closed.  ``succeeded`` is accepted temporarily for enrichment rows
+    written before the semantic-status migration; it can be removed once no
+    such rows remain in operational storage.
+    """
 
     ranked = (
         select(
@@ -1173,6 +1207,9 @@ def canonical_enrichment_metrics(session: Session) -> dict[str, Any]:
             CompanyEnrichmentRun.company_id.label("company_id"),
             CompanyEnrichmentRun.status.label("status"),
             CompanyEnrichmentRun.public_ready.label("public_ready"),
+            CompanyEnrichmentRun.source_count.label("source_count"),
+            CompanyEnrichmentRun.risk_assessment_id.label("risk_assessment_id"),
+            CompanyEnrichmentRun.summary_id.label("summary_id"),
             func.row_number()
             .over(
                 partition_by=CompanyEnrichmentRun.company_id,
@@ -1191,6 +1228,9 @@ def canonical_enrichment_metrics(session: Session) -> dict[str, Any]:
             ranked.c.company_id,
             ranked.c.status,
             ranked.c.public_ready,
+            ranked.c.source_count,
+            ranked.c.risk_assessment_id,
+            ranked.c.summary_id,
         )
         .where(ranked.c.position == 1)
         .subquery()
@@ -1198,53 +1238,106 @@ def canonical_enrichment_metrics(session: Session) -> dict[str, Any]:
     company_total = int(
         session.scalar(select(func.count()).select_from(Company)) or 0
     )
-    company_counts = session.execute(
+    latest_rows = session.execute(select(latest)).mappings().all()
+    source_rows = session.execute(
         select(
-            func.count(latest.c.company_id),
-            func.count(latest.c.company_id).filter(latest.c.status == "succeeded"),
-            func.count(latest.c.company_id).filter(latest.c.status == "failed"),
-            func.count(latest.c.company_id).filter(
-                latest.c.status.in_(
-                    ("pending", "waiting_sources", "retry_scheduled", "running")
-                )
-            ),
-            func.count(latest.c.company_id).filter(latest.c.public_ready.is_(True)),
-        )
-    ).one()
-    source_counts = session.execute(
-        select(
-            func.count(CompanySourceCoverage.id),
-            func.count(CompanySourceCoverage.id).filter(
-                CompanySourceCoverage.status == "succeeded"
-            ),
-            func.count(CompanySourceCoverage.id).filter(
-                CompanySourceCoverage.status == "retry_scheduled"
-            ),
-            func.count(CompanySourceCoverage.id).filter(
-                CompanySourceCoverage.status.in_(("failed", "cancelled"))
-            ),
-            func.count(CompanySourceCoverage.id).filter(
-                CompanySourceCoverage.status.in_(("pending", "queued", "running"))
-            ),
+            CompanySourceCoverage.enrichment_run_id,
+            CompanySourceCoverage.status,
         )
         .join(latest, latest.c.run_id == CompanySourceCoverage.enrichment_run_id)
-    ).one()
-    companies_with_run = int(company_counts[0] or 0)
-    expected = int(source_counts[0] or 0)
-    completed = int(source_counts[1] or 0)
+    ).all()
+
+    coverage_by_run: dict[UUID, list[str]] = defaultdict(list)
+    for run_id, status in source_rows:
+        coverage_by_run[run_id].append(str(status).upper())
+
+    retry_statuses = {"RETRY_SCHEDULED"}
+    failure_statuses = {
+        "FAILED",
+        "CANCELLED",
+        "SOURCE_UNAVAILABLE",
+        "TIMEOUT",
+        "PARSING_ERROR",
+        "STALE_DATA",
+        "ACCESS_REQUIRED",
+    }
+    pending_statuses = {"PENDING", "QUEUED", "RUNNING"}
+
+    companies_complete = 0
+    companies_failed = 0
+    companies_in_progress = 0
+    risk_ready = 0
+    summary_ready = 0
+    public_ready = 0
+    covered_at_least = {1: 0, 3: 0, 5: 0, 10: 0}
+    coverage_percentages = [0.0] * max(0, company_total - len(latest_rows))
+    expected = completed = retrying = failed = pending = 0
+
+    for run in latest_rows:
+        statuses = coverage_by_run.get(run["run_id"], [])
+        frozen_expected = max(int(run["source_count"] or 0), len(statuses))
+        semantic_resolved, terminal, is_complete, coverage_percent = (
+            _semantic_coverage(
+                statuses,
+                frozen_expected=frozen_expected,
+                run_status=str(run["status"]),
+            )
+        )
+        coverage_percentages.append(coverage_percent)
+        for threshold in covered_at_least:
+            if semantic_resolved >= threshold:
+                covered_at_least[threshold] += 1
+        if is_complete:
+            companies_complete += 1
+        elif str(run["status"]).lower() in {
+            "pending",
+            "waiting_sources",
+            "retry_scheduled",
+            "running",
+        }:
+            companies_in_progress += 1
+        if str(run["status"]).lower() == "failed":
+            companies_failed += 1
+        if run["risk_assessment_id"]:
+            risk_ready += 1
+        if run["summary_id"]:
+            summary_ready += 1
+        if bool(run["public_ready"]):
+            public_ready += 1
+
+        expected += frozen_expected
+        completed += terminal
+        retrying += sum(item in retry_statuses for item in statuses)
+        failed += sum(item in failure_statuses for item in statuses)
+        pending += sum(item in pending_statuses for item in statuses)
+
+    companies_with_run = len(latest_rows)
+    coverage_average = (
+        sum(coverage_percentages) / company_total if company_total else 0.0
+    )
+    coverage_median = median(coverage_percentages) if coverage_percentages else 0.0
     return {
         "master_company_count": company_total,
         "companies_with_enrichment_run": companies_with_run,
         "companies_not_started": max(0, company_total - companies_with_run),
-        "companies_complete": int(company_counts[1] or 0),
-        "companies_failed": int(company_counts[2] or 0),
-        "companies_in_progress": int(company_counts[3] or 0),
-        "public_ready_companies": int(company_counts[4] or 0),
+        "companies_complete": companies_complete,
+        "companies_failed": companies_failed,
+        "companies_in_progress": companies_in_progress,
+        "risk_ready_companies": risk_ready,
+        "summary_ready_companies": summary_ready,
+        "public_ready_companies": public_ready,
+        "coverage_at_least_1": covered_at_least[1],
+        "coverage_at_least_3": covered_at_least[3],
+        "coverage_at_least_5": covered_at_least[5],
+        "coverage_at_least_10": covered_at_least[10],
+        "coverage_100_percent": companies_complete,
+        "average_coverage_percent": round(coverage_average, 4),
+        "median_coverage_percent": round(float(coverage_median), 4),
         "source_expectation_count": expected,
         "source_expectations_succeeded": completed,
-        "source_expectations_retrying": int(source_counts[2] or 0),
-        "source_expectations_failed": int(source_counts[3] or 0),
-        "source_expectations_pending": int(source_counts[4] or 0),
+        "source_expectations_retrying": retrying,
+        "source_expectations_failed": failed,
+        "source_expectations_pending": pending,
         "source_completion_percent": (
             round(completed * 100 / expected, 4) if expected else None
         ),

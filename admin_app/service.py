@@ -28,7 +28,7 @@ from app.models.incident import (
     SourceIncident,
     SourceIncidentAction,
 )
-from app.models.source import CompanySourceData, DataSet, DataSource
+from app.models.source import DataSet, DataSource
 from app.models.worker import (
     WorkerHandlerRegistration,
     WorkerJob,
@@ -164,6 +164,21 @@ def _int(value: Any) -> int | None:
     return None
 
 
+def _source_inventory_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Count update processes, runnable handlers, and grouped source families."""
+
+    return {
+        "data_processes": len(rows),
+        "connected": sum(bool(row["connected"]) for row in rows),
+        "source_families": len(
+            {
+                (str(row["source_group"]), str(row["fact_family"]))
+                for row in rows
+            }
+        ),
+    }
+
+
 def _master_counts(session) -> dict[str, Any]:
     total, legal, individual = session.execute(
         select(
@@ -192,25 +207,6 @@ def _master_counts(session) -> dict[str, Any]:
             func.count(Company.id).filter(func.date(Company.updated_at) == today),
         )
     ).one()
-    source_counts = (
-        select(
-            CompanySourceData.company_id.label("company_id"),
-            func.count(func.distinct(CompanySourceData.source_id)).label("source_count"),
-        )
-        .group_by(CompanySourceData.company_id)
-        .subquery()
-    )
-    enriched = session.execute(
-        select(
-            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 1),
-            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 3),
-            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 5),
-            func.count(source_counts.c.company_id).filter(source_counts.c.source_count >= 10),
-            func.avg(source_counts.c.source_count),
-            func.percentile_cont(0.5).within_group(source_counts.c.source_count),
-        )
-    ).one()
-    enriched_one = int(enriched[0] or 0)
     return {
         "total": int(total or 0),
         "legal": int(legal or 0),
@@ -220,13 +216,6 @@ def _master_counts(session) -> dict[str, Any]:
         "pending_official_verification": int(authority[2] or 0),
         "new_today": int(authority[3] or 0),
         "changed_today": int(authority[4] or 0),
-        "enriched_1": enriched_one,
-        "enriched_3": int(enriched[1] or 0),
-        "enriched_5": int(enriched[2] or 0),
-        "enriched_10": int(enriched[3] or 0),
-        "average_source_snapshots": float(enriched[4] or 0),
-        "median_source_snapshots": float(enriched[5] or 0),
-        "zero_source_snapshots": max(0, int(total or 0) - enriched_one),
     }
 
 
@@ -611,6 +600,7 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
     with SessionLocal() as session:
         master = _master_counts(session)
         rows = _source_rows(session, now=now, master=master)
+        inventory = _source_inventory_counts(rows)
         queue = int(session.scalar(select(func.count()).select_from(WorkerJob).where(WorkerJob.status == "queued")) or 0)
         retries = int(session.scalar(select(func.count()).select_from(WorkerJob).where(WorkerJob.status == "retry_scheduled")) or 0)
         leases = int(session.scalar(select(func.count()).select_from(WorkerLease).where(WorkerLease.expires_at > now)) or 0)
@@ -626,6 +616,7 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
             "generated_at": now,
             "sources": rows,
             "source_count": len(rows),
+            **inventory,
             "summary": {
                 "operational": stages["OPERATIONAL"],
                 "first_run": stages["FIRST RUN"] + stages["CHECK PENDING"],

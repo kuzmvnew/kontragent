@@ -18,6 +18,7 @@ from app.models.worker import (
     WorkerRun,
 )
 from app.services.company_enrichment_service import (
+    _semantic_coverage,
     canonical_enrichment_metrics,
     consume_master_replay_signals,
     get_company_public_readiness,
@@ -27,6 +28,25 @@ from app.services.company_enrichment_service import (
 
 
 NOW = datetime(2026, 9, 26, 8, tzinfo=timezone.utc)
+
+
+def test_semantic_coverage_excludes_not_applicable_and_fails_closed():
+    resolved, terminal, complete, percent = _semantic_coverage(
+        ["FOUND", "NOT_FOUND", "NOT_APPLICABLE"],
+        frozen_expected=3,
+        run_status="succeeded",
+    )
+    assert (resolved, terminal, complete, percent) == (2, 3, True, 100.0)
+
+    resolved, terminal, complete, percent = _semantic_coverage(
+        ["FOUND", "NOT_FOUND", "NOT_APPLICABLE", "STALE_DATA"],
+        frozen_expected=4,
+        run_status="waiting_sources",
+    )
+    assert resolved == 2
+    assert terminal == 3
+    assert complete is False
+    assert round(percent, 4) == 66.6667
 
 
 def _dataset(
@@ -366,11 +386,29 @@ def test_postgresql_completeness_gate_then_persisted_risk_then_summary(tmp_path)
         assert readiness["completed_source_count"] == 2
         assert readiness["failed_source_count"] == 0
         assert readiness["pending_source_count"] == 0
+        session.add(
+            Company(
+                inn=str(uuid4().int)[:10],
+                name="Master identity without enrichment run",
+                entity_type="legal",
+                status="ACTIVE",
+            )
+        )
+        session.flush()
         metrics = canonical_enrichment_metrics(session)
+        assert metrics["master_company_count"] == 2
+        assert metrics["companies_not_started"] == 1
+        assert metrics["companies_complete"] == 1
+        assert metrics["risk_ready_companies"] == 1
+        assert metrics["summary_ready_companies"] == 1
         assert metrics["source_expectation_count"] == 2
         assert metrics["source_expectations_succeeded"] == 2
         assert metrics["source_completion_percent"] == 100.0
         assert metrics["public_ready_companies"] == 1
+        assert metrics["coverage_at_least_1"] == 1
+        assert metrics["coverage_100_percent"] == 1
+        assert metrics["average_coverage_percent"] == 50.0
+        assert metrics["median_coverage_percent"] == 50.0
         session.rollback()
 
 

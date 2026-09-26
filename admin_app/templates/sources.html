@@ -4,16 +4,21 @@
 <div class="page-head"><div><h1>Источники</h1><p>HOME DATA WORKER · приватная операционная консоль</p></div><span class="badge {{ 'ok' if worker.active else 'bad' }}">Worker {{ 'РАБОТАЕТ' if worker.active else 'ОСТАНОВЛЕН' }}</span></div>
 
 <section class="metrics">
-  {{ metric('Источники', snapshot.source_count, 'Количество источников в каноническом расписании HOME DATA WORKER.') }}
-  {{ metric('Работают', snapshot.summary.operational, 'Источники, прошедшие строгую эксплуатационную приёмку и имеющие актуальные данные.', 'green') }}
+  {{ metric('DATA PROCESSES', snapshot.data_processes, 'Зарегистрированные DataSet/процессы обновления; строки ниже остаются диагностикой процессов.') }}
+  {{ metric('CONNECTED', snapshot.connected, 'Процессы с runnable handler, зарегистрированным в Worker Foundation.') }}
+  {{ metric('OPERATIONAL', snapshot.summary.operational, 'Процессы с реальным успешным запуском, следующей проверкой, расписанием, фактами, error signal и Card/API path.', 'green') }}
+  {{ metric('SOURCE FAMILIES', snapshot.source_families, 'Бизнес-семейства source group + fact family; технические DataSet не раздувают KPI.') }}
+  {{ metric('MASTER COMPANIES', snapshot.master.total, 'Существует company identity; это не означает полное обогащение.', '', 'ЮЛ ' ~ snapshot.master.legal ~ ' · ИП ' ~ snapshot.master.ip) }}
+  {{ metric('FULLY ENRICHED', snapshot.enrichment.companies_complete, 'Все применимые operational sources закрыты семантическим результатом.', 'green') }}
   {{ metric('Первый запуск / ожидание', snapshot.summary.first_run, 'Источники, которые ещё не прошли обязательные рабочие циклы или ожидают проверки.', 'amber') }}
   {{ metric('Устарели', snapshot.summary.stale, 'Источники, срок актуальности опубликованных данных которых истёк.', 'amber') }}
   {{ metric('Ошибки', snapshot.summary.errors, 'Источники, последняя обработка которых закончилась ошибкой.', 'red') }}
   {{ metric('Заблокированы', snapshot.summary.blocked, 'Источники с проблемой у поставщика данных или без настроенного доступа.', 'red') }}
   {{ metric('Отключены', snapshot.summary.disabled, 'Источники, расписание или обработчик которых отключены.') }}
-  {{ metric('Компании Master', snapshot.master.total, 'Компании Master, с которыми сопоставляются данные источников.', '', 'ЮЛ ' ~ snapshot.master.legal ~ ' · ИП ' ~ snapshot.master.ip) }}
   {{ metric('Официально подтверждены / предварительные', snapshot.master.official_verified|default(0) ~ ' / ' ~ snapshot.master.firmoteka_provisional|default(0), 'Компании с подтверждением официального реестра и предварительные записи Firmoteka.', '', 'Ожидают проверки ' ~ snapshot.master.pending_official_verification|default(0)) }}
-  {{ metric('Обогащены ≥1 / ≥3 / ≥5 / ≥10', snapshot.master.enriched_1|default(0) ~ ' / ' ~ snapshot.master.enriched_3|default(0) ~ ' / ' ~ snapshot.master.enriched_5|default(0) ~ ' / ' ~ snapshot.master.enriched_10|default(0), 'Количество компаний Master, имеющих данные как минимум из указанного числа источников.', '', 'Без данных ' ~ snapshot.master.zero_source_snapshots|default(0) ~ ' · среднее ' ~ '%.1f'|format(snapshot.master.average_source_snapshots|default(0))) }}
+  {{ metric('Обогащение: не начато / в работе', snapshot.enrichment.companies_not_started ~ ' / ' ~ snapshot.enrichment.companies_in_progress, 'Канонические CompanyEnrichmentRun; ошибки не выдаются за clean negative.') }}
+  {{ metric('Risk / Summary / Public ready', snapshot.enrichment.risk_ready_companies ~ ' / ' ~ snapshot.enrichment.summary_ready_companies ~ ' / ' ~ snapshot.enrichment.public_ready_companies, 'Ступени downstream readiness после canonical enrichment gate.') }}
+  {{ metric('Coverage ≥1 / ≥3 / ≥5 / ≥10 / 100%', snapshot.enrichment.coverage_at_least_1 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_3 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_5 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_10 ~ ' / ' ~ snapshot.enrichment.coverage_100_percent, 'Покрытие по latest run и semantic FOUND/NOT_FOUND/NOT_APPLICABLE.', '', 'среднее ' ~ '%.1f%%'|format(snapshot.enrichment.average_coverage_percent) ~ ' · медиана ' ~ '%.1f%%'|format(snapshot.enrichment.median_coverage_percent)) }}
   {{ metric('Master сегодня', '+' ~ snapshot.master.new_today|default(0) ~ ' / Δ' ~ snapshot.master.changed_today|default(0), 'Новые и изменённые сегодня компании Master.') }}
   {{ metric('Очередь / повторы / активные задачи', snapshot.summary.queue ~ ' / ' ~ snapshot.summary.retry_scheduled ~ ' / ' ~ snapshot.summary.active_leases, 'Задачи в очереди, отложенные повторы и активные задачи worker.') }}
   {{ metric('PostgreSQL', database.status|status_ru, 'Доступность operational PostgreSQL без раскрытия строки подключения.', 'green' if database.available else 'red') }}
