@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import Sequence, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.worker import (
     WorkerHandlerRegistration,
@@ -335,13 +335,28 @@ def claim_next_job(
     """Claim one runnable job and source lease in the same DB transaction."""
 
     now = now or utc_now()
+    prior_job = aliased(WorkerJob)
+    last_source_run_at = (
+        select(func.max(WorkerRun.started_at))
+        .join(prior_job, prior_job.id == WorkerRun.job_id)
+        .where(prior_job.source_id == WorkerJob.source_id)
+        .correlate(WorkerJob)
+        .scalar_subquery()
+    )
     job = session.scalar(
         select(WorkerJob)
         .where(
             WorkerJob.status.in_(("queued", "retry_scheduled")),
             or_(WorkerJob.next_attempt_at.is_(None), WorkerJob.next_attempt_at <= now),
         )
-        .order_by(WorkerJob.created_at, WorkerJob.id)
+        # Rotate runnable source families by their last execution time.  FIFO
+        # remains authoritative within a source, while a large bounded queue
+        # for one provider cannot starve independent source continuations.
+        .order_by(
+            last_source_run_at.asc().nulls_first(),
+            WorkerJob.created_at,
+            WorkerJob.id,
+        )
         .with_for_update(skip_locked=True)
         .limit(1)
     )

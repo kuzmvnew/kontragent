@@ -1132,6 +1132,26 @@ def _scaled_daily_budget(
     return max(1, configured_minimum, rolling)
 
 
+def _apply_scale_config(
+    session: Session,
+    crawl: FirmotekaCrawlRun,
+    config: FirmotekaScaleConfig,
+) -> None:
+    """Apply operator scale settings at a durable job boundary only."""
+
+    crawl.request_delay_seconds = config.min_request_gap_seconds
+    crawl.catalog_concurrency = config.catalog_concurrency
+    crawl.company_concurrency = config.company_concurrency
+    crawl.concurrency = max(config.catalog_concurrency, config.company_concurrency)
+    crawl.backpressure_threshold = config.backpressure_threshold
+    crawl.daily_refresh_horizon_days = config.daily_refresh_horizon_days
+    crawl.daily_refresh_budget = _scaled_daily_budget(
+        session,
+        horizon_days=config.daily_refresh_horizon_days,
+        configured_minimum=config.daily_refresh_budget,
+    )
+
+
 def _create_next_job(
     session: Session,
     *,
@@ -1370,6 +1390,37 @@ def _record_request_metrics(
     crawl.latency_histogram = histogram
 
 
+def _run_benchmark_metrics(
+    validation: Mapping[str, Any], result: HandlerResult
+) -> dict[str, Any]:
+    metrics = list(validation.get("request_metrics") or ())
+    latencies = sorted(max(0, int(item["latency_ms"])) for item in metrics)
+    statuses: dict[str, int] = {}
+    for item in metrics:
+        key = str(int(item["http_status"]))
+        statuses[key] = statuses.get(key, 0) + 1
+
+    def percentile(fraction: float) -> int | None:
+        if not latencies:
+            return None
+        rank = int(fraction * len(latencies) + 0.999999)
+        return latencies[max(0, min(len(latencies) - 1, rank - 1))]
+
+    return {
+        "concurrency": int(validation.get("lane_count") or 1),
+        "requests": len(metrics),
+        "http_status_counts": statuses,
+        "latency_ms_p50": percentile(0.50),
+        "latency_ms_p95": percentile(0.95),
+        "latency_ms_max": max(latencies) if latencies else None,
+        "raw_bytes": sum(
+            int(artifact.manifest.get("response_size") or 0)
+            for artifact in result.raw_artifacts
+        ),
+        "parser_rejected": result.counters.records_rejected,
+    }
+
+
 def publish_firmoteka_result(session: Session, claim: Any, result: HandlerResult) -> HandlerResult:
     validation = dict(result.staging_result.validation.metadata if result.staging_result else {})
     crawl = session.get(FirmotekaCrawlRun, UUID(str(validation.get("crawl_run_id"))), with_for_update=True)
@@ -1592,6 +1643,11 @@ def publish_firmoteka_result(session: Session, claim: Any, result: HandlerResult
         )
 
     _update_dataset_progress(dataset, crawl, now)
+    # A continuation is created atomically by the publisher, so the scheduler
+    # never observes an idle gap in an active crawl.  Re-read scale settings at
+    # this completed-job boundary to let the controlled 1→2→4 ladder advance
+    # without cancelling a queued checkpoint or restarting the crawl.
+    _apply_scale_config(session, crawl, FirmotekaScaleConfig.from_environment())
     next_job = _create_next_job(session, crawl=crawl, raw_root=raw_root, now=now)
     if next_job is None:
         crawl.phase = "complete"
@@ -1637,7 +1693,13 @@ def publish_firmoteka_result(session: Session, claim: Any, result: HandlerResult
             else {}
         ),
     )
-    return replace(result, change_summary=summary)
+    checksum_metadata = dict(result.checksum_metadata or {})
+    checksum_metadata["benchmark"] = _run_benchmark_metrics(validation, result)
+    return replace(
+        result,
+        checksum_metadata=checksum_metadata,
+        change_summary=summary,
+    )
 
 
 def register_firmoteka_worker(session: Session, registry: HandlerRegistry) -> Any:
@@ -1729,17 +1791,7 @@ def schedule_firmoteka_check(
         return JobCreation(job=existing, created=False)
     # Apply changes only between jobs.  Persisted checkpoint claims remain
     # valid while the controlled 1→2→4 ladder can continue on this crawl.
-    crawl.request_delay_seconds = config.min_request_gap_seconds
-    crawl.catalog_concurrency = config.catalog_concurrency
-    crawl.company_concurrency = config.company_concurrency
-    crawl.concurrency = max(config.catalog_concurrency, config.company_concurrency)
-    crawl.backpressure_threshold = config.backpressure_threshold
-    crawl.daily_refresh_horizon_days = config.daily_refresh_horizon_days
-    crawl.daily_refresh_budget = _scaled_daily_budget(
-        session,
-        horizon_days=config.daily_refresh_horizon_days,
-        configured_minimum=config.daily_refresh_budget,
-    )
+    _apply_scale_config(session, crawl, config)
     if crawl.phase != "discovery":
         continuation = _create_next_job(session, crawl=crawl, raw_root=str(Path(raw_root).resolve()), now=now)
         if continuation is None:

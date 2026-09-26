@@ -149,6 +149,35 @@ def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
     return completed
 
 
+def prepare_worker_state(*, max_jobs: int) -> dict[str, object]:
+    """Recover durable state before any potentially slow source discovery.
+
+    ``worker_loop`` normally runs Worker Foundation maintenance after source
+    scheduling.  A slow official endpoint must not delay restart recovery or
+    the bounded Master enrichment queue, so the supervised entry point performs
+    this DB-only preparation once before entering that loop.  It deliberately
+    does not claim a source job; the single registered executor remains the
+    only network-processing path.
+    """
+
+    with SessionLocal() as session:
+        recovered = recover_stale_runs(
+            session,
+            stale_after=timedelta(minutes=2),
+            retry_policy=RetryPolicy(),
+        )
+        enrichment = run_company_enrichment_cycle(
+            session,
+            signal_limit=max(10, max_jobs * 25),
+            reconcile_limit=max(50, max_jobs * 50),
+        )
+        session.commit()
+    return {
+        "recovered_run_ids": tuple(str(run_id) for run_id in recovered),
+        "enrichment": enrichment,
+    }
+
+
 def ensure_activation_datasets(dataset_codes: list[str]) -> None:
     """Create control rows needed by explicitly requested activations only."""
 
@@ -268,6 +297,7 @@ def main() -> None:
             dataset_codes=sorted(ROSZDRAV_LICENSE_DATASET_CODES),
         )
     if args.loop:
+        prepare_worker_state(max_jobs=args.max_jobs)
         worker_loop(
             poll_seconds=args.poll_seconds,
             after_poll=lambda: run_workers(registry, max_jobs=args.max_jobs),

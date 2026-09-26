@@ -541,6 +541,60 @@ def test_lease_claim_conflict_expiry_and_fencing_token(worker_db):
     assert second.run_id != first.run_id
 
 
+def test_claim_rotates_source_families_without_breaking_source_fifo(worker_db):
+    registry = HandlerRegistry()
+    source_a = _identity("source-a")
+    source_b = _identity("source-b")
+    _register_fixture(worker_db, registry, source_a, _empty_handler)
+    _register_fixture(worker_db, registry, source_b, _empty_handler)
+    first_a = _create(
+        worker_db,
+        source_a,
+        idempotency_key=_identity("a-first"),
+        now=NOW,
+    )
+    second_a = _create(
+        worker_db,
+        source_a,
+        idempotency_key=_identity("a-second"),
+        now=NOW + timedelta(seconds=1),
+    )
+    only_b = _create(
+        worker_db,
+        source_b,
+        idempotency_key=_identity("b-only"),
+        now=NOW + timedelta(seconds=2),
+    )
+
+    with worker_db() as session:
+        first = claim_next_job(
+            session,
+            registry,
+            worker_id="fair-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=3),
+        )
+        session.commit()
+    assert first.job_id == first_a
+    with worker_db() as session:
+        complete_run_success(
+            session, first, HandlerResult(), now=NOW + timedelta(seconds=4)
+        )
+        session.commit()
+
+    with worker_db() as session:
+        second = claim_next_job(
+            session,
+            registry,
+            worker_id="fair-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=5),
+        )
+        session.commit()
+    assert second.job_id == only_b
+    assert second.job_id != second_a
+
+
 def test_fencing_token_is_monotonic_after_success_deletes_lease(worker_db):
     registry = HandlerRegistry()
     source_id = _identity("source")
