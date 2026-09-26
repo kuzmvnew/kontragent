@@ -17,12 +17,14 @@ from app.models.worker import (
     WorkerPublicationState,
     WorkerRun,
 )
+from app.services import company_enrichment_service as enrichment_service
 from app.services.company_enrichment_service import (
     _enrichment_refill_capacity,
     _semantic_coverage,
     canonical_enrichment_metrics,
     consume_master_replay_signals,
     get_company_public_readiness,
+    prioritize_public_cohort_enrichment,
     reconcile_enrichment_run,
     restart_enrichment_run,
 )
@@ -344,6 +346,81 @@ def test_postgresql_backlog_creates_local_replay_and_bounded_point_jobs(tmp_path
         assert repeated.signals_scheduled == 0
         assert repeated.runs_created == 0
         assert repeated.jobs_created == 0
+        session.rollback()
+
+
+def test_public_cohort_priority_is_idempotent_and_preserves_normal_backlog(
+    tmp_path, monkeypatch
+):
+    with Session(engine) as session:
+        public_company, public_signals = _seed_workflow(session, tmp_path)
+        normal_company, normal_signals = _seed_workflow(session, tmp_path)
+        monkeypatch.setattr(
+            enrichment_service,
+            "_accepted_public_cohort_companies",
+            lambda _session: (public_company,),
+        )
+
+        first = prioritize_public_cohort_enrichment(session, now=NOW)
+        session.flush()
+        public_runs = tuple(
+            session.scalars(
+                sa.select(CompanyEnrichmentRun).where(
+                    CompanyEnrichmentRun.company_id == public_company.id
+                )
+            )
+        )
+        assert first.cohort_count == 1
+        assert first.runs_created == 1
+        assert len(public_runs) == 1
+        assert public_runs[0].trigger == "public_cohort_priority"
+        public_coverage = tuple(
+            session.scalars(
+                sa.select(CompanySourceCoverage).where(
+                    CompanySourceCoverage.enrichment_run_id == public_runs[0].id
+                )
+            )
+        )
+        public_jobs = {
+            session.get(WorkerJob, row.worker_job_id)
+            for row in public_coverage
+            if row.worker_job_id is not None
+        }
+        assert public_jobs
+        assert {
+            job.schedule_metadata.get("enrichment_priority") for job in public_jobs
+        } == {"accepted_public_cohort"}
+        dormant_public = next(
+            signal
+            for code, signal in public_signals.items()
+            if code not in {row.source_id for row in public_coverage}
+        )
+        assert dormant_public.status == "pending"
+        assert {signal.status for signal in normal_signals.values()} == {"pending"}
+
+        second = prioritize_public_cohort_enrichment(
+            session, now=NOW + timedelta(seconds=30)
+        )
+        assert second.runs_created == 0
+        assert second.runs_resumed == 1
+        assert session.scalar(
+            sa.select(sa.func.count())
+            .select_from(CompanyEnrichmentRun)
+            .where(CompanyEnrichmentRun.company_id == public_company.id)
+        ) == 1
+
+        consumed = consume_master_replay_signals(
+            session, limit=10, now=NOW + timedelta(minutes=1)
+        )
+        assert consumed.runs_created == 1
+        normal_run = session.scalar(
+            sa.select(CompanyEnrichmentRun).where(
+                CompanyEnrichmentRun.company_id == normal_company.id
+            )
+        )
+        assert normal_run is not None
+        assert normal_run.trigger == "master_replay"
+        assert dormant_public.status == "pending"
         session.rollback()
 
 

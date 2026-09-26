@@ -17,7 +17,7 @@ from statistics import median
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
@@ -54,10 +54,12 @@ from app.services.risk_v3_persistence_service import (
     calculate_company_risk_v3_from_persisted,
     get_or_create_summary_v3,
 )
+from app.services.publication_service import accepted_cohort
 from app.worker.execution import JobCreation, create_job
 
 
 WORKFLOW_VERSION = "company-enrichment-v1"
+PUBLIC_COHORT_PRIORITY_CLASS = "accepted_public_cohort"
 MAX_ACTIVE_ENRICHMENT_RUNS = 100
 ENRICHMENT_REFILL_LOW_WATERMARK = 50
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
@@ -138,6 +140,17 @@ class ReplayConsumption:
     signals_seen: int
     signals_scheduled: int
     runs_created: int
+    jobs_created: int
+
+
+@dataclass(frozen=True)
+class PublicCohortPriority:
+    cohort_count: int
+    ready: int
+    runs_created: int
+    runs_resumed: int
+    runs_restarted: int
+    blocked: int
     jobs_created: int
 
 
@@ -615,6 +628,7 @@ def _enqueue_bulk_group(
     rows: Sequence[CompanySourceCoverage],
     *,
     now: datetime,
+    priority_class: str | None = None,
 ) -> JobCreation:
     first = rows[0]
     state = session.get(WorkerPublicationState, first.worker_source_id)
@@ -669,6 +683,8 @@ def _enqueue_bulk_group(
             "download_allowed": False,
         }
     )
+    if priority_class:
+        metadata["enrichment_priority"] = priority_class
     return create_job(
         session,
         source_id=first.worker_source_id,
@@ -713,6 +729,7 @@ def _enqueue_point_coverage(
     *,
     restart_count: int,
     now: datetime,
+    priority_class: str | None = None,
 ) -> JobCreation:
     handler = session.get(
         WorkerHandlerRegistration,
@@ -749,6 +766,8 @@ def _enqueue_point_coverage(
             "bounded_point_check": True,
         }
     )
+    if priority_class:
+        metadata["enrichment_priority"] = priority_class
     signal_ids = _uuid_values(coverage.master_replay_signal_ids)
     return create_job(
         session,
@@ -773,6 +792,7 @@ def enqueue_enrichment_work(
     run_ids: Sequence[UUID],
     *,
     now: datetime | None = None,
+    priority_class: str | None = None,
 ) -> int:
     """Attach pending coverage rows to executable, bounded Worker jobs."""
 
@@ -824,7 +844,9 @@ def enqueue_enrichment_work(
 
     for rows in bulk_groups.values():
         try:
-            creation = _enqueue_bulk_group(session, rows, now=now)
+            creation = _enqueue_bulk_group(
+                session, rows, now=now, priority_class=priority_class
+            )
         except Exception as error:
             for row in rows:
                 _coverage_error(row, error, now=now)
@@ -840,7 +862,11 @@ def enqueue_enrichment_work(
         run = runs[row.enrichment_run_id]
         try:
             creation = _enqueue_point_coverage(
-                session, row, restart_count=run.restart_count, now=now
+                session,
+                row,
+                restart_count=run.restart_count,
+                now=now,
+                priority_class=priority_class,
             )
         except Exception as error:
             _coverage_error(row, error, now=now)
@@ -867,12 +893,16 @@ def consume_master_replay_signals(
     now = now or utc_now()
     if limit <= 0:
         raise ValueError("limit must be positive")
+    accepted_ids = tuple(
+        company.id for company in _accepted_public_cohort_companies(session)
+    )
     candidate_companies = tuple(
         session.scalars(
             select(MasterReplaySignal.company_id)
             .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
             .where(
                 MasterReplaySignal.status == "pending",
+                ~MasterReplaySignal.company_id.in_(accepted_ids),
                 DataSet.enabled.is_(True),
                 DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
                 DataSet.operational_status == OperationalStatus.CURRENT,
@@ -1153,6 +1183,7 @@ def restart_enrichment_run(
     run_id: UUID,
     *,
     now: datetime | None = None,
+    priority_class: str | None = None,
 ) -> CompanyEnrichmentRun:
     """Restart only failed expectations; successful source work is preserved."""
 
@@ -1213,7 +1244,9 @@ def restart_enrichment_run(
         row.started_at = None
         row.finished_at = None
         row.updated_at = now
-    enqueue_enrichment_work(session, (run.id,), now=now)
+    enqueue_enrichment_work(
+        session, (run.id,), now=now, priority_class=priority_class
+    )
     return run
 
 
@@ -1457,6 +1490,210 @@ def canonical_enrichment_metrics(session: Session) -> dict[str, Any]:
     }
 
 
+def _accepted_public_cohort_companies(session: Session) -> tuple[Company, ...]:
+    manifest, _manifest_hash = accepted_cohort()
+    inns = tuple(entity.inn for entity in manifest.entities)
+    rows = tuple(session.scalars(select(Company).where(Company.inn.in_(inns))))
+    by_inn = {company.inn: company for company in rows}
+    return tuple(by_inn[inn] for inn in inns if inn in by_inn)
+
+
+def _current_public_ready_run(
+    session: Session, run: CompanyEnrichmentRun
+) -> bool:
+    if not (
+        run.status == "succeeded"
+        and run.stage == "complete"
+        and run.public_ready
+        and run.risk_assessment_id
+        and run.summary_id
+    ):
+        return False
+    risk = session.scalar(
+        select(CompanyRiskAssessmentV3)
+        .where(CompanyRiskAssessmentV3.company_id == run.company_id)
+        .order_by(
+            CompanyRiskAssessmentV3.calculated_at.desc(),
+            CompanyRiskAssessmentV3.id.desc(),
+        )
+        .limit(1)
+    )
+    if risk is None or risk.assessment_id != run.risk_assessment_id:
+        return False
+    summary = session.scalar(
+        select(CompanySummaryV3)
+        .where(CompanySummaryV3.company_id == run.company_id)
+        .order_by(
+            CompanySummaryV3.generated_at.desc(), CompanySummaryV3.id.desc()
+        )
+        .limit(1)
+    )
+    return bool(
+        summary
+        and summary.summary_id == run.summary_id
+        and summary.risk_assessment_id == risk.assessment_id
+    )
+
+
+def _pending_signal_map(
+    session: Session, company_id: int
+) -> dict[str, tuple[UUID, ...]]:
+    grouped: dict[str, list[UUID]] = defaultdict(list)
+    for signal in session.scalars(
+        select(MasterReplaySignal)
+        .where(
+            MasterReplaySignal.company_id == company_id,
+            MasterReplaySignal.status == "pending",
+        )
+        .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
+        .with_for_update(skip_locked=True)
+    ):
+        grouped[signal.target_source_id].append(signal.id)
+    return {source_id: tuple(values) for source_id, values in grouped.items()}
+
+
+def _promote_enrichment_jobs(
+    session: Session,
+    run_ids: Sequence[UUID],
+    *,
+    priority_class: str,
+) -> None:
+    requested = tuple(dict.fromkeys(run_ids))
+    if not requested:
+        return
+    job_ids = tuple(
+        session.scalars(
+            select(CompanySourceCoverage.worker_job_id)
+            .where(
+                CompanySourceCoverage.enrichment_run_id.in_(requested),
+                CompanySourceCoverage.worker_job_id.is_not(None),
+            )
+            .distinct()
+        )
+    )
+    if not job_ids:
+        return
+    for job in session.scalars(
+        select(WorkerJob).where(
+            WorkerJob.id.in_(job_ids),
+            WorkerJob.status.in_(("queued", "retry_scheduled")),
+        )
+    ):
+        metadata = dict(job.schedule_metadata or {})
+        metadata["enrichment_priority"] = priority_class
+        job.schedule_metadata = metadata
+
+
+def prioritize_public_cohort_enrichment(
+    session: Session, *, now: datetime | None = None
+) -> PublicCohortPriority:
+    """Create, resume or restart the accepted cohort before normal backlog.
+
+    This is a scheduling policy only.  Runs keep the canonical immutable
+    operational-source denominator and use the same Worker, Risk and Summary
+    gates as every other Master company.
+    """
+
+    now = now or utc_now()
+    companies = _accepted_public_cohort_companies(session)
+    jobs_before = int(session.scalar(select(func.count()).select_from(WorkerJob)) or 0)
+    ready = created = resumed = restarted = blocked = 0
+    prioritized_run_ids: list[UUID] = []
+    active_statuses = {"pending", "waiting_sources", "retry_scheduled", "running"}
+
+    for candidate in companies:
+        company = session.scalar(
+            select(Company).where(Company.id == candidate.id).with_for_update()
+        )
+        if company is None:
+            blocked += 1
+            continue
+        run = session.scalar(
+            select(CompanyEnrichmentRun)
+            .where(CompanyEnrichmentRun.company_id == company.id)
+            .order_by(
+                CompanyEnrichmentRun.created_at.desc(),
+                CompanyEnrichmentRun.id.desc(),
+            )
+            .limit(1)
+            .with_for_update()
+        )
+        signal_map = _pending_signal_map(session, company.id)
+        current_ready = bool(run and _current_public_ready_run(session, run))
+        if current_ready and not signal_map:
+            ready += 1
+            continue
+        if run is not None and run.status in active_statuses:
+            resumed += 1
+            prioritized_run_ids.append(run.id)
+            continue
+        if run is not None and run.status == "failed":
+            if run.restart_count >= run.max_restarts:
+                blocked += 1
+                continue
+            restarted_run = restart_enrichment_run(
+                session,
+                run.id,
+                now=now,
+                priority_class=PUBLIC_COHORT_PRIORITY_CLASS,
+            )
+            restarted += 1
+            prioritized_run_ids.append(restarted_run.id)
+            continue
+        if (
+            run is not None
+            and run.trigger == "public_cohort_priority"
+            and not run.public_ready
+        ):
+            # A canonical priority run which completed without public readiness
+            # is an explicit product/applicability blocker, not a reason to loop.
+            blocked += 1
+            continue
+        idempotency_suffix = str(run.id) if run is not None else "initial"
+        try:
+            creation = create_enrichment_run(
+                session,
+                company_id=company.id,
+                trigger="public_cohort_priority",
+                idempotency_key=(
+                    f"public-cohort:{WORKFLOW_VERSION}:{company.id}:"
+                    f"{idempotency_suffix}"
+                ),
+                source_signal_ids=signal_map,
+                now=now,
+            )
+        except ValueError as error:
+            if "no applicable operational sources" not in str(error):
+                raise
+            blocked += 1
+            continue
+        created += int(creation.created)
+        prioritized_run_ids.append(creation.run.id)
+
+    enqueue_enrichment_work(
+        session,
+        prioritized_run_ids,
+        now=now,
+        priority_class=PUBLIC_COHORT_PRIORITY_CLASS,
+    )
+    _promote_enrichment_jobs(
+        session,
+        prioritized_run_ids,
+        priority_class=PUBLIC_COHORT_PRIORITY_CLASS,
+    )
+    session.flush()
+    jobs_after = int(session.scalar(select(func.count()).select_from(WorkerJob)) or 0)
+    return PublicCohortPriority(
+        cohort_count=len(companies),
+        ready=ready,
+        runs_created=created,
+        runs_resumed=resumed,
+        runs_restarted=restarted,
+        blocked=blocked,
+        jobs_created=max(0, jobs_after - jobs_before),
+    )
+
+
 def seed_existing_master_enrichment(
     session: Session,
     *,
@@ -1475,13 +1712,31 @@ def seed_existing_master_enrichment(
     if limit <= 0:
         return 0, 0
     existing = select(CompanyEnrichmentRun.company_id)
+    accepted_ids = tuple(
+        company.id for company in _accepted_public_cohort_companies(session)
+    )
     company_ids = tuple(
         session.scalars(
             select(Company.id)
-            .where(~Company.id.in_(existing))
+            .where(
+                ~Company.id.in_(existing),
+                ~Company.id.in_(accepted_ids),
+            )
             .order_by(
                 Company.official_registry_verified.desc(),
-                (Company.master_source == "firmoteka").asc(),
+                case(
+                    (
+                        Company.master_source.is_(None)
+                        | (Company.master_source != "firmoteka"),
+                        0,
+                    ),
+                    (
+                        (Company.master_source == "firmoteka")
+                        & (func.lower(Company.status) == "active"),
+                        1,
+                    ),
+                    else_=2,
+                ),
                 Company.created_at,
                 Company.id,
             )
@@ -1498,6 +1753,7 @@ def seed_existing_master_enrichment(
                 company_id=company_id,
                 trigger="existing_master_bootstrap",
                 idempotency_key=f"existing-master:{WORKFLOW_VERSION}:{company_id}",
+                source_signal_ids=_pending_signal_map(session, company_id),
                 now=now,
             )
         except ValueError as error:
@@ -1519,6 +1775,10 @@ def run_company_enrichment_cycle(
     """Standalone scheduler/worker callable; caller owns the transaction."""
 
     now = now or utc_now()
+    public_priority = prioritize_public_cohort_enrichment(session, now=now)
+    accepted_ids = tuple(
+        company.id for company in _accepted_public_cohort_companies(session)
+    )
     active_count = int(
         session.scalar(
             select(func.count())
@@ -1532,13 +1792,6 @@ def run_company_enrichment_cycle(
         or 0
     )
     capacity = _enrichment_refill_capacity(active_count)
-    if capacity:
-        consumption = consume_master_replay_signals(
-            session, limit=min(signal_limit, capacity), now=now
-        )
-    else:
-        consumption = ReplayConsumption(0, 0, 0, 0)
-    capacity = max(0, capacity - consumption.runs_created)
     bootstrap_runs, bootstrap_jobs = (
         seed_existing_master_enrichment(
             session, limit=min(signal_limit, capacity), now=now
@@ -1546,6 +1799,13 @@ def run_company_enrichment_cycle(
         if capacity
         else (0, 0)
     )
+    capacity = max(0, capacity - bootstrap_runs)
+    if capacity:
+        consumption = consume_master_replay_signals(
+            session, limit=min(signal_limit, capacity), now=now
+        )
+    else:
+        consumption = ReplayConsumption(0, 0, 0, 0)
     run_ids = tuple(
         session.scalars(
             select(CompanyEnrichmentRun.id)
@@ -1554,7 +1814,14 @@ def run_company_enrichment_cycle(
                     ("pending", "waiting_sources", "retry_scheduled", "running")
                 )
             )
-            .order_by(CompanyEnrichmentRun.updated_at, CompanyEnrichmentRun.id)
+            .order_by(
+                case(
+                    (CompanyEnrichmentRun.company_id.in_(accepted_ids), 0),
+                    else_=1,
+                ),
+                CompanyEnrichmentRun.updated_at,
+                CompanyEnrichmentRun.id,
+            )
             .limit(reconcile_limit)
             .with_for_update(skip_locked=True)
         )
@@ -1564,6 +1831,13 @@ def run_company_enrichment_cycle(
         run = reconcile_enrichment_run(session, run_id, now=now)
         statuses[run.status] += 1
     return {
+        "public_cohort_count": public_priority.cohort_count,
+        "public_cohort_ready": public_priority.ready,
+        "public_cohort_runs_created": public_priority.runs_created,
+        "public_cohort_runs_resumed": public_priority.runs_resumed,
+        "public_cohort_runs_restarted": public_priority.runs_restarted,
+        "public_cohort_blocked": public_priority.blocked,
+        "public_cohort_jobs_created": public_priority.jobs_created,
         "signals_seen": consumption.signals_seen,
         "signals_scheduled": consumption.signals_scheduled,
         "runs_created": consumption.runs_created,

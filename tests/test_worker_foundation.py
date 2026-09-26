@@ -595,6 +595,38 @@ def test_claim_rotates_source_families_without_breaking_source_fifo(worker_db):
     assert second.job_id != second_a
 
 
+def test_accepted_public_cohort_job_preempts_normal_fifo(worker_db):
+    registry = HandlerRegistry()
+    source_id = _identity("source")
+    _register_fixture(worker_db, registry, source_id, _empty_handler)
+    normal = _create(
+        worker_db,
+        source_id,
+        idempotency_key=_identity("normal"),
+        now=NOW,
+    )
+    priority = _create(
+        worker_db,
+        source_id,
+        idempotency_key=_identity("public-cohort"),
+        schedule_metadata={"enrichment_priority": "accepted_public_cohort"},
+        now=NOW + timedelta(seconds=1),
+    )
+
+    with worker_db() as session:
+        claimed = claim_next_job(
+            session,
+            registry,
+            worker_id="priority-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=2),
+        )
+        session.commit()
+
+    assert claimed.job_id == priority
+    assert claimed.job_id != normal
+
+
 def test_fencing_token_is_monotonic_after_success_deletes_lease(worker_db):
     registry = HandlerRegistry()
     source_id = _identity("source")
