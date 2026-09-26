@@ -1100,15 +1100,18 @@ def _seed_daily_refresh_items(
 
 
 def _enrichment_backlog(session: Session) -> int:
+    active = select(CompanyEnrichmentRun.company_id.label("company_id")).where(
+        CompanyEnrichmentRun.status.in_(
+            ("pending", "waiting_sources", "retry_scheduled", "running")
+        )
+    )
+    signalled = select(MasterReplaySignal.company_id.label("company_id")).where(
+        MasterReplaySignal.status == "pending"
+    )
+    companies = active.union(signalled).subquery()
     return int(
         session.scalar(
-            select(func.count())
-            .select_from(CompanyEnrichmentRun)
-            .where(
-                CompanyEnrichmentRun.status.in_(
-                    ("pending", "waiting_sources", "retry_scheduled", "running")
-                )
-            )
+            select(func.count()).select_from(companies)
         )
         or 0
     )

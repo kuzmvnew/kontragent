@@ -58,6 +58,7 @@ from app.worker.execution import JobCreation, create_job
 
 
 WORKFLOW_VERSION = "company-enrichment-v1"
+MAX_ACTIVE_ENRICHMENT_RUNS = 100
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
 LEGAL_ONLY_DATASET_CODES = frozenset(
     {
@@ -1507,9 +1508,32 @@ def run_company_enrichment_cycle(
     """Standalone scheduler/worker callable; caller owns the transaction."""
 
     now = now or utc_now()
-    consumption = consume_master_replay_signals(session, limit=signal_limit, now=now)
-    bootstrap_runs, bootstrap_jobs = seed_existing_master_enrichment(
-        session, limit=signal_limit, now=now
+    active_count = int(
+        session.scalar(
+            select(func.count())
+            .select_from(CompanyEnrichmentRun)
+            .where(
+                CompanyEnrichmentRun.status.in_(
+                    ("pending", "waiting_sources", "retry_scheduled", "running")
+                )
+            )
+        )
+        or 0
+    )
+    capacity = max(0, MAX_ACTIVE_ENRICHMENT_RUNS - active_count)
+    if capacity:
+        consumption = consume_master_replay_signals(
+            session, limit=min(signal_limit, capacity), now=now
+        )
+    else:
+        consumption = ReplayConsumption(0, 0, 0, 0)
+    capacity = max(0, capacity - consumption.runs_created)
+    bootstrap_runs, bootstrap_jobs = (
+        seed_existing_master_enrichment(
+            session, limit=min(signal_limit, capacity), now=now
+        )
+        if capacity
+        else (0, 0)
     )
     run_ids = tuple(
         session.scalars(
@@ -1535,6 +1559,7 @@ def run_company_enrichment_cycle(
         "jobs_created": consumption.jobs_created,
         "bootstrap_runs_created": bootstrap_runs,
         "bootstrap_jobs_created": bootstrap_jobs,
+        "active_run_limit": MAX_ACTIVE_ENRICHMENT_RUNS,
         "runs_reconciled": len(run_ids),
         "run_statuses": dict(sorted(statuses.items())),
     }
