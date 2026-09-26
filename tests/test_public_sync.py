@@ -5,6 +5,7 @@ import gzip
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,7 +15,12 @@ from app.models.company_enrichment import CompanyEnrichmentRun
 from app.models.publication import PublicProjectionPublication, PublicPublicationRequest
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
 from app.services import publication_service as service
-from public_app.contracts import CanonicalManifest, ManifestEntity, ReleaseManifest
+from public_app.contracts import (
+    CanonicalManifest,
+    ChangedCompanySummary,
+    ManifestEntity,
+    ReleaseManifest,
+)
 from scripts import run_public_sync as runner
 from scripts.public_release_common import (
     canonical_json,
@@ -440,6 +446,11 @@ def test_ssh_upload_failure_schedules_retry_and_keeps_last_good(tmp_path, monkey
             raise runner.PublicTransportError("upload", "SSH unavailable", transient=True)
 
     monkeypatch.setattr(runner, "_active_release_id", lambda _client=None: "public-v1-last-good")
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: "public-v1-last-good",
+    )
     monkeypatch.setattr(runner, "_public_incident", lambda *args, **kwargs: None)
     result = runner.publish_claimed_request(
         _FakeSession(request), request, output_root=tmp_path, transport=Transport()
@@ -462,6 +473,11 @@ def test_import_failure_fails_closed_without_switching_live_release(tmp_path, mo
             raise runner.PublicTransportError("import", "import validation failed", transient=False)
 
     monkeypatch.setattr(runner, "_active_release_id", lambda _client=None: "public-v1-last-good")
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: "public-v1-last-good",
+    )
     monkeypatch.setattr(runner, "_public_incident", lambda *args, **kwargs: None)
     result = runner.publish_claimed_request(
         _FakeSession(request), request, output_root=tmp_path, transport=Transport()
@@ -495,6 +511,11 @@ def test_post_import_https_failure_rolls_back_exact_previous_release(tmp_path, m
             service.PublicVpsUnavailable("candidate HTTPS verification failed")
         ),
     )
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: "public-v1-last-good",
+    )
     monkeypatch.setattr(runner, "_active_release_id", lambda _client=None: release_id)
     monkeypatch.setattr(runner, "accepted_cohort", lambda: (_manifest(["0274101890"]), "c" * 64))
     monkeypatch.setattr(
@@ -509,3 +530,468 @@ def test_post_import_https_failure_rolls_back_exact_previous_release(tmp_path, m
     assert result == "FAILED"
     assert rolled_back == ["public-v1-last-good"]
     assert request.rollback_completed_at is not None
+
+
+def _ready_client(release_id: str) -> httpx.Client:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/ready"
+        return httpx.Response(
+            200,
+            json={"status": "ready", "release_id": release_id, "record_count": 40},
+        )
+
+    return httpx.Client(
+        base_url="https://public.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def _retry_candidate_row(
+    *,
+    release_id: str,
+    previous_release_id: str,
+    changed_count: int,
+    sequence: int,
+) -> PublicPublicationRequest:
+    inns = [legal_inn(700_000_000 + sequence * 100 + index) for index in range(changed_count)]
+    return PublicPublicationRequest(
+        trigger_type="ENRICHMENT_READY_SCAN",
+        status="RETRY_SCHEDULED",
+        candidate_release_id=release_id,
+        previous_release_id=previous_release_id,
+        changed_company_count=changed_count,
+        changed_company_ids=[],
+        changed_company_inns=inns,
+        change_summary=[],
+        created_main_sha=SHA,
+        attempt_count=3,
+        next_attempt_at=NOW,
+        created_at=NOW + timedelta(seconds=sequence),
+        updated_at=NOW,
+    )
+
+
+def _normalization_companies(session: Session, count: int = 40):
+    rows = []
+    projections = {}
+    for sequence in range(710_000_000, 710_000_000 + count):
+        company, item = _company_and_projection(session, sequence)
+        rows.append(company)
+        projections[company.inn] = item
+    return rows, projections
+
+
+def _changes_for(companies: list[Company]) -> list[ChangedCompanySummary]:
+    return [
+        ChangedCompanySummary(
+            inn=company.inn,
+            previous_hash=(f"{index + 1:064x}")[-64:],
+            current_hash=(f"{index + 1001:064x}")[-64:],
+        )
+        for index, company in enumerate(companies)
+    ]
+
+
+def test_retry_candidate_with_current_parent_reuses_existing_bundle(tmp_path, monkeypatch):
+    release_id = "public-v1-current-parent"
+    _candidate_bundle(tmp_path, release_id)
+    request = _candidate_request(release_id)
+    uploads = []
+
+    class Transport:
+        def upload(self, bundle, candidate):
+            uploads.append((bundle, candidate))
+            raise runner.PublicTransportError("upload", "transport disabled", transient=True)
+
+    monkeypatch.setattr(
+        runner,
+        "build_candidate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("bundle rebuilt")),
+    )
+    monkeypatch.setattr(runner, "_public_incident", lambda *args, **kwargs: None)
+    with _ready_client("public-v1-last-good") as client:
+        result = runner.publish_claimed_request(
+            _FakeSession(request),
+            request,
+            output_root=tmp_path,
+            transport=Transport(),
+            client=client,
+        )
+
+    assert result == "RETRY_SCHEDULED"
+    assert uploads == [(tmp_path / release_id, release_id)]
+
+
+def test_stale_candidate_is_rebased_before_upload(tmp_path, monkeypatch):
+    release_id = "public-v1-stale-parent"
+    _candidate_bundle(tmp_path, release_id)
+    request = _candidate_request(release_id)
+    request.previous_release_id = "public-v1-old"
+    uploads = []
+
+    class Transport:
+        def upload(self, *_args):
+            uploads.append(True)
+
+    def normalize(_session, **_kwargs):
+        request.status = "SUPERSEDED"
+        request.last_error = service.STALE_PARENT_RELEASE
+        return service.PublicationQueueNormalization(
+            live_release_id="public-v1-last-good",
+            active_count=1,
+            superseded_count=1,
+            replacement_request_id=uuid4(),
+            dirty_count=40,
+        )
+
+    monkeypatch.setattr(runner, "normalize_publication_queue", normalize)
+    with _ready_client("public-v1-last-good") as client:
+        result = runner.publish_claimed_request(
+            _FakeSession(request),
+            request,
+            output_root=tmp_path,
+            transport=Transport(),
+            client=client,
+        )
+
+    assert result == "REBASED"
+    assert uploads == []
+    assert request.status == "SUPERSEDED"
+    assert request.last_error == service.STALE_PARENT_RELEASE
+
+
+def test_three_retry_candidates_normalize_to_current_truth_not_metadata(monkeypatch, tmp_path):
+    with Session(engine) as session:
+        companies, live = _normalization_companies(session)
+        manifest = _manifest([company.inn for company in companies])
+        candidates = [
+            _retry_candidate_row(
+                release_id=f"public-v1-old-{changed_count}",
+                previous_release_id="public-v1-live",
+                changed_count=changed_count,
+                sequence=index,
+            )
+            for index, changed_count in enumerate((8, 17, 40))
+        ]
+        session.add_all(candidates)
+        session.flush()
+        for candidate in candidates:
+            bundle = tmp_path / candidate.candidate_release_id
+            bundle.mkdir()
+            (bundle / "evidence.txt").write_text("immutable", encoding="utf-8")
+
+        expected_changes = _changes_for(companies)
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service, "fetch_live_release_id", lambda *_args, **_kwargs: "public-v1-live"
+        )
+        monkeypatch.setattr(
+            service,
+            "fetch_live_cohort",
+            lambda *_args, **_kwargs: ("public-v1-live", live),
+        )
+        monkeypatch.setattr(
+            service,
+            "_current_semantic_changes",
+            lambda *_args, **_kwargs: expected_changes,
+        )
+
+        result = service.normalize_publication_queue(
+            session,
+            now=NOW,
+            source_sha=SHA,
+        )
+        replacement = session.get(
+            PublicPublicationRequest, result.replacement_request_id
+        )
+
+        assert result.superseded_count == 3
+        assert result.dirty_count == 40
+        assert replacement.status == "BUILDING"
+        assert replacement.previous_release_id == "public-v1-live"
+        assert replacement.changed_company_inns == [item.inn for item in expected_changes]
+        assert all(candidate.status == "SUPERSEDED" for candidate in candidates)
+        assert all(candidate.coalesced_into_id == replacement.id for candidate in candidates)
+        assert all(
+            (tmp_path / candidate.candidate_release_id / "evidence.txt").is_file()
+            for candidate in candidates
+        )
+        session.rollback()
+
+
+def test_single_stale_retry_creates_one_fresh_live_parent_request(monkeypatch):
+    with Session(engine) as session:
+        companies, live = _normalization_companies(session, count=1)
+        manifest = _manifest([companies[0].inn])
+        stale = _retry_candidate_row(
+            release_id="public-v1-stale",
+            previous_release_id="public-v1-old",
+            changed_count=1,
+            sequence=1,
+        )
+        session.add(stale)
+        session.flush()
+        changes = _changes_for(companies)
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service, "fetch_live_release_id", lambda *_args, **_kwargs: "public-v1-live"
+        )
+        monkeypatch.setattr(
+            service,
+            "fetch_live_cohort",
+            lambda *_args, **_kwargs: ("public-v1-live", live),
+        )
+        monkeypatch.setattr(
+            service,
+            "_current_semantic_changes",
+            lambda *_args, **_kwargs: changes,
+        )
+
+        result = service.normalize_publication_queue(session, now=NOW, source_sha=SHA)
+        replacement = session.get(PublicPublicationRequest, result.replacement_request_id)
+        assert stale.status == "SUPERSEDED"
+        assert stale.last_error == service.STALE_PARENT_RELEASE
+        assert replacement.previous_release_id == "public-v1-live"
+        assert replacement.changed_company_count == 1
+        session.rollback()
+
+
+def test_restarted_service_revalidates_stale_ready_candidate(monkeypatch):
+    with Session(engine) as session:
+        companies, live = _normalization_companies(session, count=1)
+        manifest = _manifest([companies[0].inn])
+        stale = _retry_candidate_row(
+            release_id="public-v1-stale-restart",
+            previous_release_id="public-v1-old",
+            changed_count=1,
+            sequence=1,
+        )
+        stale.status = "READY"
+        stale.next_attempt_at = None
+        session.add(stale)
+        session.flush()
+        assert service.recover_interrupted_requests(session, now=NOW) == 1
+        assert stale.status == "RETRY_SCHEDULED"
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service, "fetch_live_release_id", lambda *_args, **_kwargs: "public-v1-live"
+        )
+        monkeypatch.setattr(
+            service,
+            "fetch_live_cohort",
+            lambda *_args, **_kwargs: ("public-v1-live", live),
+        )
+        monkeypatch.setattr(
+            service,
+            "_current_semantic_changes",
+            lambda *_args, **_kwargs: _changes_for(companies),
+        )
+
+        result = service.normalize_publication_queue(session, now=NOW, source_sha=SHA)
+
+        assert result.replacement_request_id is not None
+        assert stale.status == "SUPERSEDED"
+        assert stale.last_error == service.STALE_PARENT_RELEASE
+        session.rollback()
+
+
+def test_stale_queue_with_current_truth_equal_live_is_no_public_change(monkeypatch):
+    with Session(engine) as session:
+        companies, live = _normalization_companies(session, count=1)
+        manifest = _manifest([companies[0].inn])
+        stale = _retry_candidate_row(
+            release_id="public-v1-stale-no-change",
+            previous_release_id="public-v1-old",
+            changed_count=1,
+            sequence=1,
+        )
+        session.add(stale)
+        session.flush()
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service, "fetch_live_release_id", lambda *_args, **_kwargs: "public-v1-live"
+        )
+        monkeypatch.setattr(
+            service,
+            "fetch_live_cohort",
+            lambda *_args, **_kwargs: ("public-v1-live", live),
+        )
+        monkeypatch.setattr(
+            service,
+            "_current_semantic_changes",
+            lambda *_args, **_kwargs: [],
+        )
+
+        result = service.normalize_publication_queue(session, now=NOW, source_sha=SHA)
+        assert result.no_public_change is True
+        assert result.replacement_request_id is None
+        assert stale.status == "SUPERSEDED"
+        session.rollback()
+
+
+def test_live_parent_race_after_upload_prevents_import_and_rebases(tmp_path, monkeypatch):
+    release_id = "public-v1-parent-race"
+    _candidate_bundle(tmp_path, release_id)
+    request = _candidate_request(release_id)
+    calls = {"parent": 0, "upload": 0, "import": 0}
+
+    class Transport:
+        def upload(self, *_args):
+            calls["upload"] += 1
+
+        def import_release(self, *_args):
+            calls["import"] += 1
+
+    def validate(*_args, **_kwargs):
+        calls["parent"] += 1
+        if calls["parent"] == 2:
+            raise runner.StaleCandidateParent(
+                expected="public-v1-last-good", actual="public-v1-external"
+            )
+        return "public-v1-last-good"
+
+    monkeypatch.setattr(runner, "_validated_candidate_parent", validate)
+    monkeypatch.setattr(
+        runner,
+        "normalize_publication_queue",
+        lambda *_args, **_kwargs: service.PublicationQueueNormalization(
+            live_release_id="public-v1-external",
+            active_count=1,
+            superseded_count=1,
+            replacement_request_id=uuid4(),
+            dirty_count=40,
+        ),
+    )
+    result = runner.publish_claimed_request(
+        _FakeSession(request), request, output_root=tmp_path, transport=Transport()
+    )
+
+    assert result == "REBASED"
+    assert calls == {"parent": 2, "upload": 1, "import": 0}
+
+
+def test_successful_publication_cleanup_supersedes_satisfied_old_request(monkeypatch):
+    with Session(engine) as session:
+        companies, _live = _normalization_companies(session, count=1)
+        manifest = _manifest([companies[0].inn])
+        session.add(
+            PublicProjectionPublication(
+                company_id=companies[0].id,
+                last_published_hash="new-live-hash",
+                last_published_release_id="public-v1-new",
+                published_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        published = _outbox(created_at=NOW, inn=companies[0].inn)
+        published.status = "PUBLISHED"
+        published.published_release_id = "public-v1-new"
+        obsolete = _outbox(created_at=NOW + timedelta(seconds=1), inn=companies[0].inn)
+        session.add_all([published, obsolete])
+        session.flush()
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service,
+            "_current_semantic_changes",
+            lambda *_args, **_kwargs: [],
+        )
+
+        result = service.normalize_after_successful_publication(
+            session,
+            published_request=published,
+            now=NOW + timedelta(minutes=1),
+            source_sha=SHA,
+        )
+        assert result.no_public_change is True
+        assert obsolete.status == "SUPERSEDED"
+        assert obsolete.coalesced_into_id == published.id
+        session.rollback()
+
+
+def test_new_enrichment_during_publish_survives_as_one_next_request(monkeypatch):
+    with Session(engine) as session:
+        companies, _live = _normalization_companies(session, count=1)
+        manifest = _manifest([companies[0].inn])
+        session.add(
+            PublicProjectionPublication(
+                company_id=companies[0].id,
+                last_published_hash="published-hash",
+                last_published_release_id="public-v1-new",
+                published_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        published = _outbox(created_at=NOW, inn=companies[0].inn)
+        published.status = "PUBLISHED"
+        published.published_release_id = "public-v1-new"
+        arrived = _outbox(created_at=NOW + timedelta(seconds=1), inn=companies[0].inn)
+        session.add_all([published, arrived])
+        session.flush()
+        changes = _changes_for(companies)
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service,
+            "_current_semantic_changes",
+            lambda *_args, **_kwargs: changes,
+        )
+
+        result = service.normalize_after_successful_publication(
+            session,
+            published_request=published,
+            now=NOW + timedelta(minutes=1),
+            source_sha=SHA,
+        )
+        replacement = session.get(PublicPublicationRequest, result.replacement_request_id)
+        assert arrived.status == "SUPERSEDED"
+        assert replacement.status == "PENDING"
+        assert replacement.previous_release_id == "public-v1-new"
+        assert replacement.changed_company_inns == [companies[0].inn]
+        session.rollback()
+
+
+def test_hashes_are_persisted_only_after_https_verification(tmp_path, monkeypatch):
+    release_id = "public-v1-verified-order"
+    _candidate_bundle(tmp_path, release_id)
+    request = _candidate_request(release_id)
+    events = []
+
+    class Transport:
+        def upload(self, *_args):
+            events.append("upload")
+
+        def import_release(self, *_args):
+            events.append("import")
+            return {"active": True}
+
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: "public-v1-last-good",
+    )
+    monkeypatch.setattr(
+        runner,
+        "verify_https_release",
+        lambda *_args, **_kwargs: events.append("verify"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_persist_published_hashes",
+        lambda *_args, **_kwargs: events.append("persist"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "normalize_after_successful_publication",
+        lambda *_args, **_kwargs: events.append("cleanup"),
+    )
+    monkeypatch.setattr(runner, "_resolve_public_incidents", lambda *_args, **_kwargs: None)
+
+    result = runner.publish_claimed_request(
+        _FakeSession(request), request, output_root=tmp_path, transport=Transport()
+    )
+    assert result == "PUBLISHED"
+    assert events == ["upload", "import", "verify", "persist", "cleanup"]
+
+
+def test_accepted_public_cohort_manifest_remains_exactly_40():
+    manifest, _digest = service.accepted_cohort()
+    assert len(manifest.entities) == 40

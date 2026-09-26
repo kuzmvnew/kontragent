@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import hashlib
@@ -26,7 +27,12 @@ from app.models.publication import (
     PublicPublicationRequest,
 )
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
-from public_app.contracts import CanonicalManifest, PublicationInfo, PublicProjection
+from public_app.contracts import (
+    CanonicalManifest,
+    ChangedCompanySummary,
+    PublicationInfo,
+    PublicProjection,
+)
 from scripts.export_public_release import build_projection
 from scripts.public_release_common import semantic_projection_sha256
 
@@ -39,6 +45,44 @@ ACTIVE_REQUEST_STATUSES = {
     "RETRY_SCHEDULED",
 }
 RUNNING_REQUEST_STATUSES = {"BUILDING", "READY", "UPLOADING", "IMPORTING", "VERIFYING"}
+STALE_PARENT_RELEASE = "STALE_PARENT_RELEASE"
+PUBLICATION_QUEUE_REBASED = "PUBLICATION_QUEUE_REBASED"
+NO_PUBLIC_CHANGE = "NO_PUBLIC_CHANGE"
+
+
+@dataclass(frozen=True)
+class PublicationQueueNormalization:
+    live_release_id: str
+    active_count: int
+    superseded_count: int = 0
+    replacement_request_id: UUID | None = None
+    dirty_count: int = 0
+    no_public_change: bool = False
+
+
+PUBLICATION_STATUS_LABELS = {
+    "PENDING": "ОЖИДАЕТ ПУБЛИКАЦИИ",
+    "RETRY_SCHEDULED": "ПОВТОР ЗАПЛАНИРОВАН",
+    "SUPERSEDED": "ЗАМЕНЁН НОВОЙ ВЕРСИЕЙ",
+    "PUBLISHED": "ОПУБЛИКОВАН",
+    "FAILED": "ОШИБКА",
+    "BUILDING": "ФОРМИРУЕТСЯ",
+    "READY": "ГОТОВ К ПУБЛИКАЦИИ",
+    "UPLOADING": "ЗАГРУЖАЕТСЯ",
+    "IMPORTING": "ИМПОРТИРУЕТСЯ",
+    "VERIFYING": "ПРОВЕРЯЕТСЯ",
+    "COALESCED": "ОБЪЕДИНЁН С НОВОЙ ВЕРСИЕЙ",
+}
+
+PUBLICATION_REASON_LABELS = {
+    STALE_PARENT_RELEASE: (
+        "Публичный release изменился после сборки кандидата; создана актуальная версия."
+    ),
+    PUBLICATION_QUEUE_REBASED: (
+        "Очередь публикации нормализована; создана актуальная версия."
+    ),
+    NO_PUBLIC_CHANGE: "Публичные данные уже соответствуют текущему состоянию.",
+}
 
 
 class PublicBuildError(RuntimeError):
@@ -167,6 +211,48 @@ def _public_client(client: httpx.Client | None = None) -> httpx.Client:
     )
 
 
+def _validated_ready_release_id(
+    http: httpx.Client,
+    *,
+    expected_record_count: int,
+) -> str:
+    ready = http.get("/api/ready")
+    if ready.status_code != 200:
+        raise PublicVpsUnavailable(f"public ready returned HTTP {ready.status_code}")
+    payload = ready.json()
+    release_id = str(payload.get("release_id") or "")
+    if (
+        payload.get("status") != "ready"
+        or int(payload.get("record_count") or 0) != expected_record_count
+        or not release_id
+    ):
+        raise PublicVpsUnavailable("public ready response does not match accepted cohort")
+    return release_id
+
+
+def fetch_live_release_id(
+    manifest: CanonicalManifest,
+    *,
+    client: httpx.Client | None = None,
+) -> str:
+    """Read and validate the actual HTTPS publication parent."""
+
+    owns_client = client is None
+    http = _public_client(client)
+    try:
+        return _validated_ready_release_id(
+            http,
+            expected_record_count=len(manifest.entities),
+        )
+    except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
+        if isinstance(error, PublicVpsUnavailable):
+            raise
+        raise PublicVpsUnavailable(type(error).__name__) from error
+    finally:
+        if owns_client:
+            http.close()
+
+
 def fetch_live_cohort(
     manifest: CanonicalManifest,
     *,
@@ -175,14 +261,10 @@ def fetch_live_cohort(
     owns_client = client is None
     http = _public_client(client)
     try:
-        ready = http.get("/api/ready")
-        if ready.status_code != 200:
-            raise PublicVpsUnavailable(f"public ready returned HTTP {ready.status_code}")
-        payload = ready.json()
-        release_id = str(payload.get("release_id") or "")
-        expected = len(manifest.entities)
-        if payload.get("status") != "ready" or int(payload.get("record_count") or 0) != expected:
-            raise PublicVpsUnavailable("public ready response does not match accepted cohort")
+        release_id = _validated_ready_release_id(
+            http,
+            expected_record_count=len(manifest.entities),
+        )
         projections: dict[str, PublicProjection] = {}
         for entity in manifest.entities:
             response = http.get(f"/api/company/{entity.inn}")
@@ -343,6 +425,274 @@ def scan_public_ready_changes(
     }
 
 
+def _current_semantic_changes(
+    session: Session,
+    *,
+    manifest: CanonicalManifest,
+    companies: list[Company],
+    baseline_hashes: dict[str, str],
+    now: datetime,
+    database_url: str | None = None,
+) -> list[ChangedCompanySummary]:
+    """Derive dirty companies from current canonical truth, never request metadata."""
+
+    runs = publishable_runs(session, companies)
+    changes: list[ChangedCompanySummary] = []
+    url = database_url_for_psycopg(database_url)
+    with psycopg.connect(url, row_factory=dict_row) as connection:
+        connection.execute("SET TRANSACTION READ ONLY")
+        with connection.cursor() as cursor:
+            for company in companies:
+                run = runs.get(company.id)
+                if run is None:
+                    continue
+                previous_hash = baseline_hashes[company.inn]
+                projection = build_projection(
+                    cursor,
+                    company.inn,
+                    _projection_publication(now),
+                )
+                current_hash = semantic_projection_sha256(projection)
+                if current_hash != previous_hash:
+                    changes.append(
+                        ChangedCompanySummary(
+                            inn=company.inn,
+                            previous_hash=previous_hash,
+                            current_hash=current_hash,
+                        )
+                    )
+    return changes
+
+
+def _new_replacement_request(
+    session: Session,
+    *,
+    companies: list[Company],
+    changes: list[ChangedCompanySummary],
+    previous_release_id: str,
+    now: datetime,
+    status: str,
+    source_sha: str | None = None,
+) -> PublicPublicationRequest:
+    by_inn = {company.inn: company.id for company in companies}
+    request = PublicPublicationRequest(
+        trigger_type="PUBLICATION_QUEUE_REBASE",
+        status=status,
+        projection_generation=f"rebase:{previous_release_id}:{now.isoformat()}",
+        projection_hash=hashlib.sha256(
+            json.dumps(
+                [(item.inn, item.current_hash) for item in changes],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        previous_release_id=previous_release_id,
+        changed_company_count=len(changes),
+        changed_company_ids=[by_inn[item.inn] for item in changes],
+        changed_company_inns=[item.inn for item in changes],
+        change_summary=[item.model_dump(mode="json") for item in changes],
+        attempt_count=1 if status == "BUILDING" else 0,
+        created_main_sha=source_sha or current_main_sha(),
+        build_started_at=now if status == "BUILDING" else None,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(request)
+    session.flush()
+    return request
+
+
+def _supersede_publication_requests(
+    rows: list[PublicPublicationRequest],
+    *,
+    now: datetime,
+    reason: str,
+    replacement: PublicPublicationRequest | None,
+) -> None:
+    for row in rows:
+        row.status = "SUPERSEDED"
+        row.last_error = reason
+        row.next_attempt_at = None
+        row.completed_at = now
+        row.updated_at = now
+        if replacement is not None:
+            row.coalesced_into_id = replacement.id
+
+
+def normalize_publication_queue(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    database_url: str | None = None,
+    client: httpx.Client | None = None,
+    source_sha: str | None = None,
+    force: bool = False,
+    reason_override: str | None = None,
+) -> PublicationQueueNormalization:
+    """Collapse obsolete active work into one candidate based on live/current truth."""
+
+    now = now or utc_now()
+    active = list(
+        session.scalars(
+            select(PublicPublicationRequest)
+            .where(PublicPublicationRequest.status.in_(ACTIVE_REQUEST_STATUSES))
+            .order_by(
+                PublicPublicationRequest.created_at,
+                PublicPublicationRequest.id,
+            )
+            .with_for_update(skip_locked=True)
+        )
+    )
+    if not active:
+        return PublicationQueueNormalization(live_release_id="", active_count=0)
+
+    manifest, _cohort_hash = accepted_cohort()
+    live_release_id = fetch_live_release_id(manifest, client=client)
+    candidate_rows = [row for row in active if row.candidate_release_id]
+    stale_rows = [
+        row
+        for row in candidate_rows
+        if row.previous_release_id != live_release_id
+    ]
+    mature_multiple = len(active) > 1 and any(
+        row.candidate_release_id or row.status != "PENDING" for row in active
+    )
+    if not (force or stale_rows or mature_multiple):
+        return PublicationQueueNormalization(
+            live_release_id=live_release_id,
+            active_count=len(active),
+        )
+
+    observed_release_id, live = fetch_live_cohort(manifest, client=client)
+    companies = cohort_companies(session, manifest)
+    changes = _current_semantic_changes(
+        session,
+        manifest=manifest,
+        companies=companies,
+        baseline_hashes={
+            inn: semantic_projection_sha256(projection)
+            for inn, projection in live.items()
+        },
+        now=now,
+        database_url=database_url,
+    )
+    replacement = None
+    if changes:
+        replacement = _new_replacement_request(
+            session,
+            companies=companies,
+            changes=changes,
+            previous_release_id=observed_release_id,
+            now=now,
+            status="BUILDING",
+            source_sha=source_sha,
+        )
+    reason = reason_override or (
+        NO_PUBLIC_CHANGE
+        if not changes
+        else STALE_PARENT_RELEASE
+        if stale_rows
+        else PUBLICATION_QUEUE_REBASED
+    )
+    _supersede_publication_requests(
+        active,
+        now=now,
+        reason=reason,
+        replacement=replacement,
+    )
+    return PublicationQueueNormalization(
+        live_release_id=observed_release_id,
+        active_count=len(active),
+        superseded_count=len(active),
+        replacement_request_id=replacement.id if replacement else None,
+        dirty_count=len(changes),
+        no_public_change=not changes,
+    )
+
+
+def normalize_after_successful_publication(
+    session: Session,
+    *,
+    published_request: PublicPublicationRequest,
+    now: datetime,
+    database_url: str | None = None,
+    source_sha: str | None = None,
+) -> PublicationQueueNormalization:
+    """Discard satisfied work and preserve at most one genuinely newer diff."""
+
+    active = list(
+        session.scalars(
+            select(PublicPublicationRequest)
+            .where(PublicPublicationRequest.status.in_(ACTIVE_REQUEST_STATUSES))
+            .order_by(
+                PublicPublicationRequest.created_at,
+                PublicPublicationRequest.id,
+            )
+            .with_for_update(skip_locked=True)
+        )
+    )
+    release_id = published_request.published_release_id or ""
+    if not active:
+        return PublicationQueueNormalization(
+            live_release_id=release_id,
+            active_count=0,
+        )
+
+    manifest, _cohort_hash = accepted_cohort()
+    companies = cohort_companies(session, manifest)
+    states = {
+        row.company_id: row
+        for row in session.scalars(
+            select(PublicProjectionPublication).where(
+                PublicProjectionPublication.company_id.in_(
+                    [company.id for company in companies]
+                )
+            )
+        )
+    }
+    if len(states) != len(companies):
+        raise PublicBuildError("published projection baseline is incomplete")
+    changes = _current_semantic_changes(
+        session,
+        manifest=manifest,
+        companies=companies,
+        baseline_hashes={
+            company.inn: states[company.id].last_published_hash
+            for company in companies
+        },
+        now=now,
+        database_url=database_url,
+    )
+    replacement = None
+    if changes:
+        replacement = _new_replacement_request(
+            session,
+            companies=companies,
+            changes=changes,
+            previous_release_id=release_id,
+            now=now,
+            status="PENDING",
+            source_sha=source_sha,
+        )
+    _supersede_publication_requests(
+        active,
+        now=now,
+        reason=PUBLICATION_QUEUE_REBASED if changes else NO_PUBLIC_CHANGE,
+        replacement=replacement,
+    )
+    if replacement is None:
+        for row in active:
+            row.coalesced_into_id = published_request.id
+    return PublicationQueueNormalization(
+        live_release_id=release_id,
+        active_count=len(active),
+        superseded_count=len(active),
+        replacement_request_id=replacement.id if replacement else None,
+        dirty_count=len(changes),
+        no_public_change=not changes,
+    )
+
+
 def recover_interrupted_requests(session: Session, *, now: datetime | None = None) -> int:
     now = now or utc_now()
     rows = list(
@@ -483,7 +833,13 @@ def publication_history(session: Session, *, limit: int = 100) -> list[dict[str,
             "verify_at": row.verified_at,
             "rollback_at": row.rollback_completed_at,
             "status": row.status,
+            "status_label": PUBLICATION_STATUS_LABELS.get(
+                row.status, row.status.replace("_", " ")
+            ),
             "last_error": row.last_error,
+            "last_error_label": PUBLICATION_REASON_LABELS.get(
+                row.last_error, row.last_error
+            ),
         }
         for row in rows
     ]
@@ -539,6 +895,8 @@ def publication_dashboard(
     )
     if latest and latest.status == "FAILED":
         status = "ОШИБКА"
+    elif active and active.status == "RETRY_SCHEDULED":
+        status = "ПОВТОР ЗАПЛАНИРОВАН"
     elif active and active.status in {"BUILDING", "READY"}:
         status = "ФОРМИРУЕТСЯ"
     elif active and active.status in {"UPLOADING", "IMPORTING"}:

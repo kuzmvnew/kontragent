@@ -25,7 +25,7 @@
     <td>{{ row.import_at|datetime_ru if row.import_at else '—' }}</td>
     <td>{{ row.verify_at|datetime_ru if row.verify_at else '—' }}</td>
     <td>{{ row.rollback_at|datetime_ru if row.rollback_at else '—' }}</td>
-    <td><span class="status {{ row.status|lower|replace('_','-') }}">{{ row.status }}</span>{% if row.last_error %}<small class="error-cell">{{ row.last_error }}</small>{% endif %}</td>
+    <td><span class="status {{ row.status|lower|replace('_','-') }}">{{ row.status_label }}</span>{% if row.last_error_label %}<small class="error-cell">{{ row.last_error_label }}</small>{% endif %}</td>
   </tr>{% else %}<tr><td colspan="12" class="empty">История публикаций пока пуста</td></tr>{% endfor %}</tbody>
 </table></div>
 {% endblock %}

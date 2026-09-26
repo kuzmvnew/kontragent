@@ -17,6 +17,7 @@ import subprocess
 import tarfile
 import time
 from typing import Any
+from uuid import UUID
 
 import httpx
 import psycopg
@@ -31,6 +32,7 @@ from app.models.incident import SourceIncident
 from app.models.publication import PublicProjectionPublication, PublicPublicationRequest
 from app.services.publication_service import (
     PUBLIC_SYNC_LOCK_ID,
+    STALE_PARENT_RELEASE,
     PublicBuildError,
     PublicVpsUnavailable,
     accepted_cohort,
@@ -40,6 +42,9 @@ from app.services.publication_service import (
     database_url_for_psycopg,
     fail_request,
     fetch_live_cohort,
+    fetch_live_release_id,
+    normalize_after_successful_publication,
+    normalize_publication_queue,
     publishable_runs,
     recover_interrupted_requests,
     scan_public_ready_changes,
@@ -340,7 +345,18 @@ def build_candidate(
     request.changed_company_count = len(changes)
     request.changed_company_inns = [item.inn for item in changes]
     request.changed_company_ids = [by_inn[item.inn] for item in changes]
-    request.change_summary = [item.model_dump(mode="json") for item in changes]
+    run_by_inn = {
+        company.inn: runs[company.id]
+        for company in companies
+        if company.id in runs
+    }
+    request.change_summary = [
+        {
+            **item.model_dump(mode="json"),
+            "enrichment_run_id": str(run_by_inn[item.inn].id),
+        }
+        for item in changes
+    ]
     request.status = "READY"
     request.ready_at = now
     request.last_error = None
@@ -444,15 +460,25 @@ def _persist_published_hashes(
     accepted, _ = accepted_cohort()
     companies = cohort_companies(session, accepted)
     by_inn = {company.inn: company for company in companies}
-    runs = publishable_runs(session, companies)
+    published_run_ids = {
+        item["inn"]: UUID(str(item["enrichment_run_id"]))
+        for item in (request.change_summary or [])
+        if item.get("enrichment_run_id")
+    }
     for projection in projections:
         company = by_inn[projection.company.inn]
         state = session.get(PublicProjectionPublication, company.id)
         if state is None:
             raise PublicBuildError("published projection baseline disappeared")
+        published_run_id = published_run_ids.get(company.inn)
+        if published_run_id is not None:
+            published_run = session.get(CompanyEnrichmentRun, published_run_id)
+            if published_run is None or published_run.company_id != company.id:
+                raise PublicBuildError("published enrichment run evidence is invalid")
         state.last_published_hash = semantic_projection_sha256(projection)
         state.last_published_release_id = manifest.release_id
-        state.last_enrichment_run_id = runs.get(company.id).id if company.id in runs else None
+        if published_run_id is not None:
+            state.last_enrichment_run_id = published_run_id
         state.published_at = now
         state.updated_at = now
     request.status = "PUBLISHED"
@@ -465,21 +491,52 @@ def _persist_published_hashes(
 
 
 def _active_release_id(client: httpx.Client | None = None) -> str | None:
-    http = client or httpx.Client(
-        base_url=os.getenv("PUBLIC_ORIGIN", "https://nextcompany.pro").rstrip("/"),
-        timeout=8.0,
-    )
-    owns = client is None
     try:
-        response = http.get("/api/ready")
-        if response.status_code != 200:
-            return None
-        return response.json().get("release_id")
+        manifest, _ = accepted_cohort()
+        return fetch_live_release_id(manifest, client=client)
     except Exception:
         return None
-    finally:
-        if owns:
-            http.close()
+
+
+def _validated_candidate_parent(
+    request: PublicPublicationRequest,
+    manifest: ReleaseManifest,
+    *,
+    client: httpx.Client | None,
+) -> str:
+    accepted, _ = accepted_cohort()
+    live_release_id = fetch_live_release_id(accepted, client=client)
+    if (
+        request.previous_release_id != live_release_id
+        or manifest.previous_release_id != live_release_id
+    ):
+        raise StaleCandidateParent(
+            expected=request.previous_release_id or manifest.previous_release_id,
+            actual=live_release_id,
+        )
+    return live_release_id
+
+
+class StaleCandidateParent(RuntimeError):
+    def __init__(self, *, expected: str | None, actual: str) -> None:
+        super().__init__(f"candidate parent {expected or 'missing'} != live {actual}")
+        self.expected = expected
+        self.actual = actual
+
+
+def _rebase_stale_candidate(
+    session,
+    *,
+    client: httpx.Client | None,
+) -> str:
+    result = normalize_publication_queue(
+        session,
+        client=client,
+        force=True,
+        reason_override=STALE_PARENT_RELEASE,
+    )
+    session.commit()
+    return "NO_PUBLIC_CHANGE" if result.no_public_change else "REBASED"
 
 
 def publish_claimed_request(
@@ -502,11 +559,14 @@ def publish_claimed_request(
             session.commit()
             if bundle_dir is None or manifest is None:
                 return "NO_PUBLIC_CHANGE"
+        _validated_candidate_parent(request, manifest, client=client)
         request.status = "UPLOADING"
         request.updated_at = utc_now()
         session.commit()
         transport.upload(bundle_dir, manifest.release_id)
         request.uploaded_at = utc_now()
+        session.commit()
+        _validated_candidate_parent(request, manifest, client=client)
         request.status = "IMPORTING"
         request.updated_at = request.uploaded_at
         session.commit()
@@ -517,10 +577,34 @@ def publish_claimed_request(
         session.commit()
         verify_https_release(bundle_dir, manifest, client=client)
         completed = utc_now()
-        _persist_published_hashes(session, request, bundle_dir, now=completed)
-        _resolve_public_incidents(session, now=completed)
-        session.commit()
+        try:
+            _persist_published_hashes(session, request, bundle_dir, now=completed)
+            _resolve_public_incidents(session, now=completed)
+            session.commit()
+        except Exception as error:
+            raise PublicVpsUnavailable(
+                f"verified release state persistence failed: {type(error).__name__}"
+            ) from error
+        try:
+            normalize_after_successful_publication(
+                session,
+                published_request=request,
+                now=completed,
+            )
+            session.commit()
+        except Exception as cleanup_error:
+            session.rollback()
+            _public_incident(
+                session,
+                category="PUBLIC_BUILD_ERROR",
+                message=f"post-publication queue cleanup failed: {cleanup_error}",
+                owner="OUR_CODE",
+            )
+            session.commit()
         return "PUBLISHED"
+    except StaleCandidateParent:
+        session.rollback()
+        return _rebase_stale_candidate(session, client=client)
     except PublicTransportError as error:
         session.rollback()
         request = session.get(PublicPublicationRequest, request.id)
@@ -657,13 +741,39 @@ def run_once(
                     resolution="public HTTPS baseline scan succeeded",
                 )
                 session.commit()
-                request = claim_next_request(
+                normalization = normalize_publication_queue(
                     session,
-                    debounce_seconds=debounce_seconds,
+                    client=client,
+                )
+                session.commit()
+                request = (
+                    session.get(
+                        PublicPublicationRequest,
+                        normalization.replacement_request_id,
+                    )
+                    if normalization.replacement_request_id
+                    else claim_next_request(
+                        session,
+                        debounce_seconds=debounce_seconds,
+                    )
                 )
                 if request is None:
                     session.commit()
-                    return {"status": "IDLE", "recovered": recovered, "scan": scan}
+                    return {
+                        "status": (
+                            "NO_PUBLIC_CHANGE"
+                            if normalization.no_public_change
+                            else "IDLE"
+                        ),
+                        "recovered": recovered,
+                        "scan": scan,
+                        "normalization": {
+                            "active": normalization.active_count,
+                            "superseded": normalization.superseded_count,
+                            "dirty": normalization.dirty_count,
+                            "live_release_id": normalization.live_release_id,
+                        },
+                    }
                 request_id = str(request.id)
                 session.commit()
                 outcome = publish_claimed_request(
@@ -678,6 +788,12 @@ def run_once(
                     "request_id": request_id,
                     "recovered": recovered,
                     "scan": scan,
+                    "normalization": {
+                        "active": normalization.active_count,
+                        "superseded": normalization.superseded_count,
+                        "dirty": normalization.dirty_count,
+                        "live_release_id": normalization.live_release_id,
+                    },
                 }
             finally:
                 lock_connection.exec_driver_sql(

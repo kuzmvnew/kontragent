@@ -173,6 +173,57 @@ def test_publication_history_route(client):
     assert "Public Sync РАБОТАЕТ" in response.text
 
 
+def test_publication_history_uses_owner_facing_states_and_stale_reason(
+    client, monkeypatch
+):
+    statuses = [
+        ("PENDING", "ОЖИДАЕТ ПУБЛИКАЦИИ"),
+        ("RETRY_SCHEDULED", "ПОВТОР ЗАПЛАНИРОВАН"),
+        ("SUPERSEDED", "ЗАМЕНЁН НОВОЙ ВЕРСИЕЙ"),
+        ("PUBLISHED", "ОПУБЛИКОВАН"),
+        ("FAILED", "ОШИБКА"),
+    ]
+    rows = []
+    for status, label in statuses:
+        rows.append(
+            {
+                "release_id": f"public-v1-{status.lower()}",
+                "created_at": NOW,
+                "trigger": "PUBLICATION_QUEUE_REBASE",
+                "changed_companies": [],
+                "changed_company_count": 0,
+                "company_count": 40,
+                "previous_release_id": "public-v1-last-good",
+                "build_at": None,
+                "upload_at": None,
+                "import_at": None,
+                "verify_at": None,
+                "rollback_at": None,
+                "status": status,
+                "status_label": label,
+                "last_error": (
+                    "STALE_PARENT_RELEASE" if status == "SUPERSEDED" else None
+                ),
+                "last_error_label": (
+                    "Публичный release изменился после сборки кандидата; "
+                    "создана актуальная версия."
+                    if status == "SUPERSEDED"
+                    else None
+                ),
+            }
+        )
+    monkeypatch.setattr(
+        service, "public_publication_history", lambda limit=100: rows
+    )
+
+    response = client.get("/admin/publications")
+
+    assert response.status_code == 200
+    for _status, label in statuses:
+        assert label in response.text
+    assert "Публичный release изменился после сборки кандидата" in response.text
+
+
 def test_source_inventory_distinguishes_processes_handlers_and_families():
     counts = service._source_inventory_counts(
         [
