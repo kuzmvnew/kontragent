@@ -36,7 +36,30 @@ class FirmotekaCrawlRun(Base):
             name="ck_firmoteka_crawl_run_phase",
         ),
         CheckConstraint("request_delay_seconds >= 4", name="ck_firmoteka_delay"),
-        CheckConstraint("concurrency = 1", name="ck_firmoteka_concurrency"),
+        CheckConstraint(
+            "concurrency >= 1 AND concurrency <= 64",
+            name="ck_firmoteka_concurrency",
+        ),
+        CheckConstraint(
+            "catalog_concurrency >= 1 AND catalog_concurrency <= 64",
+            name="ck_firmoteka_catalog_concurrency",
+        ),
+        CheckConstraint(
+            "company_concurrency >= 1 AND company_concurrency <= 64",
+            name="ck_firmoteka_company_concurrency",
+        ),
+        CheckConstraint(
+            "backpressure_threshold > 0",
+            name="ck_firmoteka_backpressure_threshold",
+        ),
+        CheckConstraint(
+            "daily_refresh_horizon_days > 0",
+            name="ck_firmoteka_refresh_horizon",
+        ),
+        CheckConstraint(
+            "daily_refresh_budget > 0",
+            name="ck_firmoteka_refresh_budget",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -46,6 +69,12 @@ class FirmotekaCrawlRun(Base):
     cursor: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
     request_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=4, server_default=text("4"))
     concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    catalog_concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    company_concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    backpressure_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=2000, server_default=text("2000"))
+    daily_refresh_horizon_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30, server_default=text("30"))
+    daily_refresh_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=500, server_default=text("500"))
+    lane_request_state: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
     request_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     success_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     failure_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
@@ -63,6 +92,9 @@ class FirmotekaCrawlRun(Base):
     captcha_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     raw_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     http_status_counts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    latency_ms_total: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    latency_ms_max: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    latency_histogram: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
     last_request_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -89,6 +121,11 @@ class FirmotekaCatalogPage(Base):
     url_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    claimed_by_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("worker_jobs.id", ondelete="SET NULL"), index=True
+    )
+    claim_fencing_token: Mapped[int | None] = mapped_column(BigInteger)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     discovered_companies: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -113,6 +150,11 @@ class FirmotekaCrawlItem(Base):
     discovered_from: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    claimed_by_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("worker_jobs.id", ondelete="SET NULL"), index=True
+    )
+    claim_fencing_token: Mapped[int | None] = mapped_column(BigInteger)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     raw_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
