@@ -220,6 +220,60 @@ def test_advisory_lock_allows_only_one_publication_executor():
             )
 
 
+def test_bootstrap_https_outage_records_incident_without_crashing_loop(
+    tmp_path, monkeypatch
+):
+    incidents = []
+    monkeypatch.setattr(runner, "recover_interrupted_requests", lambda _session: 0)
+    monkeypatch.setattr(
+        runner,
+        "scan_public_ready_changes",
+        lambda _session: (_ for _ in ()).throw(
+            service.PublicVpsUnavailable("TLS handshake timeout")
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_public_incident",
+        lambda _session, **kwargs: incidents.append(kwargs),
+    )
+
+    result = runner.run_once(output_root=tmp_path)
+
+    assert result == {"status": "VPS_UNAVAILABLE", "recovered": 0, "scan": None}
+    assert len(incidents) == 1
+    assert incidents[0]["category"] == "PUBLIC_VPS_UNAVAILABLE"
+    assert str(incidents[0]["message"]) == "TLS handshake timeout"
+    assert incidents[0]["owner"] == "OUR_INFRASTRUCTURE"
+
+
+def test_ssh_transport_uses_explicit_pinned_host_key_and_identity(
+    tmp_path, monkeypatch
+):
+    identity = tmp_path / "identity"
+    known_hosts = tmp_path / "known_hosts"
+    identity.touch()
+    known_hosts.touch()
+    monkeypatch.setenv("PUBLIC_SSH_IDENTITY_FILE", str(identity))
+    monkeypatch.setenv("PUBLIC_SSH_KNOWN_HOSTS_FILE", str(known_hosts))
+
+    transport = runner.SshPublicTransport("mikhail@195.24.64.231")
+
+    assert transport.ssh_argv == [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        f"UserKnownHostsFile={known_hosts}",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-i",
+        str(identity),
+    ]
+
+
 def test_non_ready_accepted_and_ready_outside_cohort_do_not_enqueue(monkeypatch):
     with Session(engine) as session:
         accepted_company, accepted_projection = _company_and_projection(session, 630_000_000)

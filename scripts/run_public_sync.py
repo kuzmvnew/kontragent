@@ -104,6 +104,29 @@ class SshPublicTransport:
         self.target = (target or os.getenv("PUBLIC_SSH_TARGET", "")).strip()
         if not SAFE_TARGET.fullmatch(self.target):
             raise PublicBuildError("PUBLIC_SSH_TARGET is missing or unsafe")
+        self.ssh_argv = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+        ]
+        known_hosts = self._configured_file("PUBLIC_SSH_KNOWN_HOSTS_FILE")
+        identity = self._configured_file("PUBLIC_SSH_IDENTITY_FILE")
+        if known_hosts:
+            self.ssh_argv.extend(["-o", f"UserKnownHostsFile={known_hosts}"])
+        if identity:
+            self.ssh_argv.extend(["-o", "IdentitiesOnly=yes", "-i", identity])
+
+    @staticmethod
+    def _configured_file(variable: str) -> str | None:
+        value = os.getenv(variable, "").strip()
+        if not value:
+            return None
+        path = Path(value).expanduser()
+        if not path.is_absolute() or not path.is_file():
+            raise PublicBuildError(f"{variable} must name an existing absolute file")
+        return str(path)
 
     @staticmethod
     def _archive(bundle_dir: Path) -> bytes:
@@ -122,7 +145,7 @@ class SshPublicTransport:
             f" && sudo -u nextcompany-importer tar -C {shlex.quote(remote)} -xf -"
         )
         try:
-            _run(["ssh", "-o", "BatchMode=yes", self.target, command], input_bytes=self._archive(bundle_dir))
+            _run([*self.ssh_argv, self.target, command], input_bytes=self._archive(bundle_dir))
         except PublicTransportError as error:
             raise PublicTransportError("upload", str(error), transient=error.transient) from error
 
@@ -138,7 +161,7 @@ class SshPublicTransport:
             )
         )
         try:
-            output = _run(["ssh", "-o", "BatchMode=yes", self.target, command])
+            output = _run([*self.ssh_argv, self.target, command])
             return json.loads(output.strip().splitlines()[-1])
         except PublicTransportError as error:
             raise PublicTransportError("import", str(error), transient=error.transient) from error
@@ -157,7 +180,7 @@ class SshPublicTransport:
                 + shlex.quote(previous_release_id)
             )
         )
-        output = _run(["ssh", "-o", "BatchMode=yes", self.target, command])
+        output = _run([*self.ssh_argv, self.target, command])
         return json.loads(output.strip().splitlines()[-1])
 
 
@@ -386,20 +409,25 @@ def _public_incident(session, *, category: str, message: object, owner: str) -> 
     )
 
 
-def _resolve_public_incidents(session, *, now: datetime) -> None:
-    rows = list(
-        session.scalars(
-            select(SourceIncident).where(
-                SourceIncident.source_id == "public_sync",
-                SourceIncident.status.not_in(TERMINAL_STATUSES),
-            )
-        )
+def _resolve_public_incidents(
+    session,
+    *,
+    now: datetime,
+    categories: set[str] | None = None,
+    resolution: str = "public release published and verified over HTTPS",
+) -> None:
+    query = select(SourceIncident).where(
+        SourceIncident.source_id == "public_sync",
+        SourceIncident.status.not_in(TERMINAL_STATUSES),
     )
+    if categories:
+        query = query.where(SourceIncident.category.in_(categories))
+    rows = list(session.scalars(query))
     for row in rows:
         row.status = "RESOLVED"
         row.resolved_at = now
         row.updated_at = now
-        row.resolution = "public release published and verified over HTTPS"
+        row.resolution = resolution
         row.resolution_evidence = {
             "verified_at": now.isoformat(), "channel": "public_sync"
         }
@@ -594,7 +622,40 @@ def run_once(
         with SessionLocal() as session:
             try:
                 recovered = recover_interrupted_requests(session)
-                scan = scan_public_ready_changes(session)
+                try:
+                    scan = scan_public_ready_changes(session)
+                except PublicVpsUnavailable as error:
+                    session.rollback()
+                    recovered = recover_interrupted_requests(session)
+                    _public_incident(
+                        session,
+                        category="PUBLIC_VPS_UNAVAILABLE",
+                        message=error,
+                        owner="OUR_INFRASTRUCTURE",
+                    )
+                    session.commit()
+                    return {
+                        "status": "VPS_UNAVAILABLE",
+                        "recovered": recovered,
+                        "scan": None,
+                    }
+                except Exception as error:
+                    session.rollback()
+                    recovered = recover_interrupted_requests(session)
+                    _public_incident(
+                        session,
+                        category="PUBLIC_BUILD_ERROR",
+                        message=error,
+                        owner="OUR_CODE",
+                    )
+                    session.commit()
+                    return {"status": "FAILED", "recovered": recovered, "scan": None}
+                _resolve_public_incidents(
+                    session,
+                    now=utc_now(),
+                    categories={"PUBLIC_VPS_UNAVAILABLE"},
+                    resolution="public HTTPS baseline scan succeeded",
+                )
                 session.commit()
                 request = claim_next_request(
                     session,
@@ -635,16 +696,21 @@ def main() -> int:
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    consecutive_failures = 0
     while True:
         result = run_once(
             debounce_seconds=args.debounce_seconds,
             output_root=args.output_root,
         )
         logger.info("public sync cycle: %s", json.dumps(result, ensure_ascii=False, default=str))
+        failed = result["status"] in {"FAILED", "VPS_UNAVAILABLE"}
         if args.once:
             print(json.dumps(result, ensure_ascii=False, default=str))
-            return 0 if result["status"] not in {"FAILED"} else 1
-        time.sleep(min(60, max(5, args.poll_seconds)))
+            return 1 if failed else 0
+        consecutive_failures = consecutive_failures + 1 if failed else 0
+        normal_delay = min(60, max(5, args.poll_seconds))
+        failure_delay = min(300, 15 * (2 ** min(5, max(0, consecutive_failures - 1))))
+        time.sleep(max(normal_delay, failure_delay) if failed else normal_delay)
 
 
 if __name__ == "__main__":
