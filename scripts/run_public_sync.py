@@ -47,6 +47,7 @@ from app.services.publication_service import (
     normalize_after_successful_publication,
     normalize_publication_queue,
     publishable_runs,
+    recover_failed_publication_if_eligible,
     recover_interrupted_requests,
     scan_public_ready_changes,
     schedule_retry,
@@ -770,6 +771,10 @@ def run_once(
                 # so a normalization rollback cannot erase already completed work.
                 session.commit()
                 try:
+                    recover_failed_publication_if_eligible(
+                        session,
+                        client=client,
+                    )
                     normalization = normalize_publication_queue(
                         session,
                         client=client,

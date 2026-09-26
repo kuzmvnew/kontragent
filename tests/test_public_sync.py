@@ -148,6 +148,35 @@ def _outbox(*, created_at: datetime, inn: str) -> PublicPublicationRequest:
     )
 
 
+def _failed_request(
+    *,
+    created_at: datetime,
+    source_sha: str,
+    inn: str,
+) -> PublicPublicationRequest:
+    return PublicPublicationRequest(
+        trigger_type="ENRICHMENT_READY_SCAN",
+        status="FAILED",
+        candidate_release_id="public-v1-failed-candidate",
+        previous_release_id="public-v1-last-good",
+        changed_company_count=1,
+        changed_company_ids=[],
+        changed_company_inns=[inn],
+        change_summary=[
+            {
+                "inn": inn,
+                "previous_hash": "1" * 64,
+                "current_hash": "2" * 64,
+            }
+        ],
+        last_error="historical importer failure",
+        created_main_sha=source_sha,
+        created_at=created_at,
+        updated_at=created_at,
+        completed_at=created_at,
+    )
+
+
 def test_semantic_hash_ignores_release_churn_but_detects_public_content():
     first = projection(release_id="public-v1-a")
     second = first.model_copy(
@@ -202,6 +231,240 @@ def test_restart_recovers_every_in_flight_state_without_losing_request():
         assert service.recover_interrupted_requests(session, now=NOW) == len(rows)
         assert {row.status for row in rows} == {"RETRY_SCHEDULED"}
         assert all(row.next_attempt_at == NOW for row in rows)
+        session.rollback()
+
+
+def test_failed_recovery_creates_one_fresh_request_and_preserves_history(
+    monkeypatch,
+):
+    current_sha = "d" * 40
+    with Session(engine) as session:
+        company, live_projection = _company_and_projection(session, 611_000_000)
+        manifest = _manifest([company.inn])
+        failed = _failed_request(
+            created_at=NOW - timedelta(hours=1),
+            source_sha="c" * 40,
+            inn=company.inn,
+        )
+        session.add(failed)
+        session.flush()
+        historical_evidence = {
+            "status": failed.status,
+            "candidate_release_id": failed.candidate_release_id,
+            "previous_release_id": failed.previous_release_id,
+            "changed_company_inns": list(failed.changed_company_inns),
+            "change_summary": list(failed.change_summary),
+            "last_error": failed.last_error,
+            "created_main_sha": failed.created_main_sha,
+            "completed_at": failed.completed_at,
+        }
+        current_changes = [
+            ChangedCompanySummary(
+                inn=company.inn,
+                previous_hash="3" * 64,
+                current_hash="4" * 64,
+            )
+        ]
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service,
+            "fetch_live_cohort",
+            lambda *_args, **_kwargs: (
+                "public-v1-actual-live",
+                {company.inn: live_projection},
+            ),
+        )
+        monkeypatch.setattr(
+            service,
+            "_current_semantic_changes",
+            lambda *_args, **_kwargs: current_changes,
+        )
+
+        result = service.recover_failed_publication_if_eligible(
+            session,
+            now=NOW,
+            source_sha=current_sha,
+        )
+        replacement = session.get(
+            PublicPublicationRequest, result.replacement_request_id
+        )
+
+        assert result.status == service.RECOVERY_CREATED
+        assert result.dirty_count == 1
+        assert replacement.trigger_type == service.PUBLICATION_FAILURE_RECOVERY
+        assert replacement.status == "PENDING"
+        assert replacement.recovered_from_request_id == failed.id
+        assert replacement.previous_release_id == "public-v1-actual-live"
+        assert replacement.created_main_sha == current_sha
+        assert replacement.candidate_release_id is None
+        assert replacement.changed_company_inns == [company.inn]
+        assert replacement.change_summary == [current_changes[0].model_dump(mode="json")]
+        assert replacement.change_summary != historical_evidence["change_summary"]
+        assert {
+            key: getattr(failed, key)
+            for key in historical_evidence
+        } == historical_evidence
+
+        session.expire_all()
+        repeated = service.recover_failed_publication_if_eligible(
+            session,
+            now=NOW + timedelta(seconds=30),
+            source_sha=current_sha,
+        )
+        replacements = list(
+            session.scalars(
+                select(PublicPublicationRequest).where(
+                    PublicPublicationRequest.recovered_from_request_id == failed.id
+                )
+            )
+        )
+        assert repeated.status == service.ACTIVE_REQUEST_EXISTS
+        assert len(replacements) == 1
+
+        replacement.status = "FAILED"
+        replacement.completed_at = NOW + timedelta(minutes=1)
+        session.flush()
+        same_generation = service.recover_failed_publication_if_eligible(
+            session,
+            now=NOW + timedelta(minutes=2),
+            source_sha=current_sha,
+        )
+        assert same_generation.status == service.NO_RECOVERY_BOUNDARY
+        assert same_generation.failed_request_id == replacement.id
+        assert len(
+            list(
+                session.scalars(
+                    select(PublicPublicationRequest).where(
+                        PublicPublicationRequest.recovered_from_request_id == failed.id
+                    )
+                )
+            )
+        ) == 1
+        session.rollback()
+
+
+def test_failed_recovery_skips_when_current_truth_matches_live(monkeypatch):
+    with Session(engine) as session:
+        company, live_projection = _company_and_projection(session, 612_000_000)
+        manifest = _manifest([company.inn])
+        failed = _failed_request(
+            created_at=NOW - timedelta(hours=1),
+            source_sha="c" * 40,
+            inn=company.inn,
+        )
+        session.add(failed)
+        session.flush()
+        monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
+        monkeypatch.setattr(
+            service,
+            "fetch_live_cohort",
+            lambda *_args, **_kwargs: (
+                "public-v1-actual-live",
+                {company.inn: live_projection},
+            ),
+        )
+        monkeypatch.setattr(
+            service, "_current_semantic_changes", lambda *_args, **_kwargs: []
+        )
+
+        result = service.recover_failed_publication_if_eligible(
+            session,
+            now=NOW,
+            source_sha="d" * 40,
+        )
+
+        assert result.status == service.NO_PUBLIC_CHANGE
+        assert result.failed_request_id == failed.id
+        assert result.live_release_id == "public-v1-actual-live"
+        assert session.scalar(
+            select(PublicPublicationRequest).where(
+                PublicPublicationRequest.recovered_from_request_id == failed.id
+            )
+        ) is None
+        assert failed.status == "FAILED"
+        assert failed.last_error == "historical importer failure"
+        session.rollback()
+
+
+def test_failed_recovery_requires_newest_failure_boundary_and_no_active_request(
+    monkeypatch,
+):
+    with Session(engine) as session:
+        older = _failed_request(
+            created_at=NOW - timedelta(hours=2),
+            source_sha="c" * 40,
+            inn=legal_inn(613_000_000),
+        )
+        latest = _failed_request(
+            created_at=NOW - timedelta(hours=1),
+            source_sha=SHA,
+            inn=legal_inn(613_000_001),
+        )
+        session.add_all([older, latest])
+        session.flush()
+        monkeypatch.setattr(
+            service,
+            "accepted_cohort",
+            lambda: pytest.fail("live cohort read without a recovery boundary"),
+        )
+
+        result = service.recover_failed_publication_if_eligible(
+            session,
+            now=NOW,
+            source_sha=SHA,
+        )
+        assert result.status == service.NO_RECOVERY_BOUNDARY
+        assert result.failed_request_id == latest.id
+
+        active = _outbox(created_at=NOW, inn=legal_inn(613_000_002))
+        session.add(active)
+        session.flush()
+        blocked = service.recover_failed_publication_if_eligible(
+            session,
+            now=NOW,
+            source_sha="e" * 40,
+        )
+        assert blocked.status == service.ACTIVE_REQUEST_EXISTS
+        session.rollback()
+
+
+def test_already_recovered_failed_does_not_create_another_replacement():
+    with Session(engine) as session:
+        failed = _failed_request(
+            created_at=NOW - timedelta(hours=1),
+            source_sha="c" * 40,
+            inn=legal_inn(614_000_000),
+        )
+        session.add(failed)
+        session.flush()
+        replacement = _outbox(
+            created_at=NOW,
+            inn=legal_inn(614_000_000),
+        )
+        replacement.status = "PUBLISHED"
+        replacement.recovered_from_request_id = failed.id
+        replacement.created_main_sha = "d" * 40
+        session.add(replacement)
+        session.flush()
+
+        result = service.recover_failed_publication_if_eligible(
+            session,
+            now=NOW + timedelta(minutes=1),
+            source_sha="e" * 40,
+        )
+
+        assert result.status == service.ALREADY_RECOVERED
+        assert result.failed_request_id == failed.id
+        assert result.replacement_request_id == replacement.id
+        assert len(
+            list(
+                session.scalars(
+                    select(PublicPublicationRequest).where(
+                        PublicPublicationRequest.recovered_from_request_id == failed.id
+                    )
+                )
+            )
+        ) == 1
         session.rollback()
 
 
@@ -288,6 +551,9 @@ def test_normalization_vps_unavailable_rolls_back_without_transport_or_hash_chan
     monkeypatch.setattr(runner, "SessionLocal", lambda: session)
     monkeypatch.setattr(runner, "recover_interrupted_requests", lambda _session: 0)
     monkeypatch.setattr(runner, "scan_public_ready_changes", lambda _session: {"changed": 0})
+    monkeypatch.setattr(
+        runner, "recover_failed_publication_if_eligible", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(runner, "normalize_publication_queue", normalize)
     monkeypatch.setattr(
         runner,
@@ -407,6 +673,9 @@ def test_normalization_code_errors_are_bounded_cycle_results(
     monkeypatch.setattr(runner, "SessionLocal", lambda: session)
     monkeypatch.setattr(runner, "recover_interrupted_requests", lambda _session: 0)
     monkeypatch.setattr(runner, "scan_public_ready_changes", lambda _session: {"changed": 0})
+    monkeypatch.setattr(
+        runner, "recover_failed_publication_if_eligible", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         runner,
         "normalize_publication_queue",
@@ -1220,6 +1489,59 @@ def test_hashes_are_persisted_only_after_https_verification(tmp_path, monkeypatc
     assert events == ["upload", "import", "verify", "persist", "cleanup"]
 
 
+def test_recovery_request_uses_normal_publication_flow_to_published(
+    tmp_path, monkeypatch
+):
+    release_id = "public-v1-recovered"
+    _candidate_bundle(tmp_path, release_id)
+    request = _candidate_request(release_id)
+    request.trigger_type = service.PUBLICATION_FAILURE_RECOVERY
+    request.recovered_from_request_id = uuid4()
+
+    class Transport:
+        def upload(self, *_args):
+            return None
+
+        def import_release(self, *_args):
+            return {"active": True, "release_id": release_id}
+
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: "public-v1-last-good",
+    )
+    monkeypatch.setattr(runner, "verify_https_release", lambda *_args, **_kwargs: None)
+
+    def persist(_session, recovered, _bundle, *, now):
+        recovered.status = "PUBLISHED"
+        recovered.published_release_id = release_id
+        recovered.verified_at = now
+        recovered.completed_at = now
+
+    monkeypatch.setattr(runner, "_persist_published_hashes", persist)
+    monkeypatch.setattr(runner, "_resolve_public_incidents", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "normalize_after_successful_publication",
+        lambda *_args, **_kwargs: service.PublicationQueueNormalization(
+            live_release_id=release_id,
+            active_count=0,
+        ),
+    )
+
+    result = runner.publish_claimed_request(
+        _FakeSession(request),
+        request,
+        output_root=tmp_path,
+        transport=Transport(),
+    )
+
+    assert result == "PUBLISHED"
+    assert request.status == "PUBLISHED"
+    assert request.published_release_id == release_id
+    assert request.recovered_from_request_id is not None
+
+
 def test_accepted_public_cohort_manifest_remains_exactly_40():
     manifest, _digest = service.accepted_cohort()
     assert len(manifest.entities) == 40
@@ -1295,6 +1617,9 @@ def test_vps_recovery_resolves_incident_after_successful_normalization(
     monkeypatch.setattr(runner, "SessionLocal", lambda: session)
     monkeypatch.setattr(runner, "recover_interrupted_requests", lambda _session: 0)
     monkeypatch.setattr(runner, "scan_public_ready_changes", lambda _session: {"changed": 0})
+    monkeypatch.setattr(
+        runner, "recover_failed_publication_if_eligible", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(runner, "normalize_publication_queue", normalize)
     monkeypatch.setattr(runner, "claim_next_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(

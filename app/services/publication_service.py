@@ -48,6 +48,12 @@ RUNNING_REQUEST_STATUSES = {"BUILDING", "READY", "UPLOADING", "IMPORTING", "VERI
 STALE_PARENT_RELEASE = "STALE_PARENT_RELEASE"
 PUBLICATION_QUEUE_REBASED = "PUBLICATION_QUEUE_REBASED"
 NO_PUBLIC_CHANGE = "NO_PUBLIC_CHANGE"
+PUBLICATION_FAILURE_RECOVERY = "PUBLICATION_FAILURE_RECOVERY"
+RECOVERY_CREATED = "RECOVERY_CREATED"
+ACTIVE_REQUEST_EXISTS = "ACTIVE_REQUEST_EXISTS"
+NO_FAILED_PUBLICATION = "NO_FAILED_PUBLICATION"
+ALREADY_RECOVERED = "ALREADY_RECOVERED"
+NO_RECOVERY_BOUNDARY = "NO_RECOVERY_BOUNDARY"
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,15 @@ class PublicationQueueNormalization:
     replacement_request_id: UUID | None = None
     dirty_count: int = 0
     no_public_change: bool = False
+
+
+@dataclass(frozen=True)
+class FailedPublicationRecovery:
+    status: str
+    failed_request_id: UUID | None = None
+    replacement_request_id: UUID | None = None
+    live_release_id: str = ""
+    dirty_count: int = 0
 
 
 PUBLICATION_STATUS_LABELS = {
@@ -82,6 +97,12 @@ PUBLICATION_REASON_LABELS = {
         "Очередь публикации нормализована; создана актуальная версия."
     ),
     NO_PUBLIC_CHANGE: "Публичные данные уже соответствуют текущему состоянию.",
+}
+
+PUBLICATION_TRIGGER_LABELS = {
+    PUBLICATION_FAILURE_RECOVERY: (
+        "Создано как автоматическое восстановление после ошибки публикации"
+    ),
 }
 
 
@@ -473,10 +494,12 @@ def _new_replacement_request(
     now: datetime,
     status: str,
     source_sha: str | None = None,
+    trigger_type: str = "PUBLICATION_QUEUE_REBASE",
+    recovered_from_request_id: UUID | None = None,
 ) -> PublicPublicationRequest:
     by_inn = {company.inn: company.id for company in companies}
     request = PublicPublicationRequest(
-        trigger_type="PUBLICATION_QUEUE_REBASE",
+        trigger_type=trigger_type,
         status=status,
         projection_generation=f"rebase:{previous_release_id}:{now.isoformat()}",
         projection_hash=hashlib.sha256(
@@ -493,6 +516,7 @@ def _new_replacement_request(
         change_summary=[item.model_dump(mode="json") for item in changes],
         attempt_count=1 if status == "BUILDING" else 0,
         created_main_sha=source_sha or current_main_sha(),
+        recovered_from_request_id=recovered_from_request_id,
         build_started_at=now if status == "BUILDING" else None,
         created_at=now,
         updated_at=now,
@@ -500,6 +524,107 @@ def _new_replacement_request(
     session.add(request)
     session.flush()
     return request
+
+
+def recover_failed_publication_if_eligible(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    database_url: str | None = None,
+    client: httpx.Client | None = None,
+    source_sha: str | None = None,
+) -> FailedPublicationRecovery:
+    """Create one fresh request after a failed publication and a new code generation."""
+
+    now = now or utc_now()
+    active = session.scalar(
+        select(PublicPublicationRequest)
+        .where(PublicPublicationRequest.status.in_(ACTIVE_REQUEST_STATUSES))
+        .order_by(
+            PublicPublicationRequest.created_at,
+            PublicPublicationRequest.id,
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    if active is not None:
+        return FailedPublicationRecovery(status=ACTIVE_REQUEST_EXISTS)
+
+    failed = session.scalar(
+        select(PublicPublicationRequest)
+        .where(PublicPublicationRequest.status == "FAILED")
+        .order_by(
+            PublicPublicationRequest.created_at.desc(),
+            PublicPublicationRequest.id.desc(),
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    if failed is None:
+        return FailedPublicationRecovery(status=NO_FAILED_PUBLICATION)
+
+    replacement = session.scalar(
+        select(PublicPublicationRequest)
+        .where(PublicPublicationRequest.recovered_from_request_id == failed.id)
+        .order_by(
+            PublicPublicationRequest.created_at.desc(),
+            PublicPublicationRequest.id.desc(),
+        )
+        .limit(1)
+    )
+    if replacement is not None:
+        return FailedPublicationRecovery(
+            status=ALREADY_RECOVERED,
+            failed_request_id=failed.id,
+            replacement_request_id=replacement.id,
+        )
+
+    created_sha = source_sha or current_main_sha()
+    if failed.created_main_sha == created_sha:
+        return FailedPublicationRecovery(
+            status=NO_RECOVERY_BOUNDARY,
+            failed_request_id=failed.id,
+        )
+
+    manifest, _cohort_hash = accepted_cohort()
+    live_release_id, live = fetch_live_cohort(manifest, client=client)
+    companies = cohort_companies(session, manifest)
+    changes = _current_semantic_changes(
+        session,
+        manifest=manifest,
+        companies=companies,
+        baseline_hashes={
+            inn: semantic_projection_sha256(projection)
+            for inn, projection in live.items()
+        },
+        now=now,
+        database_url=database_url,
+    )
+    if not changes:
+        return FailedPublicationRecovery(
+            status=NO_PUBLIC_CHANGE,
+            failed_request_id=failed.id,
+            live_release_id=live_release_id,
+        )
+
+    replacement = _new_replacement_request(
+        session,
+        companies=companies,
+        changes=changes,
+        previous_release_id=live_release_id,
+        now=now,
+        status="PENDING",
+        source_sha=created_sha,
+        trigger_type=PUBLICATION_FAILURE_RECOVERY,
+        recovered_from_request_id=failed.id,
+    )
+    return FailedPublicationRecovery(
+        status=RECOVERY_CREATED,
+        failed_request_id=failed.id,
+        replacement_request_id=replacement.id,
+        live_release_id=live_release_id,
+        dirty_count=len(changes),
+    )
 
 
 def _supersede_publication_requests(
@@ -823,6 +948,14 @@ def publication_history(session: Session, *, limit: int = 100) -> list[dict[str,
             "release_id": row.published_release_id or row.candidate_release_id,
             "created_at": row.created_at,
             "trigger": row.trigger_type,
+            "trigger_label": PUBLICATION_TRIGGER_LABELS.get(
+                row.trigger_type, row.trigger_type
+            ),
+            "recovered_from_request_id": (
+                str(row.recovered_from_request_id)
+                if row.recovered_from_request_id
+                else None
+            ),
             "changed_companies": row.changed_company_inns,
             "changed_company_count": row.changed_company_count,
             "company_count": len(accepted_cohort()[0].entities),

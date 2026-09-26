@@ -18,7 +18,7 @@
   <tbody>{% for row in rows %}<tr>
     <td class="mono">{{ row.release_id or '—' }}</td>
     <td>{{ row.created_at|datetime_ru }}</td>
-    <td>{{ row.trigger }}</td>
+    <td>{{ row.trigger_label or row.trigger }}{% if row.recovered_from_request_id %}<small class="mono">FAILED request {{ row.recovered_from_request_id }}</small>{% endif %}</td>
     <td>{{ row.changed_company_count }}{% if row.changed_companies %}<small>{{ row.changed_companies|join(', ') }}</small>{% endif %}</td>
     <td>{{ row.company_count }}</td>
     <td class="mono">{{ row.previous_release_id or '—' }}</td>
