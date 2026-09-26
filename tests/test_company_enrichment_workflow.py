@@ -18,6 +18,7 @@ from app.models.worker import (
     WorkerRun,
 )
 from app.services.company_enrichment_service import (
+    _enrichment_refill_capacity,
     _semantic_coverage,
     canonical_enrichment_metrics,
     consume_master_replay_signals,
@@ -28,6 +29,14 @@ from app.services.company_enrichment_service import (
 
 
 NOW = datetime(2026, 9, 26, 8, tzinfo=timezone.utc)
+
+
+def test_enrichment_refill_batches_snapshot_replay_work():
+    assert _enrichment_refill_capacity(100) == 0
+    assert _enrichment_refill_capacity(99) == 0
+    assert _enrichment_refill_capacity(51) == 0
+    assert _enrichment_refill_capacity(50) == 50
+    assert _enrichment_refill_capacity(0) == 100
 
 
 def test_semantic_coverage_excludes_not_applicable_and_fails_closed():
