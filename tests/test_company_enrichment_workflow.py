@@ -340,6 +340,9 @@ def test_postgresql_backlog_creates_local_replay_and_bounded_point_jobs(tmp_path
 
 def test_postgresql_completeness_gate_then_persisted_risk_then_summary(tmp_path):
     with Session(engine) as session:
+        initial_master_count = int(
+            session.scalar(sa.select(sa.func.count()).select_from(Company)) or 0
+        )
         company, _signals = _seed_workflow(session, tmp_path)
         consume_master_replay_signals(session, limit=10, now=NOW)
         run, coverage = _workflow_rows(session, company.id)
@@ -398,8 +401,8 @@ def test_postgresql_completeness_gate_then_persisted_risk_then_summary(tmp_path)
         )
         session.flush()
         metrics = canonical_enrichment_metrics(session)
-        assert metrics["master_company_count"] == 2
-        assert metrics["companies_not_started"] == 1
+        assert metrics["master_company_count"] == initial_master_count + 2
+        assert metrics["companies_not_started"] == initial_master_count + 1
         assert metrics["companies_complete"] == 1
         assert metrics["risk_ready_companies"] == 1
         assert metrics["summary_ready_companies"] == 1
@@ -409,8 +412,11 @@ def test_postgresql_completeness_gate_then_persisted_risk_then_summary(tmp_path)
         assert metrics["public_ready_companies"] == 1
         assert metrics["coverage_at_least_1"] == 1
         assert metrics["coverage_100_percent"] == 1
-        assert metrics["average_coverage_percent"] == 50.0
-        assert metrics["median_coverage_percent"] == 50.0
+        assert metrics["average_coverage_percent"] == round(
+            100 / (initial_master_count + 2), 4
+        )
+        expected_median = 50.0 if initial_master_count == 0 else 0.0
+        assert metrics["median_coverage_percent"] == expected_median
         session.rollback()
 
 
