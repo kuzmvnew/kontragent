@@ -28,6 +28,7 @@ from app.ingestion.exact_source_workers import (
 )
 from app.ingestion.roskomnadzor_bulk_worker import register_rkn_bulk_workers
 from app.ingestion.mintrans_ted_worker import register_mintrans_ted_worker
+from app.ingestion.next_five_source_workers import register_next_five_workers
 from app.ingestion.roszdrav_license_worker import register_roszdrav_license_workers
 from app.services.cbr_warning_registry_service import (
     ensure_cbr_warning_list_dataset,
@@ -69,6 +70,10 @@ def build_registry() -> HandlerRegistry:
         # Each retains an independent source id, lease, job namespace and
         # publication generation.
         register_firmoteka_worker(session, registry)
+        # Registration exposes fail-closed source contracts only.  These five
+        # families have no scheduler handlers until source-specific access and
+        # baselines are accepted explicitly.
+        register_next_five_workers(session, registry)
         register_exact_source_workers(session, registry)
         register_eis_rnp_worker(session, registry)
         register_rkn_bulk_workers(session, registry)
