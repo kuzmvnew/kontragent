@@ -5,18 +5,30 @@
 {% block content %}
 <div class="breadcrumbs"><a href="/admin/sources">Источники</a> / {{ source.source_id }}</div>
 <div class="page-head"><div><h1>{{ source.source_name }}</h1><p>{{ source.source_id }} · {{ source.fact_family }}</p></div><span class="status {{ source.stage|lower|replace(' ','-') }}">{{ source.stage|status_ru }}</span></div>
+<section class="source-summary" aria-label="Сводка источника">
+  <article><small>Состояние</small><strong>{{ source.stage|status_ru }}</strong></article>
+  <article><small>Источник</small><strong>{{ 'ВКЛ' if source.enabled and source.connected else 'ВЫКЛ' }}</strong></article>
+  <article><small>Последняя проверка</small><strong>{{ source.last_check|datetime_ru if source.last_check else 'Нет данных' }}</strong></article>
+  <article><small>Следующая проверка</small><strong>{{ source.next_scheduled_check|datetime_ru if source.next_scheduled_check else 'Нет данных' }}</strong></article>
+  <article><small>Свежесть</small><strong>{{ source.freshness|status_ru }}</strong></article>
+  <article><small>Покрытие</small><strong>{{ '%.1f%%'|format(source.master_coverage) if source.master_coverage is not none else 'Нет данных' }}</strong></article>
+  <article><small>Открытый инцидент</small><strong>{% if source.open_incident_id %}<a href="/admin/incidents/{{ source.open_incident_id }}">{{ source.open_incident_code }}</a>{% else %}Нет{% endif %}</strong></article>
+</section>
 <div class="actions">
+  {% if source.connected %}
   <a class="button primary" href="/admin/sources/{{ source.source_id }}/confirm/check-now">Проверить сейчас</a>
-  {% if source.enabled %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/pause">Приостановить расписание</a>{% else %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/{{ 'resume' if source.last_successful_run else 'activate' }}">{{ 'Возобновить расписание' if source.last_successful_run else 'Включить расписание' }}</a>{% endif %}
+  {% if source.enabled %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/pause">Выключить источник</a>{% else %}<a class="button" href="/admin/sources/{{ source.source_id }}/confirm/{{ 'resume' if source.last_successful_run else 'activate' }}">Включить источник</a>{% endif %}
+  {% else %}<span class="button disabled-button" aria-disabled="true">Ещё не подключён</span>{% endif %}
   {% if source.retryable %}<a class="button danger" href="/admin/sources/{{ source.source_id }}/confirm/retry">Повторить неудачный запуск</a>{% endif %}
   {% if source.latest_run_id %}<a class="button" href="/admin/runs/{{ source.latest_run_id }}">Последний запуск</a>{% endif %}
   {% if source.latest_run_id %}<a class="button" href="/admin/runs/{{ source.latest_run_id }}#raw-manifest">RAW-манифест</a>{% endif %}
   <a class="button" href="/admin/sources/{{ source.source_id }}/changes">История изменений</a>
-  {% if source.official_url %}<a class="button" target="_blank" rel="noopener noreferrer" href="{{ source.official_url }}">Официальный источник ↗</a>{% endif %}
+  {% if source.official_page_url %}<a class="button" target="_blank" rel="noopener noreferrer" href="{{ source.official_page_url }}">Официальная страница ↗</a>{% endif %}
+  {% if source.data_access_url %}<a class="button" target="_blank" rel="noopener noreferrer" href="{{ source.data_access_url }}">Получение данных ↗</a>{% endif %}
 </div>
 
 <section class="detail-grid">
-  <article class="panel"><h2>Источник</h2><dl><dt>Официальный источник</dt><dd>{{ source.source_group }}</dd><dt>Канал получения</dt><dd>{{ source.access_channel }}</dd><dt>Назначение</dt><dd>{{ source.description or source.fact_family }}</dd><dt>Частота</dt><dd>{{ source.frequency }}</dd><dt>Подключён</dt><dd>{{ 'ДА' if source.connected else 'НЕТ' }}</dd><dt>Расписание</dt><dd>{{ 'ВКЛЮЧЕНО' if source.enabled else 'ОТКЛЮЧЕНО' }}</dd></dl></article>
+  <article class="panel"><h2>Источник</h2><dl><dt>Официальный источник</dt><dd>{{ source.source_group }}</dd><dt>Канал получения</dt><dd>{{ source.access_kind }} · {{ source.access_channel }}</dd><dt>Назначение</dt><dd>{{ source.description or source.fact_family }}</dd><dt>Частота</dt><dd>{{ source.frequency }}</dd><dt>Подключён</dt><dd>{{ 'ДА' if source.connected else 'НЕТ' }}</dd><dt>Расписание</dt><dd>{{ 'ВКЛЮЧЕНО' if source.enabled and source.connected else 'ОТКЛЮЧЕНО' }}</dd></dl></article>
   <article class="panel"><h2>Публикация</h2><dl><dt>Дата данных</dt><dd>{{ source.source_data_date|date_ru }}</dd><dt>Актуально до</dt><dd>{{ source.official_actual_until|date_ru }}</dd><dt>Последняя проверка</dt><dd>{{ source.last_check|datetime_ru }}</dd><dt>Последняя публикация</dt><dd>{{ source.last_publication|datetime_ru }}</dd><dt>Версия публикации</dt><dd>{{ val(source.publication_generation, source.missing_reasons.publication_generation) }}</dd><dt>Контрольная сумма</dt><dd class="mono">{{ source.active_checksum or '—' }}</dd><dt>RAW-идентификатор</dt><dd class="mono">{{ source.raw_identity or '—' }}</dd><dt>Нормализованный идентификатор</dt><dd class="mono">{{ source.normalized_identity or '—' }}</dd></dl></article>
   <article class="panel"><h2>Master</h2><dl><dt>Применимых компаний</dt><dd>{{ val(source.applicable_companies) }}</dd><dt>Совпадений</dt><dd>{{ val(source.matched_companies, source.missing_reasons.matched_companies) }}</dd><dt>Не найдено</dt><dd>{{ val(source.not_found, source.missing_reasons.matched_companies) }}</dd><dt>Не применяется</dt><dd>{{ val(source.not_applicable, 'Не применяется к этому типу компании или источника.') }}</dd><dt>Конфликтов</dt><dd>{{ val(source.conflicts) }}</dd></dl></article>
   <article class="panel"><h2>Что изменилось</h2><dl><dt>Текущих фактов</dt><dd>{{ val(source.current_fact_count, source.missing_reasons.current_fact_count) }}</dd><dt>Новых</dt><dd>{{ val(source.new_facts, source.missing_reasons.new_facts) }}</dd><dt>Изменённых</dt><dd>{{ val(source.changed_facts, source.missing_reasons.changed_facts) }}</dd><dt>Удалённых / истёкших</dt><dd>{{ val(source.removed_facts, source.missing_reasons.removed_facts) }}</dd><dt>Повторно обработано</dt><dd>{{ val(source.replayed_facts, source.missing_reasons.replayed_facts) }}</dd><dt>В карантине</dt><dd>{{ val(source.quarantined_records, source.missing_reasons.quarantined_records) }}</dd></dl></article>

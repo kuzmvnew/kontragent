@@ -9,6 +9,14 @@ from fastapi.testclient import TestClient
 
 from admin_app import main as admin_main
 from admin_app import service, system
+from admin_app.auth import (
+    AuthConfig,
+    LoginLimiter,
+    SessionStore,
+    hash_password,
+    load_auth_config,
+)
+from admin_app.catalog import DATA_ACCESS_URLS, OFFICIAL_PAGE_URLS
 from admin_app.presentation import format_date, format_datetime
 from app.contracts.data_readiness import AutoUpdateStatus
 
@@ -21,6 +29,9 @@ def _snapshot(*, stage="OPERATIONAL"):
         "source_group": "ФНС России",
         "source_id": "fns_revenue_expenses",
         "official_url": "https://www.nalog.gov.ru/opendata/7707329152-revexp/",
+        "official_page_url": "https://www.nalog.gov.ru/",
+        "data_access_url": "https://www.nalog.gov.ru/opendata/7707329152-revexp/",
+        "access_kind": "Файл / страница выгрузки",
         "fact_family": "revenue_expenses",
         "connected": True,
         "stage": stage,
@@ -161,7 +172,7 @@ def test_dashboard_counters_status_and_official_source_link(client):
     assert "ДА" in response.text
     assert "data-tooltip" in response.text
     assert "https://www.nalog.gov.ru/opendata/7707329152-revexp/" in response.text
-    assert "ПУБЛИКАЦИЯ САЙТА" in response.text
+    assert "Публикация" in response.text
     assert "12 / 40" in response.text
     assert "ОЖИДАЕТ ПУБЛИКАЦИИ" in response.text
 
@@ -709,5 +720,174 @@ def test_zero_is_information_and_missing_value_has_reason(client, monkeypatch):
 def test_source_headers_have_hover_help(client):
     response = client.get("/admin/sources")
     assert response.status_code == 200
-    for label in ("Подключён", "Состояние", "Автовосстановление", "Последняя проверка", "Покрытие Master"):
+    for label in ("Подключён", "Статус", "Автовосстановление", "Последняя проверка", "Покрытие Master"):
         assert re.search(rf'data-tooltip="[^"]+">{label}', response.text)
+
+
+def test_catalog_filters_operational_planned_and_search():
+    rows = [
+        {"source_name": "ФНС Доходы", "source_id": "fns_rev", "dataset_code": "fns_rev", "source_group": "ФНС", "fact_family": "tax", "stage": "OPERATIONAL"},
+        {"source_name": "ФССП производства", "source_id": "fssp", "dataset_code": "fssp_enforcement", "source_group": "ФССП", "fact_family": "enforcement", "stage": "PLANNED"},
+        {"source_name": "Минтранс ТЭД", "source_id": "mintrans", "dataset_code": "mintrans_ted_registry", "source_group": "Минтранс", "fact_family": "transport", "stage": "ERROR"},
+    ]
+    assert service.filter_catalog_rows(rows, status="operational") == rows[:1]
+    assert service.filter_catalog_rows(rows, status="unconnected") == rows[1:2]
+    assert service.filter_catalog_rows(rows, query="FSSP_enforcement") == rows[1:2]
+    assert service.filter_catalog_rows(rows, family="transport") == rows[2:]
+
+
+def test_catalog_merge_keeps_runtime_authoritative_and_metadata_only_planned():
+    metadata = [
+        {"dataset_code": "live", "source_name": "Catalog live", "purpose": "verified"},
+        {"dataset_code": "future", "source_name": "Confirmed future", "purpose": "verified"},
+    ]
+    runtime = [{
+        "dataset_code": "live", "source_name": "Runtime live", "connected": True,
+        "enabled": True, "stage": "OPERATIONAL",
+    }]
+    rows = service.merge_catalog_metadata(metadata, runtime)
+    assert rows[0]["source_name"] == "Runtime live"
+    assert rows[0]["connected"] is True
+    assert rows[1]["source_name"] == "Confirmed future"
+    assert rows[1]["connected"] is False
+    assert rows[1]["enabled"] is False
+    assert rows[1]["stage"] == "PLANNED"
+
+
+def test_unimplemented_catalog_record_is_planned():
+    dataset = SimpleNamespace(
+        enabled=False, auto_update_status=AutoUpdateStatus.NOT_CONFIGURED,
+        last_success_at=None, next_expected_update_at=None, coverage={},
+    )
+    assert service._stage(
+        dataset, implemented=False, connected=False, freshness="access_pending",
+        latest_job=None, latest_run=None, now=NOW,
+    ) == "PLANNED"
+
+
+def test_confirmed_source_page_and_data_access_urls_are_separate_and_safe():
+    assert OFFICIAL_PAGE_URLS["fns"] == "https://www.nalog.gov.ru/"
+    assert OFFICIAL_PAGE_URLS["mintrans"] == "https://mintrans.gov.ru/"
+    assert DATA_ACCESS_URLS["mintrans_ted_registry"].startswith("https://www.mintrans.gov.ru/search?")
+    assert "транспортно-экспедиционной" not in DATA_ACCESS_URLS["mintrans_ted_registry"]
+    assert service.safe_url(DATA_ACCESS_URLS["mintrans_ted_registry"])
+    assert service.safe_url("javascript:alert(1)") is None
+    assert service.safe_url("https://example.test/file?token=secret") == "https://example.test/file"
+
+
+def test_inline_toggle_calls_existing_source_action_and_rejects_bad_value(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(service, "perform_source_action", lambda source_id, action: called.append((source_id, action)))
+    page = client.get("/admin/sources")
+    token = re.search(r'name="_csrf" value="([^"]+)"', page.text).group(1)
+    disabled = client.post(
+        "/admin/sources/fns_revenue_expenses/toggle",
+        data={"_csrf": token, "enabled": "0"}, follow_redirects=False,
+    )
+    enabled = client.post(
+        "/admin/sources/fns_revenue_expenses/toggle",
+        data={"_csrf": token, "enabled": "1"}, follow_redirects=False,
+    )
+    invalid = client.post(
+        "/admin/sources/fns_revenue_expenses/toggle",
+        data={"_csrf": token, "enabled": "yes"}, follow_redirects=False,
+    )
+    assert disabled.status_code == enabled.status_code == 303
+    assert invalid.status_code == 400
+    assert called == [
+        ("fns_revenue_expenses", "pause"),
+        ("fns_revenue_expenses", "resume"),
+    ]
+
+
+def test_backend_rejects_activation_without_registered_handler(monkeypatch):
+    state = {"connected": False, "enabled": False, "auto_update_status": "not_configured", "latest_job_id": None}
+    monkeypatch.setattr(service, "action_state", lambda _source_id: state)
+    audits = []
+    monkeypatch.setattr(service, "audit_action", lambda **kwargs: audits.append(kwargs))
+    with pytest.raises(ValueError, match="no runnable registered handler"):
+        service.perform_source_action("fedresurs_messages", "activate")
+    assert audits[-1]["result"] == "failed"
+
+
+def _remote_auth_config(password_hash):
+    return AuthConfig(
+        mode="remote", username="owner", password_hash=password_hash,
+        session_secret="s" * 48, session_ttl_seconds=600,
+        allowed_hosts=("testserver",), trusted_proxy_ips=("127.0.0.1",),
+    )
+
+
+def test_remote_login_failure_success_cookie_logout_and_secret_safety(monkeypatch):
+    password = "correct horse battery staple"
+    config = _remote_auth_config(hash_password(password, salt=b"0123456789abcdef"))
+    monkeypatch.setattr(admin_main, "AUTH_CONFIG", config)
+    monkeypatch.setattr(admin_main, "SESSIONS", SessionStore())
+    monkeypatch.setattr(admin_main, "LOGIN_LIMITER", LoginLimiter())
+    audits = []
+    monkeypatch.setattr(service, "audit_action", lambda **kwargs: audits.append(kwargs))
+    client = TestClient(admin_main.app, base_url="https://testserver")
+
+    unauthenticated = client.get("/admin/sources", follow_redirects=False)
+    assert unauthenticated.status_code == 303
+    assert unauthenticated.headers["location"] == "/admin/login"
+    login_page = client.get("/admin/login")
+    token = re.search(r'name="_csrf" value="([^"]+)"', login_page.text).group(1)
+    denied = client.post(
+        "/admin/login", data={"_csrf": token, "username": "owner", "password": "not-the-password"},
+        follow_redirects=False,
+    )
+    assert denied.status_code == 401
+    assert "not-the-password" not in denied.text
+    accepted = client.post(
+        "/admin/login", data={"_csrf": token, "username": "owner", "password": password},
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303
+    cookie = accepted.headers["set-cookie"]
+    assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=strict" in cookie
+    assert client.get("/admin/sources").status_code == 200
+    logged_out = client.post("/admin/logout", data={"_csrf": token}, follow_redirects=False)
+    assert logged_out.status_code == 303
+    assert client.get("/admin/sources", follow_redirects=False).status_code == 303
+    assert [item["action"] for item in audits] == ["login-failure", "login-success", "logout"]
+    assert password not in repr(audits)
+
+
+def test_session_expiry_and_invalidation():
+    config = _remote_auth_config(hash_password("a sufficiently long password", salt=b"fedcba9876543210"))
+    store = SessionStore()
+    token = store.create(config, now=100)
+    assert store.verify(token, config, now=699)
+    assert store.verify(token, config, now=700) is None
+    token = store.create(config, now=1000)
+    store.revoke(token, config)
+    assert store.verify(token, config, now=1001) is None
+
+
+def test_remote_config_fails_closed_and_local_defaults_loopback(monkeypatch):
+    for name in (
+        "ADMIN_ACCESS_MODE", "ADMIN_USERNAME", "ADMIN_PASSWORD_HASH",
+        "ADMIN_SESSION_SECRET", "ADMIN_ALLOWED_HOSTS", "ADMIN_TRUSTED_PROXY_IPS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    local = load_auth_config()
+    assert local.mode == "local"
+    assert local.auth_required is False
+    assert local.allowed_hosts == ("127.0.0.1", "localhost", "testserver")
+    monkeypatch.setenv("ADMIN_ACCESS_MODE", "remote")
+    with pytest.raises(RuntimeError, match="requires username"):
+        load_auth_config()
+
+
+def test_remote_mode_rejects_untrusted_direct_client(monkeypatch):
+    config = _remote_auth_config(hash_password("another strong owner password", salt=b"0123456789abcdef"))
+    monkeypatch.setattr(admin_main, "AUTH_CONFIG", config)
+    remote = TestClient(admin_main.app, client=("203.0.113.11", 443), base_url="https://testserver")
+    response = remote.get("/admin/health")
+    assert response.status_code == 403
+    assert response.json() == {"detail": "trusted proxy required"}
+
+
+def test_host_validation_rejects_unknown_host(client):
+    assert client.get("/admin/health", headers={"Host": "attacker.example"}).status_code == 400

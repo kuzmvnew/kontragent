@@ -7,18 +7,15 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 
+from admin_app.catalog import DATA_ACCESS_URLS, OFFICIAL_PAGE_URLS, access_kind
 from app.contracts.data_readiness import AutoUpdateStatus
 from app.database.postgres import SessionLocal
-from app.services.publication_service import (
-    publication_dashboard,
-    publication_history as public_sync_history,
-)
 from app.incidents.controller import (
     record_action,
     update_policy,
@@ -41,6 +38,7 @@ from app.models.worker import (
     WorkerRawManifest,
     WorkerRun,
 )
+from app.services.company_enrichment_service import canonical_enrichment_metrics
 from app.services.data_readiness_scheduler import (
     HANDLERS,
     SCHEDULED_SOURCE_DATASET_CODES,
@@ -48,7 +46,12 @@ from app.services.data_readiness_scheduler import (
     run_due_updates,
 )
 from app.services.data_readiness_service import effective_status, safe_error_message
-from app.services.company_enrichment_service import canonical_enrichment_metrics
+from app.services.publication_service import (
+    publication_dashboard,
+)
+from app.services.publication_service import (
+    publication_history as public_sync_history,
+)
 from app.worker.execution import retry_job_now
 
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
@@ -110,9 +113,21 @@ def safe_url(value: str | None) -> str | None:
     if not value:
         return None
     parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         return None
-    return value
+    safe_query = [
+        (key, item)
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+        if not SECRET_KEY.search(key) and not key.casefold().startswith("x-amz-")
+    ]
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(safe_query), "")
+    )
 
 
 def safe_identity(value: str | None) -> str | None:
@@ -404,12 +419,15 @@ def _incident_counts(session, *, now: datetime) -> dict[str, int]:
 def _stage(
     dataset: DataSet,
     *,
+    implemented: bool = True,
     connected: bool,
     freshness: str,
     latest_job: WorkerJob | None,
     latest_run: WorkerRun | None,
     now: datetime,
 ) -> str:
+    if not implemented:
+        return "PLANNED"
     if latest_run is not None and latest_run.status == "running":
         return "UPDATING"
     if freshness == "source_blocked":
@@ -439,11 +457,77 @@ def _stage(
     return "OPERATIONAL"
 
 
+CATALOG_STATUS_FILTERS = {
+    "operational": {"OPERATIONAL"},
+    "updating": {"UPDATING"},
+    "first-run": {"FIRST RUN", "CHECK PENDING"},
+    "access-required": {"ACCESS REQUIRED"},
+    "source-blocked": {"SOURCE BLOCKED"},
+    "error": {"ERROR"},
+    "stale": {"STALE"},
+    "disabled": {"DISABLED", "NOT CONFIGURED"},
+    "unconnected": {"PLANNED"},
+    "planned": {"PLANNED"},
+}
+
+
+def filter_catalog_rows(
+    rows: list[dict[str, Any]], *, query: str = "", status: str = "", family: str = ""
+) -> list[dict[str, Any]]:
+    """Apply deterministic owner filters without changing global KPI counts."""
+
+    query_folded = query.strip().casefold()
+    family_folded = family.strip().casefold()
+    stages = CATALOG_STATUS_FILTERS.get(status.strip().lower())
+    result = []
+    for row in rows:
+        haystack = " ".join(
+            str(row.get(key) or "")
+            for key in ("source_name", "source_id", "dataset_code", "source_group", "fact_family")
+        ).casefold()
+        if query_folded and query_folded not in haystack:
+            continue
+        if family_folded and str(row.get("fact_family") or "").casefold() != family_folded:
+            continue
+        if stages is not None and row.get("stage") not in stages:
+            continue
+        result.append(row)
+    return result
+
+
+def merge_catalog_metadata(
+    metadata_rows: list[dict[str, Any]], operational_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge future catalog imports without ever promoting metadata to runtime.
+
+    Operational state always wins. A confirmed metadata-only record is honest:
+    it is planned, disconnected and cannot be enabled. Current production calls
+    build both sides from the operational registry; this boundary lets the
+    canonical workbook be added later without changing templates or controls.
+    """
+
+    operational = {str(row["dataset_code"]): row for row in operational_rows}
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for metadata in metadata_rows:
+        code = str(metadata["dataset_code"])
+        runtime = operational.get(code)
+        if runtime is None:
+            merged.append({
+                **metadata, "source_id": code, "implemented": False,
+                "connected": False, "enabled": False, "stage": "PLANNED",
+            })
+        else:
+            merged.append({**metadata, **runtime})
+        seen.add(code)
+    merged.extend(row for code, row in operational.items() if code not in seen)
+    return merged
+
+
 def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict[str, Any]]:
     datasets = session.execute(
         select(DataSet, DataSource)
         .join(DataSource, DataSet.source_id == DataSource.id)
-        .where(DataSet.code.in_(DATASET_CODES))
         .order_by(DataSet.priority, DataSet.name)
     ).all()
     connected = _connected_sources(session)
@@ -505,8 +589,10 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
         policy = policies.get(worker_source_id)
         incident = active_incidents.get(worker_source_id)
         freshness = effective_status(dataset, now=now)
+        implemented = dataset.code in HANDLERS
         stage = _stage(
             dataset,
+            implemented=implemented,
             connected=dataset.code in connected,
             freshness=freshness,
             latest_job=job,
@@ -542,9 +628,23 @@ def _source_rows(session, *, now: datetime, master: dict[str, int]) -> list[dict
                 "source_group": source.name,
                 "source_id": worker_source_id,
                 "dataset_code": dataset.code,
-                "official_url": safe_url(dataset.source_url or source.website_url),
+                "official_page_url": safe_url(
+                    OFFICIAL_PAGE_URLS.get(source.code) or source.website_url
+                ),
+                "data_access_url": safe_url(
+                    DATA_ACCESS_URLS.get(dataset.code) or dataset.source_url
+                ),
+                # Compatibility for ADMIN-UX-03 templates/tests. New views use
+                # the two explicit fields above.
+                "official_url": safe_url(
+                    OFFICIAL_PAGE_URLS.get(source.code) or source.website_url
+                ),
+                "access_kind": access_kind(
+                    update_mode=dataset.update_mode, data_format=dataset.data_format
+                ),
                 "fact_family": dataset.domain,
                 "description": dataset.description,
+                "implemented": implemented,
                 "connected": dataset.code in connected,
                 "stage": stage,
                 "enabled": bool(dataset.enabled),
@@ -628,6 +728,7 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
                 "errors": stages["ERROR"],
                 "blocked": stages["SOURCE BLOCKED"] + stages["ACCESS REQUIRED"],
                 "disabled": stages["DISABLED"] + stages["NOT CONFIGURED"],
+                "planned": stages["PLANNED"],
                 "queue": queue,
                 "retry_scheduled": retries,
                 "active_leases": leases,
@@ -655,8 +756,6 @@ def public_publication_history(*, limit: int = 100) -> list[dict[str, Any]]:
 
 
 def source_detail(source_id: str, *, now: datetime | None = None) -> dict[str, Any] | None:
-    if source_id not in SOURCE_IDS:
-        return None
     now = now or utc_now()
     with SessionLocal() as session:
         master = _master_counts(session)
@@ -777,9 +876,10 @@ def run_detail(run_id: UUID) -> dict[str, Any] | None:
 
 
 def change_history(source_id: str) -> list[dict[str, Any]] | None:
-    if source_id not in SOURCE_IDS:
-        return None
     with SessionLocal() as session:
+        dataset_code = dataset_code_for(source_id)
+        if session.scalar(select(DataSet.id).where(DataSet.code == dataset_code)) is None:
+            return None
         rows = session.execute(
             select(WorkerRun, WorkerJob, SourceChangeSummary)
             .join(WorkerJob, WorkerRun.job_id == WorkerJob.id)
@@ -805,7 +905,9 @@ def action_state(source_id: str) -> dict[str, Any]:
         job = session.scalar(
             select(WorkerJob).where(WorkerJob.source_id == source_id).order_by(WorkerJob.created_at.desc()).limit(1)
         )
+        connected = bool(dataset and dataset.code in _connected_sources(session))
         return {
+            "connected": connected,
             "enabled": bool(dataset.enabled) if dataset else None,
             "auto_update_status": dataset.auto_update_status if dataset else None,
             "next_expected_update_at": dataset.next_expected_update_at.isoformat() if dataset and dataset.next_expected_update_at else None,
@@ -842,13 +944,15 @@ def audit_action(
 
 
 def perform_source_action(source_id: str, action: str) -> dict[str, Any]:
-    if source_id not in SOURCE_IDS:
-        raise LookupError("source not found")
     if action not in ACTION_LABELS:
         raise ValueError("unsupported action")
     before = action_state(source_id)
+    if before["enabled"] is None:
+        raise LookupError("source not found")
     job_id: UUID | None = None
     try:
+        if action in {"activate", "resume", "pause", "check-now"} and before.get("connected") is False:
+            raise ValueError("source has no runnable registered handler")
         if action in {"activate", "resume"}:
             configure_source_schedules(
                 enabled=True, dataset_codes=[dataset_code_for(source_id)]

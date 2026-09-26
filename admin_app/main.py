@@ -16,6 +16,13 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from admin_app import service
+from admin_app.auth import (
+    LOGIN_LIMITER,
+    SESSION_COOKIE,
+    SESSIONS,
+    load_auth_config,
+    verify_password,
+)
 from admin_app.presentation import (
     action_label,
     category_label,
@@ -37,6 +44,7 @@ from admin_app.system import (
 )
 
 ROOT = Path(__file__).resolve().parent
+AUTH_CONFIG = load_auth_config()
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
 templates.env.filters["json_pretty"] = lambda value: json.dumps(
     value, ensure_ascii=False, indent=2, default=str
@@ -70,23 +78,42 @@ app = FastAPI(
 )
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["127.0.0.1", "localhost", "testserver"],
+    allowed_hosts=list(AUTH_CONFIG.allowed_hosts),
 )
 app.mount("/admin/static", StaticFiles(directory=str(ROOT / "static")), name="admin-static")
 
 
 @app.middleware("http")
 async def loopback_and_security(request: Request, call_next):
-    """Deny non-loopback clients even after a deployment misconfiguration."""
+    """Enforce the selected network boundary and owner session."""
 
     client_host = request.client.host if request.client else ""
-    try:
-        loopback = ipaddress.ip_address(client_host).is_loopback
-    except ValueError:
-        # Starlette's in-process TestClient uses this sentinel only in tests.
-        loopback = client_host == "testclient"
-    if not loopback:
-        return JSONResponse({"detail": "loopback access only"}, status_code=403)
+    if AUTH_CONFIG.mode == "remote":
+        if client_host not in AUTH_CONFIG.trusted_proxy_ips and client_host != "testclient":
+            return JSONResponse({"detail": "trusted proxy required"}, status_code=403)
+        if client_host != "testclient" and request.headers.get("x-forwarded-proto", "").lower() != "https":
+            return JSONResponse({"detail": "HTTPS proxy required"}, status_code=403)
+    else:
+        try:
+            loopback = ipaddress.ip_address(client_host).is_loopback
+        except ValueError:
+            # Starlette's in-process TestClient uses this sentinel only in tests.
+            loopback = client_host == "testclient"
+        if not loopback:
+            return JSONResponse({"detail": "loopback access only"}, status_code=403)
+
+    public_admin_path = (
+        request.url.path in {"/admin/login", "/admin/health"}
+        or request.url.path.startswith("/admin/static/")
+    )
+    claims = None
+    if AUTH_CONFIG.auth_required:
+        claims = SESSIONS.verify(request.cookies.get(SESSION_COOKIE), AUTH_CONFIG)
+        if request.url.path.startswith("/admin/") and not public_admin_path and claims is None:
+            if request.method in {"GET", "HEAD"}:
+                return RedirectResponse("/admin/login", status_code=303)
+            return JSONResponse({"detail": "authentication required"}, status_code=401)
+    request.state.admin_authenticated = claims is not None or not AUTH_CONFIG.auth_required
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
@@ -108,7 +135,12 @@ def _render(request: Request, template: str, context: dict, *, status_code: int 
     response = templates.TemplateResponse(
         request=request,
         name=template,
-        context={"csrf_token": token, **context},
+        context={
+            "csrf_token": token,
+            "admin_authenticated": getattr(request.state, "admin_authenticated", False),
+            "admin_mode": AUTH_CONFIG.mode,
+            **context,
+        },
         status_code=status_code,
     )
     if new_token:
@@ -117,7 +149,7 @@ def _render(request: Request, template: str, context: dict, *, status_code: int 
             token,
             httponly=True,
             samesite="strict",
-            secure=False,
+            secure=AUTH_CONFIG.secure_cookie,
             path="/admin",
         )
     return response
@@ -141,6 +173,19 @@ async def _require_csrf(request: Request) -> dict:
     return form
 
 
+def _audit_auth(action: str, *, result: str) -> None:
+    """Authentication must still work when audit storage is unavailable."""
+
+    try:
+        service.audit_action(
+            action=action, source_id=None, job_id=None,
+            previous_state={"mode": AUTH_CONFIG.mode},
+            new_state={"authenticated": result == "success"}, result=result,
+        )
+    except Exception:
+        pass
+
+
 def _empty_snapshot() -> dict:
     return {
         "sources": [],
@@ -152,7 +197,7 @@ def _empty_snapshot() -> dict:
             key: 0
             for key in (
                 "operational", "first_run", "stale", "errors", "blocked",
-                "disabled", "queue", "retry_scheduled", "active_leases",
+                "disabled", "planned", "queue", "retry_scheduled", "active_leases",
             )
         },
         "master": {"total": 0, "legal": 0, "ip": 0},
@@ -197,6 +242,56 @@ async def root():
     return RedirectResponse("/admin/sources", status_code=307)
 
 
+@app.get("/admin/login", response_class=HTMLResponse, include_in_schema=False)
+async def login_page(request: Request):
+    if not AUTH_CONFIG.auth_required:
+        return RedirectResponse("/admin/sources", status_code=303)
+    if SESSIONS.verify(request.cookies.get(SESSION_COOKIE), AUTH_CONFIG):
+        return RedirectResponse("/admin/sources", status_code=303)
+    return _render(request, "login.html", {"error": None})
+
+
+@app.post("/admin/login", response_class=HTMLResponse, include_in_schema=False)
+async def login(request: Request):
+    if not AUTH_CONFIG.auth_required:
+        return RedirectResponse("/admin/sources", status_code=303)
+    form = await _require_csrf(request)
+    username = str(form.get("username", ""))
+    password = str(form.get("password", ""))
+    key = f"{request.client.host if request.client else 'unknown'}:{username.casefold()[:100]}"
+    valid = LOGIN_LIMITER.allowed(key) and verify_password(
+        password, str(AUTH_CONFIG.password_hash)
+    ) and secrets.compare_digest(username, str(AUTH_CONFIG.username))
+    if not valid:
+        LOGIN_LIMITER.failure(key)
+        _audit_auth("login-failure", result="failed")
+        return _render(
+            request, "login.html",
+            {"error": "Неверный логин или пароль. Повторите попытку позже."},
+            status_code=401,
+        )
+    LOGIN_LIMITER.success(key)
+    token = SESSIONS.create(AUTH_CONFIG)
+    _audit_auth("login-success", result="success")
+    response = RedirectResponse("/admin/sources", status_code=303)
+    response.set_cookie(
+        SESSION_COOKIE, token, httponly=True, secure=AUTH_CONFIG.secure_cookie,
+        samesite="strict", max_age=AUTH_CONFIG.session_ttl_seconds,
+        path="/admin",
+    )
+    return response
+
+
+@app.post("/admin/logout", include_in_schema=False)
+async def logout(request: Request):
+    await _require_csrf(request)
+    SESSIONS.revoke(request.cookies.get(SESSION_COOKIE), AUTH_CONFIG)
+    _audit_auth("logout", result="success")
+    response = RedirectResponse("/admin/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE, path="/admin")
+    return response
+
+
 @app.get("/admin/health", include_in_schema=False)
 async def health():
     database = service.postgres_health()
@@ -207,7 +302,9 @@ async def health():
 
 
 @app.get("/admin/sources", response_class=HTMLResponse, include_in_schema=False)
-async def sources_page(request: Request):
+async def sources_page(
+    request: Request, q: str = "", status: str = "", family: str = ""
+):
     database = service.postgres_health()
     worker = systemd_status(WORKER_SERVICE)
     public_sync = systemd_status(PUBLIC_SYNC_SERVICE)
@@ -222,6 +319,11 @@ async def sources_page(request: Request):
         database = {"available": False, "status": "UNAVAILABLE"}
         snapshot = _empty_snapshot()
         publication = _empty_publication()
+    all_rows = list(snapshot["sources"])
+    families = sorted({str(row["fact_family"]) for row in all_rows})
+    snapshot["sources"] = service.filter_catalog_rows(
+        all_rows, query=q, status=status, family=family
+    )
     backups = list_backups(limit=1)
     return _render(
         request,
@@ -235,6 +337,9 @@ async def sources_page(request: Request):
             "storage": storage_status(),
             "latest_backup": backups[0] if backups else None,
             "deployed_sha": deployed_git_sha(),
+            "filters": {"q": q, "status": status, "family": family},
+            "families": families,
+            "filtered_count": len(snapshot["sources"]),
         },
     )
 
@@ -319,6 +424,31 @@ async def source_action(request: Request, source_id: str, action: str):
             status_code=400,
         )
     return RedirectResponse(f"/admin/sources/{source_id}", status_code=303)
+
+
+@app.post("/admin/sources/{source_id}/toggle", include_in_schema=False)
+async def source_toggle(request: Request, source_id: str):
+    form = await _require_csrf(request)
+    requested = str(form.get("enabled", ""))
+    if requested not in {"0", "1"}:
+        raise HTTPException(status_code=400, detail="enabled must be 0 or 1")
+    try:
+        service.perform_source_action(
+            source_id, "resume" if requested == "1" else "pause"
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="source not found")
+    except Exception as error:
+        return _render(
+            request, "action_result.html",
+            {
+                "title": "Не удалось изменить источник",
+                "message": service.safe_error_message(error),
+                "return_url": "/admin/sources",
+            },
+            status_code=400,
+        )
+    return RedirectResponse("/admin/sources", status_code=303)
 
 
 @app.get("/admin/audit", response_class=HTMLResponse, include_in_schema=False)
