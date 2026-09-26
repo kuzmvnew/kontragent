@@ -1407,7 +1407,10 @@ def _run_benchmark_metrics(
         return latencies[max(0, min(len(latencies) - 1, rank - 1))]
 
     return {
-        "concurrency": int(validation.get("lane_count") or 1),
+        # ``lane_count`` is handler execution evidence.  It is intentionally
+        # stored in checksum metadata (not staging validation), so preserve it
+        # when the publisher adds the durable benchmark summary.
+        "concurrency": int((result.checksum_metadata or {}).get("lane_count") or 1),
         "requests": len(metrics),
         "http_status_counts": statuses,
         "latency_ms_p50": percentile(0.50),

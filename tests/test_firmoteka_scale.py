@@ -299,12 +299,12 @@ def test_run_benchmark_metrics_persist_exact_status_latency_and_raw_growth():
                 manifest={"response_size": 13},
             ),
         ),
+        checksum_metadata={"lane_count": 2},
         counters=worker.ExecutionCounters(records_rejected=1),
     )
 
     metrics = worker._run_benchmark_metrics(
         {
-            "lane_count": 2,
             "request_metrics": [
                 {"http_status": 200, "latency_ms": 100},
                 {"http_status": 200, "latency_ms": 200},
