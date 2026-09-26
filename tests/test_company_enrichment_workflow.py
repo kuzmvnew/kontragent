@@ -338,6 +338,30 @@ def test_postgresql_backlog_creates_local_replay_and_bounded_point_jobs(tmp_path
         session.rollback()
 
 
+def test_postgresql_legacy_null_acceptance_is_operational_but_false_is_not(tmp_path):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        for dataset in session.scalars(
+            sa.select(DataSet).where(
+                DataSet.code.in_(tuple(signals)), DataSet.last_success_at.is_not(None)
+            )
+        ):
+            coverage = dict(dataset.coverage or {})
+            coverage.pop("operational_accepted", None)
+            dataset.coverage = coverage
+        session.flush()
+
+        result = consume_master_replay_signals(session, limit=10, now=NOW)
+
+        assert result.runs_created == 1
+        run, coverage_rows = _workflow_rows(session, company.id)
+        assert run.source_count == 2
+        assert {row.source_id for row in coverage_rows} == {
+            code for code, signal in signals.items() if signal.status == "scheduled"
+        }
+        session.rollback()
+
+
 def test_postgresql_completeness_gate_then_persisted_risk_then_summary(tmp_path):
     with Session(engine) as session:
         initial_master_count = int(

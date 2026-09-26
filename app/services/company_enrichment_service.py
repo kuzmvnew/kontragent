@@ -24,15 +24,21 @@ from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
 from app.contracts.risk_v3 import UnsupportedSubjectOutcome
 from app.database.postgres import SessionLocal
 from app.models.company import Company
+from app.models.cbr_finorg import CbrFinorgCheck
 from app.models.cbr_warning_list import CbrWarningListEntry
 from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
+from app.models.corporate_disclosure import CorporateDisclosureCheck
 from app.models.fns_sme_support import FnsSmeSupportEntry
 from app.models.headcount import CompanyHeadcount
 from app.models.msp import CompanyMspProfile
+from app.models.mintrans_ted import TransportForwardingRegistryListing
 from app.models.registry_master import MasterReplaySignal
 from app.models.revenue_expense import CompanyRevenueExpenseSnapshot
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
-from app.models.roskomnadzor import RoskomnadzorCompanyFact
+from app.models.roskomnadzor import (
+    RoskomnadzorCompanyFact,
+    RoskomnadzorPdOperatorCheck,
+)
 from app.models.source import DataSet
 from app.models.tax_offence import CompanyTaxOffence
 from app.models.tax_payment import CompanyTaxPaymentSnapshot
@@ -69,6 +75,8 @@ LEGAL_ONLY_DATASET_CODES = frozenset(
         "rkn_communications_licenses",
         "rkn_broadcast_licenses",
         "rkn_registered_media",
+        "rkn_information_distributors",
+        "rkn_hosting_providers",
     }
 )
 IP_ONLY_DATASET_CODES = frozenset({"fns_egrip", "fns_npd"})
@@ -85,6 +93,20 @@ LOCAL_SNAPSHOT_SOURCES = frozenset(
         "rkn_communications_licenses",
         "rkn_broadcast_licenses",
         "rkn_registered_media",
+        "rkn_information_distributors",
+        "rkn_hosting_providers",
+        "mintrans_ted_registry",
+    }
+)
+LOCAL_BULK_REPLAY_SOURCES = frozenset(
+    {
+        "fns_revenue_expenses",
+        "fns_tax_offence",
+        "fns_tax_paid",
+        "fns_headcount",
+        "fns_msp",
+        "fns_tax_regime",
+        "fns_sme_support",
     }
 )
 
@@ -190,7 +212,12 @@ def _source_plan(
         return None
     if effective_status(dataset, now=now) != OperationalStatus.CURRENT:
         return None
-    if (dataset.coverage or {}).get("operational_accepted") is not True:
+    if (dataset.coverage or {}).get("operational_accepted") is False:
+        return None
+    if (
+        dataset.next_expected_update_at is not None
+        and dataset.next_expected_update_at <= now
+    ):
         return None
 
     worker_source_id = _worker_source_id(dataset.code)
@@ -213,6 +240,16 @@ def _source_plan(
     )
     state = session.get(WorkerPublicationState, worker_source_id)
     producer = _producer_job(session, state)
+    if mode == "local_bulk_replay" and not (
+        dataset.code in LOCAL_BULK_REPLAY_SOURCES
+        or (
+            registration_metadata.get("mode") == "official_bulk_release"
+            and producer is not None
+        )
+    ):
+        # A runnable source is not automatically a company-projection source.
+        # Unsupported adapters stay outside the frozen denominator fail-closed.
+        return None
     handler_version = (
         producer.handler_version
         if mode == "local_bulk_replay" and producer is not None
@@ -466,12 +503,67 @@ def _coverage_fact_count(session: Session, coverage: CompanySourceCoverage) -> i
         "rkn_communications_licenses",
         "rkn_broadcast_licenses",
         "rkn_registered_media",
+        "rkn_information_distributors",
+        "rkn_hosting_providers",
     }:
         inn = session.scalar(select(Company.inn).where(Company.id == coverage.company_id))
         statement = select(func.count()).select_from(RoskomnadzorCompanyFact).where(
             RoskomnadzorCompanyFact.dataset_id == coverage.dataset_id,
             RoskomnadzorCompanyFact.inn == inn,
         )
+    elif coverage.source_id == "mintrans_ted_registry":
+        statement = (
+            select(func.count())
+            .select_from(TransportForwardingRegistryListing)
+            .where(
+                TransportForwardingRegistryListing.company_id == coverage.company_id,
+                TransportForwardingRegistryListing.dataset_id == coverage.dataset_id,
+            )
+        )
+    elif coverage.source_id == "cbr_finorg":
+        inn = session.scalar(select(Company.inn).where(Company.id == coverage.company_id))
+        row = session.scalar(
+            select(CbrFinorgCheck)
+            .where(CbrFinorgCheck.dataset_id == coverage.dataset_id, CbrFinorgCheck.inn == inn)
+            .order_by(CbrFinorgCheck.checked_at.desc(), CbrFinorgCheck.id.desc())
+            .limit(1)
+        )
+        if row is None or row.result_status != "success":
+            raise ValueError("CBR FINORG has no successful exact-INN outcome")
+        return int(bool(row.is_participant))
+    elif coverage.source_id == "prime_corporate_disclosure":
+        row = session.scalar(
+            select(CorporateDisclosureCheck)
+            .where(
+                CorporateDisclosureCheck.dataset_id == coverage.dataset_id,
+                CorporateDisclosureCheck.company_id == coverage.company_id,
+            )
+            .order_by(
+                CorporateDisclosureCheck.checked_at.desc(),
+                CorporateDisclosureCheck.id.desc(),
+            )
+            .limit(1)
+        )
+        if row is None or row.result_status != "success":
+            raise ValueError("Corporate disclosure has no successful exact-INN outcome")
+        return int(bool(row.is_found))
+    elif coverage.source_id == "rkn_personal_data_operators":
+        inn = session.scalar(select(Company.inn).where(Company.id == coverage.company_id))
+        row = session.scalar(
+            select(RoskomnadzorPdOperatorCheck)
+            .where(
+                RoskomnadzorPdOperatorCheck.dataset_id == coverage.dataset_id,
+                RoskomnadzorPdOperatorCheck.inn == inn,
+            )
+            .order_by(
+                RoskomnadzorPdOperatorCheck.checked_at.desc(),
+                RoskomnadzorPdOperatorCheck.id.desc(),
+            )
+            .limit(1)
+        )
+        if row is None or row.result_status != "success":
+            raise ValueError("RKN PD has no successful exact-INN outcome")
+        return int(bool(row.is_found))
     else:
         run = _latest_worker_run(session, coverage.worker_job_id) if coverage.worker_job_id else None
         return int((run.records_published or run.records_written or 0) if run else 0)
@@ -620,7 +712,7 @@ def _enqueue_point_coverage(
         or not handler.enabled
         or handler.live_mode
         or (handler.metadata_json or {}).get("mode")
-        != "bounded_daily_master_exact_inn_sweep"
+        not in {"bounded_daily_master_exact_inn_sweep", "official_on_demand_api"}
     ):
         raise ValueError("bounded point-source handler contract is unavailable")
     company = session.get(Company, coverage.company_id)
@@ -773,7 +865,11 @@ def consume_master_replay_signals(
                 DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
                 DataSet.operational_status == OperationalStatus.CURRENT,
                 DataSet.last_success_at.is_not(None),
-                DataSet.coverage["operational_accepted"].as_boolean().is_(True),
+                DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
+                (
+                    DataSet.next_expected_update_at.is_(None)
+                    | (DataSet.next_expected_update_at > now)
+                ),
             )
             .group_by(MasterReplaySignal.company_id)
             .order_by(func.min(MasterReplaySignal.created_at), MasterReplaySignal.company_id)
@@ -882,7 +978,12 @@ def _sync_coverage_from_job(
     if coverage.execution_status in {"queued", "running", "retry_scheduled"}:
         coverage.status = "RUNNING"
     elif coverage.execution_status == "succeeded":
-        _resolve_successful_coverage(session, coverage, now=now)
+        try:
+            _resolve_successful_coverage(session, coverage, now=now)
+        except Exception as error:
+            coverage.status = "SOURCE_UNAVAILABLE"
+            coverage.last_error = safe_error_message(error)
+            coverage.checked_at = now
     elif coverage.execution_status in {"failed", "cancelled"}:
         error_kind = str((run.errors[-1] or {}).get("kind") or "") if run and run.errors else ""
         if "timeout" in error_kind:
