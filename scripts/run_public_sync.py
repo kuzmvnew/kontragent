@@ -104,6 +104,29 @@ class SshPublicTransport:
         self.target = (target or os.getenv("PUBLIC_SSH_TARGET", "")).strip()
         if not SAFE_TARGET.fullmatch(self.target):
             raise PublicBuildError("PUBLIC_SSH_TARGET is missing or unsafe")
+        self.ssh_argv = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+        ]
+        known_hosts = self._configured_file("PUBLIC_SSH_KNOWN_HOSTS_FILE")
+        identity = self._configured_file("PUBLIC_SSH_IDENTITY_FILE")
+        if known_hosts:
+            self.ssh_argv.extend(["-o", f"UserKnownHostsFile={known_hosts}"])
+        if identity:
+            self.ssh_argv.extend(["-o", "IdentitiesOnly=yes", "-i", identity])
+
+    @staticmethod
+    def _configured_file(variable: str) -> str | None:
+        value = os.getenv(variable, "").strip()
+        if not value:
+            return None
+        path = Path(value).expanduser()
+        if not path.is_absolute() or not path.is_file():
+            raise PublicBuildError(f"{variable} must name an existing absolute file")
+        return str(path)
 
     @staticmethod
     def _archive(bundle_dir: Path) -> bytes:
@@ -122,7 +145,7 @@ class SshPublicTransport:
             f" && sudo -u nextcompany-importer tar -C {shlex.quote(remote)} -xf -"
         )
         try:
-            _run(["ssh", "-o", "BatchMode=yes", self.target, command], input_bytes=self._archive(bundle_dir))
+            _run([*self.ssh_argv, self.target, command], input_bytes=self._archive(bundle_dir))
         except PublicTransportError as error:
             raise PublicTransportError("upload", str(error), transient=error.transient) from error
 
@@ -138,7 +161,7 @@ class SshPublicTransport:
             )
         )
         try:
-            output = _run(["ssh", "-o", "BatchMode=yes", self.target, command])
+            output = _run([*self.ssh_argv, self.target, command])
             return json.loads(output.strip().splitlines()[-1])
         except PublicTransportError as error:
             raise PublicTransportError("import", str(error), transient=error.transient) from error
@@ -157,7 +180,7 @@ class SshPublicTransport:
                 + shlex.quote(previous_release_id)
             )
         )
-        output = _run(["ssh", "-o", "BatchMode=yes", self.target, command])
+        output = _run([*self.ssh_argv, self.target, command])
         return json.loads(output.strip().splitlines()[-1])
 
 

@@ -31,7 +31,9 @@ Install the private environment and unit as `mikhail`:
 install -d -m 0700 /home/mikhail/nextcompany-operational/public-sync
 install -m 0600 deploy/env/public-sync.env.example \
   /home/mikhail/nextcompany-operational/runtime/public-sync.env
-# Set PUBLIC_SSH_TARGET to the already-authorized, host-key-pinned VPS target.
+# Set PUBLIC_SSH_TARGET, PUBLIC_SSH_IDENTITY_FILE and
+# PUBLIC_SSH_KNOWN_HOSTS_FILE to the already-authorized, host-key-pinned VPS
+# transport.
 install -m 0644 deploy/systemd/nextcompany-public-sync.service \
   /home/mikhail/.config/systemd/user/nextcompany-public-sync.service
 systemctl --user daemon-reload

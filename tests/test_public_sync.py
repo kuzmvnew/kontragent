@@ -247,6 +247,33 @@ def test_bootstrap_https_outage_records_incident_without_crashing_loop(
     assert incidents[0]["owner"] == "OUR_INFRASTRUCTURE"
 
 
+def test_ssh_transport_uses_explicit_pinned_host_key_and_identity(
+    tmp_path, monkeypatch
+):
+    identity = tmp_path / "identity"
+    known_hosts = tmp_path / "known_hosts"
+    identity.touch()
+    known_hosts.touch()
+    monkeypatch.setenv("PUBLIC_SSH_IDENTITY_FILE", str(identity))
+    monkeypatch.setenv("PUBLIC_SSH_KNOWN_HOSTS_FILE", str(known_hosts))
+
+    transport = runner.SshPublicTransport("mikhail@195.24.64.231")
+
+    assert transport.ssh_argv == [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        f"UserKnownHostsFile={known_hosts}",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-i",
+        str(identity),
+    ]
+
+
 def test_non_ready_accepted_and_ready_outside_cohort_do_not_enqueue(monkeypatch):
     with Session(engine) as session:
         accepted_company, accepted_projection = _company_and_projection(session, 630_000_000)
