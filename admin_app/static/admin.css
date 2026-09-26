@@ -15,7 +15,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 Int
 .logout-form { margin: 0; }
 .logout-form button { border: 0; background: transparent; color: #ccd6e0; padding: 8px 10px; border-radius: 6px; font: inherit; cursor: pointer; }
 .logout-form button:hover, .logout-form button:focus-visible { background: #26313d; color: #fff; }
-.page { width: min(1800px, calc(100% - 32px)); margin: 28px auto 56px; }
+.page { width: min(1800px, calc(100% - 32px)); margin: 28px auto 56px; overflow-x: clip; }
 .page-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 20px; }
 h1 { font-size: 28px; line-height: 1.2; margin: 0 0 5px; }
 h2 { font-size: 18px; margin: 26px 0 12px; }
@@ -39,7 +39,7 @@ h3 { font-size: 14px; }
 .status.stale, .status.first-run, .status.check-pending, .status.waiting-source, .status.pending, .status.retry-scheduled { background: var(--amber-bg); color: var(--amber); }
 .status.updating, .status.running, .status.auto-heal-running { background: var(--blue-bg); color: var(--blue); }
 .status.disabled, .status.not-configured, .status.planned, .status.off, .status.cancelled, .status.superseded, .status.coalesced { background: var(--gray-bg); color: #59636e; }
-.table-shell { overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.table-shell { width: 100%; min-width: 0; max-width: 100%; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 .table-shell.wide { max-height: calc(100vh - 330px); }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { padding: 10px; border-bottom: 1px solid #edf0f3; text-align: left; vertical-align: top; white-space: nowrap; }
@@ -100,6 +100,8 @@ pre { margin: 5px 0; background: #111820; color: #d8e0e8; padding: 12px; border-
 .owner-table .c-source { width: 18%; } .owner-table .c-status { width: 9%; } .owner-table .c-connected { width: 9%; } .owner-table .c-enabled { width: 6%; } .owner-table .c-fresh { width: 7%; } .owner-table .c-date { width: 9%; } .owner-table .c-coverage { width: 9%; } .owner-table .c-problem { width: 12%; } .owner-table .c-actions { width: 12%; }
 .owner-table th, .owner-table td { white-space: normal; overflow-wrap: anywhere; padding: 9px 7px; }
 .owner-table th { position: static; font-size: 11px; }
+.owner-table th:first-child { position: static; min-width: 0; max-width: none; }
+.owner-table th:nth-last-child(-n+2) .help::after { left: auto; right: 0; }
 .owner-table .source-row > td:first-child { position: static; min-width: 0; max-width: none; }
 .owner-table .source-row > td { background: #fff; }
 .owner-table .source-row:hover > td { background: #fbfcfd; }
@@ -124,6 +126,9 @@ pre { margin: 5px 0; background: #111820; color: #d8e0e8; padding: 12px; border-
 .source-summary small { display: block; color: var(--muted); }
 .source-summary strong { display: block; margin-top: 4px; overflow-wrap: anywhere; }
 .disabled-button { color: var(--muted); cursor: not-allowed; }
+.incidents-table-shell { overflow-x: auto; overscroll-behavior-inline: contain; contain: inline-size paint; }
+.incidents-table { width: max(100%, 1480px); }
+.incidents-table th:nth-last-child(-n+3) .help::after { left: auto; right: 0; }
 @media (max-width: 1180px) {
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .catalog-filters { grid-template-columns: minmax(240px, 2fr) 1fr 1fr; }
