@@ -1,67 +1,101 @@
 {% extends "base.html" %}
 {% from "_ui.html" import help, metric, missing %}
 {% block content %}
-<div class="page-head"><div><h1>Источники</h1><p>HOME DATA WORKER · приватная операционная консоль</p></div><span class="badge {{ 'ok' if worker.active else 'bad' }}">Worker {{ 'РАБОТАЕТ' if worker.active else 'ОСТАНОВЛЕН' }}</span></div>
+<div class="page-head">
+  <div><p class="eyebrow">OWNER CONSOLE V2</p><h1>Источники</h1><p>Состояние системы, каталога и публикации — затем детали.</p></div>
+  <span class="badge {{ 'ok' if worker.active else 'bad' }}">Worker {{ 'РАБОТАЕТ' if worker.active else 'ОСТАНОВЛЕН' }}</span>
+</div>
 
-<section class="metrics">
-  {{ metric('DATA PROCESSES', snapshot.data_processes, 'Зарегистрированные DataSet/процессы обновления; строки ниже остаются диагностикой процессов.') }}
-  {{ metric('CONNECTED', snapshot.connected, 'Процессы с runnable handler, зарегистрированным в Worker Foundation.') }}
-  {{ metric('OPERATIONAL', snapshot.summary.operational, 'Процессы с реальным успешным запуском, следующей проверкой, расписанием, фактами, error signal и Card/API path.', 'green') }}
-  {{ metric('SOURCE FAMILIES', snapshot.source_families, 'Бизнес-семейства source group + fact family; технические DataSet не раздувают KPI.') }}
-  {{ metric('MASTER COMPANIES', snapshot.master.total, 'Существует company identity; это не означает полное обогащение.', '', 'ЮЛ ' ~ snapshot.master.legal ~ ' · ИП ' ~ snapshot.master.ip) }}
-  {{ metric('FULLY ENRICHED', snapshot.enrichment.companies_complete, 'Все применимые operational sources закрыты семантическим результатом.', 'green') }}
-  {{ metric('Первый запуск / ожидание', snapshot.summary.first_run, 'Источники, которые ещё не прошли обязательные рабочие циклы или ожидают проверки.', 'amber') }}
-  {{ metric('Устарели', snapshot.summary.stale, 'Источники, срок актуальности опубликованных данных которых истёк.', 'amber') }}
-  {{ metric('Ошибки', snapshot.summary.errors, 'Источники, последняя обработка которых закончилась ошибкой.', 'red') }}
-  {{ metric('Заблокированы', snapshot.summary.blocked, 'Источники с проблемой у поставщика данных или без настроенного доступа.', 'red') }}
-  {{ metric('Отключены', snapshot.summary.disabled, 'Источники, расписание или обработчик которых отключены.') }}
-  {{ metric('Официально подтверждены / предварительные', snapshot.master.official_verified|default(0) ~ ' / ' ~ snapshot.master.firmoteka_provisional|default(0), 'Компании с подтверждением официального реестра и предварительные записи Firmoteka.', '', 'Ожидают проверки ' ~ snapshot.master.pending_official_verification|default(0)) }}
-  {{ metric('Обогащение: не начато / в работе', snapshot.enrichment.companies_not_started ~ ' / ' ~ snapshot.enrichment.companies_in_progress, 'Канонические CompanyEnrichmentRun; ошибки не выдаются за clean negative.') }}
-  {{ metric('Risk / Summary / Public ready', snapshot.enrichment.risk_ready_companies ~ ' / ' ~ snapshot.enrichment.summary_ready_companies ~ ' / ' ~ snapshot.enrichment.public_ready_companies, 'Ступени downstream readiness после canonical enrichment gate.') }}
-  {{ metric('Coverage ≥1 / ≥3 / ≥5 / ≥10 / 100%', snapshot.enrichment.coverage_at_least_1 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_3 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_5 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_10 ~ ' / ' ~ snapshot.enrichment.coverage_100_percent, 'Покрытие по latest run и semantic FOUND/NOT_FOUND/NOT_APPLICABLE.', '', 'среднее ' ~ '%.1f%%'|format(snapshot.enrichment.average_coverage_percent) ~ ' · медиана ' ~ '%.1f%%'|format(snapshot.enrichment.median_coverage_percent)) }}
-  {{ metric('Master сегодня', '+' ~ snapshot.master.new_today|default(0) ~ ' / Δ' ~ snapshot.master.changed_today|default(0), 'Новые и изменённые сегодня компании Master.') }}
-  {{ metric('Очередь / повторы / активные задачи', snapshot.summary.queue ~ ' / ' ~ snapshot.summary.retry_scheduled ~ ' / ' ~ snapshot.summary.active_leases, 'Задачи в очереди, отложенные повторы и активные задачи worker.') }}
-  {{ metric('PostgreSQL', database.status|status_ru, 'Доступность operational PostgreSQL без раскрытия строки подключения.', 'green' if database.available else 'red') }}
-  {{ metric('Последняя резервная копия', latest_backup.timestamp|datetime_ru if latest_backup else 'Нет данных', 'Время HOME WORKER, когда создана последняя резервная копия operational DB.') }}
-  {{ metric('RAW / свободно', (storage.raw_size|filesize) ~ ' / ' ~ (storage.disk_free|filesize), 'Размер RAW-артефактов и свободное место на диске.', '', deployed_sha[:12] if deployed_sha else 'SHA неизвестен') }}
-  {{ metric('Открытые инциденты', snapshot.incidents.open, 'Инциденты, которые ещё не закрыты и не отменены.', 'red' if snapshot.incidents.open else 'green') }}
-  {{ metric('Идёт восстановление', snapshot.incidents.running, 'Инциденты, для которых выполняется безопасное восстановление.', 'blue') }}
-  {{ metric('Ожидаем источник', snapshot.incidents.waiting_source, 'Инциденты, где система ждёт исправления официального источника.', 'amber') }}
-  {{ metric('Нужна проверка', snapshot.incidents.review_required, 'Инциденты, требующие решения инженера или владельца.', 'red') }}
-  {{ metric('Восстановлено сегодня', snapshot.incidents.recovered_today, 'Инциденты, восстановление которых подтверждено сегодня.', 'green') }}
-  {{ metric('Автовосстановление остановлено', snapshot.incidents.exhausted, 'Инциденты инфраструктуры или кода, исчерпавшие безопасный лимит попыток.', 'red') }}
-</section>
-
-<section class="panel publication-panel">
-  <div class="panel-head"><div><h2>ПУБЛИКАЦИЯ САЙТА</h2><p class="muted">Автоматический полный release из принятого публичного cohort.</p></div><a class="button" href="/admin/publications">История публикаций</a></div>
-  <div class="metrics publication-metrics">
-    {{ metric('Сайт', 'РАБОТАЕТ' if publication.site_ready else 'ДОСТУПНОСТЬ С HOME НЕ ПОДТВЕРЖДЕНА', 'Проверка HTTPS /api/ready выполняется с HOME; таймаут проверки сам по себе не означает недоступность публичного сайта.', 'green' if publication.site_ready else 'amber', publication.site_error or '') }}
-    {{ metric('Активный release', publication.active_release or 'Нет данных', 'Release ID, который сейчас обслуживает nextcompany.pro.') }}
-    {{ metric('Карточек на сайте', publication.record_count, 'Фактическое число карточек активного release.') }}
-    {{ metric('Последняя публикация', publication.last_publication|datetime_ru if publication.last_publication else 'Нет данных', 'Последняя успешно завершённая автоматическая публикация.') }}
-    {{ metric('Изменения ожидают публикации', publication.dirty_count, 'Уникальные компании accepted cohort с непубликованным semantic hash.', 'amber' if publication.dirty_count else 'green') }}
-    {{ metric('Принятая публичная когорта готова', publication.public_ready_count ~ ' / ' ~ publication.cohort_count, 'Latest CompanyEnrichmentRun успешно завершён и связан с текущими Risk/Summary v3.') }}
-    {{ metric('Компаний ещё обогащаются', publication.enriching_count, 'Accepted cohort без текущей canonical public-ready generation.') }}
-    {{ metric('Статус', publication.status, 'Сводное состояние durable publication outbox.', 'red' if publication.status == 'ОШИБКА' else 'amber' if publication.status != 'АКТУАЛЬНО' else 'green') }}
-    {{ metric('Public Sync', 'РАБОТАЕТ' if public_sync.active else 'ОСТАНОВЛЕН', 'nextcompany-public-sync.service: enabled, active, restart-safe.', 'green' if public_sync.active else 'red', 'PID ' ~ (public_sync.pid or '—') ~ ' · рестартов ' ~ (public_sync.restart_count or 0)) }}
-  </div>
-  {% if not publication.site_ready %}<div class="alert warn"><strong>Проверка сайта с HOME не выполнена.</strong>{% if publication.site_error %} Техническая причина: {{ publication.site_error }}.{% endif %}</div>{% endif %}
-  {% if publication.last_error %}<div class="alert bad"><strong>Последняя ошибка:</strong> {{ publication.last_error }}</div>{% endif %}
+<section class="overview-grid" aria-label="Главная сводка">
+  <article class="summary-card"><h2>Система</h2><dl class="summary-list">
+    <dt>Worker</dt><dd class="{{ 'green' if worker.active else 'red' }}">{{ 'Работает' if worker.active else 'Остановлен' }}</dd>
+    <dt>PostgreSQL</dt><dd class="{{ 'green' if database.available else 'red' }}">{{ database.status|status_ru }}</dd>
+    <dt>Public Sync</dt><dd class="{{ 'green' if public_sync.active else 'red' }}">{{ 'Работает' if public_sync.active else 'Остановлен' }}</dd>
+    <dt>Последний backup</dt><dd>{{ latest_backup.timestamp|datetime_ru if latest_backup else 'Нет данных' }}</dd>
+  </dl></article>
+  <article class="summary-card"><h2>Источники</h2><dl class="summary-list">
+    <dt>В каталоге</dt><dd>{{ snapshot.source_count }}</dd>
+    <dt>Подключено</dt><dd>{{ snapshot.connected }}</dd>
+    <dt>Работает</dt><dd class="green">{{ snapshot.summary.operational }}</dd>
+    <dt>Требует внимания</dt><dd class="{{ 'red' if snapshot.summary.errors + snapshot.summary.blocked + snapshot.summary.stale else 'green' }}">{{ snapshot.summary.errors + snapshot.summary.blocked + snapshot.summary.stale }}</dd>
+  </dl></article>
+  <article class="summary-card"><h2>Компании</h2><dl class="summary-list">
+    <dt>Master</dt><dd>{{ snapshot.master.total }}</dd>
+    <dt>Полностью обогащено</dt><dd>{{ snapshot.enrichment.companies_complete }}</dd>
+    <dt>В работе</dt><dd>{{ snapshot.enrichment.companies_in_progress }}</dd>
+  </dl></article>
+  <article class="summary-card"><h2>Готовность</h2><dl class="summary-list">
+    <dt>Risk ready</dt><dd>{{ snapshot.enrichment.risk_ready_companies }}</dd>
+    <dt>Summary ready</dt><dd>{{ snapshot.enrichment.summary_ready_companies }}</dd>
+    <dt>Public ready</dt><dd>{{ snapshot.enrichment.public_ready_companies }}</dd>
+  </dl></article>
+  <article class="summary-card"><h2>Инциденты</h2><dl class="summary-list">
+    <dt>Открытые</dt><dd>{{ snapshot.incidents.open }}</dd>
+    <dt>Ждём источник</dt><dd>{{ snapshot.incidents.waiting_source }}</dd>
+    <dt>Нужно действие</dt><dd class="{{ 'red' if snapshot.incidents.review_required else 'green' }}">{{ snapshot.incidents.review_required }}</dd>
+  </dl></article>
+  <article class="summary-card"><div class="panel-head"><h2>Публикация</h2><a href="/admin/publications">История</a></div><dl class="summary-list">
+    <dt>Карточек на сайте</dt><dd>{{ publication.record_count }}</dd>
+    <dt>Последний release</dt><dd>{{ publication.active_release or 'Нет данных' }}</dd>
+    <dt>Ожидают публикации</dt><dd>{{ publication.dirty_count }}</dd>
+  </dl></article>
 </section>
 
 {% if not database.available %}<div class="alert bad">PostgreSQL недоступен. Секретная строка подключения не отображается.</div>{% endif %}
-<div class="table-shell wide"><table class="sources-table">
-  <thead><tr><th>{{ help('Источник', 'Название, технический идентификатор и семейство фактов.') }}</th><th>{{ help('Подключён', 'Есть ли рабочий handler источника, зарегистрированный в Worker Foundation.') }}</th><th>{{ help('Состояние', 'Каноническое состояние: работает, ожидает запуска, ошибка и т.д.') }}</th><th>{{ help('Автовосстановление', 'Что система делает автоматически при ошибке источника.') }}</th><th>{{ help('Расписание', 'Будет ли worker проверять источник по расписанию.') }}</th><th>{{ help('Свежесть', 'Можно ли считать опубликованные данные актуальными.') }}</th><th>{{ help('Дата данных', 'Дата сведений в официальном источнике.') }}</th><th>{{ help('Актуально до', 'Последний день актуальности публикации.') }}</th><th>{{ help('Последняя проверка', 'Когда worker последний раз проверял источник. Время HOME WORKER.') }}</th><th>{{ help('Последний успех', 'Когда WorkerRun последний раз завершился успешно.') }}</th><th>{{ help('Последняя публикация', 'Когда факты последний раз атомарно опубликованы.') }}</th><th>{{ help('Следующая проверка', 'Когда источник будет проверен снова.') }}</th><th>{{ help('Следующий повтор', 'Когда система повторит неудачную операцию.') }}</th><th>{{ help('Совпадений', 'Сколько компаний Master точно связано с источником.') }}</th><th>{{ help('Покрытие Master', 'Доля применимых компаний с точным сопоставлением.') }}</th><th>{{ help('Фактов', 'Количество текущих опубликованных фактов.') }}</th><th>{{ help('Новых', 'Факты, появившиеся после предыдущей успешной публикации.') }}</th><th>{{ help('Изменённых', 'Факты, изменившиеся после предыдущей успешной публикации.') }}</th><th>{{ help('Удалённых', 'Удалённые или утратившие силу факты.') }}</th><th>{{ help('Повторно обработано', 'Факты, пересчитанные из RAW без повторного скачивания.') }}</th><th>{{ help('В карантине', 'Записи, которые нельзя безопасно принять автоматически.') }}</th><th>{{ help('Версия публикации', 'Номер атомарной версии snapshot.') }}</th><th>{{ help('Worker', 'Состояние фоновой обработки последнего запуска.') }}</th><th>{{ help('Последняя ошибка', 'Последняя безопасно отображаемая ошибка.') }}</th><th>{{ help('Официальный источник', 'Ссылка на страницу или endpoint первоисточника.') }}</th></tr></thead>
-  <tbody>{% for item in snapshot.sources %}<tr>
-    <td><a class="source-link" href="/admin/sources/{{ item.source_id }}">{{ item.source_name }}</a><small>{{ item.source_id }} · {{ item.fact_family }}</small></td>
-    <td><span class="yesno {{ 'yes' if item.connected else 'no' }}">{{ 'ДА' if item.connected else 'НЕТ' }}</span></td>
-    <td><span class="status {{ item.stage|lower|replace(' ','-') }}">{{ item.stage|status_ru }}</span></td>
-    <td>{% if item.open_incident_id %}<a class="status {{ item.auto_repair|lower|replace(' ','-') }}" href="/admin/incidents/{{ item.open_incident_id }}">{{ item.auto_repair|status_ru }}</a>{% else %}<span class="status {{ item.auto_repair|lower|replace(' ','-') }}">{{ item.auto_repair|status_ru }}</span>{% endif %}</td>
-    <td>{{ 'ВКЛЮЧЕНО' if item.enabled else 'ОТКЛЮЧЕНО' }}</td><td>{{ item.freshness|status_ru }}</td>
-    <td>{{ item.source_data_date|date_ru if item.source_data_date else missing(item.missing_reasons.source_data_date) }}</td><td>{{ item.official_actual_until|date_ru if item.official_actual_until else missing(item.missing_reasons.official_actual_until) }}</td><td>{{ item.last_check|datetime_ru if item.last_check else missing(item.missing_reasons.last_check) }}</td><td>{{ item.last_successful_run|datetime_ru if item.last_successful_run else missing(item.missing_reasons.last_successful_run) }}</td><td>{{ item.last_publication|datetime_ru if item.last_publication else missing(item.missing_reasons.last_publication) }}</td><td>{{ item.next_scheduled_check|datetime_ru if item.next_scheduled_check else missing(item.missing_reasons.next_scheduled_check) }}</td><td>{{ item.retry_at|datetime_ru if item.retry_at else missing(item.missing_reasons.retry_at) }}</td>
-    <td>{{ item.matched_companies if item.matched_companies is not none else missing(item.missing_reasons.matched_companies) }}</td><td>{{ '%.1f%%'|format(item.master_coverage) if item.master_coverage is not none else missing(item.missing_reasons.master_coverage) }}</td><td>{{ item.current_fact_count if item.current_fact_count is not none else missing(item.missing_reasons.current_fact_count) }}</td>
-    <td>{{ item.new_facts if item.new_facts is not none else missing(item.missing_reasons.new_facts) }}</td><td>{{ item.changed_facts if item.changed_facts is not none else missing(item.missing_reasons.changed_facts) }}</td><td>{{ item.removed_facts if item.removed_facts is not none else missing(item.missing_reasons.removed_facts) }}</td><td>{{ item.replayed_facts if item.replayed_facts is not none else missing(item.missing_reasons.replayed_facts) }}</td><td>{{ item.quarantined_records if item.quarantined_records is not none else missing(item.missing_reasons.quarantined_records) }}</td><td>{{ item.publication_generation if item.publication_generation is not none else missing(item.missing_reasons.publication_generation) }}</td>
-    <td>{{ item.worker_status|status_ru }}{% if item.active_lease %}<small>активная задача</small>{% endif %}</td><td class="error-cell">{{ item.last_error or '—' }}</td><td>{% if item.official_url %}<a target="_blank" rel="noopener noreferrer" href="{{ item.official_url }}">Открыть ↗</a>{% else %}—{% endif %}</td>
-  </tr>{% else %}<tr><td colspan="25" class="empty">Нет доступных операционных источников</td></tr>{% endfor %}</tbody>
+{% if not publication.site_ready %}<div class="alert warn"><strong>ДОСТУПНОСТЬ С HOME НЕ ПОДТВЕРЖДЕНА.</strong> Проверка сайта с HOME не выполнена.{% if publication.site_error %} Техническая причина: {{ publication.site_error }}.{% endif %}</div>{% endif %}
+
+<details class="panel statistics-details">
+  <summary>Подробная статистика</summary>
+  <section class="metrics compact-metrics">
+    {{ metric('DATA PROCESSES', snapshot.data_processes, 'Все подтверждённые DataSet operational registry.') }}
+    {{ metric('CONNECTED', snapshot.connected, 'Процессы с runnable handler, зарегистрированным в Worker Foundation.') }}
+    {{ metric('OPERATIONAL', snapshot.summary.operational, 'Источники с принятым рабочим циклом.', 'green') }}
+    {{ metric('SOURCE FAMILIES', snapshot.source_families, 'Группы источников и семейства фактов.') }}
+    {{ metric('MASTER COMPANIES', snapshot.master.total, 'Всего company identity.', '', 'ЮЛ ' ~ snapshot.master.legal ~ ' · ИП ' ~ snapshot.master.ip) }}
+    {{ metric('FULLY ENRICHED', snapshot.enrichment.companies_complete, 'Полностью обогащённые компании.', 'green') }}
+    {{ metric('Первый запуск / ожидание', snapshot.summary.first_run, 'Первый цикл или ожидающая проверка.', 'amber') }}
+    {{ metric('Устарели / ошибки / blocked', snapshot.summary.stale ~ ' / ' ~ snapshot.summary.errors ~ ' / ' ~ snapshot.summary.blocked, 'Требующие внимания состояния.', 'red') }}
+    {{ metric('Отключены / planned', snapshot.summary.disabled ~ ' / ' ~ snapshot.summary.planned|default(0), 'Выключенные и ещё не подключённые.') }}
+    {{ metric('Очередь / повторы / leases', snapshot.summary.queue ~ ' / ' ~ snapshot.summary.retry_scheduled ~ ' / ' ~ snapshot.summary.active_leases, 'Backlog worker.') }}
+    {{ metric('Coverage ≥1 / ≥3 / ≥5 / ≥10 / 100%', snapshot.enrichment.coverage_at_least_1 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_3 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_5 ~ ' / ' ~ snapshot.enrichment.coverage_at_least_10 ~ ' / ' ~ snapshot.enrichment.coverage_100_percent, 'Покрытие canonical enrichment.') }}
+    {{ metric('RAW / свободно', (storage.raw_size|filesize) ~ ' / ' ~ (storage.disk_free|filesize), 'RAW и свободное место.', '', deployed_sha[:12] if deployed_sha else 'SHA неизвестен') }}
+    {{ metric('Public Sync', 'РАБОТАЕТ' if public_sync.active else 'ОСТАНОВЛЕН', 'Состояние nextcompany-public-sync.service.', 'green' if public_sync.active else 'red') }}
+    {{ metric('Статус публикации', publication.status, 'Состояние durable publication outbox.') }}
+    {{ metric('Принятая когорта готова', publication.public_ready_count ~ ' / ' ~ publication.cohort_count, 'Готовность public cohort.') }}
+  </section>
+</details>
+
+<section class="catalog-head">
+  <div><h2>Каталог источников</h2><p class="muted">Показано {{ filtered_count }} из {{ snapshot.source_count }}. Метаданные — operational registry; runtime — Worker Foundation.</p></div>
+</section>
+<form class="catalog-filters panel" method="get" action="/admin/sources">
+  <label class="filter-search">Поиск<input type="search" name="q" value="{{ filters.q }}" placeholder="Название, source_id, dataset, family"></label>
+  <label>Статус<select name="status">
+    {% for value, label in [('', 'Все'), ('operational','Работают'), ('updating','Обновляются'), ('first-run','Первый запуск'), ('access-required','Нужен доступ'), ('source-blocked','Проблема у источника'), ('error','Ошибка'), ('stale','Устарели'), ('disabled','Отключены'), ('unconnected','Ещё не подключены')] %}<option value="{{ value }}" {{ 'selected' if filters.status == value else '' }}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <label>Семейство<select name="family"><option value="">Все</option>{% for item in families %}<option value="{{ item }}" {{ 'selected' if filters.family == item else '' }}>{{ item }}</option>{% endfor %}</select></label>
+  <button class="button primary" type="submit">Применить</button><a class="button" href="/admin/sources">Сбросить</a>
+</form>
+
+<div class="table-shell catalog-table-shell"><table class="sources-table owner-table">
+  <colgroup><col class="c-source"><col class="c-status"><col class="c-connected"><col class="c-enabled"><col class="c-fresh"><col class="c-date"><col class="c-date"><col class="c-coverage"><col class="c-problem"><col class="c-actions"></colgroup>
+  <thead><tr><th>{{ help('Источник', 'Название, владелец и canonical dataset code.') }}</th><th>{{ help('Статус', 'Owner-facing состояние на основе runtime и freshness.') }}</th><th>{{ help('Подключён', 'Есть runnable handler и активная регистрация Worker Foundation.') }}</th><th>{{ help('Включён', 'Фактическое persisted состояние canonical scheduler.') }}</th><th>{{ help('Свежесть', 'Оценка актуальности официальных данных.') }}</th><th>{{ help('Последняя проверка', 'Последнее успешное обновление или публикация.') }}</th><th>{{ help('Следующая проверка', 'Фактически сохранённое время следующей проверки.') }}</th><th>{{ help('Покрытие Master', 'Доля сопоставленных компаний и число фактов.') }}</th><th>{{ help('Проблема', 'Открытый инцидент или безопасное сообщение последней ошибки.') }}</th><th>{{ help('Действия', 'Detail page и проверенные ссылки источника.') }}</th></tr></thead>
+  <tbody>{% for item in snapshot.sources %}
+  <tr class="source-row">
+    <td data-label="Источник"><a class="source-link" href="/admin/sources/{{ item.source_id }}">{{ item.source_name }}</a><small>{{ item.source_group }} · {{ item.dataset_code }}</small></td>
+    <td data-label="Статус"><span class="status {{ item.stage|lower|replace(' ','-') }}">{{ item.stage|status_ru }}</span></td>
+    <td data-label="Подключение"><span class="yesno {{ 'yes' if item.connected else 'no' }}">{{ 'Подключён' if item.connected else 'Ещё не подключён' }}</span></td>
+    <td data-label="Включён">{% if item.connected %}<form method="post" action="/admin/sources/{{ item.source_id }}/toggle" class="toggle-form"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled" value="{{ '0' if item.enabled else '1' }}"><button type="submit" class="toggle-button {{ 'on' if item.enabled else 'off' }}" aria-label="{{ 'Выключить' if item.enabled else 'Включить' }} {{ item.source_name }}">{{ 'ВКЛ' if item.enabled else 'ВЫКЛ' }}</button></form>{% else %}<span class="disabled-control" aria-disabled="true">Недоступно</span>{% endif %}</td>
+    <td data-label="Свежесть">{{ item.freshness|status_ru }}</td>
+    <td data-label="Последнее обновление">{{ (item.last_publication or item.last_successful_run)|datetime_ru if (item.last_publication or item.last_successful_run) else missing(item.missing_reasons.last_publication) }}</td>
+    <td data-label="Следующая проверка">{{ item.next_scheduled_check|datetime_ru if item.next_scheduled_check else missing(item.missing_reasons.next_scheduled_check) }}</td>
+    <td data-label="Покрытие / факты">{% if item.master_coverage is not none %}{{ '%.1f%%'|format(item.master_coverage) }}{% else %}—{% endif %}<small>{{ item.current_fact_count if item.current_fact_count is not none else 'Нет данных' }} фактов</small></td>
+    <td data-label="Проблема" class="problem-cell">{% if item.open_incident_id %}<a href="/admin/incidents/{{ item.open_incident_id }}">{{ item.open_incident_code }}</a>{% elif item.last_error %}{{ item.last_error }}{% elif item.stage == 'PLANNED' %}Реализация не подключена{% else %}—{% endif %}</td>
+    <td data-label="Действия" class="row-actions"><a href="/admin/sources/{{ item.source_id }}">Открыть</a>{% if item.official_page_url %}<a target="_blank" rel="noopener noreferrer" href="{{ item.official_page_url }}">Официальная страница ↗</a>{% endif %}{% if item.data_access_url %}<a target="_blank" rel="noopener noreferrer" href="{{ item.data_access_url }}">Получение данных ↗</a>{% endif %}</td>
+  </tr>
+  <tr class="technical-row"><td colspan="10"><details><summary>Технические данные: {{ item.dataset_code }}</summary><div class="technical-grid">
+    <span><b>source_id</b> {{ item.source_id }}</span><span><b>Worker</b> {{ item.worker_status|status_ru }}</span><span><b>{{ help('Автовосстановление', 'Состояние incident autopilot для этого источника.') }}</b> {{ item.auto_repair|status_ru }}</span><span><b>Publication generation</b> {{ item.publication_generation if item.publication_generation is not none else missing(item.missing_reasons.publication_generation) }}</span><span><b>Новых / изменённых / удалённых</b> {{ item.new_facts if item.new_facts is not none else missing(item.missing_reasons.new_facts) }} / {{ item.changed_facts if item.changed_facts is not none else '—' }} / {{ item.removed_facts if item.removed_facts is not none else '—' }}</span><span><b>Replayed / quarantine</b> {{ item.replayed_facts if item.replayed_facts is not none else '—' }} / {{ item.quarantined_records if item.quarantined_records is not none else '—' }}</span><span><b>Run / Job</b> {{ item.latest_run_id[:8] if item.latest_run_id else '—' }} / {{ item.latest_job_id[:8] if item.latest_job_id else '—' }}</span><span><b>Канал</b> {{ item.access_kind }} · {{ item.access_channel }}</span>
+  </div></details></td></tr>
+  {% else %}<tr><td colspan="10" class="empty">Источники по выбранным условиям не найдены</td></tr>{% endfor %}</tbody>
 </table></div>
 {% endblock %}

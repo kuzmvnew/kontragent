@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Вход — NEXT Company{% endblock %}
+{% block content %}
+<section class="login-card panel">
+  <p class="eyebrow">OWNER ADMIN</p>
+  <h1>Вход в операционную консоль</h1>
+  <p class="muted">Используйте учётные данные владельца. Сеанс ограничен по времени.</p>
+  {% if error %}<div class="alert bad" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/admin/login" class="login-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>Логин<input name="username" autocomplete="username" required autofocus></label>
+    <label>Пароль<input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="button primary" type="submit">Войти</button>
+  </form>
+</section>
+{% endblock %}

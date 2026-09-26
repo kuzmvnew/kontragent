@@ -10,7 +10,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/admin/sources">NEXT Company <span>Операции</span></a>
-    <nav><a href="/admin/sources">Источники</a><a href="/admin/publications">Публикации</a><a href="/admin/incidents">Инциденты</a><a href="/admin/automation">Автоматизация</a><a href="/admin/system">Система</a><a href="/admin/backups">Резервные копии</a><a href="/admin/audit">Аудит</a></nav>
+    {% if admin_authenticated %}<nav aria-label="Основная навигация"><a href="/admin/sources">Источники</a><a href="/admin/publications">Публикации</a><a href="/admin/incidents">Инциденты</a><a href="/admin/automation">Автоматизация</a><a href="/admin/system">Система</a><a href="/admin/backups">Резервные копии</a><a href="/admin/audit">Аудит</a><form method="post" action="/admin/logout" class="logout-form"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit">Выйти</button></form></nav>{% endif %}
   </header>
   <main class="page">{% block content %}{% endblock %}</main>
 </body>
