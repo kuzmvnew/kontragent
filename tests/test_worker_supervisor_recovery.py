@@ -32,8 +32,14 @@ def test_supervisor_recovers_stale_runs_before_claiming(monkeypatch):
         events.append("recover")
         return ()
 
+    def enrich(session, **_kwargs):
+        assert isinstance(session, Session)
+        events.append("enrich")
+        return {}
+
     monkeypatch.setattr(supervisor, "SessionLocal", Session)
     monkeypatch.setattr(supervisor, "recover_stale_runs", recover)
+    monkeypatch.setattr(supervisor, "run_company_enrichment_cycle", enrich)
     monkeypatch.setattr(supervisor, "WorkerExecutor", Executor)
 
     assert supervisor.run_workers(object(), max_jobs=1) == []

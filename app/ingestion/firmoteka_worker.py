@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 from threading import Lock
 import time
 from typing import Any, Mapping
@@ -32,6 +33,7 @@ from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
 from app.ingestion.firmoteka_parser import PARSER_VERSION, parse_firmoteka_page, source_as_of
 from app.ingestion.mintrans_ted_registry import is_valid_inn, is_valid_ogrn
 from app.models.company import Company, CompanyManager
+from app.models.company_enrichment import CompanyEnrichmentRun
 from app.models.firmoteka import (
     FirmotekaCatalogPage,
     FirmotekaCompanySnapshot,
@@ -72,9 +74,9 @@ TOP_CATALOG_URL = urljoin(BASE_URL, "top-5000-by-revenue")
 CHECK_INTERVAL = timedelta(days=1)
 MIN_REQUEST_DELAY_SECONDS = 4
 COMPANY_BATCH_SIZE = 10
-DAILY_REFRESH_LIMIT = 500
+DAILY_REFRESH_LIMIT = 0
 DEFAULT_BACKPRESSURE_THRESHOLD = 2_000
-DEFAULT_DAILY_REFRESH_HORIZON_DAYS = 30
+DEFAULT_DAILY_REFRESH_HORIZON_DAYS = 7
 MAX_LANE_CONCURRENCY = 64
 USER_AGENT = "next.company-source-worker/1.0 (authorized low-rate catalog crawl)"
 CHALLENGE_MARKERS = (
@@ -112,8 +114,8 @@ class FirmotekaScaleConfig:
             raise ValueError("Firmoteka backpressure threshold must be positive")
         if self.daily_refresh_horizon_days <= 0:
             raise ValueError("Firmoteka daily refresh horizon must be positive")
-        if self.daily_refresh_budget <= 0:
-            raise ValueError("Firmoteka daily refresh budget must be positive")
+        if self.daily_refresh_budget < 0:
+            raise ValueError("Firmoteka daily refresh budget cannot be negative")
 
     @classmethod
     def from_environment(cls) -> "FirmotekaScaleConfig":
@@ -151,6 +153,12 @@ class _EgressLane:
     proxy_url: str | None = field(default=None, repr=False)
 
 
+@dataclass(frozen=True)
+class _LaneFailure:
+    task: dict[str, Any]
+    error: Exception = field(repr=False)
+
+
 def _egress_lanes(concurrency: int) -> tuple[_EgressLane, ...]:
     """Load optional proxy credentials only in handler memory.
 
@@ -158,7 +166,20 @@ def _egress_lanes(concurrency: int) -> tuple[_EgressLane, ...]:
     or handler registration.  Persisted lane keys are anonymous ordinals.
     """
 
+    pool_file = str(os.environ.get("FIRMOTEKA_EGRESS_POOL_FILE") or "").strip()
     raw = str(os.environ.get("FIRMOTEKA_EGRESS_POOL_JSON") or "").strip()
+    if pool_file:
+        if raw:
+            raise InvalidDataError("Firmoteka egress pool has conflicting configuration")
+        try:
+            path = Path(pool_file).expanduser().resolve(strict=True)
+            if stat.S_IMODE(path.stat().st_mode) & 0o077:
+                raise InvalidDataError("Firmoteka egress pool file permissions must be 0600")
+            raw = path.read_text(encoding="utf-8").strip()
+        except InvalidDataError:
+            raise
+        except OSError:
+            raise InvalidDataError("Firmoteka egress pool file is unavailable") from None
     if not raw:
         return tuple(_EgressLane(key=f"lane-{index}") for index in range(concurrency))
     try:
@@ -366,7 +387,11 @@ def _run_parallel_lanes(
                     sleep(wait)
             last_started_monotonic = monotonic()
             last_started_at = now()
-            rows.append((index, fetch_task(task, lane)))
+            try:
+                outcome = fetch_task(task, lane)
+            except Exception as error:  # isolate a failed checkpoint from its peers
+                outcome = _LaneFailure(task=task, error=error)
+            rows.append((index, outcome))
         return rows, lane.key, last_started_at
 
     indexed: list[tuple[int, Any]] = []
@@ -384,11 +409,17 @@ def _run_parallel_lanes(
                 lane_state[lane_key] = last_started_at.isoformat()
     indexed.sort(key=lambda pair: pair[0])
     retrieved_values = [
-        row[1]["retrieved_at"] for row in indexed if row[1].get("retrieved_at")
+        row[1]["retrieved_at"]
+        for row in indexed
+        if isinstance(row[1], dict) and row[1].get("retrieved_at")
     ]
-    latest_retrieved_at = max(
-        datetime.fromisoformat(value) if isinstance(value, str) else value
-        for value in retrieved_values
+    latest_retrieved_at = (
+        max(
+            datetime.fromisoformat(value) if isinstance(value, str) else value
+            for value in retrieved_values
+        )
+        if retrieved_values
+        else now()
     )
     return [row for _, row in indexed], lane_state, latest_retrieved_at
 
@@ -579,13 +610,17 @@ def firmoteka_worker_handler(context: HandlerContext) -> HandlerResult:
                 "latency_ms": latency_ms,
             }
 
-        page_results, lane_request_state, last_request_at = _run_parallel_lanes(
+        page_outcomes, lane_request_state, last_request_at = _run_parallel_lanes(
             pages,
             concurrency=concurrency,
             min_gap_seconds=min_gap_seconds,
             lane_not_before=lane_not_before,
             fetch_task=fetch_catalog,
         )
+        page_failures = [row for row in page_outcomes if isinstance(row, _LaneFailure)]
+        page_results = [row for row in page_outcomes if not isinstance(row, _LaneFailure)]
+        if page_failures and not page_results:
+            raise page_failures[0].error
         artifacts.extend(row.pop("artifact") for row in page_results)
         for row in page_results:
             row["retrieved_at"] = row["retrieved_at"].isoformat()
@@ -593,6 +628,13 @@ def firmoteka_worker_handler(context: HandlerContext) -> HandlerResult:
             "phase": phase,
             "crawl_run_id": str(crawl_id),
             "catalog_pages": page_results,
+            "failed_catalog_pages": [
+                {
+                    "id": int(failure.task["id"]),
+                    "error_kind": type(failure.error).__name__,
+                }
+                for failure in page_failures
+            ],
             "request_metrics": [
                 {"http_status": row["manifest"]["http_status"], "latency_ms": row["latency_ms"]}
                 for row in page_results
@@ -665,13 +707,21 @@ def firmoteka_worker_handler(context: HandlerContext) -> HandlerResult:
                 "artifact": artifact,
             }
 
-        projections, lane_request_state, last_request_at = _run_parallel_lanes(
+        company_outcomes, lane_request_state, last_request_at = _run_parallel_lanes(
             items,
             concurrency=concurrency,
             min_gap_seconds=min_gap_seconds,
             lane_not_before=lane_not_before,
             fetch_task=fetch_company,
         )
+        company_failures = [
+            row for row in company_outcomes if isinstance(row, _LaneFailure)
+        ]
+        projections = [
+            row for row in company_outcomes if not isinstance(row, _LaneFailure)
+        ]
+        if company_failures and not projections:
+            raise company_failures[0].error
         artifacts.extend(row.pop("artifact") for row in projections)
         rejected = sum(not row["accepted"] for row in projections)
         context.report_counters(
@@ -686,6 +736,13 @@ def firmoteka_worker_handler(context: HandlerContext) -> HandlerResult:
             "phase": phase,
             "crawl_run_id": str(crawl_id),
             "projections": projections,
+            "failed_company_items": [
+                {
+                    "id": int(failure.task["id"]),
+                    "error_kind": type(failure.error).__name__,
+                }
+                for failure in company_failures
+            ],
             "request_metrics": [
                 {
                     "http_status": row["raw_manifest"]["http_status"],
@@ -1042,6 +1099,36 @@ def _seed_daily_refresh_items(
     return inserted
 
 
+def _enrichment_backlog(session: Session) -> int:
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(CompanyEnrichmentRun)
+            .where(
+                CompanyEnrichmentRun.status.in_(
+                    ("pending", "waiting_sources", "retry_scheduled", "running")
+                )
+            )
+        )
+        or 0
+    )
+
+
+def _scaled_daily_budget(
+    session: Session, *, horizon_days: int, configured_minimum: int
+) -> int:
+    known = int(
+        session.scalar(
+            select(func.count())
+            .select_from(FirmotekaCompanySnapshot)
+            .where(FirmotekaCompanySnapshot.is_current.is_(True))
+        )
+        or 0
+    )
+    rolling = (known + horizon_days - 1) // horizon_days
+    return max(1, configured_minimum, rolling)
+
+
 def _create_next_job(
     session: Session,
     *,
@@ -1072,8 +1159,16 @@ def _create_next_job(
         )
         or 0
     )
-    process_companies = pending_items > 0 and (
-        pending_pages == 0 or pending_items >= crawl.backpressure_threshold
+    enrichment_backlog = _enrichment_backlog(session)
+    cursor = dict(crawl.cursor or {})
+    cursor["pending_enrichment_backlog"] = enrichment_backlog
+    cursor["company_intake_backpressured"] = (
+        enrichment_backlog >= crawl.backpressure_threshold
+    )
+    crawl.cursor = cursor
+    process_companies = (
+        pending_items > 0
+        and enrichment_backlog < crawl.backpressure_threshold
     )
     if process_companies:
         batch_limit = COMPANY_BATCH_SIZE * crawl.company_concurrency
@@ -1360,6 +1455,24 @@ def publish_firmoteka_result(session: Session, claim: Any, result: HandlerResult
                         position=item_position,
                     )
                 )
+        for failed in validation.get("failed_catalog_pages") or ():
+            page = session.get(
+                FirmotekaCatalogPage, int(failed["id"]), with_for_update=True
+            )
+            if (
+                page is None
+                or page.crawl_run_id != crawl.id
+                or page.claimed_by_job_id != claim.job_id
+            ):
+                raise InvalidDataError("Firmoteka failed catalog checkpoint differs")
+            page.status = "pending"
+            page.claimed_by_job_id = None
+            page.claim_fencing_token = None
+            page.claimed_at = None
+            page.attempt_count += 1
+            page.last_error = str(failed.get("error_kind") or "request_failed")[:120]
+            crawl.failure_count += 1
+            crawl.retry_count += 1
 
     else:
         new_master = changed_master = published = rejected = legal = ip = 0
@@ -1439,6 +1552,24 @@ def publish_firmoteka_result(session: Session, claim: Any, result: HandlerResult
             changed_master += int(changed and not created)
             legal += int(is_legal)
             ip += int(not is_legal)
+        for failed in validation.get("failed_company_items") or ():
+            item = session.get(
+                FirmotekaCrawlItem, int(failed["id"]), with_for_update=True
+            )
+            if (
+                item is None
+                or item.crawl_run_id != crawl.id
+                or item.claimed_by_job_id != claim.job_id
+            ):
+                raise InvalidDataError("Firmoteka failed company checkpoint differs")
+            item.status = "pending"
+            item.claimed_by_job_id = None
+            item.claim_fencing_token = None
+            item.claimed_at = None
+            item.attempt_count += 1
+            item.last_error = str(failed.get("error_kind") or "request_failed")[:120]
+            crawl.failure_count += 1
+            crawl.retry_count += 1
         crawl.fetched_count += len(validation["projections"])
         crawl.parsed_count += len(validation["projections"]) - rejected
         crawl.valid_count += len(validation["projections"]) - rejected
@@ -1555,6 +1686,11 @@ def schedule_firmoteka_check(
             .order_by(FirmotekaCrawlRun.completed_at.desc())
             .limit(1)
         )
+        daily_budget = _scaled_daily_budget(
+            session,
+            horizon_days=config.daily_refresh_horizon_days,
+            configured_minimum=config.daily_refresh_budget,
+        )
         crawl = FirmotekaCrawlRun(
             run_kind="daily" if prior else "initial",
             status="running",
@@ -1568,7 +1704,7 @@ def schedule_firmoteka_check(
             company_concurrency=config.company_concurrency,
             backpressure_threshold=config.backpressure_threshold,
             daily_refresh_horizon_days=config.daily_refresh_horizon_days,
-            daily_refresh_budget=config.daily_refresh_budget,
+            daily_refresh_budget=daily_budget,
             lane_request_state={},
             started_at=now,
         )
@@ -1588,6 +1724,19 @@ def schedule_firmoteka_check(
     )
     if existing is not None:
         return JobCreation(job=existing, created=False)
+    # Apply changes only between jobs.  Persisted checkpoint claims remain
+    # valid while the controlled 1→2→4 ladder can continue on this crawl.
+    crawl.request_delay_seconds = config.min_request_gap_seconds
+    crawl.catalog_concurrency = config.catalog_concurrency
+    crawl.company_concurrency = config.company_concurrency
+    crawl.concurrency = max(config.catalog_concurrency, config.company_concurrency)
+    crawl.backpressure_threshold = config.backpressure_threshold
+    crawl.daily_refresh_horizon_days = config.daily_refresh_horizon_days
+    crawl.daily_refresh_budget = _scaled_daily_budget(
+        session,
+        horizon_days=config.daily_refresh_horizon_days,
+        configured_minimum=config.daily_refresh_budget,
+    )
     if crawl.phase != "discovery":
         continuation = _create_next_job(session, crawl=crawl, raw_root=str(Path(raw_root).resolve()), now=now)
         if continuation is None:

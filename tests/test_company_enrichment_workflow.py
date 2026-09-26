@@ -329,7 +329,9 @@ def test_postgresql_backlog_creates_local_replay_and_bounded_point_jobs(tmp_path
         assert dormant.status == "pending"
 
         repeated = consume_master_replay_signals(session, limit=10, now=NOW)
-        assert repeated.signals_seen == 1
+        # Non-operational signals are filtered before LIMIT, so they neither
+        # starve eligible companies nor masquerade as executable work.
+        assert repeated.signals_seen == 0
         assert repeated.signals_scheduled == 0
         assert repeated.runs_created == 0
         assert repeated.jobs_created == 0
@@ -438,9 +440,11 @@ def test_postgresql_restart_preserves_success_and_requeues_only_failure(tmp_path
         assert restarted.restart_count == 1
         assert restarted.status == "waiting_sources"
         assert bulk_row.worker_job_id == bulk_job_id
-        assert bulk_row.status == "succeeded"
+        assert bulk_row.status == "NOT_FOUND"
+        assert bulk_row.execution_status == "succeeded"
         assert point_row.worker_job_id != failed_point_job_id
-        assert point_row.status == "queued"
+        assert point_row.status == "RUNNING"
+        assert point_row.execution_status == "queued"
         assert point_signal.status == "scheduled"
         replacement = session.get(WorkerJob, point_row.worker_job_id)
         assert replacement.idempotency_key != session.get(
@@ -470,9 +474,11 @@ def test_postgresql_restart_replaces_failed_local_bulk_job(tmp_path):
         session.flush()
         assert restarted.restart_count == 1
         assert restarted.status == "waiting_sources"
-        assert point_row.status == "succeeded"
+        assert point_row.status == "NOT_FOUND"
+        assert point_row.execution_status == "succeeded"
         assert bulk_row.worker_job_id != failed_bulk_job_id
-        assert bulk_row.status == "queued"
+        assert bulk_row.status == "RUNNING"
+        assert bulk_row.execution_status == "queued"
         assert bulk_signal.status == "scheduled"
         replacement = session.get(WorkerJob, bulk_row.worker_job_id)
         assert replacement.idempotency_key != session.get(

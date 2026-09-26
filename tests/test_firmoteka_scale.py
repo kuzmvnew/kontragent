@@ -144,6 +144,112 @@ def test_scale_config_and_egress_pool_keep_credentials_out_of_repr(monkeypatch):
     assert captured.value.__cause__ is None
 
 
+def test_egress_pool_file_is_mode_0600_and_never_repr_leaks_secret(
+    monkeypatch, tmp_path
+):
+    monkeypatch.delenv("FIRMOTEKA_EGRESS_POOL_JSON", raising=False)
+    secret = "file-only-egress-password"
+    config_path = tmp_path / "egress.json"
+    config_path.write_text(
+        json.dumps([{"proxy_url": f"http://lane:{secret}@127.0.0.1:9000"}]),
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+    monkeypatch.setenv("FIRMOTEKA_EGRESS_POOL_FILE", str(config_path))
+
+    lanes = worker._egress_lanes(1)
+    assert secret not in repr(lanes)
+
+    config_path.chmod(0o644)
+    with pytest.raises(worker.InvalidDataError, match="permissions must be 0600"):
+        worker._egress_lanes(1)
+
+
+def test_partial_parallel_failure_returns_only_failed_checkpoint_for_retry():
+    calls = []
+
+    def fetch(task, _lane):
+        calls.append(task["id"])
+        if task["id"] == 2:
+            raise worker.WorkerNetworkError("transient")
+        return {"id": task["id"], "retrieved_at": NOW}
+
+    outcomes, _lane_state, _latest = worker._run_parallel_lanes(
+        [{"id": 1}, {"id": 2}, {"id": 3}],
+        concurrency=2,
+        min_gap_seconds=4,
+        lane_not_before={},
+        fetch_task=fetch,
+        sleep=lambda _seconds: None,
+    )
+
+    assert calls == [1, 3, 2] or sorted(calls) == [1, 2, 3]
+    assert [item["id"] for item in outcomes if isinstance(item, dict)] == [1, 3]
+    failure = next(item for item in outcomes if isinstance(item, worker._LaneFailure))
+    assert failure.task == {"id": 2}
+
+
+def test_active_crawl_applies_new_lane_config_between_jobs(tmp_path):
+    connection, transaction, factory = _factory()
+    try:
+        with factory() as session:
+            ensure_source_factory_datasets(session)
+            if (
+                session.get(
+                    WorkerHandlerRegistration,
+                    (worker.SOURCE_ID, worker.HANDLER_VERSION),
+                )
+                is None
+            ):
+                session.add(
+                    WorkerHandlerRegistration(
+                        source_id=worker.SOURCE_ID,
+                        handler_version=worker.HANDLER_VERSION,
+                        approved=True,
+                        enabled=True,
+                        live_mode=False,
+                        metadata_json={},
+                    )
+                )
+            crawl = _crawl(phase="companies", catalog_concurrency=1, company_concurrency=1)
+            session.add(crawl)
+            session.flush()
+            inn = _legal_inn(150_000_000)
+            session.add(
+                FirmotekaCrawlItem(
+                    crawl_run_id=crawl.id,
+                    position=1,
+                    inn=inn,
+                    source_url=f"https://firmoteka.ru/{inn}",
+                    discovered_from="test",
+                    status="pending",
+                )
+            )
+            session.flush()
+
+            creation = worker.schedule_firmoteka_check(
+                session,
+                raw_root=tmp_path,
+                now=NOW,
+                scale_config=worker.FirmotekaScaleConfig(
+                    catalog_concurrency=2,
+                    company_concurrency=4,
+                    daily_refresh_horizon_days=7,
+                    daily_refresh_budget=0,
+                ),
+            )
+
+            assert creation.job.schedule_metadata["company_concurrency"] == 4
+            assert crawl.catalog_concurrency == 2
+            assert crawl.company_concurrency == 4
+            assert crawl.request_delay_seconds == 4
+            assert crawl.daily_refresh_horizon_days == 7
+            assert crawl.daily_refresh_budget >= 1
+    finally:
+        transaction.rollback()
+        connection.close()
+
+
 def test_backpressure_claims_company_batch_once_with_job_identity(tmp_path):
     connection, transaction, factory = _factory()
     try:

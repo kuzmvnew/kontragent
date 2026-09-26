@@ -46,13 +46,13 @@ def upgrade() -> None:
             "daily_refresh_horizon_days",
             sa.Integer(),
             nullable=False,
-            server_default="30",
+            server_default="7",
         ),
     )
     op.add_column(
         "firmoteka_crawl_runs",
         sa.Column(
-            "daily_refresh_budget", sa.Integer(), nullable=False, server_default="500"
+            "daily_refresh_budget", sa.Integer(), nullable=False, server_default="1"
         ),
     )
     op.add_column(
