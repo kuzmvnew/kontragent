@@ -184,6 +184,23 @@ def test_publication_history_route(client):
     assert "Public Sync РАБОТАЕТ" in response.text
 
 
+def test_publication_summary_failure_does_not_hide_catalog_or_return_500(
+    client, monkeypatch
+):
+    def unavailable():
+        raise RuntimeError("private publication failure detail")
+
+    monkeypatch.setattr(service, "public_publication_snapshot", unavailable)
+    sources = client.get("/admin/sources")
+    publications = client.get("/admin/publications")
+    assert sources.status_code == 200
+    assert "ФНС: Доходы и расходы" in sources.text
+    assert "PostgreSQL недоступен" not in sources.text
+    assert publications.status_code == 200
+    assert "Сводка публикации временно недоступна." in publications.text
+    assert "private publication failure detail" not in sources.text + publications.text
+
+
 def test_publication_timeout_is_described_as_unverified_from_home(
     client, monkeypatch
 ):
