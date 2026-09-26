@@ -35,7 +35,9 @@ class PublicRepository:
             cursor.execute(
                 """
                 SELECT r.release_id, r.schema_version, r.created_at,
-                       r.record_count, r.source_main_sha
+                       r.record_count, r.source_main_sha,
+                       (SELECT count(*) FROM public_company_projections p
+                         WHERE p.release_id = r.release_id) AS actual_record_count
                 FROM public_publication_state s
                 JOIN public_releases r ON r.release_id = s.active_release_id
                 WHERE s.singleton = TRUE
@@ -102,4 +104,5 @@ class PublicRepository:
         if not release:
             return False, None, 0
         count = int(release["record_count"])
-        return count == 40, str(release["release_id"]), count
+        actual = int(release["actual_record_count"])
+        return count > 0 and actual == count, str(release["release_id"]), actual

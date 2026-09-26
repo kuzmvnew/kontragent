@@ -15,6 +15,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.contracts.data_readiness import AutoUpdateStatus
 from app.database.postgres import SessionLocal
+from app.services.publication_service import (
+    publication_dashboard,
+    publication_history as public_sync_history,
+)
 from app.incidents.controller import (
     record_action,
     update_policy,
@@ -638,6 +642,16 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
                 "started_at": latest_run[0].started_at,
             } if latest_run else None,
         }
+
+
+def public_publication_snapshot() -> dict[str, Any]:
+    with SessionLocal() as session:
+        return publication_dashboard(session)
+
+
+def public_publication_history(*, limit: int = 100) -> list[dict[str, Any]]:
+    with SessionLocal() as session:
+        return public_sync_history(session, limit=limit)
 
 
 def source_detail(source_id: str, *, now: datetime | None = None) -> dict[str, Any] | None:

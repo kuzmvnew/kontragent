@@ -249,7 +249,7 @@ class CanonicalManifest(PublicModel):
     production_eligibility: Literal["VERIFIED_OPERATIONAL"]
     selection_policy: dict[str, Any]
     supersedes_release_id: str | None = Field(default=None, max_length=120)
-    entities: tuple[ManifestEntity, ...] = Field(min_length=40, max_length=40)
+    entities: tuple[ManifestEntity, ...] = Field(min_length=1, max_length=10_000)
 
     @field_validator("created_at")
     @classmethod
@@ -259,11 +259,9 @@ class CanonicalManifest(PublicModel):
         return value
 
     @model_validator(mode="after")
-    def exactly_40_unique_legal_entities(self) -> CanonicalManifest:
+    def unique_sorted_legal_entities(self) -> CanonicalManifest:
         inns = tuple(entity.inn for entity in self.entities)
-        if len(inns) != 40:
-            raise ValueError("first public release requires exactly 40 entities")
-        if len(set(inns)) != 40:
+        if len(set(inns)) != len(inns):
             raise ValueError("manifest contains duplicate INNs")
         if inns != tuple(sorted(inns)):
             raise ValueError("manifest entities must be sorted by INN")
@@ -272,6 +270,19 @@ class CanonicalManifest(PublicModel):
         if not self.selection_policy.get("version"):
             raise ValueError("canonical cohort selection policy version is required")
         return self
+
+
+class ChangedCompanySummary(PublicModel):
+    inn: str
+    previous_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    current_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("inn")
+    @classmethod
+    def legal_inn_only(cls, value: str) -> str:
+        if not valid_legal_inn(value):
+            raise ValueError("changed company must have a valid legal-entity INN")
+        return value
 
 
 class ReleaseManifest(PublicModel):
@@ -285,8 +296,10 @@ class ReleaseManifest(PublicModel):
     created_at: datetime
     result_date: date
     content_updated_at: datetime
-    record_count: int = Field(ge=40, le=40)
+    record_count: int = Field(ge=1, le=10_000)
     companies_file: str = Field(pattern=r"^companies\.jsonl\.gz$")
+    changed_company_count: int = Field(default=0, ge=0, le=10_000)
+    changed_companies: tuple[ChangedCompanySummary, ...] = ()
 
     @field_validator("created_at", "content_updated_at")
     @classmethod
@@ -294,3 +307,11 @@ class ReleaseManifest(PublicModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("release timestamps must include a timezone")
         return value
+
+    @model_validator(mode="after")
+    def changed_summary_matches_count(self) -> ReleaseManifest:
+        if self.changed_company_count != len(self.changed_companies):
+            raise ValueError("changed company summary count mismatch")
+        if len({item.inn for item in self.changed_companies}) != len(self.changed_companies):
+            raise ValueError("changed company summary contains duplicate INNs")
+        return self

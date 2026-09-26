@@ -83,10 +83,9 @@ def test_forbidden_public_values_are_rejected(value):
         scan_forbidden(value)
 
 
-@pytest.mark.parametrize("count", [39, 41])
-def test_manifest_requires_exactly_40(count):
-    with pytest.raises(ValidationError):
-        manifest(entities(count))
+@pytest.mark.parametrize("count", [40, 500, 1_000])
+def test_manifest_contract_supports_future_bounded_cohort_growth(count):
+    assert len(manifest(entities(count)).entities) == count
 
 
 def test_manifest_rejects_duplicate_inn():

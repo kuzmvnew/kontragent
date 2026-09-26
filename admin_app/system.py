@@ -16,7 +16,10 @@ from typing import Any
 WORKER_SERVICE = "nextcompany-source-worker.service"
 ADMIN_SERVICE = "nextcompany-admin.service"
 INCIDENT_SERVICE = "nextcompany-incident-controller.service"
-_ALLOWED_SERVICES = frozenset({WORKER_SERVICE, ADMIN_SERVICE, INCIDENT_SERVICE})
+PUBLIC_SYNC_SERVICE = "nextcompany-public-sync.service"
+_ALLOWED_SERVICES = frozenset(
+    {WORKER_SERVICE, ADMIN_SERVICE, INCIDENT_SERVICE, PUBLIC_SYNC_SERVICE}
+)
 _BACKUP_NAME = re.compile(r"^nextcompany_operational_\d{8}T\d{6}Z\.dump$")
 
 

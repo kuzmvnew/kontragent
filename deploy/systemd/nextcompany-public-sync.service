@@ -1,0 +1,33 @@
+[Unit]
+Description=NEXT Company automatic public release synchronizer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mikhail/nextcompany-runtime/current
+EnvironmentFile=/home/mikhail/nextcompany-operational/runtime/worker.env
+EnvironmentFile=/home/mikhail/nextcompany-operational/runtime/public-sync.env
+Environment=PYTHONPATH=.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/mikhail/nextcompany-runtime/current/.venv/bin/python -m scripts.run_public_sync --poll-seconds 30 --debounce-seconds 120
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=45s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mikhail/nextcompany-operational/public-sync
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

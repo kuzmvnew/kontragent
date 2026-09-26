@@ -36,6 +36,21 @@ def payload_sha256(projection: PublicProjection) -> str:
     ).hexdigest()
 
 
+def semantic_projection_payload(projection: PublicProjection) -> dict:
+    """Return only visible/business projection state, excluding release churn."""
+
+    payload = projection.model_dump(mode="json")
+    publication = dict(payload["publication"])
+    publication.pop("release_id", None)
+    publication.pop("published_at", None)
+    payload["publication"] = publication
+    return payload
+
+
+def semantic_projection_sha256(projection: PublicProjection) -> str:
+    return hashlib.sha256(canonical_json(semantic_projection_payload(projection))).hexdigest()
+
+
 def write_checksums(bundle_dir: Path) -> None:
     lines = [f"{sha256_file(bundle_dir / name)}  {name}" for name in sorted(EXPECTED_FILES)]
     (bundle_dir / "checksums.sha256").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -77,11 +92,14 @@ def load_bundle(bundle_dir: Path) -> tuple[ReleaseManifest, list[PublicProjectio
             raw = json.loads(line)
             scan_forbidden(raw)
             projections.append(PublicProjection.model_validate(raw))
-    if len(projections) != manifest.record_count or len(projections) != 40:
-        raise ValueError("bundle must contain exactly 40 projections")
+    if len(projections) != manifest.record_count:
+        raise ValueError("bundle record count does not match manifest")
     inns = [projection.company.inn for projection in projections]
-    if len(set(inns)) != 40:
+    if len(set(inns)) != len(inns):
         raise ValueError("bundle contains duplicate INNs")
+    changed_inns = {item.inn for item in manifest.changed_companies}
+    if not changed_inns.issubset(inns):
+        raise ValueError("changed company summary is outside the release cohort")
     if any(projection.publication.release_id != manifest.release_id for projection in projections):
         raise ValueError("projection release_id mismatch")
     if any(projection.publication.schema_version != manifest.schema_version for projection in projections):

@@ -121,6 +121,24 @@ def client(monkeypatch):
     monkeypatch.setattr(service, "source_detail", lambda source_id: snapshot["sources"][0] if source_id == "fns_revenue_expenses" else None)
     monkeypatch.setattr(service, "change_history", lambda source_id: [])
     monkeypatch.setattr(service, "audit_rows", lambda: [])
+    monkeypatch.setattr(
+        service,
+        "public_publication_snapshot",
+        lambda: {
+            "site_ready": True,
+            "site_error": None,
+            "active_release": "public-v1-test",
+            "record_count": 40,
+            "last_publication": NOW,
+            "dirty_count": 2,
+            "public_ready_count": 12,
+            "enriching_count": 28,
+            "status": "ОЖИДАЕТ ПУБЛИКАЦИИ",
+            "last_error": None,
+            "outbox": {"pending": 1, "coalesced": 2, "failed": 0, "published": 3},
+        },
+    )
+    monkeypatch.setattr(service, "public_publication_history", lambda limit=100: [])
     monkeypatch.setattr(admin_main, "systemd_status", lambda name: {"service": name, "active": True, "enabled": True, "pid": 123, "restart_count": 0, "started_at": "now"})
     monkeypatch.setattr(admin_main, "storage_status", lambda: {"raw_size": 10, "disk_free": 100, "disk_used": 20, "raw_root": "/safe/raw", "mount_identity": "device:1"})
     monkeypatch.setattr(admin_main, "list_backups", lambda limit=50: [])
@@ -142,6 +160,15 @@ def test_dashboard_counters_status_and_official_source_link(client):
     assert "ДА" in response.text
     assert "data-tooltip" in response.text
     assert "https://www.nalog.gov.ru/opendata/7707329152-revexp/" in response.text
+    assert "ПУБЛИКАЦИЯ САЙТА" in response.text
+    assert "ОЖИДАЕТ ПУБЛИКАЦИИ" in response.text
+
+
+def test_publication_history_route(client):
+    response = client.get("/admin/publications")
+    assert response.status_code == 200
+    assert "Публикации сайта" in response.text
+    assert "Public Sync РАБОТАЕТ" in response.text
 
 
 def test_source_inventory_distinguishes_processes_handlers_and_families():
