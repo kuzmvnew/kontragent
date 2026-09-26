@@ -32,6 +32,7 @@ from app.models.company import (
     CompanyManager,
 )
 from app.models.company_fact import CompanyPublicFact
+from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
 from app.models.disqualified_person import (
     DisqualifiedPersonSnapshot,
 )
@@ -127,6 +128,7 @@ __all__ = [
     "CbrFinorgCheck",
     "CbrWarningListEntry",
     "Company",
+    "CompanyEnrichmentRun",
     "CompanyPublicFact",
     "CorporateDisclosureCheck",
     "GeneralCourtCheck",
@@ -146,6 +148,7 @@ __all__ = [
     "CompanySummary",
     "CompanySummaryV3",
     "CompanySourceData",
+    "CompanySourceCoverage",
     "CompanyTaxDebtItem",
     "CompanyTaxDebtSnapshot",
     "FnsTaxDebtNormalizedRecord",

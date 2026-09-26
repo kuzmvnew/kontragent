@@ -44,6 +44,7 @@ from app.services.data_readiness_scheduler import (
     run_due_updates,
 )
 from app.services.data_readiness_service import effective_status, safe_error_message
+from app.services.company_enrichment_service import canonical_enrichment_metrics
 from app.worker.execution import retry_job_now
 
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
@@ -637,6 +638,7 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
                 "active_leases": leases,
             },
             "master": master,
+            "enrichment": canonical_enrichment_metrics(session),
             "incidents": incident_counts,
             "latest_run": {
                 "id": str(latest_run[0].id),
