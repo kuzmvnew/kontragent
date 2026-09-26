@@ -556,6 +556,7 @@ def publication_dashboard(
         "record_count": record_count,
         "last_publication": last_published.completed_at if last_published else None,
         "dirty_count": len(dirty_inns),
+        "cohort_count": len(companies),
         "public_ready_count": ready_count,
         "enriching_count": len(companies) - ready_count,
         "status": status,

@@ -131,6 +131,7 @@ def client(monkeypatch):
             "record_count": 40,
             "last_publication": NOW,
             "dirty_count": 2,
+            "cohort_count": 40,
             "public_ready_count": 12,
             "enriching_count": 28,
             "status": "ОЖИДАЕТ ПУБЛИКАЦИИ",
@@ -161,6 +162,7 @@ def test_dashboard_counters_status_and_official_source_link(client):
     assert "data-tooltip" in response.text
     assert "https://www.nalog.gov.ru/opendata/7707329152-revexp/" in response.text
     assert "ПУБЛИКАЦИЯ САЙТА" in response.text
+    assert "12 / 40" in response.text
     assert "ОЖИДАЕТ ПУБЛИКАЦИИ" in response.text
 
 

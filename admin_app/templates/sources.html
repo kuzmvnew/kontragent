@@ -40,7 +40,7 @@
     {{ metric('Карточек на сайте', publication.record_count, 'Фактическое число карточек активного release.') }}
     {{ metric('Последняя публикация', publication.last_publication|datetime_ru if publication.last_publication else 'Нет данных', 'Последняя успешно завершённая автоматическая публикация.') }}
     {{ metric('Изменения ожидают публикации', publication.dirty_count, 'Уникальные компании accepted cohort с непубликованным semantic hash.', 'amber' if publication.dirty_count else 'green') }}
-    {{ metric('Компаний готовы к публикации', publication.public_ready_count, 'Latest CompanyEnrichmentRun успешно завершён и связан с текущими Risk/Summary v3.') }}
+    {{ metric('Принятая публичная когорта готова', publication.public_ready_count ~ ' / ' ~ publication.cohort_count, 'Latest CompanyEnrichmentRun успешно завершён и связан с текущими Risk/Summary v3.') }}
     {{ metric('Компаний ещё обогащаются', publication.enriching_count, 'Accepted cohort без текущей canonical public-ready generation.') }}
     {{ metric('Статус', publication.status, 'Сводное состояние durable publication outbox.', 'red' if publication.status == 'ОШИБКА' else 'amber' if publication.status != 'АКТУАЛЬНО' else 'green') }}
     {{ metric('Public Sync', 'РАБОТАЕТ' if public_sync.active else 'ОСТАНОВЛЕН', 'nextcompany-public-sync.service: enabled, active, restart-safe.', 'green' if public_sync.active else 'red', 'PID ' ~ (public_sync.pid or '—') ~ ' · рестартов ' ~ (public_sync.restart_count or 0)) }}

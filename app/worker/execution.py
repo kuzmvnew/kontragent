@@ -10,7 +10,7 @@ import time
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Sequence, delete, func, or_, select, update
+from sqlalchemy import Sequence, case, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, aliased
@@ -343,6 +343,14 @@ def claim_next_job(
         .correlate(WorkerJob)
         .scalar_subquery()
     )
+    enrichment_priority = case(
+        (
+            WorkerJob.schedule_metadata["enrichment_priority"].as_string()
+            == "accepted_public_cohort",
+            0,
+        ),
+        else_=1,
+    )
     job = session.scalar(
         select(WorkerJob)
         .where(
@@ -353,6 +361,7 @@ def claim_next_job(
         # remains authoritative within a source, while a large bounded queue
         # for one provider cannot starve independent source continuations.
         .order_by(
+            enrichment_priority,
             last_source_run_at.asc().nulls_first(),
             WorkerJob.created_at,
             WorkerJob.id,
