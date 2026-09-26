@@ -60,6 +60,7 @@ dt { color: var(--muted); } dd { margin: 0; min-width: 0; overflow-wrap: anywher
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .alert { padding: 12px 14px; border-radius: 8px; margin: 14px 0; }
 .alert.bad { background: var(--red-bg); color: var(--red); }
+.alert.warn { background: var(--amber-bg); color: var(--amber); }
 .alert.neutral { background: var(--gray-bg); color: #44515f; }
 .alert.good { background: var(--green-bg); color: var(--green); }
 .breadcrumbs { color: var(--muted); margin-bottom: 14px; } .breadcrumbs a { color: #175cd3; }

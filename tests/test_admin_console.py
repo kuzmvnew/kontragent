@@ -173,6 +173,37 @@ def test_publication_history_route(client):
     assert "Public Sync РАБОТАЕТ" in response.text
 
 
+def test_publication_timeout_is_described_as_unverified_from_home(
+    client, monkeypatch
+):
+    unavailable = {
+        "site_ready": False,
+        "site_error": "ConnectTimeout",
+        "active_release": None,
+        "record_count": 0,
+        "last_publication": None,
+        "dirty_count": 40,
+        "cohort_count": 40,
+        "public_ready_count": 40,
+        "enriching_count": 0,
+        "status": "ПОВТОР ЗАПЛАНИРОВАН",
+        "last_error": "ConnectTimeout",
+        "outbox": {"pending": 1, "coalesced": 37, "failed": 0, "published": 0},
+    }
+    monkeypatch.setattr(service, "public_publication_snapshot", lambda: unavailable)
+
+    publications = client.get("/admin/publications")
+    sources = client.get("/admin/sources")
+
+    assert publications.status_code == 200
+    assert sources.status_code == 200
+    for response in (publications, sources):
+        assert "ДОСТУПНОСТЬ С HOME НЕ ПОДТВЕРЖДЕНА" in response.text
+        assert "Проверка сайта с HOME не выполнена" in response.text
+        assert "ConnectTimeout" in response.text
+        assert ">НЕДОСТУПЕН<" not in response.text
+
+
 def test_publication_history_uses_owner_facing_states_and_stale_reason(
     client, monkeypatch
 ):

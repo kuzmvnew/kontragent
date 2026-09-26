@@ -27,6 +27,7 @@ from sqlalchemy import select
 from app.database.postgres import SessionLocal, engine
 from app.incidents.classification import Classification
 from app.incidents.controller import TERMINAL_STATUSES, upsert_incident
+from app.incidents.safe import safe_text
 from app.models.company_enrichment import CompanyEnrichmentRun
 from app.models.incident import SourceIncident
 from app.models.publication import PublicProjectionPublication, PublicPublicationRequest
@@ -410,7 +411,27 @@ def verify_https_release(
 
 
 def _public_incident(session, *, category: str, message: object, owner: str) -> None:
-    upsert_incident(
+    technical_message = safe_text(message)
+    if category == "PUBLIC_VPS_UNAVAILABLE":
+        incident = session.scalar(
+            select(SourceIncident)
+            .where(
+                SourceIncident.source_id == "public_sync",
+                SourceIncident.category == category,
+                SourceIncident.status.not_in(TERMINAL_STATUSES),
+            )
+            .order_by(SourceIncident.updated_at.desc())
+            .limit(1)
+        )
+        if incident is not None:
+            incident.updated_at = utc_now()
+            incident.safe_error_message = technical_message
+            incident.resolution_evidence = {
+                **(incident.resolution_evidence or {}),
+                "home_verification_error": technical_message,
+            }
+            return
+    incident, _created = upsert_incident(
         session,
         source_id="public_sync",
         dataset="public_release",
@@ -421,8 +442,18 @@ def _public_incident(session, *, category: str, message: object, owner: str) -> 
             remediation_level=1 if owner == "OUR_INFRASTRUCTURE" else 3,
         ),
         error_code=category.lower(),
-        message=str(message),
+        message=(
+            "HOME public HTTPS verification unavailable"
+            if category == "PUBLIC_VPS_UNAVAILABLE"
+            else technical_message
+        ),
     )
+    if category == "PUBLIC_VPS_UNAVAILABLE":
+        incident.safe_error_message = technical_message
+        incident.resolution_evidence = {
+            **(incident.resolution_evidence or {}),
+            "home_verification_error": technical_message,
+        }
 
 
 def _resolve_public_incidents(
@@ -734,16 +765,72 @@ def run_once(
                     )
                     session.commit()
                     return {"status": "FAILED", "recovered": recovered, "scan": None}
+                # Recovery and the readiness scan are legitimate state transitions.
+                # Commit them before the network-dependent normalization transaction
+                # so a normalization rollback cannot erase already completed work.
+                session.commit()
+                try:
+                    normalization = normalize_publication_queue(
+                        session,
+                        client=client,
+                    )
+                except PublicVpsUnavailable as error:
+                    session.rollback()
+                    _public_incident(
+                        session,
+                        category="PUBLIC_VPS_UNAVAILABLE",
+                        message=error,
+                        owner="OUR_INFRASTRUCTURE",
+                    )
+                    session.commit()
+                    return {
+                        "status": "VPS_UNAVAILABLE",
+                        "recovered": recovered,
+                        "scan": scan,
+                        "normalization": None,
+                    }
+                except PublicBuildError as error:
+                    session.rollback()
+                    _public_incident(
+                        session,
+                        category="PUBLIC_BUILD_ERROR",
+                        message=error,
+                        owner="OUR_CODE",
+                    )
+                    session.commit()
+                    return {
+                        "status": "FAILED",
+                        "recovered": recovered,
+                        "scan": scan,
+                        "normalization": None,
+                        "error": type(error).__name__,
+                    }
+                except Exception as error:
+                    session.rollback()
+                    logger.exception("public sync queue normalization failed")
+                    try:
+                        _public_incident(
+                            session,
+                            category="PUBLIC_BUILD_ERROR",
+                            message=error,
+                            owner="OUR_CODE",
+                        )
+                        session.commit()
+                    except Exception:
+                        session.rollback()
+                        logger.exception("could not persist normalization failure incident")
+                    return {
+                        "status": "FAILED",
+                        "recovered": recovered,
+                        "scan": scan,
+                        "normalization": None,
+                        "error": type(error).__name__,
+                    }
                 _resolve_public_incidents(
                     session,
                     now=utc_now(),
                     categories={"PUBLIC_VPS_UNAVAILABLE"},
-                    resolution="public HTTPS baseline scan succeeded",
-                )
-                session.commit()
-                normalization = normalize_publication_queue(
-                    session,
-                    client=client,
+                    resolution="public HTTPS scan and queue normalization succeeded",
                 )
                 session.commit()
                 request = (
@@ -801,6 +888,62 @@ def run_once(
                 )
 
 
+def _record_unexpected_cycle_incident(error: Exception) -> None:
+    try:
+        with SessionLocal() as session:
+            _public_incident(
+                session,
+                category="PUBLIC_BUILD_ERROR",
+                message=error,
+                owner="OUR_CODE",
+            )
+            session.commit()
+    except Exception:
+        logger.exception("could not persist unexpected public-sync cycle incident")
+
+
+def _run_loop(
+    *,
+    once: bool,
+    poll_seconds: int,
+    debounce_seconds: int,
+    output_root: Path | None,
+    cycle=None,
+    sleep=None,
+    max_cycles: int | None = None,
+) -> int:
+    cycle = cycle or run_once
+    sleep = sleep or time.sleep
+    consecutive_failures = 0
+    cycle_count = 0
+    while True:
+        try:
+            result = cycle(
+                debounce_seconds=debounce_seconds,
+                output_root=output_root,
+            )
+        except Exception as error:
+            logger.exception("unexpected public-sync cycle failure")
+            _record_unexpected_cycle_incident(error)
+            result = {
+                "status": "FAILED",
+                "error": type(error).__name__,
+                "message": safe_text(error),
+            }
+        logger.info("public sync cycle: %s", json.dumps(result, ensure_ascii=False, default=str))
+        failed = result["status"] in {"FAILED", "VPS_UNAVAILABLE"}
+        if once:
+            print(json.dumps(result, ensure_ascii=False, default=str))
+            return 1 if failed else 0
+        consecutive_failures = consecutive_failures + 1 if failed else 0
+        cycle_count += 1
+        if max_cycles is not None and cycle_count >= max_cycles:
+            return 1 if failed else 0
+        normal_delay = min(60, max(5, poll_seconds))
+        failure_delay = min(300, 15 * (2 ** min(5, max(0, consecutive_failures - 1))))
+        sleep(max(normal_delay, failure_delay) if failed else normal_delay)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
@@ -812,21 +955,12 @@ def main() -> int:
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    consecutive_failures = 0
-    while True:
-        result = run_once(
-            debounce_seconds=args.debounce_seconds,
-            output_root=args.output_root,
-        )
-        logger.info("public sync cycle: %s", json.dumps(result, ensure_ascii=False, default=str))
-        failed = result["status"] in {"FAILED", "VPS_UNAVAILABLE"}
-        if args.once:
-            print(json.dumps(result, ensure_ascii=False, default=str))
-            return 1 if failed else 0
-        consecutive_failures = consecutive_failures + 1 if failed else 0
-        normal_delay = min(60, max(5, args.poll_seconds))
-        failure_delay = min(300, 15 * (2 ** min(5, max(0, consecutive_failures - 1))))
-        time.sleep(max(normal_delay, failure_delay) if failed else normal_delay)
+    return _run_loop(
+        once=args.once,
+        poll_seconds=args.poll_seconds,
+        debounce_seconds=args.debounce_seconds,
+        output_root=args.output_root,
+    )
 
 
 if __name__ == "__main__":
