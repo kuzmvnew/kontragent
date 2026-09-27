@@ -21,12 +21,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
-from app.models.company_enrichment import CompanyEnrichmentRun
+from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
 from app.models.publication import (
     PublicProjectionPublication,
     PublicPublicationRequest,
 )
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
+from app.services.replay_readiness_service import has_unresolved_replay
 from public_app.contracts import (
     CanonicalManifest,
     ChangedCompanySummary,
@@ -174,6 +175,20 @@ def _run_is_current_and_public_ready(
         and run.public_ready
         and run.risk_assessment_id
         and run.summary_id
+    ):
+        return False
+    if session.scalar(
+        select(func.count(CompanySourceCoverage.id)).where(
+            CompanySourceCoverage.enrichment_run_id == run.id,
+            CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+        )
+    ):
+        return False
+    if has_unresolved_replay(
+        session,
+        company_id=run.company_id,
+        run_id=run.id,
+        now=utc_now(),
     ):
         return False
     risk = session.scalar(

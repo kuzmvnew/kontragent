@@ -201,7 +201,10 @@ def _unavailable(
         freshness=Freshness.UNKNOWN,
         scope=ScopeCompleteness.UNKNOWN,
         temporal_kind=temporal_kind,
-        checked_at=captured_at,
+        # ``captured_at`` is the calculation time, not a source observation.
+        # Persisting it in evidence identity caused identical missing-source
+        # inputs to create a new immutable Risk/Summary pair every poll.
+        checked_at=None,
         limitations=(
             _limitation(code, candidate_ref, evidence_refs=(evidence_ref,)),
         ),
@@ -210,7 +213,7 @@ def _unavailable(
 
 def _dataset_dates(dataset: DataSet | None, captured_at: datetime) -> dict[str, Any]:
     if dataset is None:
-        return {"checked_at": captured_at}
+        return {"checked_at": None}
     return {
         "source_as_of": dataset.source_as_of or dataset.last_data_date,
         "retrieved_at": dataset.retrieved_at,
@@ -238,7 +241,11 @@ def _registration_candidate(
         scope=ScopeCompleteness.COMPLETE,
         source_as_of=(dataset.source_as_of if dataset else company.master_data_date),
         retrieved_at=(dataset.retrieved_at if dataset else company.source_updated_at),
-        checked_at=(dataset.checked_at if dataset else captured_at),
+        checked_at=(
+            dataset.checked_at
+            if dataset
+            else company.source_updated_at or company.updated_at or company.created_at
+        ),
         fact_payload={
             "status": status,
             "adverse": status in _ADVERSE_REGISTRATION_STATUSES,

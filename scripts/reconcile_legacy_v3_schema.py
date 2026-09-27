@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "a6c1d9e4f2b7"
+CURRENT_SCHEMA_HEAD = "c2a4f6d8e0b1"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -85,6 +85,8 @@ POST_CANONICAL_TARGET_TABLES = {
     "firmoteka_quarantine_records",
     "public_projection_publications",
     "public_publication_requests",
+    "factory_generations",
+    "factory_generation_companies",
 }
 DEV009_EXTENSION_TABLES = {
     "fns_tax_debt_raw_artifacts",
@@ -106,6 +108,24 @@ DEV009_SNAPSHOT_EXTENSION_PATHS = {
     "ix_company_tax_debt_snapshots_publication_generation",
     "uq_company_tax_debt_company_dataset_date_generation",
     "uq_company_tax_debt_company_dataset_date",
+}
+DATA_SCALE_DATASET_EXTENSION_PATHS = {
+    "source_family",
+    "capability",
+    "risk_role",
+    "positive_role",
+    "coverage_role",
+    "applicability",
+    "freshness",
+    "precedence",
+    "publicability",
+    "impact_priority",
+    "ix_data_sets_source_family",
+    "ix_data_sets_capability",
+    "ix_data_sets_risk_role",
+    "ix_data_sets_precedence",
+    "ix_data_sets_publicability",
+    "ix_data_sets_impact_priority",
 }
 V1_TABLES = ("company_risk_assessments", "company_summaries")
 PROTECTED_DATABASE = "kontragent"
@@ -493,6 +513,13 @@ def full_parent_compatibility(connection: sa.Connection) -> dict[str, Any]:
         ) or (
             table == "company_tax_debt_snapshots"
             and path in DEV009_SNAPSHOT_EXTENSION_PATHS
+            and (
+                error.get("kind", "").startswith("missing")
+                or error.get("kind", "").startswith("unexpected")
+            )
+        ) or (
+            table == "data_sets"
+            and path in DATA_SCALE_DATASET_EXTENSION_PATHS
             and (
                 error.get("kind", "").startswith("missing")
                 or error.get("kind", "").startswith("unexpected")

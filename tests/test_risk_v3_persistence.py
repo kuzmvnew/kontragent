@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -169,4 +170,34 @@ def test_db_only_boundary_calculates_from_persisted_rows_without_refresh():
             for item in result.evidence_snapshot
         )
         assert result.mandatory_gate.allowed is False
+        session.rollback()
+
+
+def test_missing_source_evidence_is_stable_across_recalculation_time():
+    """A scheduler poll is not a new source observation or Risk generation."""
+
+    with Session(engine) as session:
+        company = Company(
+            inn=str(uuid4().int)[:10],
+            name="Stable missing-source identity",
+            entity_type="legal",
+            status="ACTIVE",
+        )
+        session.add(company)
+        session.flush()
+        first, first_reused = calculate_company_risk_v3_from_persisted(
+            session, company.id, calculated_at=NOW
+        )
+        second, second_reused = calculate_company_risk_v3_from_persisted(
+            session, company.id, calculated_at=NOW + timedelta(hours=1)
+        )
+        assert first_reused is False
+        assert second_reused is True
+        assert second.assessment_id == first.assessment_id
+        assert second.input_hash == first.input_hash
+        assert session.scalar(
+            sa.select(sa.func.count())
+            .select_from(CompanyRiskAssessmentV3)
+            .where(CompanyRiskAssessmentV3.company_id == company.id)
+        ) == 1
         session.rollback()

@@ -45,6 +45,11 @@ from app.models.firmoteka import (
 from app.models.registry_master import CompanyRegistryChange, MasterReplaySignal
 from app.models.source import CompanySourceData, DataSet, DataSource
 from app.models.worker import WorkerHandlerRegistration, WorkerJob
+from app.services.factory_scale_service import (
+    FactoryScaleConfig,
+    adaptive_intake_decision,
+    collect_factory_pressure,
+)
 from app.worker.contracts import (
     ExecutionCounters,
     HandlerContext,
@@ -952,6 +957,10 @@ def _apply_master(
             manager.position = projection.get("manager_position")
             manager.observed_at = now
     if created or changed:
+        # Serialize replay emission with the company enrichment Risk gate.
+        session.scalar(
+            select(Company.id).where(Company.id == company.id).with_for_update()
+        )
         event_type = "created" if created else "identity_changed"
         record_key = f"{inn}:{row['content_hash']}:{event_type}"
         change = CompanyRegistryChange(
@@ -1099,24 +1108,6 @@ def _seed_daily_refresh_items(
     return inserted
 
 
-def _enrichment_backlog(session: Session) -> int:
-    active = select(CompanyEnrichmentRun.company_id.label("company_id")).where(
-        CompanyEnrichmentRun.status.in_(
-            ("pending", "waiting_sources", "retry_scheduled", "running")
-        )
-    )
-    signalled = select(MasterReplaySignal.company_id.label("company_id")).where(
-        MasterReplaySignal.status == "pending"
-    )
-    companies = active.union(signalled).subquery()
-    return int(
-        session.scalar(
-            select(func.count()).select_from(companies)
-        )
-        or 0
-    )
-
-
 def _scaled_daily_budget(
     session: Session, *, horizon_days: int, configured_minimum: int
 ) -> int:
@@ -1182,19 +1173,28 @@ def _create_next_job(
         )
         or 0
     )
-    enrichment_backlog = _enrichment_backlog(session)
+    scale_config = FactoryScaleConfig.from_environment()
+    pressure = collect_factory_pressure(session, raw_root=raw_root, now=now)
+    pressure_decision = adaptive_intake_decision(pressure, scale_config)
+    enrichment_backlog = pressure.actionable_backlog
     cursor = dict(crawl.cursor or {})
     cursor["pending_enrichment_backlog"] = enrichment_backlog
-    cursor["company_intake_backpressured"] = (
-        enrichment_backlog >= crawl.backpressure_threshold
-    )
+    cursor["company_intake_backpressured"] = not pressure_decision.allow_company_intake
+    cursor["adaptive_backpressure"] = pressure_decision.as_dict()
     crawl.cursor = cursor
     process_companies = (
         pending_items > 0
-        and enrichment_backlog < crawl.backpressure_threshold
+        and pressure_decision.allow_company_intake
     )
     if process_companies:
-        batch_limit = COMPANY_BATCH_SIZE * crawl.company_concurrency
+        batch_limit = max(
+            1,
+            int(
+                COMPANY_BATCH_SIZE
+                * crawl.company_concurrency
+                * pressure_decision.recommended_intake_ratio
+            ),
+        )
         items = tuple(
             session.scalars(
                 select(FirmotekaCrawlItem)
@@ -1228,6 +1228,7 @@ def _create_next_job(
                 "items": [{"id": item.id, "inn": item.inn, "url": item.source_url} for item in items],
                 "request_delay_seconds": crawl.request_delay_seconds,
                 "company_concurrency": crawl.company_concurrency,
+                "factory_lane": "master_intake",
                 "lane_not_before": _lane_not_before(
                     crawl, crawl.company_concurrency
                 ),
@@ -1286,6 +1287,7 @@ def _create_next_job(
                 "raw_root": raw_root,
                 "request_delay_seconds": crawl.request_delay_seconds,
                 "catalog_concurrency": crawl.catalog_concurrency,
+                "factory_lane": "master_intake",
                 "lane_not_before": _lane_not_before(
                     crawl, crawl.catalog_concurrency
                 ),
@@ -1809,6 +1811,7 @@ def schedule_firmoteka_check(
         idempotency_key=f"{SOURCE_ID}:{crawl.id}:discovery:{HANDLER_VERSION}",
         schedule_metadata={
             "phase": "discovery",
+            "factory_lane": "master_intake",
             "crawl_run_id": str(crawl.id),
             "raw_root": str(Path(raw_root).resolve()),
             "request_delay_seconds": crawl.request_delay_seconds,

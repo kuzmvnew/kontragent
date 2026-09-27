@@ -39,6 +39,7 @@ from app.models.worker import (
     WorkerRun,
 )
 from app.services.company_enrichment_service import canonical_enrichment_metrics
+from app.services.factory_metrics_service import collect_factory_metrics
 from app.services.data_readiness_scheduler import (
     HANDLERS,
     SCHEDULED_SOURCE_DATASET_CODES,
@@ -735,6 +736,9 @@ def console_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
             },
             "master": master,
             "enrichment": canonical_enrichment_metrics(session),
+            "factory": collect_factory_metrics(
+                session, window_hours=1.0, now=now, enforce_read_only=False
+            ),
             "incidents": incident_counts,
             "latest_run": {
                 "id": str(latest_run[0].id),

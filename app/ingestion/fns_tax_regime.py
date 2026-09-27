@@ -1190,6 +1190,11 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
     enrichment_replay = bool(
         claim.schedule_metadata.get("company_enrichment_run_ids")
     )
+    target_company_ids = (
+        {int(value) for value in claim.schedule_metadata.get("company_ids") or ()}
+        if enrichment_replay
+        else None
+    )
     if check_only:
         descriptor_path = _accepted_replay_path(
             session, claim=claim, spec=family_spec
@@ -1231,6 +1236,7 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
             spec=spec,
             staging_path=staging_path,
             replace_existing=not check_only,
+            target_company_ids=target_company_ids,
         )
         published = int(
             session.scalar(

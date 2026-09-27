@@ -560,6 +560,7 @@ def _project_worker_support(
     ingestion_run,
     staging_path,
     replay,
+    target_company_ids=None,
 ):
     from app.ingestion.fns_bulk_worker import _iter_jsonl
 
@@ -572,12 +573,17 @@ def _project_worker_support(
         ]
         excluded_npd += len(batch) - len(eligible)
         inns = {str(row["recipient_inn"]) for row in eligible}
+        company_statement = select(
+            Company.inn, Company.id, Company.entity_type
+        ).where(Company.inn.in_(inns))
+        if target_company_ids is not None:
+            company_statement = company_statement.where(
+                Company.id.in_(target_company_ids)
+            )
         companies = {
             inn: (company_id, entity_type)
             for inn, company_id, entity_type in session.execute(
-                select(Company.inn, Company.id, Company.entity_type).where(
-                    Company.inn.in_(inns)
-                )
+                company_statement
             )
         }
         values = []
@@ -667,6 +673,14 @@ def publish_fns_sme_support_worker_result(session, claim, result):
             ingestion_run=ingestion_run,
             staging_path=replay_path,
             replay=True,
+            target_company_ids=(
+                {
+                    int(value)
+                    for value in claim.schedule_metadata.get("company_ids") or ()
+                }
+                if enrichment_replay
+                else None
+            ),
         )
         published = int(
             session.scalar(

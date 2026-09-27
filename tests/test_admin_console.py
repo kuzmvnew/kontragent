@@ -119,6 +119,21 @@ def _snapshot(*, stage="OPERATIONAL"):
             "average_coverage_percent": 7.5,
             "median_coverage_percent": 0.0,
         },
+        "factory": {
+            "totals": {"enrichment_backlog": 95},
+            "queues": {
+                "oldest_enrichment_seconds": 600,
+                "source_expectations": 4,
+                "worker_pending": 2,
+                "worker_running": 1,
+            },
+            "rates": {
+                "fully_enriched": {"per_hour": 12.5},
+                "public_ready": {"per_hour": 10.0},
+            },
+            "current_companies_per_day": 240.0,
+            "storage": {"raw_bytes_per_hour": 1024},
+        },
         "incidents": {"open": 0, "running": 0, "waiting_source": 0, "review_required": 0, "recovered_today": 0, "exhausted": 0},
         "latest_run": None,
     }

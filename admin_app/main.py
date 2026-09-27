@@ -216,6 +216,21 @@ def _empty_snapshot() -> dict:
             "average_coverage_percent": 0.0,
             "median_coverage_percent": 0.0,
         },
+        "factory": {
+            "totals": {"enrichment_backlog": 0},
+            "queues": {
+                "oldest_enrichment_seconds": None,
+                "source_expectations": 0,
+                "worker_pending": 0,
+                "worker_running": 0,
+            },
+            "rates": {
+                "fully_enriched": {"per_hour": 0},
+                "public_ready": {"per_hour": 0},
+            },
+            "current_companies_per_day": 0,
+            "storage": {"raw_bytes_per_hour": 0},
+        },
         "incidents": {"open": 0, "running": 0, "waiting_source": 0, "review_required": 0, "recovered_today": 0, "exhausted": 0},
         "latest_run": None,
     }

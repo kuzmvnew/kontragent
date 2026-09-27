@@ -1000,6 +1000,7 @@ def _project_normalized_snapshot(
     spec: FnsBulkSourceSpec,
     staging_path: Path,
     replace_existing: bool,
+    target_company_ids: set[int] | None = None,
 ) -> tuple[int, int, set[int], int]:
     """Exact-INN project a normalized snapshot using existing fact tables.
 
@@ -1015,11 +1016,14 @@ def _project_normalized_snapshot(
         session.execute(delete(model).where(model.dataset_id == dataset.id))
     for batch in _iter_jsonl(staging_path):
         inns = {str(row["inn"]) for row in batch}
-        company_ids = dict(
-            session.execute(
-                select(Company.inn, Company.id).where(Company.inn.in_(inns))
-            ).all()
+        company_statement = select(Company.inn, Company.id).where(
+            Company.inn.in_(inns)
         )
+        if target_company_ids is not None:
+            company_statement = company_statement.where(
+                Company.id.in_(target_company_ids)
+            )
+        company_ids = dict(session.execute(company_statement).all())
         values: list[dict[str, Any]] = []
         payment_items: dict[tuple[int, date], list[dict[str, Any]]] = {}
         for row in batch:
@@ -1333,12 +1337,21 @@ def publish_bulk_result(
         matched_companies: set[int] = set()
         if claim.schedule_metadata.get("replay_snapshot"):
             replay_path = _accepted_replay_path(session, claim=claim, spec=spec)
+            target_company_ids = (
+                {
+                    int(value)
+                    for value in claim.schedule_metadata.get("company_ids") or ()
+                }
+                if enrichment_replay
+                else None
+            )
             matched, unmatched, matched_companies, inserted = _project_normalized_snapshot(
                 session,
                 dataset=dataset,
                 spec=spec,
                 staging_path=replay_path,
                 replace_existing=False,
+                target_company_ids=target_company_ids,
             )
             model = _fact_model(spec)
             dataset.record_count = int(

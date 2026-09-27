@@ -533,6 +533,12 @@ def _emit_change_and_replays(
     changed_fields: dict[str, Any],
     now: datetime,
 ) -> None:
+    # The enrichment completion gate takes the same row lock before its final
+    # replay-signal scan.  This serializes a committed late signal with Risk:
+    # either the signal is visible to that scan or it is created afterwards.
+    session.scalar(
+        select(Company.id).where(Company.id == company.id).with_for_update()
+    )
     change = CompanyRegistryChange(
         source_id=spec.source_id, company_id=company.id, run_id=claim.run_id,
         inn=company.inn, event_type=event_type, changed_fields=changed_fields,
