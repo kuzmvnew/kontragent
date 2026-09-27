@@ -26,7 +26,6 @@ from public_app.seo import (
     COMPANY_SHARD_COUNT,
     build_catalog_pagination,
     catalog_page_url,
-    compile_seo_projection,
     sitemap_shard,
 )
 
@@ -60,18 +59,13 @@ def _sitemap_rows(repository, shard: str) -> list[dict]:
     try:
         return repository.sitemap_rows(shard=shard)
     except TypeError:  # Compatibility with the v1 repository/test doubles.
-        item = getattr(repository, "item", None)
-        if item is not None and not compile_seo_projection(item).sitemap_eligible:
-            return []
         return [row for row in repository.sitemap_rows() if sitemap_shard(str(row["inn"])) == shard]
 
 
 def _catalog_page(repository, page: int, page_size: int = 24):
     if hasattr(repository, "catalog_page"):
         return repository.catalog_page(page=page, page_size=page_size)
-    item = getattr(repository, "item", None)
-    eligible = item is not None and compile_seo_projection(item).catalog_eligible
-    return ([item] if eligible and page == 1 else []), (1 if eligible else 0)
+    return [], 0
 
 
 def create_app(repository=None) -> FastAPI:
@@ -246,13 +240,13 @@ def create_app(repository=None) -> FastAPI:
     def company_card(request: Request, inn: str):
         if not valid_legal_inn(inn):
             raise StarletteHTTPException(status_code=404)
-        projection = _repo(request).get_company(inn)
-        if projection is None:
+        snapshot = _repo(request).get_company_page_snapshot(inn)
+        if snapshot is None:
             raise StarletteHTTPException(status_code=404)
+        projection = snapshot.projection
         if _tracking_only(request):
             return RedirectResponse(f"/companies/{inn}", status_code=308)
-        stored_seo = _repo(request).get_seo_projection(inn) if hasattr(_repo(request), "get_seo_projection") else None
-        seo = stored_seo or compile_seo_projection(projection)
+        seo = snapshot.seo
         robots = "noindex, follow" if request.query_params else seo.robots
         return templates.TemplateResponse(
             request=request,

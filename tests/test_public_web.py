@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from public_app.main import create_app
 from public_app.contracts import PublicProjection
+from public_app.repository import CompanyPageSnapshot
+from public_app.seo import SeoEligibilityContext, compile_seo_projection
 from tests.public_test_support import projection
 
 
@@ -22,11 +24,39 @@ class FakeRepository:
     def get_company(self, inn):
         return self.item if inn == self.item.company.inn else None
 
+    def get_company_page_snapshot(self, inn):
+        if inn != self.item.company.inn:
+            return None
+        seo = compile_seo_projection(
+            self.item,
+            context=SeoEligibilityContext(
+                active_revision_id=self.item.publication.release_id,
+                public_ready=True,
+                released=True,
+            ),
+        )
+        return CompanyPageSnapshot(
+            release_id=self.item.publication.release_id,
+            projection=self.item,
+            seo=seo,
+            seo_release_cohort=500,
+            seo_released=True,
+            stored_seo_valid=True,
+        )
+
     def search(self, query, limit=20):
         return [self.item] if query.casefold() in self.item.company.name.casefold() else []
 
-    def sitemap_rows(self):
+    def sitemap_rows(self, shard=None):
+        seo = self.get_company_page_snapshot(self.item.company.inn).seo
+        if not seo.sitemap_eligible or (shard is not None and seo.sitemap_shard != shard):
+            return []
         return [{"inn": self.item.company.inn, "content_updated_at": datetime(2026, 9, 25, tzinfo=timezone.utc)}]
+
+    def catalog_page(self, page, page_size=24):
+        seo = self.get_company_page_snapshot(self.item.company.inn).seo
+        eligible = seo.catalog_eligible and page == 1 and page_size == 24
+        return ([self.item] if eligible else []), (1 if seo.catalog_eligible else 0)
 
     def ready(self):
         return True, self.item.publication.release_id, 40

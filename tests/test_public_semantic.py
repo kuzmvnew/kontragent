@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from app.contracts import semantic_v4
 from public_app.contracts import Freshness, PublicProjection, PublicSourceBlock, PublicState
 from public_app.main import create_app
+from public_app.repository import CompanyPageSnapshot
+from public_app.seo import SeoEligibilityContext, compile_seo_projection
 from public_app.semantic import (
     MeaningInput,
     PUBLIC_NEXT_INDEX_ENABLED,
@@ -55,6 +57,26 @@ class _Repository:
 
     def get_company(self, inn):
         return self.item if inn == self.item.company.inn else None
+
+    def get_company_page_snapshot(self, inn):
+        if inn != self.item.company.inn:
+            return None
+        seo = compile_seo_projection(
+            self.item,
+            context=SeoEligibilityContext(
+                active_revision_id=self.item.publication.release_id,
+                public_ready=True,
+                released=True,
+            ),
+        )
+        return CompanyPageSnapshot(
+            release_id=self.item.publication.release_id,
+            projection=self.item,
+            seo=seo,
+            seo_release_cohort=500,
+            seo_released=True,
+            stored_seo_valid=True,
+        )
 
     def ready(self):
         return True, self.item.publication.release_id, 1

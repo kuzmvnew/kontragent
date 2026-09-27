@@ -79,7 +79,7 @@ def test_desktop_card_v2_semantic_screenshot_regression(public_server, tmp_path)
         assert page.locator("h1").inner_text().startswith("ООО ТЕСТ")
         assert page.locator(".source-card").count() == 4
         assert page.get_by_text("Дата данных источника").count() == 4
-        assert page.locator("meta[name=robots]").get_attribute("content") == "index, follow"
+        assert page.locator("meta[name=robots]").get_attribute("content") == "noindex, follow"
         visible = page.locator("body").inner_text()
         for marker in (
             "{'", "fact_ref", "origin_check_ref", "limitation_code",

@@ -16,6 +16,22 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column("public_releases", sa.Column("seo_contract_version", sa.String(80), nullable=True))
+    op.add_column("public_releases", sa.Column("seo_release_cohort", sa.Integer(), nullable=True))
+    op.add_column(
+        "public_releases",
+        sa.Column("seo_released", sa.Boolean(), nullable=False, server_default=sa.false()),
+    )
+    op.create_check_constraint(
+        "ck_public_release_seo_cohort",
+        "public_releases",
+        "seo_release_cohort IS NULL OR seo_release_cohort IN (500, 2000, 10000)",
+    )
+    op.create_check_constraint(
+        "ck_public_release_seo_authority",
+        "public_releases",
+        "NOT seo_released OR (seo_release_cohort IS NOT NULL AND seo_contract_version IS NOT NULL)",
+    )
     op.add_column("public_company_projections", sa.Column("seo_projection", postgresql.JSONB(), nullable=True))
     op.add_column("public_company_projections", sa.Column("seo_decision", sa.String(40), nullable=True))
     op.add_column("public_company_projections", sa.Column("seo_compiler_version", sa.String(80), nullable=True))
@@ -69,3 +85,8 @@ def downgrade() -> None:
     op.drop_column("public_company_projections", "seo_compiler_version")
     op.drop_column("public_company_projections", "seo_decision")
     op.drop_column("public_company_projections", "seo_projection")
+    op.drop_constraint("ck_public_release_seo_authority", "public_releases", type_="check")
+    op.drop_constraint("ck_public_release_seo_cohort", "public_releases", type_="check")
+    op.drop_column("public_releases", "seo_released")
+    op.drop_column("public_releases", "seo_release_cohort")
+    op.drop_column("public_releases", "seo_contract_version")
