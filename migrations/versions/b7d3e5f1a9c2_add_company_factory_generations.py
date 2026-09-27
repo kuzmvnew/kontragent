@@ -43,7 +43,6 @@ def upgrade() -> None:
             risk_role = 'context',
             positive_role = 'none',
             coverage_role = CASE WHEN d.domain = 'registry' THEN 'identity' ELSE 'supporting' END,
-            applicability = '{"entity_types": ["legal", "individual_entrepreneur"]}'::jsonb,
             freshness = jsonb_build_object(
               'policy', d.freshness_policy,
               'schedule', d.refresh_schedule
@@ -140,7 +139,7 @@ def upgrade() -> None:
         ),
         sa.Column("risk_assessment_id", sa.String(36)),
         sa.Column("summary_id", sa.String(36)),
-        sa.Column("status", sa.String(20), nullable=False, server_default="pending"),
+        sa.Column("status", sa.String(30), nullable=False, server_default="pending"),
         sa.Column("last_error", sa.Text()),
         sa.Column(
             "created_at",
@@ -159,7 +158,8 @@ def upgrade() -> None:
             "generation_id", "company_id", name="uq_factory_generation_company"
         ),
         sa.CheckConstraint(
-            "status IN ('pending','scheduled','complete','failed','not_applicable')",
+            "status IN ('pending','scheduled','complete','failed','not_applicable',"
+            "'applicability_unknown')",
             name="ck_factory_generation_companies_status",
         ),
     )

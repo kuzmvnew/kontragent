@@ -52,9 +52,10 @@ from app.models.worker import (
 from app.services.data_readiness_service import effective_status, safe_error_message
 from app.services.factory_scale_service import FactoryScaleConfig
 from app.services.source_applicability_service import (
-    company_scope as _company_scope,
+    SourceApplicability,
+    resolve_source_applicability,
     source_applicability_clause,
-    source_is_applicable as _is_applicable,
+    source_applicability_expression,
 )
 from app.services.risk_v3_persistence_service import (
     calculate_company_risk_v3_from_persisted,
@@ -156,6 +157,10 @@ class SourcePlan:
     snapshot: dict[str, Any]
 
 
+class SourceApplicabilityUnknownError(ValueError):
+    """An operational source cannot join a denominator without valid policy."""
+
+
 def _iso(value: datetime | date | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -199,7 +204,7 @@ def _source_plan(
     *,
     now: datetime,
 ) -> SourcePlan | None:
-    if not dataset.enabled or not _is_applicable(company, dataset.code):
+    if not dataset.enabled:
         return None
     if dataset.auto_update_status != AutoUpdateStatus.CONFIGURED:
         return None
@@ -245,6 +250,13 @@ def _source_plan(
         # A runnable source is not automatically a company-projection source.
         # Unsupported adapters stay outside the frozen denominator fail-closed.
         return None
+    applicability = resolve_source_applicability(company, dataset)
+    if applicability is SourceApplicability.NOT_APPLICABLE:
+        return None
+    if applicability is SourceApplicability.UNKNOWN:
+        raise SourceApplicabilityUnknownError(
+            f"{dataset.code}: source applicability is unknown for company {company.id}"
+        )
     handler_version = (
         producer.handler_version
         if mode == "local_bulk_replay" and producer is not None
@@ -266,6 +278,8 @@ def _source_plan(
         "handler_mode": registration_metadata.get("mode"),
         "operational_status": OperationalStatus.CURRENT.value,
         "operational_accepted": True,
+        "applicability": SourceApplicability.APPLICABLE.value,
+        "applicability_policy": dict(dataset.applicability or {}),
         "source_data_date": _iso(source_data_date),
         "last_success_at": _iso(dataset.last_success_at),
         "publication_generation": state.generation if state else None,
@@ -888,7 +902,11 @@ def consume_master_replay_signals(
                     DataSet.next_expected_update_at.is_(None)
                     | (DataSet.next_expected_update_at > now)
                 ),
-                source_applicability_clause(DataSet.code, Company.inn),
+                source_applicability_clause(
+                    DataSet.applicability,
+                    Company.entity_type,
+                    Company.inn,
+                ),
             )
             .group_by(MasterReplaySignal.company_id)
             .order_by(func.min(MasterReplaySignal.created_at), MasterReplaySignal.company_id)
@@ -898,9 +916,25 @@ def consume_master_replay_signals(
     signals = tuple(
         session.scalars(
             select(MasterReplaySignal)
+            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+            .join(Company, Company.id == MasterReplaySignal.company_id)
             .where(
                 MasterReplaySignal.status == "pending",
                 MasterReplaySignal.company_id.in_(candidate_companies),
+                DataSet.enabled.is_(True),
+                DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
+                DataSet.operational_status == OperationalStatus.CURRENT,
+                DataSet.last_success_at.is_not(None),
+                DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
+                (
+                    DataSet.next_expected_update_at.is_(None)
+                    | (DataSet.next_expected_update_at > now)
+                ),
+                source_applicability_clause(
+                    DataSet.applicability,
+                    Company.entity_type,
+                    Company.inn,
+                ),
             )
             .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
             .with_for_update(skip_locked=True)
@@ -1539,13 +1573,48 @@ def _pending_signal_map(
                 DataSet.next_expected_update_at.is_(None)
                 | (DataSet.next_expected_update_at > now)
             ),
-            source_applicability_clause(DataSet.code, Company.inn),
+            source_applicability_clause(
+                DataSet.applicability,
+                Company.entity_type,
+                Company.inn,
+            ),
         )
         .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
         .with_for_update(skip_locked=True)
     ):
         grouped[signal.target_source_id].append(signal.id)
     return {source_id: tuple(values) for source_id, values in grouped.items()}
+
+
+def _has_pending_unknown_source_applicability(
+    session: Session, company_id: int, *, now: datetime
+) -> bool:
+    decision = source_applicability_expression(
+        DataSet.applicability,
+        Company.entity_type,
+        Company.inn,
+    )
+    return bool(
+        session.scalar(
+            select(func.count(MasterReplaySignal.id))
+            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+            .join(Company, Company.id == MasterReplaySignal.company_id)
+            .where(
+                MasterReplaySignal.company_id == company_id,
+                MasterReplaySignal.status == "pending",
+                DataSet.enabled.is_(True),
+                DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
+                DataSet.operational_status == OperationalStatus.CURRENT,
+                DataSet.last_success_at.is_not(None),
+                DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
+                (
+                    DataSet.next_expected_update_at.is_(None)
+                    | (DataSet.next_expected_update_at > now)
+                ),
+                decision == SourceApplicability.UNKNOWN.value,
+            )
+        )
+    )
 
 
 def _promote_enrichment_jobs(
@@ -1614,6 +1683,11 @@ def prioritize_public_cohort_enrichment(
             .limit(1)
             .with_for_update()
         )
+        if _has_pending_unknown_source_applicability(
+            session, company.id, now=now
+        ):
+            blocked += 1
+            continue
         signal_map = _pending_signal_map(session, company.id, now=now)
         current_ready = bool(run and _current_public_ready_run(session, run))
         if current_ready and not signal_map:

@@ -98,7 +98,8 @@ class FactoryGenerationCompany(Base):
             "generation_id", "company_id", name="uq_factory_generation_company"
         ),
         CheckConstraint(
-            "status IN ('pending','scheduled','complete','failed','not_applicable')",
+            "status IN ('pending','scheduled','complete','failed','not_applicable',"
+            "'applicability_unknown')",
             name="ck_factory_generation_companies_status",
         ),
         Index("ix_factory_generation_companies_status", "generation_id", "status"),
@@ -123,7 +124,7 @@ class FactoryGenerationCompany(Base):
     risk_assessment_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     summary_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="pending", server_default=text("'pending'")
+        String(30), nullable=False, default="pending", server_default=text("'pending'")
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

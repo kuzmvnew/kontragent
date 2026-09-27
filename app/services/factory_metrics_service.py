@@ -13,9 +13,13 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
+from app.models.factory import FactoryGeneration, FactoryGenerationCompany
 from app.models.registry_master import MasterReplaySignal
 from app.models.source import DataSet
-from app.services.source_applicability_service import source_applicability_clause
+from app.services.source_applicability_service import (
+    SourceApplicability,
+    source_applicability_expression,
+)
 
 
 def _scalar(session: Session, statement: str, **parameters: Any) -> int | float:
@@ -115,26 +119,73 @@ def collect_factory_metrics(
         """,
         observed_at=observed_at,
     )
-    queues["master_replay_actionable"] = int(
-        session.scalar(
-            select(func.count(MasterReplaySignal.id))
-            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
-            .join(Company, Company.id == MasterReplaySignal.company_id)
-            .where(
-                MasterReplaySignal.status.in_(("pending", "scheduled")),
-                DataSet.enabled.is_(True),
-                DataSet.auto_update_status == "configured",
-                DataSet.operational_status == "current",
-                DataSet.last_success_at.is_not(None),
-                DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
-                (
-                    DataSet.next_expected_update_at.is_(None)
-                    | (DataSet.next_expected_update_at > observed_at)
-                ),
-                source_applicability_clause(DataSet.code, Company.inn),
+    applicability = source_applicability_expression(
+        DataSet.applicability,
+        Company.entity_type,
+        Company.inn,
+    )
+
+    def replay_count(outcome: SourceApplicability) -> int:
+        return int(
+            session.scalar(
+                select(func.count(MasterReplaySignal.id))
+                .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+                .join(Company, Company.id == MasterReplaySignal.company_id)
+                .where(
+                    MasterReplaySignal.status.in_(("pending", "scheduled")),
+                    DataSet.enabled.is_(True),
+                    DataSet.auto_update_status == "configured",
+                    DataSet.operational_status == "current",
+                    DataSet.last_success_at.is_not(None),
+                    DataSet.coverage["operational_accepted"]
+                    .as_boolean()
+                    .is_not(False),
+                    (
+                        DataSet.next_expected_update_at.is_(None)
+                        | (DataSet.next_expected_update_at > observed_at)
+                    ),
+                    applicability == outcome.value,
+                )
             )
+            or 0
         )
-        or 0
+
+    queues["master_replay_actionable"] = replay_count(
+        SourceApplicability.APPLICABLE
+    )
+    queues["master_replay_not_applicable"] = replay_count(
+        SourceApplicability.NOT_APPLICABLE
+    )
+    queues["master_replay_applicability_unknown"] = replay_count(
+        SourceApplicability.UNKNOWN
+    )
+    generation_counts = dict(
+        session.execute(
+            select(
+                FactoryGenerationCompany.status,
+                func.count(FactoryGenerationCompany.id),
+            )
+            .join(
+                FactoryGeneration,
+                FactoryGeneration.id == FactoryGenerationCompany.generation_id,
+            )
+            .where(FactoryGeneration.generation_type == "source")
+            .group_by(FactoryGenerationCompany.status)
+        ).all()
+    )
+    for status in (
+        "pending",
+        "scheduled",
+        "complete",
+        "failed",
+        "not_applicable",
+        "applicability_unknown",
+    ):
+        queues[f"source_generation_{status}"] = int(
+            generation_counts.get(status, 0)
+        )
+    queues["source_generation_actionable"] = (
+        queues["source_generation_pending"] + queues["source_generation_scheduled"]
     )
     queues = {
         key: (round(float(value), 3) if key.endswith("_seconds") else int(value or 0))

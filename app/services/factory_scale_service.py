@@ -280,7 +280,11 @@ def collect_factory_pressure(
                 DataSet.next_expected_update_at.is_(None)
                 | (DataSet.next_expected_update_at > now)
             ),
-            source_applicability_clause(DataSet.code, Company.inn),
+            source_applicability_clause(
+                DataSet.applicability,
+                Company.entity_type,
+                Company.inn,
+            ),
         )
     )
     backlog_rows = active.union_all(actionable_signals).subquery()

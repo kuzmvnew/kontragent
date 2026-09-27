@@ -105,6 +105,7 @@ def test_ip_only_signal_does_not_backpressure_legal_company(tmp_path):
                 source_as_of=NOW,
                 checked_at=NOW,
                 coverage={"operational_accepted": True},
+                applicability={"entity_types": ["individual_entrepreneur"]},
                 operational_status="current",
                 auto_update_status="configured",
             )
@@ -114,6 +115,9 @@ def test_ip_only_signal_does_not_backpressure_legal_company(tmp_path):
             dataset.last_success_at = NOW
             dataset.next_expected_update_at = None
             dataset.coverage = {"operational_accepted": True}
+            dataset.applicability = {
+                "entity_types": ["individual_entrepreneur"]
+            }
             dataset.operational_status = "current"
             dataset.auto_update_status = "configured"
 
@@ -221,6 +225,7 @@ def test_new_operational_source_schedules_source_only_master_backfill(monkeypatc
             source_as_of=NOW,
             checked_at=NOW,
             coverage={"operational_accepted": True},
+            applicability={"entity_types": ["legal"]},
             operational_status="current",
             auto_update_status="configured",
         )

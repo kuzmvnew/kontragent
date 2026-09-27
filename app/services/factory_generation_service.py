@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import case, func, literal, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.contracts.risk_v3 import UnsupportedSubjectOutcome
@@ -26,7 +26,11 @@ from app.services.risk_v3_persistence_service import (
     calculate_company_risk_v3_from_persisted,
     get_or_create_summary_v3,
 )
-from app.services.source_applicability_service import source_applicability_clause
+from app.services.source_applicability_service import (
+    SourceApplicability,
+    parse_source_applicability,
+    source_applicability_expression,
+)
 
 
 def utc_now() -> datetime:
@@ -172,21 +176,36 @@ def _schedule_source_members(
         enqueue_enrichment_work,
     )
 
-    company_ids = tuple(
-        session.scalars(
-            select(Company.id)
+    dataset = (
+        session.get(DataSet, generation.dataset_id)
+        if generation.dataset_id is not None
+        else None
+    )
+    if dataset is None:
+        raise RuntimeError("Source generation dataset is missing")
+    decision = source_applicability_expression(
+        DataSet.applicability,
+        Company.entity_type,
+        Company.inn,
+    ).label("applicability")
+    rows = tuple(
+        session.execute(
+            select(Company.id.label("company_id"), decision)
+            .select_from(Company)
+            .join(DataSet, DataSet.id == dataset.id)
             .where(
                 Company.id > generation.cursor_company_id,
-                source_applicability_clause(
-                    literal(str(generation.source_id)), Company.inn
-                ),
+                DataSet.id == dataset.id,
             )
             .order_by(Company.id)
             .limit(limit)
         )
     )
     run_ids: list[UUID] = []
-    for company_id in company_ids:
+    selected_count = 0
+    for company_id, applicability in rows:
+        if applicability == SourceApplicability.NOT_APPLICABLE.value:
+            continue
         member = FactoryGenerationCompany(
             generation_id=generation.id,
             company_id=company_id,
@@ -195,6 +214,11 @@ def _schedule_source_members(
             updated_at=now,
         )
         session.add(member)
+        selected_count += 1
+        if applicability == SourceApplicability.UNKNOWN.value:
+            member.status = "applicability_unknown"
+            member.last_error = "Company subject applicability is unresolved"
+            continue
         try:
             creation = create_enrichment_run(
                 session,
@@ -215,10 +239,10 @@ def _schedule_source_members(
         member.status = "scheduled"
         member.enrichment_run_id = creation.run.id
         run_ids.append(creation.run.id)
-    if company_ids:
-        generation.cursor_company_id = max(company_ids)
-        generation.selected_count += len(company_ids)
-    if len(company_ids) < limit:
+    if rows:
+        generation.cursor_company_id = max(int(row.company_id) for row in rows)
+        generation.selected_count += selected_count
+    if len(rows) < limit:
         generation.selection_complete = True
     jobs_created = enqueue_enrichment_work(session, run_ids, now=now)
     generation.scheduled_count += len(run_ids)
@@ -346,9 +370,18 @@ def _refresh_counts(
         counts.get("not_applicable", 0)
     )
     generation.failed_count = int(counts.get("failed", 0))
+    applicability_unknown = int(counts.get("applicability_unknown", 0))
     active = int(counts.get("pending", 0)) + int(counts.get("scheduled", 0))
     if generation.selection_complete and not active:
-        generation.status = "failed" if generation.failed_count else "complete"
+        generation.status = (
+            "failed"
+            if generation.failed_count or applicability_unknown
+            else "complete"
+        )
+        if applicability_unknown and not generation.last_error:
+            generation.last_error = (
+                f"{applicability_unknown} company applicability decisions are unknown"
+            )
         generation.completed_at = now
     else:
         generation.status = "running"
@@ -390,20 +423,34 @@ def process_factory_generations(
         }
     jobs_created = 0
     runs_scheduled = 0
+    blocked_by_unknown_policy = False
     if generation.generation_type == "source":
-        _reconcile_source_members(session, generation, now=observed_at)
-        source_limit = (
-            selection_limit
-            if source_selection_limit is None
-            else source_selection_limit
+        dataset = (
+            session.get(DataSet, generation.dataset_id)
+            if generation.dataset_id is not None
+            else None
         )
-        if not generation.selection_complete and source_limit:
-            jobs_created, runs_scheduled = _schedule_source_members(
-                session,
-                generation,
-                limit=source_limit,
-                now=observed_at,
+        if dataset is None or parse_source_applicability(dataset.applicability) is None:
+            blocked_by_unknown_policy = True
+            generation.status = "failed"
+            generation.selection_complete = True
+            generation.last_error = "Source dataset applicability is unknown"
+            generation.completed_at = observed_at
+            generation.updated_at = observed_at
+        else:
+            _reconcile_source_members(session, generation, now=observed_at)
+            source_limit = (
+                selection_limit
+                if source_selection_limit is None
+                else source_selection_limit
             )
+            if not generation.selection_complete and source_limit:
+                jobs_created, runs_scheduled = _schedule_source_members(
+                    session,
+                    generation,
+                    limit=source_limit,
+                    now=observed_at,
+                )
     elif not generation.selection_complete:
         _recalculate_ruleset_members(
             session,
@@ -411,7 +458,17 @@ def process_factory_generations(
             limit=selection_limit,
             now=observed_at,
         )
-    _refresh_counts(session, generation, now=observed_at)
+    if not blocked_by_unknown_policy:
+        _refresh_counts(session, generation, now=observed_at)
+    applicability_unknown_count = int(
+        session.scalar(
+            select(func.count(FactoryGenerationCompany.id)).where(
+                FactoryGenerationCompany.generation_id == generation.id,
+                FactoryGenerationCompany.status == "applicability_unknown",
+            )
+        )
+        or 0
+    )
     return {
         "generation_id": str(generation.id),
         "generation_type": generation.generation_type,
@@ -422,6 +479,7 @@ def process_factory_generations(
         "scheduled_count": generation.scheduled_count,
         "completed_count": generation.completed_count,
         "failed_count": generation.failed_count,
+        "applicability_unknown_count": applicability_unknown_count,
         "jobs_created": jobs_created,
         "runs_scheduled": runs_scheduled,
     }

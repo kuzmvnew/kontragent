@@ -90,6 +90,7 @@ def _dataset(
             "operational_accepted": operational,
             "successful_scheduled_checks": 2 if operational else 0,
         },
+        applicability={"entity_types": ["legal"]},
         operational_status="current" if operational else "not_configured",
         auto_update_status="configured" if operational else "not_configured",
     )
@@ -304,7 +305,8 @@ def test_postgresql_backlog_creates_local_replay_and_bounded_point_jobs(tmp_path
     with Session(engine) as session:
         company, signals = _seed_workflow(session, tmp_path)
         result = consume_master_replay_signals(session, limit=10, now=NOW)
-        assert result.signals_seen == 3
+        # Only operational, explicitly applicable signals enter the consumer.
+        assert result.signals_seen == 2
         assert result.signals_scheduled == 2
         assert result.runs_created == 1
         assert result.jobs_created == 2

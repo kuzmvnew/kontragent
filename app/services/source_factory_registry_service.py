@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
 from app.models.source import DataSet, DataSource
+from app.services.source_applicability_service import parse_source_applicability
 
 
 DATASETS = {
     "firmoteka": {
+        "applicability": {"entity_types": ["legal", "individual_entrepreneur"]},
         "source_code": "firmoteka",
         "source_name": "Firmoteka",
         "source_type": "authorized_bridge",
@@ -34,6 +36,7 @@ DATASETS = {
         ),
     },
     "fns_egrul": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "fns",
         "source_name": "ФНС России",
         "name": "ЕГРЮЛ: полная выгрузка и ежедневные изменения",
@@ -49,6 +52,7 @@ DATASETS = {
         "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
     },
     "fns_egrip": {
+        "applicability": {"entity_types": ["individual_entrepreneur"]},
         "source_code": "fns",
         "source_name": "ФНС России",
         "name": "ЕГРИП: полная выгрузка и ежедневные изменения",
@@ -64,6 +68,7 @@ DATASETS = {
         "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
     },
     "girbo_accounting": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "girbo",
         "source_name": "ГИР БО ФНС России",
         "name": "ГИР БО: бухгалтерская отчётность и корректировки",
@@ -79,6 +84,7 @@ DATASETS = {
         "auto_update_status": AutoUpdateStatus.ACCESS_PENDING,
     },
     "fns_npd": {
+        "applicability": {"entity_types": ["individual_entrepreneur"]},
         "source_code": "fns",
         "source_name": "ФНС России",
         "source_priority": 1,
@@ -95,6 +101,7 @@ DATASETS = {
         "auto_update_status": AutoUpdateStatus.NOT_CONFIGURED,
     },
     "nostroy_sro_members_on_demand": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "nostroy",
         "source_name": "НОСТРОЙ",
         "name": "НОСТРОЙ: члены строительных СРО",
@@ -110,6 +117,7 @@ DATASETS = {
         "auto_update_status": AutoUpdateStatus.NOT_CONFIGURED,
     },
     "nopriz_sro_members_on_demand": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "nopriz",
         "source_name": "НОПРИЗ",
         "name": "НОПРИЗ: члены СРО изыскателей и проектировщиков",
@@ -125,6 +133,7 @@ DATASETS = {
         "auto_update_status": AutoUpdateStatus.NOT_CONFIGURED,
     },
     "prime_corporate_disclosure": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "prime_disclosure",
         "source_name": "ПРАЙМ Раскрытие",
         "source_type": "public_disclosure",
@@ -142,6 +151,7 @@ DATASETS = {
         "description": "Public issuer-disclosure disseminator; exact-INN evidence, not Master authority.",
     },
     "eis_rnp": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "eis",
         "source_name": "ЕИС Закупки",
         "name": "ЕИС: реестр недобросовестных поставщиков",
@@ -158,6 +168,7 @@ DATASETS = {
         "description": "Official EIS machine channel; requires EIS_IP_TOKEN and accepted baseline schema.",
     },
     "rkn_personal_data_operators": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "roskomnadzor",
         "source_name": "Роскомнадзор",
         "name": "Роскомнадзор: операторы персональных данных",
@@ -174,6 +185,7 @@ DATASETS = {
         "description": "Low-load exact-INN public legal-entity lookup; no mass crawling or personal data publication.",
     },
     "rkn_communications_licenses": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "roskomnadzor", "source_name": "Роскомнадзор",
         "name": "Роскомнадзор: лицензии связи", "domain": "communications_licenses",
         "update_mode": "bulk", "data_format": "xml", "refresh_schedule": "daily_check",
@@ -184,6 +196,7 @@ DATASETS = {
         "description": "Official daily XML snapshot with separately frozen XSD.",
     },
     "rkn_broadcast_licenses": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "roskomnadzor", "source_name": "Роскомнадзор",
         "name": "Роскомнадзор: лицензии вещания", "domain": "broadcast_licenses",
         "update_mode": "bulk", "data_format": "xml", "refresh_schedule": "daily_check",
@@ -194,6 +207,7 @@ DATASETS = {
         "description": "Official daily XML snapshot with separately frozen XSD.",
     },
     "rkn_registered_media": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "roskomnadzor", "source_name": "Роскомнадзор",
         "name": "Роскомнадзор: зарегистрированные СМИ", "domain": "media_registry",
         "update_mode": "bulk", "data_format": "xml", "refresh_schedule": "daily_check",
@@ -204,6 +218,7 @@ DATASETS = {
         "description": "Official daily XML snapshot with separately frozen XSD.",
     },
     "rkn_information_distributors": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "roskomnadzor", "source_name": "Роскомнадзор",
         "name": "Роскомнадзор: организаторы распространения информации", "domain": "information_distributors",
         "update_mode": "bulk", "data_format": "xml", "refresh_schedule": "daily_check",
@@ -214,6 +229,7 @@ DATASETS = {
         "description": "Official XML snapshot with separately frozen XSD.",
     },
     "rkn_hosting_providers": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "roskomnadzor", "source_name": "Роскомнадзор",
         "name": "Роскомнадзор: провайдеры хостинга", "domain": "hosting_registry",
         "update_mode": "bulk", "data_format": "xlsx", "refresh_schedule": "daily_check",
@@ -224,6 +240,7 @@ DATASETS = {
         "description": "Official XLSX registry snapshot; personal rows remain unpublished.",
     },
     "mintrans_ted_registry": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "mintrans",
         "source_name": "Минтранс России",
         "name": "Минтранс: реестр уведомлений ТЭД",
@@ -239,6 +256,7 @@ DATASETS = {
         "auto_update_status": AutoUpdateStatus.NOT_CONFIGURED,
     },
     "fedresurs_messages": {
+        "applicability": {"entity_types": ["legal", "individual_entrepreneur"]},
         "source_code": "fedresurs",
         "source_name": "Федресурс",
         "name": "Федресурс: события компаний и банкротство",
@@ -259,6 +277,7 @@ DATASETS = {
         ),
     },
     "checko_arbitration_cases": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "checko",
         "source_name": "Checko",
         "source_type": "commercial_aggregator_free_api",
@@ -280,6 +299,7 @@ DATASETS = {
         ),
     },
     "fssp_enforcement": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "fssp",
         "source_name": "ФССП России",
         "name": "ФССП: исполнительные производства",
@@ -300,6 +320,7 @@ DATASETS = {
         ),
     },
     "moscow_general_court_cases": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "moscow_courts_official",
         "source_name": "Суды города Москвы",
         "source_type": "official_public_service",
@@ -321,6 +342,7 @@ DATASETS = {
         ),
     },
     "eis_procurements": {
+        "applicability": {"entity_types": ["legal"]},
         "source_code": "eis",
         "source_name": "ЕИС Закупки",
         "name": "ЕИС: закупочная деятельность",
@@ -343,31 +365,27 @@ DATASETS = {
 }
 
 
+def registry_applicability_inventory() -> dict[str, int]:
+    """Return validation counts without inventing policy for incomplete specs."""
+
+    missing = invalid = 0
+    for spec in DATASETS.values():
+        if "applicability" not in spec:
+            missing += 1
+        elif parse_source_applicability(spec["applicability"]) is None:
+            invalid += 1
+    return {
+        "total": len(DATASETS),
+        "valid": len(DATASETS) - missing - invalid,
+        "missing": missing,
+        "invalid": invalid,
+    }
+
+
 def _factory_metadata(code: str, spec: dict) -> dict:
-    if code in {"fns_egrip", "fns_npd"}:
-        entity_types = ["individual_entrepreneur"]
-    elif code in {
-        "fns_egrul",
-        "girbo_accounting",
-        "nostroy_sro_members_on_demand",
-        "nopriz_sro_members_on_demand",
-        "prime_corporate_disclosure",
-        "eis_rnp",
-        "rkn_personal_data_operators",
-        "rkn_communications_licenses",
-        "rkn_broadcast_licenses",
-        "rkn_registered_media",
-        "rkn_information_distributors",
-        "rkn_hosting_providers",
-        "mintrans_ted_registry",
-        "checko_arbitration_cases",
-        "fssp_enforcement",
-        "moscow_general_court_cases",
-        "eis_procurements",
-    }:
-        entity_types = ["legal"]
-    else:
-        entity_types = ["legal", "individual_entrepreneur"]
+    applicability = spec.get("applicability")
+    if parse_source_applicability(applicability) is None:
+        raise ValueError(f"{code}: explicit valid applicability is required")
     adverse_domains = {
         "legal_events",
         "arbitration_courts",
@@ -395,7 +413,9 @@ def _factory_metadata(code: str, spec: dict) -> dict:
         "coverage_role": (
             "identity" if spec["domain"] == "registry" else "supporting"
         ),
-        "applicability": {"entity_types": entity_types},
+        "applicability": {
+            "entity_types": list(applicability["entity_types"]),
+        },
         "freshness": {
             "policy": spec["freshness_policy"],
             "schedule": spec["refresh_schedule"],
