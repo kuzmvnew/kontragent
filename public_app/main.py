@@ -197,7 +197,7 @@ def create_app(repository=None) -> FastAPI:
         projection = _repo(request).get_company(inn)
         if projection is None:
             raise StarletteHTTPException(status_code=404)
-        return JSONResponse(projection.model_dump(mode="json"))
+        return JSONResponse(projection.public_payload())
 
     @app.get("/robots.txt")
     def robots():

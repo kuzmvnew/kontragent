@@ -70,7 +70,7 @@ def public_server(tmp_path_factory):
     process.wait(timeout=10)
 
 
-def test_desktop_card_v2(public_server):
+def test_desktop_card_v2_semantic_screenshot_regression(public_server, tmp_path):
     with sync_playwright() as manager:
         browser = manager.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -80,6 +80,18 @@ def test_desktop_card_v2(public_server):
         assert page.locator(".source-card").count() == 4
         assert page.get_by_text("Дата данных источника").count() == 4
         assert page.locator("meta[name=robots]").get_attribute("content") == "index, follow"
+        visible = page.locator("body").inner_text()
+        for marker in (
+            "{'", "fact_ref", "origin_check_ref", "limitation_code",
+            "recommendation_code", "parameters", "evidence_refs",
+            "APPLICABILITY_UNKNOWN", "STALE_DATA", "REVEXP", "PAYTAX",
+            "DEBTAM", "TAXOFFENCE", "Risk v3",
+        ):
+            assert marker not in visible
+        screenshot = tmp_path / "semantic-card-desktop.png"
+        page.screenshot(path=screenshot, full_page=True)
+        assert screenshot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert screenshot.stat().st_size > 10_000
         browser.close()
 
 

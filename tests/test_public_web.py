@@ -58,15 +58,15 @@ def test_legacy_route_is_permanent_redirect():
     assert response.headers["location"] == "/companies/0274101890"
 
 
-def test_api_and_html_use_same_active_revision_and_show_v3_dates():
+def test_api_and_html_show_same_prepared_projection_dates_without_engine_metadata():
     web, repository = client()
     html = web.get("/companies/0274101890")
     api = web.get("/api/company/0274101890")
     assert html.status_code == api.status_code == 200
-    assert repository.item.publication.release_id in html.text
-    assert api.json()["publication"]["release_id"] == repository.item.publication.release_id
-    assert "Risk v3" in html.text
-    assert repository.item.summary.short_conclusion in html.text
+    assert repository.item.publication.release_id not in html.text
+    assert "release_id" not in api.json()["publication"]
+    assert "Risk v3" not in html.text
+    assert repository.item.public_conclusion in html.text
     assert "Дата данных источника" in html.text
     assert "Дата результата" in html.text
 
@@ -86,8 +86,9 @@ def test_public_gets_make_no_network_calls_or_writes(monkeypatch):
 def test_limiting_states_are_visually_distinct():
     web, repository = client()
     response = web.get(f"/companies/{repository.item.company.inn}")
-    assert "state-partial" in response.text
-    assert "PARTIAL" in response.text
+    assert "state-attention" in response.text
+    assert "Оценка содержит ограничения" in response.text
+    assert "PARTIAL" not in response.text
 
 
 def test_stale_unavailable_and_unknown_never_become_no_violations():
@@ -103,8 +104,10 @@ def test_stale_unavailable_and_unknown_never_become_no_violations():
     repository.item = PublicProjection.model_validate(value)
     response = web.get(f"/companies/{repository.item.company.inn}")
     assert response.status_code == 200
-    for css_state in ("state-stale_data", "state-source_unavailable", "state-unknown"):
-        assert css_state in response.text
+    for public_text in ("Данные устарели", "Источник временно недоступен", "Недостаточно данных"):
+        assert public_text in response.text
+    for internal_text in ("STALE_DATA", "SOURCE_UNAVAILABLE", "state-stale_data", "state-source_unavailable"):
+        assert internal_text not in response.text
     assert "нарушений нет" not in response.text.casefold()
 
 

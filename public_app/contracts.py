@@ -9,6 +9,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from public_app.semantic import (
+    PUBLIC_NEXT_INDEX_ENABLED,
+    CompiledLimitation,
+    CompiledRecommendation,
+    compile_limitation,
+    compile_recommendation,
+    compile_source_status,
+    validate_public_text,
+)
+
 SCHEMA_VERSION = "public-projection-v1"
 REQUIRED_SOURCE_CODES = ("REVEXP", "PAYTAX", "DEBTAM", "TAXOFFENCE")
 FORBIDDEN_KEY_PARTS = {
@@ -137,11 +147,59 @@ class CompanyInfo(PublicModel):
         return value
 
 
+class PublicLimitation(PublicModel):
+    headline: str = Field(min_length=1, max_length=500)
+    short_explanation: str = Field(min_length=1, max_length=1600)
+    effect_on_conclusion: str = Field(min_length=1, max_length=1600)
+    what_remains_unknown: str = Field(min_length=1, max_length=1600)
+
+    @classmethod
+    def from_compiled(cls, value: CompiledLimitation) -> "PublicLimitation":
+        return cls(**value.model_dump())
+
+
+class PublicRecommendation(PublicModel):
+    action: str = Field(min_length=1, max_length=1600)
+    rationale: str = Field(min_length=1, max_length=1600)
+    effect: str = Field(min_length=1, max_length=1600)
+
+    @classmethod
+    def from_compiled(cls, value: CompiledRecommendation) -> "PublicRecommendation":
+        return cls(**value.model_dump())
+
+
 class PublicRiskFactor(PublicModel):
+    meaning_id: str | None = Field(default=None, max_length=200)
+    category: str = Field(default="Фактор проверки", min_length=1, max_length=240)
+    severity: str = Field(default="Требует внимания", min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=1000)
     explanation: str | None = Field(default=None, max_length=2000)
+    full_explanation: str | None = Field(default=None, max_length=3000)
+    client_meaning: str | None = Field(default=None, max_length=2000)
+    what_it_does_not_mean: str | None = Field(default=None, max_length=1600)
+    recommendation_effect: str | None = Field(default=None, max_length=1600)
+    current_state: str | None = Field(default=None, max_length=240)
+    previous_state: str | None = Field(default=None, max_length=240)
+    change: str | None = Field(default=None, max_length=500)
+    trend: str | None = Field(default=None, max_length=160)
+    frequency: str | None = Field(default=None, max_length=160)
+    recency: str | None = Field(default=None, max_length=160)
+    duration: str | None = Field(default=None, max_length=160)
+    materiality: str | None = Field(default=None, max_length=500)
+    counter_evidence: tuple[str, ...] = ()
+    confidence: float | None = Field(default=None, ge=0, le=1)
     source_name: str | None = Field(default=None, max_length=250)
     source_data_date: date | None = None
+
+    @property
+    def public_headline(self) -> str:
+        return self.title if self.meaning_id else "Подтверждённый фактор требует внимания."
+
+    @property
+    def public_explanation(self) -> str:
+        if self.meaning_id and self.explanation:
+            return self.explanation
+        return "Фактор показан без расширенной интерпретации; изучите подтверждённые сведения и дату источника."
 
 
 class PublicRisk(PublicModel):
@@ -149,17 +207,65 @@ class PublicRisk(PublicModel):
     title: str = Field(min_length=1, max_length=300)
     explanation: str = Field(min_length=1, max_length=3000)
     factors: tuple[PublicRiskFactor, ...] = ()
-    limitations: tuple[str, ...] = ()
+    limitations: tuple[PublicLimitation, ...] = ()
     assessment_date: date
     model_version: str | None = Field(default=None, max_length=80)
     ruleset_version: str | None = Field(default=None, max_length=120)
+
+    @field_validator("limitations", mode="before")
+    @classmethod
+    def compile_legacy_limitations(cls, value):
+        compiled = []
+        for item in value or ():
+            if isinstance(item, PublicLimitation):
+                compiled.append(item)
+            elif isinstance(item, dict) and {
+                "headline", "short_explanation", "effect_on_conclusion", "what_remains_unknown"
+            } <= set(item):
+                compiled.append(item)
+            else:
+                code = item.get("limitation_code") if isinstance(item, dict) else item
+                compiled.append(compile_limitation(str(code or "")).model_dump())
+        return tuple(compiled)
+
+    @property
+    def public_status(self) -> str:
+        return compile_source_status(
+            self.state.value,
+            source_date=self.assessment_date,
+            negative_closure_proven=self.state == PublicState.NOT_FOUND,
+        ).label
+
+    @property
+    def public_visual_state(self) -> str:
+        return compile_source_status(
+            self.state.value,
+            source_date=self.assessment_date,
+            negative_closure_proven=self.state == PublicState.NOT_FOUND,
+        ).visual_state
+
+    @property
+    def public_title(self) -> str:
+        if self.limitations:
+            return "Оценка содержит ограничения"
+        if self.factors:
+            return "Выявлены факторы, требующие внимания"
+        if self.state == PublicState.NOT_FOUND:
+            return "Неблагоприятные факторы не выявлены в завершённых проверках"
+        return "Оценка содержит ограничения"
+
+    @property
+    def public_explanation(self) -> str:
+        if self.limitations:
+            return "Часть проверок не даёт подтверждённого результата; ограничения перечислены отдельно."
+        return "Вывод сформирован только по сохранённым подтверждённым фактам и завершённым проверкам."
 
 
 class PublicSummary(PublicModel):
     short_conclusion: str = Field(min_length=1, max_length=2000)
     main_factors: tuple[str, ...] = ()
-    limitations: tuple[str, ...] = ()
-    recommendations: tuple[str, ...] = ()
+    limitations: tuple[PublicLimitation, ...] = ()
+    recommendations: tuple[PublicRecommendation, ...] = ()
     generated_at: datetime
 
     @field_validator("generated_at")
@@ -168,6 +274,39 @@ class PublicSummary(PublicModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("summary generated_at must include a timezone")
         return value
+
+    @field_validator("limitations", mode="before")
+    @classmethod
+    def compile_legacy_limitations(cls, value):
+        compiled = []
+        for item in value or ():
+            if isinstance(item, PublicLimitation):
+                compiled.append(item)
+            elif isinstance(item, dict) and {
+                "headline", "short_explanation", "effect_on_conclusion", "what_remains_unknown"
+            } <= set(item):
+                compiled.append(item)
+            else:
+                code = item.get("limitation_code") if isinstance(item, dict) else item
+                compiled.append(compile_limitation(str(code or "")).model_dump())
+        return tuple(compiled)
+
+    @field_validator("recommendations", mode="before")
+    @classmethod
+    def compile_legacy_recommendations(cls, value):
+        compiled = []
+        for item in value or ():
+            if isinstance(item, PublicRecommendation):
+                compiled.append(item)
+                continue
+            if isinstance(item, dict) and {"action", "rationale", "effect"} <= set(item):
+                compiled.append(item)
+                continue
+            code = item.get("recommendation_code") if isinstance(item, dict) else item
+            result = compile_recommendation(str(code or ""))
+            if result is not None:
+                compiled.append(result.model_dump())
+        return tuple(compiled)
 
 
 PublicScalar = str | int | float | bool | None
@@ -182,6 +321,7 @@ class PublicSourceBlock(PublicModel):
     result_date: date
     freshness: Freshness
     limitation: str | None = Field(default=None, max_length=2000)
+    negative_closure_proven: bool = False
 
     @field_validator("code")
     @classmethod
@@ -205,7 +345,42 @@ class PublicSourceBlock(PublicModel):
             PublicState.CONFLICTING_EVIDENCE,
         } and not self.limitation:
             raise ValueError("limiting source states require an explanation")
+        if self.state == PublicState.NOT_FOUND and not self.negative_closure_proven:
+            raise ValueError("NOT_FOUND requires proven negative closure")
         return self
+
+    @property
+    def public_name(self) -> str:
+        return {
+            "REVEXP": "Доходы и расходы по данным ФНС",
+            "PAYTAX": "Уплаченные налоги и сборы по данным ФНС",
+            "DEBTAM": "Налоговая задолженность по данным ФНС",
+            "TAXOFFENCE": "Налоговые правонарушения по данным ФНС",
+        }[self.code]
+
+    @property
+    def public_status(self) -> str:
+        return compile_source_status(
+            self.state.value,
+            source_date=self.source_data_date,
+            negative_closure_proven=self.negative_closure_proven,
+        ).label
+
+    @property
+    def public_explanation(self) -> str:
+        return compile_source_status(
+            self.state.value,
+            source_date=self.source_data_date,
+            negative_closure_proven=self.negative_closure_proven,
+        ).explanation
+
+    @property
+    def public_visual_state(self) -> str:
+        return compile_source_status(
+            self.state.value,
+            source_date=self.source_data_date,
+            negative_closure_proven=self.negative_closure_proven,
+        ).visual_state
 
 
 class PublicProjection(PublicModel):
@@ -222,6 +397,86 @@ class PublicProjection(PublicModel):
             raise ValueError("projection must contain each required source exactly once")
         scan_forbidden(self.model_dump(mode="json"))
         return self
+
+    @property
+    def public_conclusion(self) -> str:
+        if self.risk.factors:
+            return "Выявлены подтверждённые факторы, требующие внимания."
+        if self.risk.state == PublicState.NOT_FOUND and not self.risk.limitations:
+            return "Неблагоприятные факторы не выявлены в завершённых проверках."
+        return "Данных недостаточно для положительного вывода; учтите ограничения проверки."
+
+    @property
+    def public_limitations(self) -> tuple[PublicLimitation, ...]:
+        return tuple(dict.fromkeys((*self.risk.limitations, *self.summary.limitations)))
+
+    def public_payload(self) -> dict[str, Any]:
+        """Return the ordinary-user API shape with no operational identifiers."""
+
+        factors = [
+            {
+                "meaning_id": item.meaning_id,
+                "category": item.category,
+                "severity": item.severity,
+                "headline": item.public_headline,
+                "short_explanation": item.public_explanation,
+                "full_explanation": item.full_explanation or item.public_explanation,
+                "client_meaning": item.client_meaning,
+                "what_it_does_not_mean": item.what_it_does_not_mean,
+                "recommendation_effect": item.recommendation_effect,
+                "current_state": item.current_state,
+                "previous_state": item.previous_state,
+                "change": item.change,
+                "trend": item.trend,
+                "frequency": item.frequency,
+                "recency": item.recency,
+                "duration": item.duration,
+                "materiality": item.materiality,
+                "counter_evidence": list(item.counter_evidence),
+                "confidence": item.confidence,
+                "source": item.source_name,
+                "source_data_date": item.source_data_date.isoformat() if item.source_data_date else None,
+            }
+            for item in self.risk.factors
+        ]
+        limitations = [item.model_dump(mode="json") for item in self.public_limitations]
+        recommendations = [item.model_dump(mode="json") for item in self.summary.recommendations]
+        payload = {
+            "publication": {
+                "published_at": self.publication.published_at.isoformat(),
+                "result_date": self.publication.result_date.isoformat(),
+                "content_updated_at": self.publication.content_updated_at.isoformat(),
+            },
+            "company": self.company.model_dump(mode="json"),
+            "assessment": {
+                "status": self.risk.public_status,
+                "title": self.risk.public_title,
+                "explanation": self.risk.public_explanation,
+                "assessment_date": self.risk.assessment_date.isoformat(),
+                "critical_factors": [item for item in factors if item["severity"] == "Критический фактор"],
+                "attention_factors": [item for item in factors if item["severity"] != "Критический фактор"],
+                "positive_factors": [],
+                "limitations": limitations,
+            },
+            "summary": {
+                "short_conclusion": self.public_conclusion,
+                "recommendations": recommendations,
+                "limitations": limitations,
+            },
+            "sources": [
+                {
+                    "name": item.public_name,
+                    "status": item.public_status,
+                    "explanation": item.public_explanation,
+                    "values": item.values,
+                    "source_data_date": item.source_data_date.isoformat() if item.source_data_date else None,
+                    "result_date": item.result_date.isoformat(),
+                }
+                for item in self.sources
+            ],
+        }
+        validate_public_text(payload)
+        return payload
 
 
 class ManifestEntity(PublicModel):

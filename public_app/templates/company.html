@@ -29,17 +29,17 @@
     <p class="result-date">Дата результата <time datetime="{{ projection.publication.result_date }}">{{ projection.publication.result_date.strftime('%d.%m.%Y') }}</time></p>
   </section>
 
-  <section class="summary-panel risk-state-{{ projection.risk.state.value | lower }}">
+  <section class="summary-panel risk-state-{{ projection.risk.public_visual_state }}">
     <p class="section-kicker">Краткий вывод</p>
-    <h2>{{ projection.summary.short_conclusion }}</h2>
-    {% if projection.summary.main_factors %}<ul>{% for factor in projection.summary.main_factors %}<li>{{ factor }}</li>{% endfor %}</ul>{% endif %}
+    <h2>{{ projection.public_conclusion }}</h2>
+    {% if projection.risk.factors %}<ul>{% for factor in projection.risk.factors %}<li>{{ factor.public_headline }}</li>{% endfor %}</ul>{% endif %}
   </section>
 
   <section class="content-section">
-    <div class="section-heading"><div><p class="section-kicker">Risk v3</p><h2>{{ projection.risk.title }}</h2></div><span class="state-badge state-{{ projection.risk.state.value | lower }}">{{ projection.risk.state.value }}</span></div>
-    <p class="lead">{{ projection.risk.explanation }}</p>
-    {% if projection.risk.factors %}<div class="factor-grid">{% for factor in projection.risk.factors %}<article><h3>{{ factor.title }}</h3>{% if factor.explanation %}<p>{{ factor.explanation }}</p>{% endif %}{% if factor.source_name %}<small>{{ factor.source_name }}{% if factor.source_data_date %} · {{ factor.source_data_date.strftime('%d.%m.%Y') }}{% endif %}</small>{% endif %}</article>{% endfor %}</div>{% endif %}
-    <p class="engine-meta">Оценка: {{ projection.risk.assessment_date.strftime('%d.%m.%Y') }}{% if projection.risk.model_version %} · Модель {{ projection.risk.model_version }}{% endif %}</p>
+    <div class="section-heading"><div><p class="section-kicker">Аналитическая оценка</p><h2>{{ projection.risk.public_title }}</h2></div><span class="state-badge state-{{ projection.risk.public_visual_state }}">{{ projection.risk.public_status }}</span></div>
+    <p class="lead">{{ projection.risk.public_explanation }}</p>
+    {% if projection.risk.factors %}<div class="factor-grid">{% for factor in projection.risk.factors %}<article><p class="section-kicker">{{ factor.category }} · {{ factor.severity }}</p><h3>{{ factor.public_headline }}</h3><p>{{ factor.public_explanation }}</p>{% if factor.client_meaning %}<p>{{ factor.client_meaning }}</p>{% endif %}{% if factor.what_it_does_not_mean %}<p class="limitation"><strong>Что это не означает:</strong> {{ factor.what_it_does_not_mean }}</p>{% endif %}{% if factor.source_name %}<small>{{ factor.source_name }}{% if factor.source_data_date %} · {{ factor.source_data_date.strftime('%d.%m.%Y') }}{% endif %}</small>{% endif %}</article>{% endfor %}</div>{% endif %}
+    <p class="engine-meta">Дата оценки: {{ projection.risk.assessment_date.strftime('%d.%m.%Y') }}</p>
   </section>
 
   <section class="content-section">
@@ -56,22 +56,22 @@
     <p class="section-kicker">Официальные наборы данных</p><h2>Налоги и финансовые показатели</h2>
     <div class="source-grid">
     {% for source in projection.sources %}
-      <article class="source-card state-{{ source.state.value | lower }}">
-        <div class="source-title"><div><span>{{ source.code }}</span><h3>{{ source.source_name }}</h3></div><span class="state-badge state-{{ source.state.value | lower }}">{{ source.state.value }}</span></div>
+      <article class="source-card state-{{ source.public_visual_state }}">
+        <div class="source-title"><div><h3>{{ source.public_name }}</h3></div><span class="state-badge state-{{ source.public_visual_state }}">{{ source.public_status }}</span></div>
         {% if source.values %}<dl>{% for key, value in source.values.items() %}<div><dt>{{ key }}</dt><dd>{{ value if value is not none else '—' }}</dd></div>{% endfor %}</dl>{% endif %}
         <div class="dates"><span>Дата данных источника <b>{{ source.source_data_date.strftime('%d.%m.%Y') if source.source_data_date else 'не указана' }}</b></span><span>Дата результата <b>{{ source.result_date.strftime('%d.%m.%Y') }}</b></span></div>
-        {% if source.limitation %}<p class="limitation">{{ source.limitation }}</p>{% endif %}
+        <p class="limitation">{{ source.public_explanation }}</p>
       </article>
     {% endfor %}
     </div>
   </section>
 
-  {% if projection.summary.limitations or projection.summary.recommendations %}
+  {% if projection.public_limitations or projection.summary.recommendations %}
   <section class="content-section two-column">
-    <div><p class="section-kicker">Ограничения</p><h2>Что учитывать</h2><ul>{% for item in projection.summary.limitations %}<li>{{ item }}</li>{% endfor %}</ul></div>
-    <div><p class="section-kicker">Рекомендации</p><h2>Что проверить дальше</h2><ul>{% for item in projection.summary.recommendations %}<li>{{ item }}</li>{% endfor %}</ul></div>
+    <div><p class="section-kicker">Ограничения</p><h2>Что учитывать</h2><ul>{% for item in projection.public_limitations %}<li><strong>{{ item.headline }}</strong> {{ item.short_explanation }} {{ item.effect_on_conclusion }} {{ item.what_remains_unknown }}</li>{% endfor %}</ul></div>
+    <div><p class="section-kicker">Рекомендации</p><h2>Что делать</h2><ul>{% for item in projection.summary.recommendations %}<li><strong>{{ item.action }}</strong> {{ item.rationale }} {{ item.effect }}</li>{% endfor %}</ul></div>
   </section>
   {% endif %}
-  <p class="release-meta">Публикация {{ projection.publication.release_id }} · обновлено {{ projection.publication.content_updated_at.strftime('%d.%m.%Y') }}</p>
+  <p class="release-meta">Обновлено {{ projection.publication.content_updated_at.strftime('%d.%m.%Y') }}</p>
 </article>
 {% endblock %}
