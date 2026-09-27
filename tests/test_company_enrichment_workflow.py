@@ -400,6 +400,49 @@ def test_mixed_applicable_unknown_is_a_durable_non_actionable_denominator_blocke
         session.rollback()
 
 
+def test_found_applicable_source_is_still_blocked_by_unknown(tmp_path):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        unknown_code = _set_signal_policy(session, signals, mode="api")
+        consume_master_replay_signals(session, limit=10, now=NOW)
+        run, coverage = _workflow_rows(session, company.id)
+        actionable = next(row for row in coverage if row.source_id != unknown_code)
+        job = session.get(WorkerJob, actionable.worker_job_id)
+        job.status = "succeeded"
+        session.add(
+            WorkerRun(
+                job_id=job.id,
+                attempt_no=1,
+                started_at=NOW,
+                finished_at=NOW + timedelta(seconds=1),
+                status="succeeded",
+                worker_id="found-regression-worker",
+                fencing_token=1,
+                handler_version=job.handler_version,
+                current_stage="complete",
+                records_written=1,
+                records_published=1,
+                errors=[],
+                checksum_metadata={},
+                heartbeat_at=NOW + timedelta(seconds=1),
+                duration_ms=1_000,
+                retryable=False,
+            )
+        )
+        session.flush()
+
+        blocked = reconcile_enrichment_run(
+            session, run.id, now=NOW + timedelta(minutes=1)
+        )
+        assert actionable.status == "FOUND"
+        assert blocked.status == "waiting_sources"
+        assert blocked.last_error_code == "applicability_unknown"
+        assert blocked.risk_assessment_id is None
+        assert blocked.summary_id is None
+        assert blocked.public_ready is False
+        session.rollback()
+
+
 def test_pure_and_multiple_unknown_sources_create_no_worker_jobs(tmp_path):
     with Session(engine) as session:
         company, signals = _seed_workflow(session, tmp_path)
