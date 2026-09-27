@@ -283,6 +283,58 @@ def test_publication_history_uses_owner_facing_states_and_stale_reason(
     assert "Публичный release изменился после сборки кандидата" in response.text
 
 
+def test_publication_history_keeps_failed_row_and_shows_recovery_provenance(
+    client, monkeypatch
+):
+    failed_id = str(uuid4())
+    common = {
+        "created_at": NOW,
+        "changed_companies": ["0274101890"],
+        "changed_company_count": 1,
+        "company_count": 40,
+        "previous_release_id": "public-v1-last-good",
+        "build_at": None,
+        "upload_at": None,
+        "import_at": None,
+        "verify_at": None,
+        "rollback_at": None,
+        "last_error_label": None,
+    }
+    rows = [
+        {
+            **common,
+            "release_id": "public-v1-failed",
+            "trigger": "ENRICHMENT_READY_SCAN",
+            "trigger_label": "ENRICHMENT_READY_SCAN",
+            "recovered_from_request_id": None,
+            "status": "FAILED",
+            "status_label": "ОШИБКА",
+        },
+        {
+            **common,
+            "release_id": "public-v1-recovered",
+            "trigger": "PUBLICATION_FAILURE_RECOVERY",
+            "trigger_label": (
+                "Создано как автоматическое восстановление после ошибки публикации"
+            ),
+            "recovered_from_request_id": failed_id,
+            "status": "PUBLISHED",
+            "status_label": "ОПУБЛИКОВАН",
+        },
+    ]
+    monkeypatch.setattr(
+        service, "public_publication_history", lambda limit=100: rows
+    )
+
+    response = client.get("/admin/publications")
+
+    assert response.status_code == 200
+    assert "ОШИБКА" in response.text
+    assert "ОПУБЛИКОВАН" in response.text
+    assert "Создано как автоматическое восстановление после ошибки публикации" in response.text
+    assert f"FAILED request {failed_id}" in response.text
+
+
 def test_source_inventory_distinguishes_processes_handlers_and_families():
     counts = service._source_inventory_counts(
         [
