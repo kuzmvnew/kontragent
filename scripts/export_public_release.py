@@ -29,6 +29,8 @@ from public_app.contracts import (
     Freshness,
     PublicationInfo,
     PublicProjection,
+    PublicLimitation,
+    PublicRecommendation,
     PublicRisk,
     PublicRiskFactor,
     PublicSourceBlock,
@@ -36,6 +38,16 @@ from public_app.contracts import (
     PublicSummary,
     ReleaseManifest,
     strongest_state,
+)
+from public_app.semantic import (
+    MeaningInput,
+    aggregate_clean_conclusion_proof,
+    compile_aggregate_abstention_conclusion,
+    compile_aggregate_clean_conclusion,
+    compile_limitation,
+    compile_meaning,
+    compile_recommendation,
+    compile_source_status,
 )
 from scripts.public_release_common import canonical_json, write_checksums
 
@@ -249,20 +261,26 @@ def _source_block(
         }
     if not row:
         state = checked_state or PublicState.UNKNOWN
-        limitation = (
-            "Совпадение не найдено в опубликованном наборе данных за указанную дату; вывод ограничен охватом этого набора."
-            if state == PublicState.NOT_FOUND
-            else str((check or {}).get("limitation") or "В сохранённых данных нет результата, достаточного для положительного или отрицательного вывода.")
+        negative_closure_proven = bool(
+            (check or {}).get("negative_closure_proven")
         )
+        if state == PublicState.NOT_FOUND and not negative_closure_proven:
+            state = PublicState.UNKNOWN
         check_freshness = str((check or {}).get("freshness") or "").upper()
         freshness = Freshness.STALE if state == PublicState.STALE_DATA else (
             Freshness.CURRENT if check_freshness == "CURRENT" else Freshness.UNKNOWN
+        )
+        status = compile_source_status(
+            state.value,
+            source_date=_check_source_date(check),
+            negative_closure_proven=negative_closure_proven,
         )
         return PublicSourceBlock(
             code=code, state=state, values={}, source_name=SOURCE_NAMES[code],
             source_data_date=_check_source_date(check),
             result_date=checked_result_date or default_result_date,
-            freshness=freshness, limitation=limitation,
+            freshness=freshness, limitation=status.explanation,
+            negative_closure_proven=negative_closure_proven,
         )
     dataset = _dataset(cursor, row.get("dataset_id"))
     row_result_date = _date(row.get("updated_at") or row.get("created_at")) or default_result_date
@@ -274,19 +292,26 @@ def _source_block(
         state = strongest_state(row_state, checked_state) if checked_state else row_state
     if state == PublicState.STALE_DATA:
         freshness = Freshness.STALE
-    limitation = None
-    if state == PublicState.STALE_DATA:
-        limitation = "Срок актуальности опубликованного набора данных истёк; значение показано как историческое."
-    elif state == PublicState.CONFLICTING_EVIDENCE:
-        limitation = "Сохранённые результаты источника противоречат друг другу; требуется повторная проверка."
-    elif state not in {PublicState.FOUND, PublicState.NOT_FOUND, PublicState.NOT_APPLICABLE}:
-        limitation = str((check or {}).get("limitation") or "Результат источника имеет ограничение и не допускает положительного вывода.")
+    negative_closure_proven = bool((check or {}).get("negative_closure_proven"))
+    if state == PublicState.NOT_FOUND and not negative_closure_proven:
+        state = PublicState.UNKNOWN
+    status = compile_source_status(
+        state.value,
+        source_date=_date(row.get("data_date")),
+        negative_closure_proven=negative_closure_proven,
+    )
+    limitation = (
+        status.explanation
+        if state not in {PublicState.FOUND, PublicState.NOT_FOUND, PublicState.NOT_APPLICABLE}
+        else None
+    )
     return PublicSourceBlock(
         code=code, state=state, values=values,
         source_name=str(dataset.get("name") or SOURCE_NAMES[code])[:250],
         source_data_date=_date(row.get("data_date")),
         result_date=checked_result_date or row_result_date,
         freshness=freshness, limitation=limitation,
+        negative_closure_proven=negative_closure_proven,
     )
 
 
@@ -294,30 +319,100 @@ def _risk_projection(risk: dict) -> PublicRisk:
     result_payload = risk.get("result_payload") or {}
     raw_factors = risk.get("factors") or result_payload.get("points") or ()
     factors = []
+    seen_factor_codes: set[str] = set()
+    unknown_factor_present = False
     for factor in raw_factors[:12]:
-        title = factor.get("title") or factor.get("fact") or factor.get("factor_code")
-        if not title:
+        factor_code = factor.get("factor_code")
+        factor_ref = factor.get("factor_ref")
+        source_refs = tuple(str(item) for item in factor.get("source_refs") or () if item)
+        if not (factor_code and factor_ref and source_refs):
+            unknown_factor_present = True
+            continue
+        if str(factor_code) in seen_factor_codes:
             continue
         source_code = factor.get("source_code")
+        source_date = _date(factor.get("source_as_of") or factor.get("effective_at"))
+        try:
+            meaning_input = MeaningInput(
+                meaning_id=f"meaning:{factor_ref}",
+                factor_code=str(factor_code),
+                factor_refs=(str(factor_ref),),
+                fact_refs=(str(factor["fact_ref"]),) if factor.get("fact_ref") else (),
+                source_refs=source_refs,
+                source_dates=(source_date,) if source_date else (),
+                current_state=(
+                    "Исторический факт"
+                    if str(factor.get("recency") or "").upper() == "HISTORICAL"
+                    else "Текущий подтверждённый факт"
+                ),
+                recency={
+                    "CURRENT": "Текущие сведения",
+                    "RECENT": "Недавние сведения",
+                    "HISTORICAL": "Исторические сведения",
+                    "UNKNOWN": "Давность не определена",
+                }.get(str(factor.get("recency") or "").upper()),
+                confidence=1.0,
+                recommendation_code=factor.get("recommendation_code"),
+                ruleset_version=str(factor.get("rule_version") or risk.get("ruleset_version") or "v3"),
+            )
+        except ValueError:
+            unknown_factor_present = True
+            continue
+        compiled = compile_meaning(meaning_input)
+        if compiled is None:
+            unknown_factor_present = True
+            continue
+        seen_factor_codes.add(str(factor_code))
         factors.append(
             PublicRiskFactor(
-                title=_clean_reason(str(title)),
-                explanation=str(factor.get("explanation"))[:2000] if factor.get("explanation") else None,
-                source_name=SOURCE_CODE_NAMES.get(source_code, str(source_code) if source_code else None),
-                source_data_date=_date(factor.get("source_as_of") or factor.get("effective_at")),
+                meaning_id=compiled.meaning_id,
+                category=compiled.category,
+                severity=compiled.severity,
+                title=compiled.headline,
+                explanation=compiled.short_explanation,
+                full_explanation=compiled.full_explanation,
+                client_meaning=compiled.client_meaning,
+                what_it_does_not_mean=compiled.what_it_does_not_mean,
+                recommendation_effect=compiled.recommendation_effect,
+                current_state=compiled.current_state,
+                previous_state=compiled.previous_state,
+                change=compiled.change,
+                trend=compiled.trend,
+                frequency=compiled.frequency,
+                recency=compiled.recency,
+                duration=compiled.duration,
+                materiality=compiled.materiality,
+                counter_evidence=compiled.counter_evidence,
+                confidence=compiled.confidence,
+                source_name=SOURCE_CODE_NAMES.get(source_code, "Официальный источник"),
+                source_data_date=source_date,
             )
         )
-    coverage = risk.get("coverage_snapshot") or risk.get("coverage") or result_payload.get("coverage") or {}
-    limitations = []
+    limitations: list[PublicLimitation] = []
     for item in risk.get("limitations") or ():
-        if isinstance(item, str):
-            limitations.append(item[:1500])
-        elif isinstance(item, dict):
-            text = item.get("explanation") or item.get("message") or item.get("limitation_code")
-            if text:
-                limitations.append(str(text)[:1500])
-    is_partial = bool(result_payload.get("preliminary")) or not bool(coverage.get("mandatory_hard_checks_resolved", True)) or bool(limitations)
-    state = PublicState.PARTIAL if is_partial else (PublicState.FOUND if factors else PublicState.NOT_FOUND)
+        code = item.get("limitation_code") if isinstance(item, dict) else item
+        limitations.append(PublicLimitation.from_compiled(compile_limitation(str(code or ""))))
+    if unknown_factor_present:
+        limitations.append(PublicLimitation.from_compiled(compile_limitation(None)))
+    aggregate_proof = aggregate_clean_conclusion_proof(risk) if not factors else None
+    if not factors and (aggregate_proof is None or not aggregate_proof.proven):
+        limitations.append(
+            PublicLimitation.from_compiled(
+                compile_limitation("AGGREGATE_CLEAN_PROOF_NOT_PROVEN")
+            )
+        )
+    limitations = list(dict.fromkeys(limitations))
+    is_partial = bool(result_payload.get("preliminary")) or bool(limitations)
+    clean_proven = bool(aggregate_proof and aggregate_proof.proven)
+    state = (
+        PublicState.PARTIAL
+        if is_partial
+        else PublicState.FOUND
+        if factors
+        else PublicState.NOT_FOUND
+        if clean_proven
+        else PublicState.PARTIAL
+    )
     if state == PublicState.PARTIAL:
         title = "Оценка содержит ограничения"
     elif factors:
@@ -325,13 +420,13 @@ def _risk_projection(risk: dict) -> PublicRisk:
     else:
         title = "Неблагоприятные факторы не выявлены в выполненных проверках"
     explanation = (
-        "Факторы приведены по сохранённому результату Risk v3. Ограничения полноты не позволяют трактовать отсутствие отдельных сведений как отсутствие риска."
+        "Факторы приведены по сохранённым результатам проверки. Ограничения полноты не позволяют трактовать отсутствие отдельных сведений как отсутствие риска."
         if is_partial else
-        "Факторы приведены по сохранённому результату Risk v3 без рейтинга или вероятностной интерпретации."
+        "Факторы приведены по сохранённым результатам проверки без рейтинга или вероятностной интерпретации."
     )
     return PublicRisk(
         state=state, title=title, explanation=explanation, factors=tuple(factors),
-        limitations=tuple(dict.fromkeys(limitations)),
+        limitations=tuple(limitations),
         assessment_date=_aware(risk["calculated_at"]).date(),
         model_version=risk.get("risk_model_version") or risk.get("risk_engine_version"),
         ruleset_version=risk.get("ruleset_version"),
@@ -340,24 +435,50 @@ def _risk_projection(risk: dict) -> PublicRisk:
 
 def _summary_projection(summary: dict, public_risk: PublicRisk) -> PublicSummary:
     payload = summary.get("structured_payload") or {}
-    main = tuple(_clean_reason(value) for value in payload.get("main_reasons") or () if _clean_reason(value))
-    limitations = tuple(str(value)[:1500] for value in payload.get("limitations") or ())
-    recommendations = tuple(str(value)[:1500] for value in payload.get("recommendations") or ())
+    main = tuple(item.public_headline for item in public_risk.factors)
+    limitations = list(public_risk.limitations)
+    for item in payload.get("limitations") or ():
+        code = item.get("limitation_code") if isinstance(item, dict) else item
+        limitations.append(PublicLimitation.from_compiled(compile_limitation(str(code or ""))))
+    limitations = tuple(dict.fromkeys(limitations))
+    recommendations: list[PublicRecommendation] = []
+    for item in payload.get("recommendations") or ():
+        code = item.get("recommendation_code") if isinstance(item, dict) else item
+        compiled = compile_recommendation(str(code or ""))
+        if compiled is not None:
+            recommendations.append(PublicRecommendation.from_compiled(compiled))
+    recommendations = list(dict.fromkeys(recommendations))
     if public_risk.factors:
         conclusion = "Выявлены факторы, требующие внимания. Их значение следует оценивать вместе с полнотой и датами исходных данных."
     elif public_risk.state == PublicState.NOT_FOUND:
-        conclusion = "Неблагоприятные факторы не выявлены в рамках выполненных проверок."
+        conclusion = compile_aggregate_clean_conclusion()
     else:
-        conclusion = "Данных недостаточно для положительного вывода; ограничения проверки указаны ниже."
+        conclusion = compile_aggregate_abstention_conclusion()
     return PublicSummary(
         short_conclusion=conclusion, main_factors=main,
-        limitations=limitations, recommendations=recommendations,
+        limitations=limitations, recommendations=tuple(recommendations),
         generated_at=_aware(summary["generated_at"]),
     )
 
 
 def _load_latest(cursor, table: str, company_id: int, date_column: str) -> dict | None:
     return _latest_json(cursor, table, company_id, f"{date_column} DESC, id DESC")
+
+
+def _index_eligible(
+    company_info: CompanyInfo,
+    sources: tuple[PublicSourceBlock, ...],
+    public_risk: PublicRisk,
+) -> bool:
+    return bool(
+        company_info.ogrn
+        and public_risk.state in {PublicState.FOUND, PublicState.NOT_FOUND}
+        and not public_risk.limitations
+        and all(
+            source.state in {PublicState.FOUND, PublicState.NOT_FOUND}
+            for source in sources
+        )
+    )
 
 
 def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicProjection:
@@ -397,10 +518,7 @@ def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicPr
         director_name=director_name,
         director_position=director_position,
     )
-    index_eligible = bool(
-        company_info.ogrn
-        and all(source.state in {PublicState.FOUND, PublicState.NOT_FOUND} for source in sources)
-    )
+    index_eligible = _index_eligible(company_info, sources, public_risk)
     content_candidates = [_aware(risk["calculated_at"]), _aware(summary["generated_at"])]
     for field in ("updated_at", "source_updated_at"):
         if company.get(field):
