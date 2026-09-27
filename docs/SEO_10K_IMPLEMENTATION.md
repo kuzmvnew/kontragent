@@ -1,6 +1,6 @@
 # SEO 10K implementation foundation
 
-Task: `SEO-10K-IMPL-01-A-CORRECTION-02`
+Task: `SEO-10K-IMPL-01-A-CORRECTION-03`
 
 Status: implemented and locally testable; **not production accepted**
 
@@ -29,6 +29,12 @@ then produces exactly `VALID_INDEX`, `VALID_NOINDEX` or `INVALID`. It validates
 the full strict schema and nested structures, deterministic metadata/JSON-LD,
 canonical URL, revision/INN, decisions, robots and discovery membership,
 compiler/contract authority, hashes, timestamp and every scalar mirror.
+The complete typed `SeoEligibilityResult` must equal the canonical compiler
+result, including decision, reason codes, evidence references and nested
+compiler version. Tuple order is compiler-defined and significant: persisted
+reason/evidence reordering is not normalized or trusted. `content_updated_at`
+remains a separate mirror check so no-op republish timestamp preservation is
+not replaced by naive equality of the entire `SeoProjection`.
 Missing, malformed, unauthorized or revision-mismatched SEO state is rendered
 as `noindex, follow`; it is never upgraded to INDEX at request time. The page,
 sitemap and catalog all consume this same typed result.

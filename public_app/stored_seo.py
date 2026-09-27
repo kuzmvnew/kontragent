@@ -129,7 +129,7 @@ def validate_stored_seo_projection(
             context=SeoEligibilityContext(
                 active_revision_id=release_id,
                 public_ready=True,
-                released=True,
+                released=released,
             ),
         )
         content_updated_at = _timestamp(seo_content_updated_at)
@@ -148,7 +148,8 @@ def validate_stored_seo_projection(
             and candidate.content_updated_at == content_updated_at
         )
         deterministic_content_matches = (
-            candidate.metadata == expected.metadata
+            candidate.eligibility == expected.eligibility
+            and candidate.metadata == expected.metadata
             and candidate.json_ld == expected.json_ld
             and candidate.search_visible_hash == expected.search_visible_hash
             and candidate.non_identity_content_hash == expected.non_identity_content_hash

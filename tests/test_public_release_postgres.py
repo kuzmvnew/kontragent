@@ -3,7 +3,7 @@ from __future__ import annotations
 import gzip
 import os
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -16,7 +16,6 @@ from public_app.main import create_app
 from public_app.repository import PublicRepository
 from public_app.seo import (
     SEO_COMPILER_VERSION,
-    IdentityEvidenceState,
     SeoDecision,
     SeoEligibilityContext,
     compile_seo_projection,
@@ -24,7 +23,7 @@ from public_app.seo import (
 )
 from public_app.stored_seo import StoredSeoProjectionState
 from scripts.import_public_release import import_release
-from scripts.public_release_common import canonical_json, write_checksums
+from scripts.public_release_common import canonical_json, payload_sha256, write_checksums
 from scripts.rollback_public_release import rollback_release
 from tests.public_test_support import forty_projections
 
@@ -119,30 +118,46 @@ def authorize_seo_release(connection, release_id: str) -> None:
 
 
 def store_noindex_projection(connection, release_id: str, inn: str) -> None:
-    projection = PublicProjection.model_validate(
+    stored_projection = PublicProjection.model_validate(
         connection.execute(
             "SELECT payload FROM public_company_projections WHERE release_id=%s AND inn=%s",
             (release_id, inn),
         ).fetchone()[0]
     )
+    payload = stored_projection.model_dump(mode="json")
+    for source in payload["sources"]:
+        source.update(
+            {
+                "state": "SOURCE_UNAVAILABLE",
+                "values": {},
+                "source_data_date": None,
+                "freshness": "UNKNOWN",
+                "limitation": "Источник недоступен для канонического NOINDEX-теста.",
+                "negative_closure_proven": False,
+            }
+        )
+    projection = PublicProjection.model_validate(payload)
     seo = compile_seo_projection(
         projection,
         context=SeoEligibilityContext(
             active_revision_id=release_id,
             public_ready=True,
             released=True,
-            identity_state=IdentityEvidenceState.DISPUTED,
         ),
     )
+    assert seo.eligibility.decision == SeoDecision.NOINDEX_RECOVERABLE
     connection.execute(
         """
         UPDATE public_company_projections
-        SET seo_projection=%s, seo_decision=%s, seo_compiler_version=%s,
+        SET payload=%s, payload_sha256=%s,
+            seo_projection=%s, seo_decision=%s, seo_compiler_version=%s,
             search_visible_hash=%s, non_identity_content_hash=%s,
             sitemap_shard=%s, seo_content_updated_at=%s
         WHERE release_id=%s AND inn=%s
         """,
         (
+            Jsonb(projection.model_dump(mode="json")),
+            payload_sha256(projection),
             Jsonb(seo.model_dump(mode="json")),
             seo.eligibility.decision.value,
             seo.compiler_version,
@@ -167,6 +182,35 @@ def discovery_inns(repository: PublicRepository) -> tuple[set[str], set[str]]:
         catalog.update(item.company.inn for item in items)
         page += 1
     return sitemap, catalog
+
+
+def mutate_stored_seo(connection, release_id: str, inn: str, mutation) -> None:
+    stored = connection.execute(
+        "SELECT seo_projection FROM public_company_projections WHERE release_id=%s AND inn=%s",
+        (release_id, inn),
+    ).fetchone()[0]
+    mutation(stored)
+    connection.execute(
+        "UPDATE public_company_projections SET seo_projection=%s WHERE release_id=%s AND inn=%s",
+        (Jsonb(stored), release_id, inn),
+    )
+
+
+def assert_invalid_on_page_and_discovery(
+    repository: PublicRepository,
+    web: TestClient,
+    inn: str,
+) -> tuple[set[str], set[str]]:
+    snapshot = repository.get_company_page_snapshot(inn)
+    assert snapshot is not None
+    assert snapshot.stored_seo_state == StoredSeoProjectionState.INVALID
+    response = web.get(f"/companies/{inn}")
+    assert response.status_code == 200
+    assert response.headers["x-robots-tag"] == "noindex, follow"
+    sitemap_inns, catalog_inns = discovery_inns(repository)
+    assert inn not in sitemap_inns
+    assert inn not in catalog_inns
+    return sitemap_inns, catalog_inns
 
 
 @pytest.fixture(autouse=True)
@@ -314,42 +358,7 @@ def test_partial_seo_storage_and_stored_noindex_are_fail_closed(tmp_path):
             """,
             (release_id, missing_inn),
         )
-        projection = PublicProjection.model_validate(
-            connection.execute(
-                "SELECT payload FROM public_company_projections WHERE release_id=%s AND inn=%s",
-                (release_id, noindex_inn),
-            ).fetchone()[0]
-        )
-        noindex = compile_seo_projection(
-            projection,
-            context=SeoEligibilityContext(
-                active_revision_id=release_id,
-                public_ready=True,
-                released=True,
-                identity_state=IdentityEvidenceState.DISPUTED,
-            ),
-        )
-        assert noindex.eligibility.decision == SeoDecision.NOINDEX_RECOVERABLE
-        connection.execute(
-            """
-            UPDATE public_company_projections
-            SET seo_projection=%s, seo_decision=%s, seo_compiler_version=%s,
-                search_visible_hash=%s, non_identity_content_hash=%s,
-                sitemap_shard=%s, seo_content_updated_at=%s
-            WHERE release_id=%s AND inn=%s
-            """,
-            (
-                Jsonb(noindex.model_dump(mode="json")),
-                noindex.eligibility.decision.value,
-                noindex.compiler_version,
-                noindex.search_visible_hash,
-                noindex.non_identity_content_hash,
-                noindex.sitemap_shard,
-                noindex.content_updated_at,
-                release_id,
-                noindex_inn,
-            ),
-        )
+        store_noindex_projection(connection, release_id, noindex_inn)
 
     repository = PublicRepository(TEST_URL)
     missing = repository.get_company_page_snapshot(missing_inn)
@@ -363,7 +372,10 @@ def test_partial_seo_storage_and_stored_noindex_are_fail_closed(tmp_path):
     assert stored_noindex.stored_seo_valid is True
     assert stored_noindex.stored_seo_state == StoredSeoProjectionState.VALID_NOINDEX
     assert stored_noindex.seo.eligibility.decision == SeoDecision.NOINDEX_RECOVERABLE
-    assert compile_seo_projection(stored_noindex.projection).eligibility.decision == SeoDecision.INDEX
+    assert (
+        compile_seo_projection(stored_noindex.projection).eligibility.decision
+        == SeoDecision.NOINDEX_RECOVERABLE
+    )
 
     sitemap_inns = {row["inn"] for row in repository.sitemap_rows()}
     catalog_inns = {
@@ -411,6 +423,202 @@ def test_revision_mismatch_cannot_enter_page_sitemap_or_catalog(tmp_path):
         for page in (1, 2)
         for item in repository.catalog_page(page)[0]
     }
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("reason_codes", "evidence_refs", "combined"),
+)
+def test_index_eligibility_tamper_is_fail_closed_everywhere(tmp_path, case):
+    release_id = f"public-v2-eligibility-{case.replace('_', '-')}"
+    release = bundle(tmp_path, release_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, release)
+        authorize_seo_release(connection, release_id)
+        tampered_inn, valid_inn = [
+            row[0]
+            for row in connection.execute(
+                "SELECT inn FROM public_company_projections WHERE release_id=%s ORDER BY inn LIMIT 2",
+                (release_id,),
+            ).fetchall()
+        ]
+
+        def mutation(stored):
+            if case in {"reason_codes", "combined"}:
+                stored["eligibility"]["reason_codes"] = ["PUBLIC_NOT_READY"]
+            if case in {"evidence_refs", "combined"}:
+                stored["eligibility"]["evidence_refs"] = ["forged-evidence"]
+
+        mutate_stored_seo(connection, release_id, tampered_inn, mutation)
+
+    repository = PublicRepository(TEST_URL)
+    valid = repository.get_company_page_snapshot(valid_inn)
+    assert valid is not None
+    assert valid.stored_seo_state == StoredSeoProjectionState.VALID_INDEX
+    web = TestClient(create_app(repository))
+    sitemap_inns, catalog_inns = assert_invalid_on_page_and_discovery(
+        repository,
+        web,
+        tampered_inn,
+    )
+    assert valid_inn in sitemap_inns
+    assert valid_inn in catalog_inns
+
+
+def test_noindex_eligibility_tamper_is_invalid_without_elevating_page(tmp_path):
+    release_id = "public-v2-noindex-eligibility-tamper"
+    release = bundle(tmp_path, release_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, release)
+        authorize_seo_release(connection, release_id)
+        valid_inn, tampered_inn = [
+            row[0]
+            for row in connection.execute(
+                "SELECT inn FROM public_company_projections WHERE release_id=%s ORDER BY inn LIMIT 2",
+                (release_id,),
+            ).fetchall()
+        ]
+        store_noindex_projection(connection, release_id, valid_inn)
+        store_noindex_projection(connection, release_id, tampered_inn)
+
+        def mutation(stored):
+            stored["eligibility"]["reason_codes"] = ["IDENTITY_NOT_CURRENT"]
+            stored["eligibility"]["evidence_refs"] = ["forged-evidence"]
+
+        mutate_stored_seo(connection, release_id, tampered_inn, mutation)
+
+    repository = PublicRepository(TEST_URL)
+    valid = repository.get_company_page_snapshot(valid_inn)
+    assert valid is not None
+    assert valid.stored_seo_state == StoredSeoProjectionState.VALID_NOINDEX
+    assert valid.seo.robots == "noindex, follow"
+    web = TestClient(create_app(repository))
+    sitemap_inns, catalog_inns = assert_invalid_on_page_and_discovery(
+        repository,
+        web,
+        tampered_inn,
+    )
+    assert valid_inn not in sitemap_inns
+    assert valid_inn not in catalog_inns
+
+
+def test_nested_eligibility_compiler_version_must_match_canonical_output(tmp_path):
+    release_id = "public-v2-nested-compiler-tamper"
+    release = bundle(tmp_path, release_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, release)
+        authorize_seo_release(connection, release_id)
+        inn = connection.execute(
+            "SELECT inn FROM public_company_projections WHERE release_id=%s ORDER BY inn LIMIT 1",
+            (release_id,),
+        ).fetchone()[0]
+
+        def mutation(stored):
+            stored["eligibility"]["compiler_version"] = "seo-eligibility-v0"
+
+        mutate_stored_seo(connection, release_id, inn, mutation)
+
+    repository = PublicRepository(TEST_URL)
+    web = TestClient(create_app(repository))
+    assert_invalid_on_page_and_discovery(repository, web, inn)
+
+
+def test_eligibility_evidence_order_is_compiler_deterministic(tmp_path):
+    release_id = "public-v2-eligibility-order-tamper"
+    release = bundle(tmp_path, release_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, release)
+        authorize_seo_release(connection, release_id)
+        inn = connection.execute(
+            "SELECT inn FROM public_company_projections WHERE release_id=%s ORDER BY inn LIMIT 1",
+            (release_id,),
+        ).fetchone()[0]
+
+        def mutation(stored):
+            evidence = stored["eligibility"]["evidence_refs"]
+            assert len(evidence) > 1
+            stored["eligibility"]["evidence_refs"] = list(reversed(evidence))
+
+        mutate_stored_seo(connection, release_id, inn, mutation)
+
+    repository = PublicRepository(TEST_URL)
+    web = TestClient(create_app(repository))
+    assert_invalid_on_page_and_discovery(repository, web, inn)
+
+
+def test_preserved_noop_content_timestamp_remains_valid_index(tmp_path):
+    release_id = "public-v2-preserved-seo-timestamp"
+    release = bundle(tmp_path, release_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, release)
+        authorize_seo_release(connection, release_id)
+        inn, stored = connection.execute(
+            """
+            SELECT inn, seo_projection
+            FROM public_company_projections
+            WHERE release_id=%s ORDER BY inn LIMIT 1
+            """,
+            (release_id,),
+        ).fetchone()
+        preserved = datetime.fromisoformat(stored["content_updated_at"]) - timedelta(days=1)
+        stored["content_updated_at"] = preserved.isoformat()
+        connection.execute(
+            """
+            UPDATE public_company_projections
+            SET seo_projection=%s, seo_content_updated_at=%s
+            WHERE release_id=%s AND inn=%s
+            """,
+            (Jsonb(stored), preserved, release_id, inn),
+        )
+
+    repository = PublicRepository(TEST_URL)
+    snapshot = repository.get_company_page_snapshot(inn)
+    assert snapshot is not None
+    assert snapshot.stored_seo_state == StoredSeoProjectionState.VALID_INDEX
+    assert snapshot.seo.content_updated_at == preserved
+    sitemap_inns, catalog_inns = discovery_inns(repository)
+    assert inn in sitemap_inns
+    assert inn in catalog_inns
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "title",
+        "description",
+        "json_ld",
+        "search_visible_hash",
+        "non_identity_content_hash",
+    ),
+)
+def test_deterministic_stored_content_tamper_remains_fail_closed(tmp_path, case):
+    release_id = f"public-v2-content-{case.replace('_', '-')}"
+    release = bundle(tmp_path, release_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, release)
+        authorize_seo_release(connection, release_id)
+        inn = connection.execute(
+            "SELECT inn FROM public_company_projections WHERE release_id=%s ORDER BY inn LIMIT 1",
+            (release_id,),
+        ).fetchone()[0]
+
+        def mutation(stored):
+            if case == "title":
+                stored["metadata"]["title"] += " forged"
+            elif case == "description":
+                stored["metadata"]["description"] += " forged"
+            elif case == "json_ld":
+                stored["json_ld"]["@graph"][0]["name"] += " forged"
+            elif case == "search_visible_hash":
+                stored["search_visible_hash"] = "0" * 64
+            else:
+                stored["non_identity_content_hash"] = "0" * 64
+
+        mutate_stored_seo(connection, release_id, inn, mutation)
+
+    repository = PublicRepository(TEST_URL)
+    web = TestClient(create_app(repository))
+    assert_invalid_on_page_and_discovery(repository, web, inn)
 
 
 def test_corrupt_stored_seo_matrix_is_excluded_with_exact_catalog_pagination(tmp_path):

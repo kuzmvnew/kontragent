@@ -168,6 +168,14 @@ IMPLEMENTATION_GATE_SPECS = (
         "SEOIMPL-A18",
         "stored SEO page/discovery integrity parity",
         (
+            "tests/test_public_release_postgres.py::test_index_eligibility_tamper_is_fail_closed_everywhere[reason_codes]",
+            "tests/test_public_release_postgres.py::test_index_eligibility_tamper_is_fail_closed_everywhere[evidence_refs]",
+            "tests/test_public_release_postgres.py::test_index_eligibility_tamper_is_fail_closed_everywhere[combined]",
+            "tests/test_public_release_postgres.py::test_noindex_eligibility_tamper_is_invalid_without_elevating_page",
+            "tests/test_public_release_postgres.py::test_nested_eligibility_compiler_version_must_match_canonical_output",
+            "tests/test_public_release_postgres.py::test_eligibility_evidence_order_is_compiler_deterministic",
+            "tests/test_public_release_postgres.py::test_preserved_noop_content_timestamp_remains_valid_index",
+            "tests/test_public_release_postgres.py::test_deterministic_stored_content_tamper_remains_fail_closed",
             "tests/test_public_release_postgres.py::test_corrupt_stored_seo_matrix_is_excluded_with_exact_catalog_pagination",
             "tests/test_public_release_postgres.py::test_page_sitemap_catalog_integrity_parity",
             "tests/test_public_release_postgres.py::test_active_release_switch_never_mixes_one_discovery_operation",
@@ -257,7 +265,7 @@ def build_evidence(
         for gate_id, name in RELEASE_GATES.items()
     }
     return {
-        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-02",
+        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-03",
         "repository": "kuzmvnew/kontragent",
         "base_sha": BASE_SHA,
         "head_sha": head_sha,
