@@ -21,14 +21,14 @@ def test_evidence_keeps_implementation_and_canonical_release_gates_separate():
         gate_results=gate_results,
         generated_at="2026-09-27T00:00:00+00:00",
     )
-    assert evidence["task_id"] == "SEO-10K-IMPL-01-A-CORRECTION-01"
+    assert evidence["task_id"] == "SEO-10K-IMPL-01-A-CORRECTION-02"
     assert evidence["head_sha"] == "a" * 40
     assert evidence["source_tree_sha"] == "b" * 40
     assert evidence["canonical_contract_sha256"] == (
         "051b13f14a09d25f6bc9f7ec1079cab65bbc02db0c439e33838b32010bfdd599"
     )
     assert list(evidence["implementation_gates"]) == [
-        f"SEOIMPL-A{number:02d}" for number in range(1, 18)
+        f"SEOIMPL-A{number:02d}" for number in range(1, 19)
     ]
     assert list(evidence["release_gates"]) == list(RELEASE_GATES)
     assert all(

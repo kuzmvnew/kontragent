@@ -10,6 +10,7 @@ from public_app.main import create_app
 from public_app.contracts import PublicProjection
 from public_app.repository import CompanyPageSnapshot
 from public_app.seo import SeoEligibilityContext, compile_seo_projection
+from public_app.stored_seo import StoredSeoProjectionState
 from tests.public_test_support import projection
 
 
@@ -42,6 +43,7 @@ class FakeRepository:
             seo_release_cohort=500,
             seo_released=True,
             stored_seo_valid=True,
+            stored_seo_state=StoredSeoProjectionState.VALID_INDEX,
         )
 
     def search(self, query, limit=20):

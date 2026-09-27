@@ -1,6 +1,6 @@
 # SEO 10K implementation foundation
 
-Task: `SEO-10K-IMPL-01-A`
+Task: `SEO-10K-IMPL-01-A-CORRECTION-02`
 
 Status: implemented and locally testable; **not production accepted**
 
@@ -24,20 +24,28 @@ authorization; the migration does not backfill legacy rows or assign INDEX.
 The migration is committed but not deployed by this task.
 
 The company HTML route reads release id, public facts and persisted SEO state
-with one repository statement, then verifies that every revision id agrees.
+with one repository statement. A single canonical stored-projection validator
+then produces exactly `VALID_INDEX`, `VALID_NOINDEX` or `INVALID`. It validates
+the full strict schema and nested structures, deterministic metadata/JSON-LD,
+canonical URL, revision/INN, decisions, robots and discovery membership,
+compiler/contract authority, hashes, timestamp and every scalar mirror.
 Missing, malformed, unauthorized or revision-mismatched SEO state is rendered
-as `noindex, follow`; it is never upgraded to INDEX at request time. Each API
-request also reads one public projection revision. Separate HTML and API
-requests may legitimately observe different releases after an atomic switch,
-but no single HTML response mixes facts, metadata, OpenGraph or JSON-LD.
+as `noindex, follow`; it is never upgraded to INDEX at request time. The page,
+sitemap and catalog all consume this same typed result.
 
-Sitemap and catalog reads are set-based and require an explicit released SEO
-cohort plus a complete, coherent stored INDEX row. Legacy rows and partial
-storage produce no membership; stored NOINDEX always wins over what a runtime
-compiler might otherwise derive. The catalog uses `LIMIT/OFFSET` with a fixed
-page size of 24. The 16 stable company shards use the first hexadecimal digit
-of SHA-256(INN). Import reuses the prior SEO `content_updated_at` when
-`search_visible_hash` is unchanged.
+SQL only performs cheap fail-closed candidate filtering. One sitemap request
+fetches and validates candidates for its requested SHA-256 shard, not the full
+10K corpus. Catalog discovery uses a PostgreSQL server-side cursor and validates
+ordered candidates in bounded batches of 256. It retains at most one batch plus
+the 24 requested projections while still scanning all candidates to compute an
+exact valid total and fill pages without corrupt-row holes. Thus time is O(N)
+per catalog page, application memory is O(256 + 24), and no 10K list of full
+`PublicProjection` objects is materialized. Both discovery scans run in one
+read-only `REPEATABLE READ` transaction so a response cannot mix releases.
+Legacy rows and partial storage produce no membership; valid stored NOINDEX
+always wins over what a runtime compiler might otherwise derive. The 16 stable
+company shards use the first hexadecimal digit of SHA-256(INN). Import reuses
+the prior SEO `content_updated_at` when `search_visible_hash` is unchanged.
 
 Repeated import distinguishes a legacy release by its null release-level SEO
 contract marker. Such a release must still have all derived SEO fields null and

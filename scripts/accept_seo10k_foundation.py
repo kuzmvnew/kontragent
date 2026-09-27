@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "SEO-10K_RELEASE_CONTRACT.md"
 CONTRACT_SHA256 = "051b13f14a09d25f6bc9f7ec1079cab65bbc02db0c439e33838b32010bfdd599"
-BASE_SHA = "475b3bd9bc12408017dfe3858fe7f261c0cee0cf"
+BASE_SHA = "5b0e1e8d4e05325a8f9a4549b6154bdba3ec654c"
 
 RELEASE_GATES = {
     "SEO10K-A01": "Input integrity",
@@ -164,6 +164,15 @@ IMPLEMENTATION_GATE_SPECS = (
         "explicit SEO release-cohort authority",
         ("tests/test_public_release_postgres.py::test_active_public_release_without_seo_cohort_is_not_index_authority",),
     ),
+    (
+        "SEOIMPL-A18",
+        "stored SEO page/discovery integrity parity",
+        (
+            "tests/test_public_release_postgres.py::test_corrupt_stored_seo_matrix_is_excluded_with_exact_catalog_pagination",
+            "tests/test_public_release_postgres.py::test_page_sitemap_catalog_integrity_parity",
+            "tests/test_public_release_postgres.py::test_active_release_switch_never_mixes_one_discovery_operation",
+        ),
+    ),
 )
 
 
@@ -248,7 +257,7 @@ def build_evidence(
         for gate_id, name in RELEASE_GATES.items()
     }
     return {
-        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-01",
+        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-02",
         "repository": "kuzmvnew/kontragent",
         "base_sha": BASE_SHA,
         "head_sha": head_sha,
