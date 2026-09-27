@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 from datetime import datetime, timezone
 
@@ -109,16 +110,22 @@ def test_stale_unavailable_and_unknown_never_become_no_violations():
     for internal_text in ("STALE_DATA", "SOURCE_UNAVAILABLE", "state-stale_data", "state-source_unavailable"):
         assert internal_text not in response.text
     assert "нарушений нет" not in response.text.casefold()
+    assert "data-nosnippet" in response.text
 
 
 def test_robots_sitemap_canonical_open_graph_jsonld_and_404():
     web, repository = client()
     robots = web.get("/robots.txt")
-    assert "Disallow: /search" in robots.text
-    assert "Disallow: /api/" in robots.text
+    assert "Allow: /" in robots.text
+    assert "Disallow: /api/" not in robots.text
+    assert "Disallow: /admin/" in robots.text
     assert "Sitemap: https://nextcompany.pro/sitemap.xml" in robots.text
     sitemap = web.get("/sitemap.xml")
-    assert f"/companies/{repository.item.company.inn}" in sitemap.text
+    assert "<sitemapindex" in sitemap.text
+    assert sitemap.text.count("/sitemaps/companies-") == 16
+    shard = __import__("hashlib").sha256(repository.item.company.inn.encode()).hexdigest()[0]
+    company_sitemap = web.get(f"/sitemaps/companies-0{shard}.xml.gz")
+    assert f"/companies/{repository.item.company.inn}" in company_sitemap.text
     card = web.get(f"/companies/{repository.item.company.inn}")
     assert f'<link rel="canonical" href="https://nextcompany.pro/companies/{repository.item.company.inn}">' in card.text
     assert 'property="og:title"' in card.text
@@ -126,6 +133,62 @@ def test_robots_sitemap_canonical_open_graph_jsonld_and_404():
     missing = web.get("/companies/7700000000")
     assert missing.status_code == 404
     assert "noindex" in missing.headers["x-robots-tag"]
+
+
+def test_catalog_is_crawlable_and_query_variants_are_noindex():
+    web, repository = client()
+    response = web.get("/companies")
+    assert response.status_code == 200
+    assert f'href="/companies/{repository.item.company.inn}"' in response.text
+    assert '<meta name="robots" content="index, follow">' in response.text
+    variant = web.get("/companies?sort=name")
+    assert variant.status_code == 200
+    assert variant.headers["x-robots-tag"] == "noindex, follow"
+    assert '<meta name="robots" content="noindex, follow">' in variant.text
+    first = web.get("/companies/page/1", follow_redirects=False)
+    assert first.status_code == 308
+    assert first.headers["location"] == "/companies"
+    assert web.get("/companies/page/2").status_code == 404
+
+
+def test_company_url_normalization_and_tracking_parameters():
+    web, repository = client()
+    inn = repository.item.company.inn
+    trailing = web.get(f"/companies/{inn}/", follow_redirects=False)
+    assert trailing.status_code == 308
+    assert trailing.headers["location"] == f"/companies/{inn}"
+    tracked = web.get(f"/companies/{inn}?utm_source=test&gclid=abc", follow_redirects=False)
+    assert tracked.status_code == 308
+    assert tracked.headers["location"] == f"/companies/{inn}"
+    variant = web.get(f"/companies/{inn}?view=compact")
+    assert variant.status_code == 200
+    assert variant.headers["x-robots-tag"] == "noindex, follow"
+    assert web.get("/company/123", follow_redirects=False).status_code == 404
+
+
+def test_production_host_normalizes_http_www_and_legacy_path_in_one_hop():
+    repository = FakeRepository()
+    web = TestClient(create_app(repository), base_url="http://www.nextcompany.pro")
+    inn = repository.item.company.inn
+    response = web.get(f"/company/{inn}?utm_source=test", follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["location"] == f"https://nextcompany.pro/companies/{inn}"
+
+
+def test_numeric_index_payload_is_noindex_sanitized_and_absent_from_discovery():
+    web, repository = client()
+    value = repository.item.model_dump(mode="json")
+    value["sources"][0]["values"]["next_index"] = 81
+    repository.item = PublicProjection.model_validate(value)
+    inn = repository.item.company.inn
+    card = web.get(f"/companies/{inn}")
+    assert card.status_code == 200
+    assert card.headers["x-robots-tag"] == "noindex, follow"
+    assert "next_index" not in card.text
+    assert "next_index" not in json.dumps(web.get(f"/api/company/{inn}").json())
+    shard = __import__("hashlib").sha256(inn.encode()).hexdigest()[0]
+    assert f"/companies/{inn}" not in web.get(f"/sitemaps/companies-0{shard}.xml.gz").text
+    assert web.get("/companies").status_code == 404
 
 
 def test_docs_openapi_and_internal_are_absent():

@@ -1,0 +1,130 @@
+{
+  "task": "SEO-10K-IMPL-01-A",
+  "contract_version": "1.0",
+  "generated_at": "2026-09-27T14:16:44.060541+00:00",
+  "no_averaged_score": true,
+  "release_blocked": true,
+  "waves": {
+    "500": "NOT_RELEASED",
+    "2000": "NOT_RELEASED",
+    "10000": "NOT_RELEASED"
+  },
+  "gates": {
+    "A01": {
+      "status": "PASS",
+      "description": "SEO eligibility compiler",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A02": {
+      "status": "PASS",
+      "description": "public_ready alone fails closed",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A03": {
+      "status": "PASS",
+      "description": "semantic evidence gate",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A04": {
+      "status": "PASS",
+      "description": "thin-content gate and cluster detection",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A05": {
+      "status": "PASS",
+      "description": "allowlisted metadata",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A06": {
+      "status": "NOT_RUN",
+      "description": "live Wordstat evidence",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "A07": {
+      "status": "NOT_RUN",
+      "description": "live Google historical metrics",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "A08": {
+      "status": "PASS",
+      "description": "visible-parity JSON-LD",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A09": {
+      "status": "PASS",
+      "description": "canonical and redirect contract",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A10": {
+      "status": "PASS",
+      "description": "robots and API X-Robots contract",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A11": {
+      "status": "PASS",
+      "description": "sitemap index membership",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A12": {
+      "status": "PASS",
+      "description": "16 deterministic shards",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A13": {
+      "status": "PASS",
+      "description": "crawlable catalog",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A14": {
+      "status": "PASS",
+      "description": "catalog pagination",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A15": {
+      "status": "PASS",
+      "description": "stale/disputed safety",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A16": {
+      "status": "PASS",
+      "description": "search-visible hash",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A17": {
+      "status": "PASS",
+      "description": "numeric index hard ban",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A18": {
+      "status": "PASS",
+      "description": "current public regression",
+      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
+    },
+    "A19": {
+      "status": "NOT_RUN",
+      "description": "production performance and 5x bot peak",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "A20": {
+      "status": "NOT_RUN",
+      "description": "Search Console production observation",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "A21": {
+      "status": "NOT_RUN",
+      "description": "Yandex Webmaster production observation",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "A22": {
+      "status": "NOT_RUN",
+      "description": "production cohort release and deployment",
+      "evidence": null,
+      "release_blocking": true
+    }
+  }
+}

@@ -10,6 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from public_app.contracts import PublicProjection
+from public_app.seo import SeoDecision, SeoProjection, compile_seo_projection, sitemap_shard
 
 
 class PublicRepository:
@@ -60,6 +61,25 @@ class PublicRepository:
             row = cursor.fetchone()
         return PublicProjection.model_validate(row["payload"]) if row else None
 
+    def get_seo_projection(self, inn: str) -> SeoProjection | None:
+        """Read the release-owned SEO snapshot without requiring v2 columns."""
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.release_id, to_jsonb(p)->'seo_projection' AS seo_projection
+                FROM public_publication_state s
+                JOIN public_company_projections p ON p.release_id = s.active_release_id
+                WHERE s.singleton = TRUE AND p.inn = %s
+                """,
+                (inn,),
+            )
+            row = cursor.fetchone()
+        if not row or row["seo_projection"] is None:
+            return None
+        seo = SeoProjection.model_validate(row["seo_projection"])
+        return seo if seo.active_revision_id == row["release_id"] else None
+
     def search(self, query: str, limit: int = 20) -> list[PublicProjection]:
         normalized = " ".join(query.casefold().split())
         if not normalized:
@@ -82,19 +102,113 @@ class PublicRepository:
             rows = cursor.fetchall()
         return [PublicProjection.model_validate(row["payload"]) for row in rows]
 
-    def sitemap_rows(self) -> list[dict]:
+    @staticmethod
+    def _seo_storage_ready(cursor) -> bool:
+        cursor.execute(
+            """
+            SELECT count(*) = 7 AS ready
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'public_company_projections'
+              AND column_name IN (
+                'seo_projection', 'seo_decision', 'seo_compiler_version',
+                'search_visible_hash', 'non_identity_content_hash',
+                'sitemap_shard', 'seo_content_updated_at'
+              )
+            """
+        )
+        row = cursor.fetchone()
+        return bool(row and row["ready"])
+
+    @staticmethod
+    def _stored_seo_complete(cursor) -> bool:
+        cursor.execute(
+            """
+            SELECT count(*) AS total,
+                   count(*) FILTER (WHERE p.seo_projection IS NOT NULL) AS compiled
+            FROM public_publication_state s
+            JOIN public_company_projections p ON p.release_id = s.active_release_id
+            WHERE s.singleton = TRUE
+            """
+        )
+        row = cursor.fetchone()
+        return bool(row and int(row["total"]) > 0 and int(row["total"]) == int(row["compiled"]))
+
+    def sitemap_rows(self, shard: str | None = None) -> list[dict]:
         with self._connection() as connection, connection.cursor() as cursor:
+            if self._seo_storage_ready(cursor) and self._stored_seo_complete(cursor):
+                cursor.execute(
+                    """
+                    SELECT p.inn, p.seo_content_updated_at AS content_updated_at
+                    FROM public_publication_state s
+                    JOIN public_company_projections p
+                      ON p.release_id = s.active_release_id
+                    WHERE s.singleton = TRUE
+                      AND p.seo_decision = 'INDEX'
+                      AND (%s IS NULL OR p.sitemap_shard = %s)
+                    ORDER BY p.inn
+                    """,
+                    (shard, shard),
+                )
+                return list(cursor.fetchall())
+            # Mixed-version fallback is bounded by the v1 release constraint (40).
             cursor.execute(
                 """
-                SELECT p.inn, p.content_updated_at
+                SELECT p.payload
                 FROM public_publication_state s
-                JOIN public_company_projections p
-                  ON p.release_id = s.active_release_id
-                WHERE s.singleton = TRUE AND p.index_eligible = TRUE
+                JOIN public_company_projections p ON p.release_id = s.active_release_id
+                WHERE s.singleton = TRUE
                 ORDER BY p.inn
                 """
             )
-            return list(cursor.fetchall())
+            projections = [PublicProjection.model_validate(row["payload"]) for row in cursor.fetchall()]
+        rows = []
+        for projection in projections:
+            seo = compile_seo_projection(projection)
+            if seo.eligibility.decision == SeoDecision.INDEX and (shard is None or seo.sitemap_shard == shard):
+                rows.append({"inn": projection.company.inn, "content_updated_at": seo.content_updated_at})
+        return rows
+
+    def catalog_page(self, page: int, page_size: int = 24) -> tuple[list[PublicProjection], int]:
+        if page < 1 or page_size != 24:
+            return [], 0
+        offset = (page - 1) * page_size
+        with self._connection() as connection, connection.cursor() as cursor:
+            if self._seo_storage_ready(cursor) and self._stored_seo_complete(cursor):
+                cursor.execute(
+                    """
+                    SELECT count(*) AS count
+                    FROM public_publication_state s
+                    JOIN public_company_projections p ON p.release_id = s.active_release_id
+                    WHERE s.singleton = TRUE AND p.seo_decision = 'INDEX'
+                    """
+                )
+                total = int(cursor.fetchone()["count"])
+                cursor.execute(
+                    """
+                    SELECT p.payload
+                    FROM public_publication_state s
+                    JOIN public_company_projections p ON p.release_id = s.active_release_id
+                    WHERE s.singleton = TRUE AND p.seo_decision = 'INDEX'
+                    ORDER BY p.normalized_name, p.inn
+                    LIMIT %s OFFSET %s
+                    """,
+                    (page_size, offset),
+                )
+                return [PublicProjection.model_validate(row["payload"]) for row in cursor.fetchall()], total
+            # Mixed-version fallback remains bounded to the current 40-card schema.
+            cursor.execute(
+                """
+                SELECT p.payload
+                FROM public_publication_state s
+                JOIN public_company_projections p ON p.release_id = s.active_release_id
+                WHERE s.singleton = TRUE
+                ORDER BY p.normalized_name, p.inn
+                """
+            )
+            projections = [PublicProjection.model_validate(row["payload"]) for row in cursor.fetchall()]
+        eligible = [item for item in projections if compile_seo_projection(item).eligibility.decision == SeoDecision.INDEX]
+        return eligible[offset : offset + page_size], len(eligible)
 
     def ready(self) -> tuple[bool, str | None, int]:
         try:

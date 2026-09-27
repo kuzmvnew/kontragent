@@ -1,23 +1,24 @@
 {% extends "base.html" %}
 {% block head %}
-<title>{{ projection.company.name }} — ИНН {{ projection.company.inn }} | NEXT Company</title>
+<title>{{ seo.metadata.title }}</title>
 <meta name="description" content="{{ description }}">
 <meta name="robots" content="{{ robots }}">
 <link rel="canonical" href="{{ canonical }}">
-<meta property="og:type" content="profile">
-<meta property="og:title" content="{{ projection.company.name }} — NEXT Company">
-<meta property="og:description" content="{{ description }}">
-<meta property="og:url" content="{{ canonical }}">
-<meta property="og:site_name" content="NEXT Company">
+<meta property="og:type" content="{{ seo.metadata.open_graph.type }}">
+<meta property="og:title" content="{{ seo.metadata.open_graph.title }}">
+<meta property="og:description" content="{{ seo.metadata.open_graph.description }}">
+<meta property="og:url" content="{{ seo.metadata.open_graph.url }}">
+<meta property="og:site_name" content="{{ seo.metadata.open_graph.site_name }}">
 <script type="application/ld+json">{{ json_ld | tojson }}</script>
 {% endblock %}
 {% block content %}
 {% set company = projection.company %}
 <article class="company-page">
+  <nav aria-label="Хлебные крошки"><a href="/">Главная</a> · <a href="/companies">Компании</a></nav>
   <section class="company-hero">
     <div>
       <p class="eyebrow">Карточка юридического лица</p>
-      <h1>{{ company.name }}</h1>
+      <h1>{{ seo.metadata.h1 }}</h1>
       {% if company.full_name and company.full_name != company.name %}<p class="full-name">{{ company.full_name }}</p>{% endif %}
     </div>
     <span class="status-pill">{{ company.legal_status or 'Статус не указан' }}</span>
@@ -29,7 +30,7 @@
     <p class="result-date">Дата результата <time datetime="{{ projection.publication.result_date }}">{{ projection.publication.result_date.strftime('%d.%m.%Y') }}</time></p>
   </section>
 
-  <section class="summary-panel risk-state-{{ projection.risk.public_visual_state }}">
+  <section class="summary-panel risk-state-{{ projection.risk.public_visual_state }}"{% if stale_adverse %} data-nosnippet{% endif %}>
     <p class="section-kicker">Краткий вывод</p>
     <h2>{{ projection.public_conclusion }}</h2>
     {% if projection.risk.factors %}<ul>{% for factor in projection.risk.factors %}<li>{{ factor.public_headline }}</li>{% endfor %}</ul>{% endif %}
@@ -38,7 +39,7 @@
   <section class="content-section">
     <div class="section-heading"><div><p class="section-kicker">Аналитическая оценка</p><h2>{{ projection.risk.public_title }}</h2></div><span class="state-badge state-{{ projection.risk.public_visual_state }}">{{ projection.risk.public_status }}</span></div>
     <p class="lead">{{ projection.risk.public_explanation }}</p>
-    {% if projection.risk.factors %}<div class="factor-grid">{% for factor in projection.risk.factors %}<article><p class="section-kicker">{{ factor.category }} · {{ factor.severity }}</p><h3>{{ factor.public_headline }}</h3><p>{{ factor.public_explanation }}</p>{% if factor.client_meaning %}<p>{{ factor.client_meaning }}</p>{% endif %}{% if factor.what_it_does_not_mean %}<p class="limitation"><strong>Что это не означает:</strong> {{ factor.what_it_does_not_mean }}</p>{% endif %}{% if factor.source_name %}<small>{{ factor.source_name }}{% if factor.source_data_date %} · {{ factor.source_data_date.strftime('%d.%m.%Y') }}{% endif %}</small>{% endif %}</article>{% endfor %}</div>{% endif %}
+    {% if projection.risk.factors %}<div class="factor-grid"{% if stale_adverse %} data-nosnippet{% endif %}>{% for factor in projection.risk.factors %}<article><p class="section-kicker">{{ factor.category }} · {{ factor.severity }}</p><h3>{{ factor.public_headline }}</h3><p>{{ factor.public_explanation }}</p>{% if factor.client_meaning %}<p>{{ factor.client_meaning }}</p>{% endif %}{% if factor.what_it_does_not_mean %}<p class="limitation"><strong>Что это не означает:</strong> {{ factor.what_it_does_not_mean }}</p>{% endif %}{% if factor.source_name %}<small>{{ factor.source_name }}{% if factor.source_data_date %} · {{ factor.source_data_date.strftime('%d.%m.%Y') }}{% endif %}</small>{% endif %}</article>{% endfor %}</div>{% endif %}
     <p class="engine-meta">Дата оценки: {{ projection.risk.assessment_date.strftime('%d.%m.%Y') }}</p>
   </section>
 
@@ -56,9 +57,9 @@
     <p class="section-kicker">Официальные наборы данных</p><h2>Налоги и финансовые показатели</h2>
     <div class="source-grid">
     {% for source in projection.sources %}
-      <article class="source-card state-{{ source.public_visual_state }}">
+      <article class="source-card state-{{ source.public_visual_state }}"{% if source.freshness.value != 'CURRENT' %} data-nosnippet{% endif %}>
         <div class="source-title"><div><h3>{{ source.public_name }}</h3></div><span class="state-badge state-{{ source.public_visual_state }}">{{ source.public_status }}</span></div>
-        {% if source.values %}<dl>{% for key, value in source.values.items() %}<div><dt>{{ key }}</dt><dd>{{ value if value is not none else '—' }}</dd></div>{% endfor %}</dl>{% endif %}
+        {% if source.public_values %}<dl>{% for key, value in source.public_values.items() %}<div><dt>{{ key }}</dt><dd>{{ value if value is not none else '—' }}</dd></div>{% endfor %}</dl>{% endif %}
         <div class="dates"><span>Дата данных источника <b>{{ source.source_data_date.strftime('%d.%m.%Y') if source.source_data_date else 'не указана' }}</b></span><span>Дата результата <b>{{ source.result_date.strftime('%d.%m.%Y') }}</b></span></div>
         <p class="limitation">{{ source.public_explanation }}</p>
       </article>
@@ -72,6 +73,6 @@
     <div><p class="section-kicker">Рекомендации</p><h2>Что делать</h2><ul>{% for item in projection.summary.recommendations %}<li><strong>{{ item.action }}</strong> {{ item.rationale }} {{ item.effect }}</li>{% endfor %}</ul></div>
   </section>
   {% endif %}
-  <p class="release-meta">Обновлено {{ projection.publication.content_updated_at.strftime('%d.%m.%Y') }}</p>
+  <p class="release-meta">Обновлено {{ seo.content_updated_at.strftime('%d.%m.%Y') }}</p>
 </article>
 {% endblock %}

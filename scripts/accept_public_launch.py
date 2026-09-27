@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -14,7 +15,6 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from public_app.contracts import PublicProjection  # noqa: E402
 from scripts.public_release_common import load_bundle  # noqa: E402
 
 
@@ -50,9 +50,15 @@ def main() -> int:
         require(ready_json.get("record_count") == 40, "active release is not 40 records")
         release_id = ready_json.get("release_id")
         robots = client.get(base + "/robots.txt")
-        require(robots.status_code == 200 and "Disallow: /api/" in robots.text, "robots invalid")
+        require(
+            robots.status_code == 200
+            and "Allow: /" in robots.text
+            and "Disallow: /api/" not in robots.text,
+            "robots invalid",
+        )
         sitemap = client.get(base + "/sitemap.xml")
-        require(sitemap.status_code == 200 and "<urlset" in sitemap.text, "sitemap invalid")
+        require(sitemap.status_code == 200 and "<sitemapindex" in sitemap.text, "sitemap invalid")
+        require(sitemap.text.count("/sitemaps/companies-0") == 16, "sitemap shard inventory invalid")
         missing = client.get(base + "/companies/7700000000")
         require(missing.status_code == 404 and "noindex" in missing.headers.get("x-robots-tag", ""), "404 invalid")
         for inn in inns:
@@ -62,12 +68,21 @@ def main() -> int:
             require(card.status_code == 200, f"card failed for {inn}")
             require(f'rel="canonical" href="{base}/companies/{inn}"' in card.text, "canonical missing")
             require('application/ld+json' in card.text and "Дата данных источника" in card.text and "Дата результата" in card.text, "SEO or dates missing")
+            shard = hashlib.sha256(inn.encode("ascii")).hexdigest()[0]
+            shard_map = client.get(f"{base}/sitemaps/companies-0{shard}.xml.gz")
+            require(shard_map.status_code == 200, f"sitemap shard failed for {inn}")
             api = client.get(f"{base}/api/company/{inn}")
             require(api.status_code == 200, f"API failed for {inn}")
-            projection = PublicProjection.model_validate(api.json())
-            require(projection.publication.release_id == release_id, "API revision mismatch")
-            require(projection.risk.title and projection.summary.short_conclusion, "Risk/Summary missing")
-            require(len(projection.sources) == 4, "source blocks missing")
+            payload = api.json()
+            require(payload.get("company", {}).get("inn") == inn, "API company mismatch")
+            require("release_id" not in payload.get("publication", {}), "internal release identity leaked")
+            require(payload.get("assessment", {}).get("title"), "assessment missing")
+            require(payload.get("summary", {}).get("short_conclusion"), "summary missing")
+            require(len(payload.get("sources", ())) == 4, "source blocks missing")
+            require(
+                api.headers.get("x-robots-tag") == "noindex, nofollow, nosnippet",
+                "API X-Robots contract missing",
+            )
     if args.bundle:
         manifest, projections, _ = load_bundle(args.bundle)
         require(manifest.release_id == release_id, "active release differs from bundle")

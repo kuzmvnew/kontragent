@@ -17,6 +17,32 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.public_release_common import load_bundle, payload_sha256  # noqa: E402
+from public_app.seo import SeoEligibilityContext, SeoProjection, compile_seo_projection  # noqa: E402
+
+
+SEO_COLUMNS = {
+    "seo_projection",
+    "seo_decision",
+    "seo_compiler_version",
+    "search_visible_hash",
+    "non_identity_content_hash",
+    "sitemap_shard",
+    "seo_content_updated_at",
+}
+
+
+def _seo_storage_available(cursor) -> bool:
+    cursor.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'public_company_projections'
+          AND column_name = ANY(%s)
+        """,
+        (list(SEO_COLUMNS),),
+    )
+    return {row["column_name"] for row in cursor.fetchall()} == SEO_COLUMNS
 
 
 def import_release(connection, bundle_dir: Path, expected_release_id: str | None = None) -> dict:
@@ -40,6 +66,43 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
             expected = {item.company.inn: payload_sha256(item) for item in projections}
             if stored != expected:
                 raise ValueError("stored release payload does not match repeated bundle")
+            if _seo_storage_available(cursor):
+                cursor.execute(
+                    """
+                    SELECT inn, seo_decision, seo_compiler_version,
+                           search_visible_hash, sitemap_shard
+                    FROM public_company_projections
+                    WHERE release_id=%s
+                    """,
+                    (manifest.release_id,),
+                )
+                stored_seo = {
+                    row["inn"]: (
+                        row["seo_decision"],
+                        row["seo_compiler_version"],
+                        row["search_visible_hash"],
+                        row["sitemap_shard"],
+                    )
+                    for row in cursor.fetchall()
+                }
+                expected_seo = {}
+                for projection in projections:
+                    seo = compile_seo_projection(
+                        projection,
+                        context=SeoEligibilityContext(
+                            active_revision_id=manifest.release_id,
+                            public_ready=True,
+                            released=True,
+                        ),
+                    )
+                    expected_seo[projection.company.inn] = (
+                        seo.eligibility.decision.value,
+                        seo.compiler_version,
+                        seo.search_visible_hash,
+                        seo.sitemap_shard,
+                    )
+                if stored_seo != expected_seo:
+                    raise ValueError("stored release SEO projection does not match repeated bundle")
             cursor.execute(
                 "SELECT active_release_id FROM public_publication_state WHERE singleton=TRUE"
             )
@@ -49,6 +112,33 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
                 "record_count": manifest.record_count,
                 "idempotent": True,
                 "active": bool(state and state["active_release_id"] == manifest.release_id),
+            }
+
+        cursor.execute(
+            """INSERT INTO public_publication_state(singleton, active_release_id)
+               VALUES(TRUE, NULL) ON CONFLICT(singleton) DO NOTHING"""
+        )
+        cursor.execute(
+            "SELECT active_release_id FROM public_publication_state WHERE singleton=TRUE FOR UPDATE"
+        )
+        state = cursor.fetchone()
+        active_release_id = state["active_release_id"] if state else None
+        if manifest.previous_release_id and manifest.previous_release_id != active_release_id:
+            raise ValueError("bundle previous_release_id does not match the active release")
+        seo_storage = _seo_storage_available(cursor)
+        previous_seo: dict[str, SeoProjection] = {}
+        if seo_storage and active_release_id:
+            cursor.execute(
+                """
+                SELECT inn, seo_projection
+                FROM public_company_projections
+                WHERE release_id=%s AND seo_projection IS NOT NULL
+                """,
+                (active_release_id,),
+            )
+            previous_seo = {
+                row["inn"]: SeoProjection.model_validate(row["seo_projection"])
+                for row in cursor.fetchall()
             }
 
         cursor.execute(
@@ -70,24 +160,56 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
         )
         for projection in projections:
             payload = projection.model_dump(mode="json")
-            cursor.execute(
-                """
-                INSERT INTO public_company_projections (
-                    release_id, inn, name, normalized_name, payload,
-                    payload_sha256, content_updated_at, index_eligible
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    manifest.release_id,
-                    projection.company.inn,
-                    projection.company.name,
-                    " ".join(projection.company.name.casefold().split()),
-                    Jsonb(payload),
-                    payload_sha256(projection),
-                    projection.publication.content_updated_at,
-                    projection.publication.index_eligible,
-                ),
+            base_values = (
+                manifest.release_id,
+                projection.company.inn,
+                projection.company.name,
+                " ".join(projection.company.name.casefold().split()),
+                Jsonb(payload),
+                payload_sha256(projection),
+                projection.publication.content_updated_at,
+                projection.publication.index_eligible,
             )
+            if seo_storage:
+                seo = compile_seo_projection(
+                    projection,
+                    context=SeoEligibilityContext(
+                        active_revision_id=manifest.release_id,
+                        public_ready=True,
+                        released=True,
+                    ),
+                    previous=previous_seo.get(projection.company.inn),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO public_company_projections (
+                        release_id, inn, name, normalized_name, payload,
+                        payload_sha256, content_updated_at, index_eligible,
+                        seo_projection, seo_decision, seo_compiler_version,
+                        search_visible_hash, non_identity_content_hash,
+                        sitemap_shard, seo_content_updated_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    base_values + (
+                        Jsonb(seo.model_dump(mode="json")),
+                        seo.eligibility.decision.value,
+                        seo.compiler_version,
+                        seo.search_visible_hash,
+                        seo.non_identity_content_hash,
+                        seo.sitemap_shard,
+                        seo.content_updated_at,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO public_company_projections (
+                        release_id, inn, name, normalized_name, payload,
+                        payload_sha256, content_updated_at, index_eligible
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    base_values,
+                )
         cursor.execute(
             """SELECT count(*) AS count, count(DISTINCT inn) AS unique_count,
                       count(*) FILTER (WHERE payload->'publication'->>'release_id'=%s) AS matching_count
@@ -98,18 +220,17 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
         expected_count = manifest.record_count
         if tuple(validation.values()) != (expected_count, expected_count, expected_count):
             raise ValueError("staged release failed database validation")
-
-        cursor.execute(
-            """INSERT INTO public_publication_state(singleton, active_release_id)
-               VALUES(TRUE, NULL) ON CONFLICT(singleton) DO NOTHING"""
-        )
-        cursor.execute(
-            "SELECT active_release_id FROM public_publication_state WHERE singleton=TRUE FOR UPDATE"
-        )
-        state = cursor.fetchone()
-        active_release_id = state["active_release_id"] if state else None
-        if manifest.previous_release_id and manifest.previous_release_id != active_release_id:
-            raise ValueError("bundle previous_release_id does not match the active release")
+        if seo_storage:
+            cursor.execute(
+                """
+                SELECT count(*) AS count
+                FROM public_company_projections
+                WHERE release_id=%s AND seo_projection IS NOT NULL
+                """,
+                (manifest.release_id,),
+            )
+            if int(cursor.fetchone()["count"]) != expected_count:
+                raise ValueError("staged release has incomplete SEO projection")
         cursor.execute(
             "UPDATE public_releases SET previous_release_id=%s WHERE release_id=%s",
             (active_release_id, manifest.release_id),
