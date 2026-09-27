@@ -14,13 +14,18 @@ from public_app.semantic import (
     MeaningInput,
     PUBLIC_NEXT_INDEX_ENABLED,
     SemanticCompilerError,
+    aggregate_clean_conclusion_proof,
     compile_limitation,
     compile_meaning,
     compile_recommendation,
     compile_source_status,
     validate_public_text,
 )
-from scripts.export_public_release import _risk_projection, _summary_projection
+from scripts.export_public_release import (
+    _index_eligible,
+    _risk_projection,
+    _summary_projection,
+)
 from tests.public_test_support import projection
 
 
@@ -59,6 +64,160 @@ class _Repository:
 
     def sitemap_rows(self):
         return []
+
+
+NOW = "2026-09-25T07:00:00+00:00"
+
+
+def _clean_risk_v3() -> dict:
+    return {
+        "assessment_id": "11111111-1111-1111-1111-111111111111",
+        "company_id": 1,
+        "subject_scope": "LEGAL_ENTITY",
+        "status": "CALCULATED",
+        "risk_model_version": "risk-v3.0.0",
+        "ruleset_version": "risk-rules-v3.0.0",
+        "coverage_policy_version": "coverage-v3.0.0",
+        "applicability_policy_version": "applicability-v3.0.0",
+        "source_resolution_policy_version": "resolution-v3.0.0",
+        "freshness_policy_version": "freshness-v3.0.0",
+        "input_hash": "a" * 64,
+        "calculated_at": NOW,
+        "evidence_snapshot": [
+            {
+                "candidate_ref": "candidate:tax-debt:1",
+                "capability_code": "tax_debt",
+                "fact_identity": "company:1:tax_debt",
+                "company_id": 1,
+                "subject_identity": {"company_id": 1},
+                "source_code": "fns_tax_debt",
+                "source_class": "OFFICIAL_DOWNLOADED_DATASET",
+                "evidence_refs": ["evidence:tax-debt:1"],
+                "exact_identity_match": True,
+                "applicability": "APPLICABLE",
+                "observation": "NOT_FOUND",
+                "execution": "CHECKED",
+                "freshness": "CURRENT",
+                "scope": "COMPLETE",
+                "scope_details": {"coverage": "official-current-dataset"},
+                "temporal_kind": "CURRENT_STATE",
+                "source_as_of": NOW,
+                "checked_at": NOW,
+                "negative_closure_capable": True,
+                "limitations": [],
+            }
+        ],
+        "resolved_checks": [
+            {
+                "check_ref": "risk-v3:1:tax_debt",
+                "capability_code": "tax_debt",
+                "fact_identity": "company:1:tax_debt",
+                "company_id": 1,
+                "applicability": "APPLICABLE",
+                "observation": "NOT_FOUND",
+                "execution": "CHECKED",
+                "freshness": "CURRENT",
+                "scope": "COMPLETE",
+                "scope_details": {"coverage": "official-current-dataset"},
+                "temporal_kind": "CURRENT_STATE",
+                "resolution_state": "RESOLVED",
+                "selected_evidence_refs": ["evidence:tax-debt:1"],
+                "candidate_refs": ["candidate:tax-debt:1"],
+                "source_refs": ["fns_tax_debt"],
+                "negative_closure_proven": True,
+                "source_as_of": NOW,
+                "checked_at": NOW,
+                "limitations": [],
+                "resolution_policy_version": "resolution-v3.0.0",
+            }
+        ],
+        "factors": [],
+        "coverage_snapshot": {
+            "applicable_codes": ["tax_debt"],
+            "resolved_codes": ["tax_debt"],
+            "unresolved_codes": [],
+            "partial_codes": [],
+            "applicability_unknown_codes": [],
+            "numerator": 1,
+            "denominator": 1,
+            "percentage": "100.00",
+            "mandatory_applicable_codes": ["tax_debt"],
+            "mandatory_resolved_codes": ["tax_debt"],
+            "mandatory_numerator": 1,
+            "mandatory_denominator": 1,
+            "calculated_at": NOW,
+            "coverage_policy_version": "coverage-v3.0.0",
+        },
+        "mandatory_gate": {
+            "allowed": True,
+            "policy_version": "applicability-v3.0.0",
+            "mandatory_applicable_codes": ["tax_debt"],
+            "resolved_codes": ["tax_debt"],
+            "blocking_checks": [],
+            "evaluated_at": NOW,
+        },
+        "limitations": [],
+        "overall_result": "NO_ADVERSE_FACTORS_AFTER_MANDATORY_GATE",
+    }
+
+
+def _incomplete_risk_v3(
+    blocking_reason: str,
+    *,
+    applicability: str = "APPLICABLE",
+    execution: str = "CHECKED",
+    freshness: str = "CURRENT",
+    scope: str = "COMPLETE",
+    resolution_state: str = "UNRESOLVED",
+) -> dict:
+    risk = _clean_risk_v3()
+    check = risk["resolved_checks"][0]
+    check.update(
+        {
+            "applicability": applicability,
+            "observation": "UNKNOWN",
+            "execution": execution,
+            "freshness": freshness,
+            "scope": scope,
+            "resolution_state": resolution_state,
+            "selected_evidence_refs": [],
+            "negative_closure_proven": False,
+        }
+    )
+    if resolution_state == "CONFLICTING_EVIDENCE":
+        check["conflict_refs"] = ["candidate:tax-debt:1", "candidate:tax-debt:2"]
+    applicable_codes = ["tax_debt"] if applicability == "APPLICABLE" else []
+    risk["coverage_snapshot"].update(
+        {
+            "applicable_codes": applicable_codes,
+            "resolved_codes": [],
+            "unresolved_codes": applicable_codes,
+            "partial_codes": ["tax_debt"] if scope == "PARTIAL" else [],
+            "applicability_unknown_codes": (
+                ["tax_debt"] if applicability == "APPLICABILITY_UNKNOWN" else []
+            ),
+            "numerator": 0,
+            "denominator": len(applicable_codes),
+            "percentage": "0.00",
+            "mandatory_resolved_codes": [],
+            "mandatory_numerator": 0,
+        }
+    )
+    risk["mandatory_gate"].update(
+        {
+            "allowed": False,
+            "resolved_codes": [],
+            "blocking_checks": [
+                {
+                    "capability_code": "tax_debt",
+                    "reasons": [blocking_reason],
+                    "check_ref": "risk-v3:1:tax_debt",
+                }
+            ],
+        }
+    )
+    risk["overall_result"] = "INCOMPLETE_NO_POSITIVE_CONCLUSION"
+    return risk
 
 
 def test_meaning_compiler_is_deterministic_traceable_and_abstains_on_unknown_code():
@@ -131,6 +290,239 @@ def test_not_found_requires_negative_closure_and_stale_is_explicitly_historical(
             result_date=date(2026, 9, 25),
             freshness=Freshness.CURRENT,
         )
+    safe_source = PublicSourceBlock(
+        code="DEBTAM",
+        state=PublicState.NOT_FOUND,
+        values={},
+        source_name="ФНС",
+        source_data_date=date(2026, 8, 1),
+        result_date=date(2026, 9, 25),
+        freshness=Freshness.CURRENT,
+        negative_closure_proven=True,
+    )
+    assert safe_source.state == PublicState.NOT_FOUND
+
+
+def test_qa_empty_coverage_reproduction_fails_closed_and_summary_abstains():
+    risk = {
+        "calculated_at": NOW,
+        "factors": [],
+        "limitations": [],
+        "coverage_snapshot": {},
+    }
+    public_risk = _risk_projection(risk)
+    summary = _summary_projection(
+        {"generated_at": NOW, "structured_payload": {}},
+        public_risk,
+    )
+
+    assert public_risk.state == PublicState.PARTIAL
+    assert public_risk.limitations
+    assert public_risk.limitations[0].headline == "Проверка выполнена не полностью."
+    assert "Неблагоприятные факторы не выявлены" not in summary.short_conclusion
+    assert summary.short_conclusion == (
+        "Недостаточно данных для общего положительного вывода. "
+        "Ограничения проверки указаны ниже."
+    )
+    serialized = json.dumps(
+        {
+            "risk": public_risk.model_dump(mode="json"),
+            "summary": summary.model_dump(mode="json"),
+        },
+        ensure_ascii=False,
+    )
+    assert "AGGREGATE_CLEAN_PROOF_NOT_PROVEN" not in serialized
+    assert "limitation_code" not in serialized
+
+    item = projection().model_copy(update={"risk": public_risk, "summary": summary})
+    web = TestClient(create_app(_Repository(item)))
+    html = web.get(f"/companies/{item.company.inn}")
+    api = web.get(f"/api/company/{item.company.inn}")
+    assert html.status_code == api.status_code == 200
+    combined = html.text + json.dumps(api.json(), ensure_ascii=False)
+    assert "Недостаточно данных для общего положительного вывода" in combined
+    assert "Неблагоприятные факторы не выявлены" not in combined
+    assert "AGGREGATE_CLEAN_PROOF_NOT_PROVEN" not in combined
+
+
+@pytest.mark.parametrize("coverage_value", [None, {}, {"denominator": 0}])
+def test_missing_empty_and_zero_denominator_coverage_fail_closed(coverage_value):
+    risk = _clean_risk_v3()
+    if coverage_value is None:
+        risk.pop("coverage_snapshot")
+    else:
+        risk["coverage_snapshot"] = coverage_value
+
+    proof = aggregate_clean_conclusion_proof(risk)
+    public_risk = _risk_projection(risk)
+
+    assert proof.proven is False
+    assert public_risk.state == PublicState.PARTIAL
+    assert public_risk.limitations
+
+
+def test_canonical_zero_denominator_and_empty_mandatory_set_fail_closed():
+    risk = _clean_risk_v3()
+    risk["resolved_checks"] = []
+    risk["coverage_snapshot"].update(
+        {
+            "applicable_codes": [],
+            "resolved_codes": [],
+            "unresolved_codes": [],
+            "numerator": 0,
+            "denominator": 0,
+            "percentage": "0.00",
+            "mandatory_applicable_codes": [],
+            "mandatory_resolved_codes": [],
+            "mandatory_numerator": 0,
+            "mandatory_denominator": 0,
+        }
+    )
+    risk["mandatory_gate"].update(
+        {
+            "allowed": False,
+            "mandatory_applicable_codes": [],
+            "resolved_codes": [],
+            "blocking_checks": [
+                {
+                    "capability_code": "__mandatory_policy__",
+                    "reasons": ["EMPTY_MANDATORY_SET"],
+                    "check_ref": "risk-v3:1:mandatory-policy",
+                }
+            ],
+        }
+    )
+    risk["overall_result"] = "INCOMPLETE_NO_POSITIVE_CONCLUSION"
+
+    assert aggregate_clean_conclusion_proof(risk).proven is False
+    assert _risk_projection(risk).state == PublicState.PARTIAL
+
+
+def test_missing_and_unresolved_mandatory_gate_fail_closed():
+    missing = _clean_risk_v3()
+    missing.pop("mandatory_gate")
+    unresolved = _incomplete_risk_v3("NOT_CHECKED", execution="NOT_CHECKED")
+
+    for risk in (missing, unresolved):
+        assert aggregate_clean_conclusion_proof(risk).proven is False
+        assert _risk_projection(risk).state == PublicState.PARTIAL
+
+
+@pytest.mark.parametrize(
+    ("blocking_reason", "overrides"),
+    [
+        ("APPLICABILITY_UNKNOWN", {"applicability": "APPLICABILITY_UNKNOWN"}),
+        ("STALE_CURRENT_STATE", {"freshness": "STALE"}),
+        (
+            "SOURCE_UNAVAILABLE",
+            {
+                "execution": "SOURCE_UNAVAILABLE",
+                "freshness": "UNKNOWN",
+                "scope": "UNKNOWN",
+            },
+        ),
+        (
+            "TIMEOUT",
+            {"execution": "TIMEOUT", "freshness": "UNKNOWN", "scope": "UNKNOWN"},
+        ),
+        (
+            "PARSING_ERROR",
+            {
+                "execution": "PARSING_ERROR",
+                "freshness": "UNKNOWN",
+                "scope": "UNKNOWN",
+            },
+        ),
+        ("PARTIAL_SCOPE", {"scope": "PARTIAL"}),
+        ("CONFLICTING_EVIDENCE", {"resolution_state": "CONFLICTING_EVIDENCE"}),
+    ],
+)
+def test_incomplete_canonical_risk_axes_fail_closed(blocking_reason, overrides):
+    risk = _incomplete_risk_v3(blocking_reason, **overrides)
+
+    assert aggregate_clean_conclusion_proof(risk).proven is False
+    public_risk = _risk_projection(risk)
+    assert public_risk.state == PublicState.PARTIAL
+    assert public_risk.limitations
+
+
+def test_valid_canonical_clean_negative_is_explicit_traceable_and_narrow():
+    risk = _clean_risk_v3()
+    proof = aggregate_clean_conclusion_proof(risk)
+    public_risk = _risk_projection(risk)
+    summary = _summary_projection(
+        {"generated_at": NOW, "structured_payload": {}},
+        public_risk,
+    )
+
+    assert proof.proven is True
+    assert proof.reason_codes == ()
+    assert proof.resolved_check_refs == ("risk-v3:1:tax_debt",)
+    assert proof.coverage_calculated_at == NOW
+    assert proof.mandatory_gate_evaluated_at == NOW
+    assert public_risk.state == PublicState.NOT_FOUND
+    assert public_risk.limitations == ()
+    assert summary.short_conclusion == (
+        "Неблагоприятные факторы не выявлены в рамках выполненных актуальных проверок."
+    )
+    assert "рисков нет" not in summary.short_conclusion.casefold()
+
+
+def test_proven_not_applicable_check_does_not_block_clean_conclusion():
+    risk = _clean_risk_v3()
+    risk["resolved_checks"].append(
+        {
+            "check_ref": "risk-v3:1:industry_specific",
+            "capability_code": "industry_specific",
+            "fact_identity": "company:1:industry-specific",
+            "company_id": 1,
+            "applicability": "NOT_APPLICABLE",
+            "applicability_decision": {
+                "rule_id": "applicability.industry-specific",
+                "rule_version": "1.0.0",
+                "subject_scope": "LEGAL_ENTITY",
+                "evidence_refs": ["evidence:registration:1"],
+                "source_refs": ["source:egrul"],
+                "source_classes": ["OFFICIAL_DIRECT"],
+                "based_on_data_absence": False,
+                "decided_at": NOW,
+            },
+            "observation": "UNKNOWN",
+            "execution": "CHECKED",
+            "freshness": "CURRENT",
+            "scope": "COMPLETE",
+            "temporal_kind": "CURRENT_STATE",
+            "resolution_state": "RESOLVED",
+            "resolution_policy_version": "resolution-v3.0.0",
+        }
+    )
+
+    assert aggregate_clean_conclusion_proof(risk).proven is True
+    assert _risk_projection(risk).state == PublicState.NOT_FOUND
+
+
+def test_negative_closure_is_required_by_aggregate_proof():
+    risk = _clean_risk_v3()
+    risk["resolved_checks"][0]["negative_closure_proven"] = False
+
+    assert aggregate_clean_conclusion_proof(risk).proven is False
+    assert _risk_projection(risk).state == PublicState.PARTIAL
+
+
+def test_partial_aggregate_is_not_index_eligible_but_proven_clean_is():
+    item = projection()
+    clean_risk = _risk_projection(_clean_risk_v3())
+    partial_risk = _risk_projection(
+        {
+            "calculated_at": NOW,
+            "factors": [],
+            "limitations": [],
+            "coverage_snapshot": {},
+        }
+    )
+
+    assert _index_eligible(item.company, item.sources, clean_risk) is True
+    assert _index_eligible(item.company, item.sources, partial_risk) is False
 
 
 def test_limitations_and_recommendations_are_approved_public_objects():

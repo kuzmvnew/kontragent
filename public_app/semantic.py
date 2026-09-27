@@ -12,7 +12,20 @@ from datetime import date
 from enum import StrEnum
 from typing import Any, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from app.contracts.risk_v3 import (
+    Applicability,
+    AssessmentStatus,
+    Execution,
+    Freshness as RiskFreshness,
+    Observation,
+    OverallRiskResult,
+    ResolutionState,
+    RiskAssessmentV3,
+    ScopeCompleteness,
+    TemporalKind,
+)
 
 
 PUBLIC_NEXT_INDEX_ENABLED = False
@@ -122,6 +135,179 @@ class CompiledSourceStatus(CompilerModel):
     label: str
     explanation: str
     visual_state: str = Field(pattern=r"^(positive|neutral|attention|negative)$")
+
+
+class AggregateCleanProof(CompilerModel):
+    """Internal trace for the permission to publish a clean aggregate result."""
+
+    proven: bool
+    reason_codes: tuple[str, ...]
+    resolved_check_refs: tuple[str, ...] = ()
+    coverage_calculated_at: str | None = None
+    mandatory_gate_evaluated_at: str | None = None
+    ruleset_version: str | None = None
+    policy_versions: tuple[str, ...] = ()
+
+
+def aggregate_clean_conclusion_proof(
+    risk: Mapping[str, Any],
+) -> AggregateCleanProof:
+    """Prove a clean aggregate conclusion from one canonical Risk v3 payload.
+
+    Persisted rows contain the canonical assessment in ``result_payload``.  A
+    direct RiskAssessmentV3-shaped mapping is accepted for deterministic use by
+    the compiler itself.  Missing, empty, legacy, or malformed evidence never
+    receives compatibility defaults.
+    """
+
+    if not isinstance(risk, Mapping):
+        return AggregateCleanProof(
+            proven=False,
+            reason_codes=("RISK_V3_CONTRACT_MISSING",),
+        )
+    persisted_payload = risk.get("result_payload")
+    payload = persisted_payload if isinstance(persisted_payload, Mapping) else risk
+    try:
+        assessment = RiskAssessmentV3.model_validate(payload)
+    except (ValidationError, TypeError, ValueError):
+        return AggregateCleanProof(
+            proven=False,
+            reason_codes=("RISK_V3_CONTRACT_INVALID",),
+        )
+
+    coverage = assessment.coverage_snapshot
+    gate = assessment.mandatory_gate
+    trace = {
+        "resolved_check_refs": tuple(
+            sorted(item.check_ref for item in assessment.resolved_checks)
+        ),
+        "coverage_calculated_at": coverage.calculated_at.isoformat(),
+        "mandatory_gate_evaluated_at": gate.evaluated_at.isoformat(),
+        "ruleset_version": assessment.ruleset_version,
+        "policy_versions": (
+            assessment.coverage_policy_version,
+            assessment.applicability_policy_version,
+            assessment.source_resolution_policy_version,
+            assessment.freshness_policy_version,
+            gate.policy_version,
+        ),
+    }
+    reasons: list[str] = []
+
+    if assessment.status != AssessmentStatus.CALCULATED:
+        reasons.append("ASSESSMENT_NOT_CALCULATED")
+    if assessment.factors:
+        reasons.append("FACTORS_PRESENT")
+    if assessment.overall_result != OverallRiskResult.NO_ADVERSE_FACTORS_AFTER_MANDATORY_GATE:
+        reasons.append("OVERALL_RESULT_NOT_CLEAN")
+    if any(item.blocks_positive_conclusion for item in assessment.limitations):
+        reasons.append("BLOCKING_LIMITATION")
+
+    applicable = set(coverage.applicable_codes)
+    resolved = set(coverage.resolved_codes)
+    mandatory = set(coverage.mandatory_applicable_codes)
+    mandatory_resolved = set(coverage.mandatory_resolved_codes)
+    if coverage.denominator <= 0 or coverage.numerator != coverage.denominator:
+        reasons.append("COVERAGE_NOT_COMPLETE")
+    if not applicable or resolved != applicable:
+        reasons.append("APPLICABLE_CHECKS_NOT_RESOLVED")
+    if (
+        coverage.unresolved_codes
+        or coverage.partial_codes
+        or coverage.applicability_unknown_codes
+    ):
+        reasons.append("COVERAGE_HAS_UNRESOLVED_AXES")
+    if (
+        coverage.mandatory_denominator <= 0
+        or coverage.mandatory_numerator != coverage.mandatory_denominator
+        or not mandatory
+        or mandatory_resolved != mandatory
+    ):
+        reasons.append("MANDATORY_COVERAGE_NOT_COMPLETE")
+    if coverage.coverage_policy_version != assessment.coverage_policy_version:
+        reasons.append("COVERAGE_POLICY_MISMATCH")
+
+    if (
+        gate.allowed is not True
+        or gate.blocking_checks
+        or set(gate.mandatory_applicable_codes) != mandatory
+        or set(gate.resolved_codes) != mandatory
+    ):
+        reasons.append("MANDATORY_GATE_NOT_PROVEN")
+    if gate.policy_version != assessment.applicability_policy_version:
+        reasons.append("MANDATORY_GATE_POLICY_MISMATCH")
+
+    check_codes = [item.capability_code for item in assessment.resolved_checks]
+    if len(check_codes) != len(set(check_codes)):
+        reasons.append("DUPLICATE_CHECK_CAPABILITY")
+    check_applicable = {
+        item.capability_code
+        for item in assessment.resolved_checks
+        if item.applicability == Applicability.APPLICABLE
+    }
+    if check_applicable != applicable:
+        reasons.append("COVERAGE_CHECK_SET_MISMATCH")
+    candidate_refs = {item.candidate_ref for item in assessment.evidence_snapshot}
+    evidence_refs = {
+        ref for item in assessment.evidence_snapshot for ref in item.evidence_refs
+    }
+    source_refs = {item.source_code for item in assessment.evidence_snapshot}
+    if any(
+        item.company_id != assessment.company_id
+        for item in assessment.evidence_snapshot
+    ):
+        reasons.append("EVIDENCE_SUBJECT_MISMATCH")
+
+    for check in assessment.resolved_checks:
+        if check.company_id != assessment.company_id:
+            reasons.append("CHECK_SUBJECT_MISMATCH")
+        if check.applicability == Applicability.APPLICABILITY_UNKNOWN:
+            reasons.append("APPLICABILITY_NOT_PROVEN")
+            continue
+        if check.applicability == Applicability.NOT_APPLICABLE:
+            if (
+                check.resolution_state != ResolutionState.RESOLVED
+                or check.applicability_decision is None
+            ):
+                reasons.append("NOT_APPLICABLE_PROVENANCE_MISSING")
+            continue
+        if check.capability_code not in applicable:
+            continue
+        if (
+            check.resolution_state != ResolutionState.RESOLVED
+            or check.execution != Execution.CHECKED
+            or check.observation not in {Observation.FOUND, Observation.NOT_FOUND}
+            or check.scope != ScopeCompleteness.COMPLETE
+            or not check.selected_evidence_refs
+            or not check.source_refs
+            or not check.candidate_refs
+        ):
+            reasons.append("RELIED_CHECK_NOT_RESOLVED")
+        if (
+            not set(check.candidate_refs) <= candidate_refs
+            or not set(check.selected_evidence_refs) <= evidence_refs
+            or not set(check.source_refs) <= source_refs
+        ):
+            reasons.append("RELIED_EVIDENCE_NOT_TRACEABLE")
+        if (
+            check.temporal_kind == TemporalKind.CURRENT_STATE
+            and check.freshness != RiskFreshness.CURRENT
+        ):
+            reasons.append("RELIED_CHECK_NOT_CURRENT")
+        if (
+            check.observation == Observation.NOT_FOUND
+            and not check.negative_closure_proven
+        ):
+            reasons.append("NEGATIVE_CLOSURE_NOT_PROVEN")
+        if check.resolution_policy_version != assessment.source_resolution_policy_version:
+            reasons.append("RESOLUTION_POLICY_MISMATCH")
+
+    unique_reasons = tuple(dict.fromkeys(reasons))
+    return AggregateCleanProof(
+        proven=not unique_reasons,
+        reason_codes=unique_reasons,
+        **trace,
+    )
 
 
 class _FactorTemplate(CompilerModel):
@@ -265,6 +451,12 @@ FACTOR_TEMPLATES: dict[str, _FactorTemplate] = {
 
 
 LIMITATION_TEMPLATES: dict[str, CompiledLimitation] = {
+    "AGGREGATE_CLEAN_PROOF_NOT_PROVEN": CompiledLimitation(
+        headline="Проверка выполнена не полностью.",
+        short_explanation="Недостаточно подтверждённых результатов, чтобы сделать общий вывод об отсутствии факторов внимания.",
+        effect_on_conclusion="Отсутствие выявленных факторов не считается подтверждением их отсутствия.",
+        what_remains_unknown="Остаётся неизвестно, завершены ли все применимые обязательные проверки.",
+    ),
     "APPLICABILITY_UNKNOWN": CompiledLimitation(
         headline="Применимость проверки не определена.",
         short_explanation="Недостаточно подтверждённых данных, чтобы решить, относится ли эта проверка к деятельности компании.",
@@ -501,6 +693,14 @@ def compile_meaning(value: MeaningInput) -> CompiledMeaning | None:
 
 def compile_limitation(code: str | None) -> CompiledLimitation:
     return LIMITATION_TEMPLATES.get(str(code or "").upper(), GENERIC_LIMITATION)
+
+
+def compile_aggregate_abstention_conclusion() -> str:
+    return "Недостаточно данных для общего положительного вывода. Ограничения проверки указаны ниже."
+
+
+def compile_aggregate_clean_conclusion() -> str:
+    return "Неблагоприятные факторы не выявлены в рамках выполненных актуальных проверок."
 
 
 def compile_recommendation(code: str | None) -> CompiledRecommendation | None:

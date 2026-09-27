@@ -13,6 +13,8 @@ from public_app.semantic import (
     PUBLIC_NEXT_INDEX_ENABLED,
     CompiledLimitation,
     CompiledRecommendation,
+    compile_aggregate_abstention_conclusion,
+    compile_aggregate_clean_conclusion,
     compile_limitation,
     compile_recommendation,
     compile_source_status,
@@ -403,8 +405,8 @@ class PublicProjection(PublicModel):
         if self.risk.factors:
             return "Выявлены подтверждённые факторы, требующие внимания."
         if self.risk.state == PublicState.NOT_FOUND and not self.risk.limitations:
-            return "Неблагоприятные факторы не выявлены в завершённых проверках."
-        return "Данных недостаточно для положительного вывода; учтите ограничения проверки."
+            return compile_aggregate_clean_conclusion()
+        return compile_aggregate_abstention_conclusion()
 
     @property
     def public_limitations(self) -> tuple[PublicLimitation, ...]:

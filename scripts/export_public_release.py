@@ -41,6 +41,9 @@ from public_app.contracts import (
 )
 from public_app.semantic import (
     MeaningInput,
+    aggregate_clean_conclusion_proof,
+    compile_aggregate_abstention_conclusion,
+    compile_aggregate_clean_conclusion,
     compile_limitation,
     compile_meaning,
     compile_recommendation,
@@ -385,16 +388,31 @@ def _risk_projection(risk: dict) -> PublicRisk:
                 source_data_date=source_date,
             )
         )
-    coverage = risk.get("coverage_snapshot") or risk.get("coverage") or result_payload.get("coverage") or {}
     limitations: list[PublicLimitation] = []
     for item in risk.get("limitations") or ():
         code = item.get("limitation_code") if isinstance(item, dict) else item
         limitations.append(PublicLimitation.from_compiled(compile_limitation(str(code or ""))))
     if unknown_factor_present:
         limitations.append(PublicLimitation.from_compiled(compile_limitation(None)))
+    aggregate_proof = aggregate_clean_conclusion_proof(risk) if not factors else None
+    if not factors and (aggregate_proof is None or not aggregate_proof.proven):
+        limitations.append(
+            PublicLimitation.from_compiled(
+                compile_limitation("AGGREGATE_CLEAN_PROOF_NOT_PROVEN")
+            )
+        )
     limitations = list(dict.fromkeys(limitations))
-    is_partial = bool(result_payload.get("preliminary")) or not bool(coverage.get("mandatory_hard_checks_resolved", True)) or bool(limitations)
-    state = PublicState.PARTIAL if is_partial else (PublicState.FOUND if factors else PublicState.NOT_FOUND)
+    is_partial = bool(result_payload.get("preliminary")) or bool(limitations)
+    clean_proven = bool(aggregate_proof and aggregate_proof.proven)
+    state = (
+        PublicState.PARTIAL
+        if is_partial
+        else PublicState.FOUND
+        if factors
+        else PublicState.NOT_FOUND
+        if clean_proven
+        else PublicState.PARTIAL
+    )
     if state == PublicState.PARTIAL:
         title = "Оценка содержит ограничения"
     elif factors:
@@ -402,9 +420,9 @@ def _risk_projection(risk: dict) -> PublicRisk:
     else:
         title = "Неблагоприятные факторы не выявлены в выполненных проверках"
     explanation = (
-        "Факторы приведены по сохранённому результату Risk v3. Ограничения полноты не позволяют трактовать отсутствие отдельных сведений как отсутствие риска."
+        "Факторы приведены по сохранённым результатам проверки. Ограничения полноты не позволяют трактовать отсутствие отдельных сведений как отсутствие риска."
         if is_partial else
-        "Факторы приведены по сохранённому результату Risk v3 без рейтинга или вероятностной интерпретации."
+        "Факторы приведены по сохранённым результатам проверки без рейтинга или вероятностной интерпретации."
     )
     return PublicRisk(
         state=state, title=title, explanation=explanation, factors=tuple(factors),
@@ -433,9 +451,9 @@ def _summary_projection(summary: dict, public_risk: PublicRisk) -> PublicSummary
     if public_risk.factors:
         conclusion = "Выявлены факторы, требующие внимания. Их значение следует оценивать вместе с полнотой и датами исходных данных."
     elif public_risk.state == PublicState.NOT_FOUND:
-        conclusion = "Неблагоприятные факторы не выявлены в рамках выполненных проверок."
+        conclusion = compile_aggregate_clean_conclusion()
     else:
-        conclusion = "Данных недостаточно для положительного вывода; ограничения проверки указаны ниже."
+        conclusion = compile_aggregate_abstention_conclusion()
     return PublicSummary(
         short_conclusion=conclusion, main_factors=main,
         limitations=limitations, recommendations=tuple(recommendations),
@@ -445,6 +463,22 @@ def _summary_projection(summary: dict, public_risk: PublicRisk) -> PublicSummary
 
 def _load_latest(cursor, table: str, company_id: int, date_column: str) -> dict | None:
     return _latest_json(cursor, table, company_id, f"{date_column} DESC, id DESC")
+
+
+def _index_eligible(
+    company_info: CompanyInfo,
+    sources: tuple[PublicSourceBlock, ...],
+    public_risk: PublicRisk,
+) -> bool:
+    return bool(
+        company_info.ogrn
+        and public_risk.state in {PublicState.FOUND, PublicState.NOT_FOUND}
+        and not public_risk.limitations
+        and all(
+            source.state in {PublicState.FOUND, PublicState.NOT_FOUND}
+            for source in sources
+        )
+    )
 
 
 def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicProjection:
@@ -484,10 +518,7 @@ def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicPr
         director_name=director_name,
         director_position=director_position,
     )
-    index_eligible = bool(
-        company_info.ogrn
-        and all(source.state in {PublicState.FOUND, PublicState.NOT_FOUND} for source in sources)
-    )
+    index_eligible = _index_eligible(company_info, sources, public_risk)
     content_candidates = [_aware(risk["calculated_at"]), _aware(summary["generated_at"])]
     for field in ("updated_at", "source_updated_at"):
         if company.get(field):
