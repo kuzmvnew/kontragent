@@ -53,6 +53,11 @@
     {{ metric('SOURCE FAMILIES', snapshot.source_families, 'Группы источников и семейства фактов.') }}
     {{ metric('MASTER COMPANIES', snapshot.master.total, 'Всего company identity.', '', 'ЮЛ ' ~ snapshot.master.legal ~ ' · ИП ' ~ snapshot.master.ip) }}
     {{ metric('FULLY ENRICHED', snapshot.enrichment.companies_complete, 'Полностью обогащённые компании.', 'green') }}
+    {{ metric('Factory companies/day', snapshot.factory.current_companies_per_day|round|int, 'Фактический темп public_ready за последний час.') }}
+    {{ metric('Backlog / oldest', snapshot.factory.totals.enrichment_backlog ~ ' / ' ~ ((snapshot.factory.queues.oldest_enrichment_seconds / 60)|round|int ~ ' мин' if snapshot.factory.queues.oldest_enrichment_seconds is not none else '—'), 'Очередь enrichment и возраст старейшей активной работы.') }}
+    {{ metric('Ready/hour', snapshot.factory.rates.fully_enriched.per_hour|round(1) ~ ' / ' ~ snapshot.factory.rates.public_ready.per_hour|round(1), 'Fully enriched / public_ready за последний час.') }}
+    {{ metric('Source / Worker backlog', snapshot.factory.queues.source_expectations ~ ' / ' ~ snapshot.factory.queues.worker_pending ~ '+' ~ snapshot.factory.queues.worker_running, 'Ожидания источников и worker jobs pending+running.') }}
+    {{ metric('RAW growth/hour', snapshot.factory.storage.raw_bytes_per_hour|filesize, 'Измеренный прирост известных RAW-артефактов за последний час.') }}
     {{ metric('Первый запуск / ожидание', snapshot.summary.first_run, 'Первый цикл или ожидающая проверка.', 'amber') }}
     {{ metric('Устарели / ошибки / blocked', snapshot.summary.stale ~ ' / ' ~ snapshot.summary.errors ~ ' / ' ~ snapshot.summary.blocked, 'Требующие внимания состояния.', 'red') }}
     {{ metric('Отключены / planned', snapshot.summary.disabled ~ ' / ' ~ snapshot.summary.planned|default(0), 'Выключенные и ещё не подключённые.') }}

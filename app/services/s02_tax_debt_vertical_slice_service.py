@@ -638,12 +638,22 @@ def load_s02_tax_debt_fact(
 
     if captured_at.tzinfo is None or captured_at.utcoffset() is None:
         raise ValueError("captured_at must include a timezone")
+    # Calculation time is used to evaluate freshness, but it is not a source
+    # observation and therefore must not change immutable Risk input identity.
+    evidence_checked_at = (
+        dataset.checked_at
+        or dataset.last_attempt_at
+        or dataset.last_success_at
+        or dataset.updated_at
+        if dataset is not None
+        else company.source_updated_at or company.updated_at or company.created_at
+    )
     inn = str(company.inn or "").strip()
     if len(inn) != 10 or not inn.isdigit():
         return build_s02_tax_debt_fact(
             company_id=company.id,
             state=S02FactState.SOURCE_UNAVAILABLE,
-            checked_at=captured_at,
+            checked_at=evidence_checked_at,
             evidence_refs=(f"company:{company.id}:invalid-inn",),
             freshness_reason="legal_entity_inn_invalid",
             limitations=("legal_entity_inn_invalid",),
@@ -652,7 +662,7 @@ def load_s02_tax_debt_fact(
         return build_s02_tax_debt_fact(
             company_id=company.id,
             state=S02FactState.SOURCE_UNAVAILABLE,
-            checked_at=captured_at,
+            checked_at=evidence_checked_at,
             evidence_refs=("persisted-source-state:fns_tax_debt",),
             freshness_reason="dataset_not_available",
             limitations=("dataset_not_available",),
@@ -667,7 +677,7 @@ def load_s02_tax_debt_fact(
         return build_s02_tax_debt_fact(
             company_id=company.id,
             state=S02FactState.SOURCE_UNAVAILABLE,
-            checked_at=captured_at,
+            checked_at=evidence_checked_at,
             evidence_refs=(f"data_sets:{dataset.id}:unavailable",),
             source_as_of=publication.source_as_of,
             retrieved_at=publication.retrieved_at,
@@ -681,7 +691,7 @@ def load_s02_tax_debt_fact(
         return build_s02_tax_debt_fact(
             company_id=company.id,
             state=S02FactState.STALE_DATA,
-            checked_at=captured_at,
+            checked_at=evidence_checked_at,
             evidence_refs=(
                 f"data_sets:{dataset.id}:stale:{publication.data_as_of}",
             ),
@@ -717,7 +727,7 @@ def load_s02_tax_debt_fact(
             return build_s02_tax_debt_fact(
                 company_id=company.id,
                 state=S02FactState.SOURCE_UNAVAILABLE,
-                checked_at=captured_at,
+                checked_at=evidence_checked_at,
                 evidence_refs=(negative_closure.evidence_ref,),
                 amount_as_of_date=publication.data_as_of,
                 source_as_of=publication.source_as_of,
@@ -729,7 +739,7 @@ def load_s02_tax_debt_fact(
         return build_s02_tax_debt_fact(
             company_id=company.id,
             state=S02FactState.NOT_FOUND,
-            checked_at=captured_at,
+            checked_at=evidence_checked_at,
             evidence_refs=(
                 f"data_sets:{dataset.id}:absence:{publication.data_as_of}",
             ),
@@ -744,7 +754,7 @@ def load_s02_tax_debt_fact(
     return build_s02_tax_debt_fact(
         company_id=company.id,
         state=S02FactState.FOUND,
-        checked_at=captured_at,
+        checked_at=evidence_checked_at,
         evidence_refs=(f"company_tax_debt_snapshots:{row.id}",),
         amount=amount,
         amount_as_of_date=row.data_date,

@@ -1,0 +1,342 @@
+"""Read-only operational measurements for the company factory.
+
+The service intentionally uses only persisted timestamps and PostgreSQL
+statistics.  It does not infer production throughput from configured limits.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session
+
+from app.models.company import Company
+from app.models.registry_master import MasterReplaySignal
+from app.models.source import DataSet
+from app.services.source_applicability_service import source_applicability_clause
+
+
+def _scalar(session: Session, statement: str, **parameters: Any) -> int | float:
+    value = session.execute(text(statement), parameters).scalar()
+    return value or 0
+
+
+def _mapping(session: Session, statement: str, **parameters: Any) -> dict[str, Any]:
+    row = session.execute(text(statement), parameters).mappings().one()
+    return dict(row)
+
+
+def _rate(count: int, window_hours: float) -> dict[str, float]:
+    per_hour = float(count) / window_hours
+    return {
+        "count": int(count),
+        "per_hour": round(per_hour, 3),
+        "per_day": round(per_hour * 24, 3),
+    }
+
+
+def collect_factory_metrics(
+    session: Session,
+    *,
+    window_hours: float = 1.0,
+    now: datetime | None = None,
+    enforce_read_only: bool = True,
+) -> dict[str, Any]:
+    """Collect one database-authoritative, mutation-free factory snapshot."""
+
+    if window_hours <= 0:
+        raise ValueError("window_hours must be positive")
+    observed_at = now or datetime.now(timezone.utc)
+    cutoff = observed_at - timedelta(hours=window_hours)
+    if enforce_read_only:
+        session.execute(text("SET TRANSACTION READ ONLY"))
+
+    totals = _mapping(
+        session,
+        """
+        WITH latest AS (
+          SELECT r.*,
+                 row_number() OVER (
+                   PARTITION BY r.company_id
+                   ORDER BY r.created_at DESC, r.id DESC
+                 ) AS position
+          FROM company_enrichment_runs r
+        )
+        SELECT
+          (SELECT count(*) FROM companies) AS master,
+          count(*) FILTER (WHERE position = 1) AS companies_with_run,
+          count(*) FILTER (
+            WHERE position = 1 AND status = 'succeeded'
+              AND completed_source_count = source_count
+              AND failed_source_count = 0
+          ) AS fully_enriched,
+          count(*) FILTER (
+            WHERE position = 1 AND public_ready
+              AND risk_assessment_id IS NOT NULL
+              AND summary_id IS NOT NULL
+          ) AS public_ready,
+          count(*) FILTER (
+            WHERE position = 1
+              AND status IN ('pending','waiting_sources','retry_scheduled','running')
+          ) AS enrichment_active,
+          count(*) FILTER (WHERE position = 1 AND status = 'failed') AS enrichment_failed
+        FROM latest
+        """,
+    )
+    totals = {key: int(value or 0) for key, value in totals.items()}
+    totals["enrichment_not_started"] = max(
+        0, totals["master"] - totals["companies_with_run"]
+    )
+    totals["enrichment_backlog"] = max(
+        0, totals["master"] - totals["fully_enriched"]
+    )
+
+    queues = _mapping(
+        session,
+        """
+        SELECT
+          (SELECT count(*) FROM master_replay_signals
+             WHERE status IN ('pending','scheduled')) AS master_replay_total,
+          (SELECT count(*) FROM company_source_coverage
+             WHERE execution_status IN ('pending','queued','running','retry_scheduled'))
+             AS source_expectations,
+          (SELECT count(*) FROM worker_jobs
+             WHERE status IN ('queued','retry_scheduled')) AS worker_pending,
+          (SELECT count(*) FROM worker_jobs WHERE status = 'running') AS worker_running,
+          (SELECT EXTRACT(EPOCH FROM (:observed_at - min(created_at)))
+             FROM company_enrichment_runs
+             WHERE status IN ('pending','waiting_sources','retry_scheduled','running'))
+             AS oldest_enrichment_seconds,
+          (SELECT EXTRACT(EPOCH FROM (:observed_at - min(created_at)))
+             FROM worker_jobs WHERE status IN ('queued','retry_scheduled'))
+             AS oldest_worker_job_seconds
+        """,
+        observed_at=observed_at,
+    )
+    queues["master_replay_actionable"] = int(
+        session.scalar(
+            select(func.count(MasterReplaySignal.id))
+            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+            .join(Company, Company.id == MasterReplaySignal.company_id)
+            .where(
+                MasterReplaySignal.status.in_(("pending", "scheduled")),
+                DataSet.enabled.is_(True),
+                DataSet.auto_update_status == "configured",
+                DataSet.operational_status == "current",
+                DataSet.last_success_at.is_not(None),
+                DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
+                (
+                    DataSet.next_expected_update_at.is_(None)
+                    | (DataSet.next_expected_update_at > observed_at)
+                ),
+                source_applicability_clause(DataSet.code, Company.inn),
+            )
+        )
+        or 0
+    )
+    queues = {
+        key: (round(float(value), 3) if key.endswith("_seconds") else int(value or 0))
+        if value is not None
+        else None
+        for key, value in queues.items()
+    }
+
+    firmoteka = _mapping(
+        session,
+        """
+        WITH identities AS (
+          SELECT inn, min(source_url) AS source_url
+          FROM firmoteka_crawl_items
+          GROUP BY inn
+        ), latest_run AS (
+          SELECT * FROM firmoteka_crawl_runs
+          ORDER BY created_at DESC, id DESC LIMIT 1
+        )
+        SELECT
+          (SELECT count(*) FROM firmoteka_crawl_items) AS discovered_rows,
+          (SELECT count(*) FROM identities) AS unique_company_urls,
+          (SELECT count(*) FROM identities WHERE length(inn) = 10) AS legal,
+          (SELECT count(*) FROM identities WHERE length(inn) = 12) AS ip,
+          (SELECT count(*) FROM firmoteka_crawl_items)
+            - (SELECT count(*) FROM identities) AS duplicate_identities,
+          (SELECT count(DISTINCT inn) FROM firmoteka_crawl_items
+             WHERE status = 'succeeded') AS fetched,
+          (SELECT count(*) FROM firmoteka_crawl_items
+             WHERE status IN ('pending','running')) AS backlog,
+          (SELECT count(*) FROM firmoteka_quarantine_records) AS quarantined,
+          (SELECT count(*) FROM firmoteka_quarantine_records
+             WHERE reason ILIKE '%%identity%%' OR reason ILIKE '%%inn%%'
+                OR reason ILIKE '%%ogrn%%') AS invalid_identities,
+          (SELECT count(*) FROM firmoteka_catalog_pages
+             WHERE status = 'succeeded') AS catalog_pages_succeeded,
+          (SELECT count(*) FROM firmoteka_catalog_pages) AS catalog_pages_total,
+          (SELECT status FROM latest_run) AS crawl_status,
+          (SELECT phase FROM latest_run) AS crawl_phase,
+          (SELECT catalog_concurrency FROM latest_run) AS catalog_lanes,
+          (SELECT company_concurrency FROM latest_run) AS company_lanes,
+          (SELECT http_status_counts FROM latest_run) AS http_status_counts,
+          (SELECT captcha_count FROM latest_run) AS captcha_count,
+          (SELECT latency_histogram FROM latest_run) AS latency_histogram,
+          (SELECT latency_ms_max FROM latest_run) AS latency_ms_max
+        """,
+    )
+    for key in (
+        "discovered_rows",
+        "unique_company_urls",
+        "legal",
+        "ip",
+        "duplicate_identities",
+        "fetched",
+        "backlog",
+        "quarantined",
+        "invalid_identities",
+        "catalog_pages_succeeded",
+        "catalog_pages_total",
+        "catalog_lanes",
+        "company_lanes",
+        "captcha_count",
+        "latency_ms_max",
+    ):
+        firmoteka[key] = int(firmoteka.get(key) or 0)
+
+    observed_counts = _mapping(
+        session,
+        """
+        SELECT
+          (SELECT count(*) FROM companies WHERE created_at >= :cutoff) AS master,
+          (SELECT count(*) FROM (
+             SELECT company_id, min(finished_at) AS first_ready_at
+             FROM company_enrichment_runs
+             WHERE status = 'succeeded'
+               AND completed_source_count = source_count
+               AND failed_source_count = 0
+             GROUP BY company_id
+           ) x WHERE first_ready_at >= :cutoff) AS fully_enriched,
+          (SELECT count(*) FROM (
+             SELECT company_id, min(finished_at) AS first_ready_at
+             FROM company_enrichment_runs
+             WHERE public_ready
+               AND risk_assessment_id IS NOT NULL
+               AND summary_id IS NOT NULL
+             GROUP BY company_id
+           ) x WHERE first_ready_at >= :cutoff) AS public_ready,
+          (SELECT count(*) FROM company_risk_assessments_v3
+             WHERE calculated_at >= :cutoff) AS risk,
+          (SELECT count(*) FROM company_summaries_v3
+             WHERE generated_at >= :cutoff) AS summary,
+          (SELECT count(*) FROM company_source_coverage
+             WHERE finished_at >= :cutoff) AS source_expectations,
+          (SELECT count(*) FROM worker_jobs WHERE created_at >= :cutoff) AS worker_jobs,
+          (SELECT count(*) FROM worker_runs
+             WHERE finished_at >= :cutoff) AS worker_runs,
+          (SELECT count(DISTINCT inn) FROM firmoteka_crawl_items
+             WHERE fetched_at >= :cutoff AND status = 'succeeded') AS firmoteka_fetched
+        """,
+        cutoff=cutoff,
+    )
+    rates = {
+        key: _rate(int(value or 0), window_hours)
+        for key, value in observed_counts.items()
+    }
+
+    latency = _mapping(
+        session,
+        """
+        SELECT
+          count(*) AS sample_count,
+          percentile_cont(0.5) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (r.started_at - j.created_at))
+          ) AS p50_seconds,
+          percentile_cont(0.95) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (r.started_at - j.created_at))
+          ) AS p95_seconds,
+          max(EXTRACT(EPOCH FROM (r.started_at - j.created_at))) AS max_seconds
+        FROM worker_runs r
+        JOIN worker_jobs j ON j.id = r.job_id
+        WHERE r.started_at >= :cutoff
+        """,
+        cutoff=cutoff,
+    )
+    latency = {
+        key: int(value or 0)
+        if key == "sample_count"
+        else round(float(value), 3) if value is not None else None
+        for key, value in latency.items()
+    }
+
+    database = _mapping(
+        session,
+        """
+        SELECT
+          pg_database_size(current_database()) AS size_bytes,
+          blks_read,
+          blks_hit,
+          temp_files,
+          temp_bytes,
+          tup_returned,
+          tup_fetched,
+          tup_inserted,
+          tup_updated,
+          tup_deleted,
+          xact_commit,
+          xact_rollback,
+          deadlocks,
+          blk_read_time,
+          blk_write_time,
+          stats_reset
+        FROM pg_stat_database
+        WHERE datname = current_database()
+        """,
+    )
+    numeric_database = {}
+    for key, value in database.items():
+        if key == "stats_reset":
+            numeric_database[key] = value.isoformat() if value else None
+        elif isinstance(value, float):
+            numeric_database[key] = round(value, 3)
+        else:
+            numeric_database[key] = int(value or 0)
+
+    storage = _mapping(
+        session,
+        """
+        SELECT
+          (SELECT coalesce(sum(size_bytes), 0) FROM firmoteka_raw_artifacts)
+            + (SELECT coalesce(sum(
+                CASE
+                  WHEN coalesce(manifest->>'size_bytes', '') ~ '^[0-9]+$'
+                  THEN (manifest->>'size_bytes')::bigint ELSE 0
+                END
+              ), 0) FROM worker_raw_manifests) AS raw_bytes_known,
+          (SELECT coalesce(sum(size_bytes), 0) FROM firmoteka_raw_artifacts
+             WHERE retrieved_at >= :cutoff)
+            + (SELECT coalesce(sum(
+                CASE
+                  WHEN coalesce(manifest->>'size_bytes', '') ~ '^[0-9]+$'
+                  THEN (manifest->>'size_bytes')::bigint ELSE 0
+                END
+              ), 0) FROM worker_raw_manifests WHERE created_at >= :cutoff)
+              AS raw_bytes_window
+        """,
+        cutoff=cutoff,
+    )
+    storage = {key: int(value or 0) for key, value in storage.items()}
+    storage["raw_bytes_per_hour"] = round(
+        storage["raw_bytes_window"] / window_hours, 3
+    )
+    storage["postgres_bytes"] = numeric_database["size_bytes"]
+
+    return {
+        "observed_at": observed_at.isoformat(),
+        "window_hours": window_hours,
+        "totals": totals,
+        "queues": queues,
+        "rates": rates,
+        "current_companies_per_day": rates["public_ready"]["per_day"],
+        "queue_latency": latency,
+        "firmoteka": firmoteka,
+        "database": numeric_database,
+        "storage": storage,
+    }

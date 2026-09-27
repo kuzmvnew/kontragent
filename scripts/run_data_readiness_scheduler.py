@@ -1,6 +1,7 @@
 """Run the data-readiness scheduler once or as a supervised worker."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 import json
 
@@ -41,6 +42,7 @@ from app.services.erknm_registry_service import ensure_erknm_dataset
 from app.services.source_service import ensure_default_dataset
 from app.services.source_factory_registry_service import ensure_source_factory_datasets
 from app.services.company_enrichment_service import run_company_enrichment_cycle
+from app.services.factory_scale_service import FactoryScaleConfig
 from app.services.roszdrav_registry_service import ensure_roszdrav_datasets
 from app.services.data_readiness_scheduler import (
     FNS_BULK_DATASET_CODES,
@@ -122,21 +124,51 @@ def run_workers(registry: HandlerRegistry, *, max_jobs: int) -> list[str]:
             reconcile_limit=max(50, max_jobs * 50),
         )
         session.commit()
-    executor = WorkerExecutor(
-        session_factory=SessionLocal,
-        registry=registry,
-        worker_id="data-readiness-supervisor",
-    )
+    config = FactoryScaleConfig.from_environment()
+    budgets = config.lane_budgets()
+    lane_order = tuple(budgets)
+    bounded = {lane: 0 for lane in lane_order}
+    remaining = max(0, max_jobs)
+    while remaining and any(bounded[lane] < budgets[lane] for lane in lane_order):
+        for lane in lane_order:
+            if not remaining:
+                break
+            if bounded[lane] >= budgets[lane]:
+                continue
+            bounded[lane] += 1
+            remaining -= 1
+
+    def run_lane(lane: str, budget: int) -> list[str]:
+        executor = WorkerExecutor(
+            session_factory=SessionLocal,
+            registry=registry,
+            worker_id=f"data-readiness-supervisor:{lane}",
+        )
+        lane_completed: list[str] = []
+        for _ in range(budget):
+            try:
+                run_id = executor.run_once(allowed_lanes=(lane,))
+            except WorkerFoundationError:
+                sync_worker_failure_signals()
+                continue
+            if run_id is None:
+                break
+            lane_completed.append(str(run_id))
+        return lane_completed
+
     completed: list[str] = []
-    for _ in range(max_jobs):
-        try:
-            run_id = executor.run_once()
-        except WorkerFoundationError:
-            sync_worker_failure_signals()
-            continue
-        if run_id is None:
-            break
-        completed.append(str(run_id))
+    active_budgets = {lane: budget for lane, budget in bounded.items() if budget}
+    if active_budgets:
+        with ThreadPoolExecutor(
+            max_workers=len(active_budgets), thread_name_prefix="factory-lane"
+        ) as pool:
+            futures = {
+                lane: pool.submit(run_lane, lane, budget)
+                for lane, budget in active_budgets.items()
+            }
+            for lane in lane_order:
+                if lane in futures:
+                    completed.extend(futures[lane].result())
     # A completed Worker job can satisfy the last frozen source expectation;
     # reconcile immediately instead of waiting for the next polling minute.
     with SessionLocal() as session:

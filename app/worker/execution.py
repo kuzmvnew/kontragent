@@ -331,10 +331,20 @@ def claim_next_job(
     worker_id: str,
     lease_ttl: timedelta,
     now: datetime | None = None,
+    allowed_lanes: Sequence[str] | None = None,
 ) -> ClaimedExecution | None:
     """Claim one runnable job and source lease in the same DB transaction."""
 
     now = now or utc_now()
+    requested_lanes = tuple(dict.fromkeys(allowed_lanes or ()))
+    valid_lanes = {
+        "master_intake",
+        "bulk_enrichment",
+        "point_enrichment",
+        "source_control",
+    }
+    if requested_lanes and not set(requested_lanes) <= valid_lanes:
+        raise ValueError("unknown factory lane")
     prior_job = aliased(WorkerJob)
     last_source_run_at = (
         select(func.max(WorkerRun.started_at))
@@ -351,11 +361,21 @@ def claim_next_job(
         ),
         else_=1,
     )
+    explicit_lane = WorkerJob.schedule_metadata["factory_lane"].as_string()
+    factory_lane = case(
+        (explicit_lane.in_(tuple(sorted(valid_lanes))), explicit_lane),
+        (WorkerJob.job_type == "company_enrichment_local_replay", "bulk_enrichment"),
+        (WorkerJob.job_type == "company_enrichment_point_check", "point_enrichment"),
+        (WorkerJob.job_type.like("firmoteka_%"), "master_intake"),
+        else_="source_control",
+    )
+    lane_filter = factory_lane.in_(requested_lanes) if requested_lanes else True
     job = session.scalar(
         select(WorkerJob)
         .where(
             WorkerJob.status.in_(("queued", "retry_scheduled")),
             or_(WorkerJob.next_attempt_at.is_(None), WorkerJob.next_attempt_at <= now),
+            lane_filter,
         )
         # Rotate runnable source families by their last execution time.  FIFO
         # remains authoritative within a source, while a large bounded queue
@@ -1157,7 +1177,9 @@ class WorkerExecutor:
             raise WorkerFoundationError("handler child returned no result")
         return outcome
 
-    def run_once(self) -> UUID | None:
+    def run_once(
+        self, *, allowed_lanes: Sequence[str] | None = None
+    ) -> UUID | None:
         if self.shutdown_requested:
             return None
         with self.session_factory() as session:
@@ -1167,6 +1189,7 @@ class WorkerExecutor:
                 worker_id=self.worker_id,
                 lease_ttl=self.lease_ttl,
                 now=self.clock(),
+                allowed_lanes=allowed_lanes,
             )
             if claim is None:
                 session.rollback()

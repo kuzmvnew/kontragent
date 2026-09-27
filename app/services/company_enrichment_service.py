@@ -50,6 +50,12 @@ from app.models.worker import (
     WorkerRun,
 )
 from app.services.data_readiness_service import effective_status, safe_error_message
+from app.services.factory_scale_service import FactoryScaleConfig
+from app.services.source_applicability_service import (
+    company_scope as _company_scope,
+    source_applicability_clause,
+    source_is_applicable as _is_applicable,
+)
 from app.services.risk_v3_persistence_service import (
     calculate_company_risk_v3_from_persisted,
     get_or_create_summary_v3,
@@ -63,27 +69,6 @@ PUBLIC_COHORT_PRIORITY_CLASS = "accepted_public_cohort"
 MAX_ACTIVE_ENRICHMENT_RUNS = 100
 ENRICHMENT_REFILL_LOW_WATERMARK = 50
 DATASET_WORKER_SOURCE_IDS = {"fns_tax_debt": "S02"}
-LEGAL_ONLY_DATASET_CODES = frozenset(
-    {
-        "fns_egrul",
-        "fns_revenue_expenses",
-        "fns_tax_offence",
-        "fns_tax_paid",
-        "fns_tax_debt",
-        "fns_headcount",
-        "girbo_accounting",
-        "nostroy_sro_members_on_demand",
-        "nopriz_sro_members_on_demand",
-        "prime_corporate_disclosure",
-        "rkn_personal_data_operators",
-        "rkn_communications_licenses",
-        "rkn_broadcast_licenses",
-        "rkn_registered_media",
-        "rkn_information_distributors",
-        "rkn_hosting_providers",
-    }
-)
-IP_ONLY_DATASET_CODES = frozenset({"fns_egrip", "fns_npd"})
 ACTIVE_EXECUTION_STATUSES = frozenset(
     {"pending", "queued", "running", "retry_scheduled"}
 )
@@ -119,14 +104,17 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _enrichment_refill_capacity(active_count: int) -> int:
+def _enrichment_refill_capacity(
+    active_count: int, config: FactoryScaleConfig | None = None
+) -> int:
     """Refill in cohorts so immutable snapshots are not replayed per company."""
 
     if active_count < 0:
         raise ValueError("active enrichment count cannot be negative")
-    if active_count > ENRICHMENT_REFILL_LOW_WATERMARK:
+    config = config or FactoryScaleConfig()
+    if active_count > config.refill_low_watermark:
         return 0
-    return max(0, MAX_ACTIVE_ENRICHMENT_RUNS - active_count)
+    return max(0, config.active_run_limit - active_count)
 
 
 @dataclass(frozen=True)
@@ -174,24 +162,6 @@ def _iso(value: datetime | date | None) -> str | None:
 
 def _worker_source_id(dataset_code: str) -> str:
     return DATASET_WORKER_SOURCE_IDS.get(dataset_code, dataset_code)
-
-
-def _company_scope(company: Company) -> str:
-    value = str(company.entity_type or "").strip().lower()
-    if value in {"legal", "legal_entity", "organization"} or len(company.inn) == 10:
-        return "legal"
-    if value in {"individual_entrepreneur", "ip", "entrepreneur"} or len(company.inn) == 12:
-        return "ip"
-    return "unknown"
-
-
-def _is_applicable(company: Company, dataset_code: str) -> bool:
-    scope = _company_scope(company)
-    if dataset_code in LEGAL_ONLY_DATASET_CODES:
-        return scope == "legal"
-    if dataset_code in IP_ONLY_DATASET_CODES:
-        return scope == "ip"
-    return True
 
 
 def _latest_handler(
@@ -681,6 +651,7 @@ def _enqueue_bulk_group(
             "company_enrichment_run_ids": list(run_ids),
             "company_ids": list(company_ids),
             "download_allowed": False,
+            "factory_lane": "bulk_enrichment",
         }
     )
     if priority_class:
@@ -764,6 +735,7 @@ def _enqueue_point_coverage(
             "scheduled_index": 0,
             "company_enrichment_run_id": str(coverage.enrichment_run_id),
             "bounded_point_check": True,
+            "factory_lane": "point_enrichment",
         }
     )
     if priority_class:
@@ -842,21 +814,24 @@ def enqueue_enrichment_work(
         else:
             point_rows.append(row)
 
+    bulk_batch_size = FactoryScaleConfig.from_environment().bulk_batch_size
     for rows in bulk_groups.values():
-        try:
-            creation = _enqueue_bulk_group(
-                session, rows, now=now, priority_class=priority_class
-            )
-        except Exception as error:
-            for row in rows:
-                _coverage_error(row, error, now=now)
-            continue
-        jobs_created += int(creation.created)
-        for row in rows:
-            row.worker_job_id = creation.job.id
-            row.execution_status = creation.job.status
-            row.status = "RUNNING"
-            row.updated_at = now
+        for offset in range(0, len(rows), bulk_batch_size):
+            batch = rows[offset : offset + bulk_batch_size]
+            try:
+                creation = _enqueue_bulk_group(
+                    session, batch, now=now, priority_class=priority_class
+                )
+            except Exception as error:
+                for row in batch:
+                    _coverage_error(row, error, now=now)
+                continue
+            jobs_created += int(creation.created)
+            for row in batch:
+                row.worker_job_id = creation.job.id
+                row.execution_status = creation.job.status
+                row.status = "RUNNING"
+                row.updated_at = now
 
     for row in point_rows:
         run = runs[row.enrichment_run_id]
@@ -900,6 +875,7 @@ def consume_master_replay_signals(
         session.scalars(
             select(MasterReplaySignal.company_id)
             .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+            .join(Company, Company.id == MasterReplaySignal.company_id)
             .where(
                 MasterReplaySignal.status == "pending",
                 ~MasterReplaySignal.company_id.in_(accepted_ids),
@@ -912,6 +888,7 @@ def consume_master_replay_signals(
                     DataSet.next_expected_update_at.is_(None)
                     | (DataSet.next_expected_update_at > now)
                 ),
+                source_applicability_clause(DataSet.code, Company.inn),
             )
             .group_by(MasterReplaySignal.company_id)
             .order_by(func.min(MasterReplaySignal.created_at), MasterReplaySignal.company_id)
@@ -943,7 +920,12 @@ def consume_master_replay_signals(
         by_source: dict[str, list[UUID]] = defaultdict(list)
         for signal in company_signals:
             by_source[signal.target_source_id].append(signal.id)
-        plans = freeze_operational_sources(session, company, now=now)
+        # A replay signal names the changed source.  New-company intake emits
+        # one signal per source, while a source refresh may name only one.
+        # Freezing every operational source here caused unrelated replays.
+        plans = freeze_operational_sources(
+            session, company, source_ids=tuple(sorted(by_source)), now=now
+        )
         eligible_sources = {plan.source_id for plan in plans}
         if not eligible_sources:
             continue
@@ -1101,6 +1083,7 @@ def _refresh_run_state(
     if not allow_projection:
         run.status = "running"
         run.stage = "risk"
+        run.public_ready = False
         return run
 
     try:
@@ -1536,14 +1519,27 @@ def _current_public_ready_run(
 
 
 def _pending_signal_map(
-    session: Session, company_id: int
+    session: Session, company_id: int, *, now: datetime | None = None
 ) -> dict[str, tuple[UUID, ...]]:
+    now = now or utc_now()
     grouped: dict[str, list[UUID]] = defaultdict(list)
     for signal in session.scalars(
         select(MasterReplaySignal)
+        .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+        .join(Company, Company.id == MasterReplaySignal.company_id)
         .where(
             MasterReplaySignal.company_id == company_id,
             MasterReplaySignal.status == "pending",
+            DataSet.enabled.is_(True),
+            DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
+            DataSet.operational_status == OperationalStatus.CURRENT,
+            DataSet.last_success_at.is_not(None),
+            DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
+            (
+                DataSet.next_expected_update_at.is_(None)
+                | (DataSet.next_expected_update_at > now)
+            ),
+            source_applicability_clause(DataSet.code, Company.inn),
         )
         .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
         .with_for_update(skip_locked=True)
@@ -1618,7 +1614,7 @@ def prioritize_public_cohort_enrichment(
             .limit(1)
             .with_for_update()
         )
-        signal_map = _pending_signal_map(session, company.id)
+        signal_map = _pending_signal_map(session, company.id, now=now)
         current_ready = bool(run and _current_public_ready_run(session, run))
         if current_ready and not signal_map:
             ready += 1
@@ -1659,6 +1655,7 @@ def prioritize_public_cohort_enrichment(
                     f"public-cohort:{WORKFLOW_VERSION}:{company.id}:"
                     f"{idempotency_suffix}"
                 ),
+                source_ids=(tuple(sorted(signal_map)) if signal_map else None),
                 source_signal_ids=signal_map,
                 now=now,
             )
@@ -1753,7 +1750,7 @@ def seed_existing_master_enrichment(
                 company_id=company_id,
                 trigger="existing_master_bootstrap",
                 idempotency_key=f"existing-master:{WORKFLOW_VERSION}:{company_id}",
-                source_signal_ids=_pending_signal_map(session, company_id),
+                source_signal_ids=_pending_signal_map(session, company_id, now=now),
                 now=now,
             )
         except ValueError as error:
@@ -1775,6 +1772,15 @@ def run_company_enrichment_cycle(
     """Standalone scheduler/worker callable; caller owns the transaction."""
 
     now = now or utc_now()
+    scale_config = FactoryScaleConfig.from_environment()
+    from app.services.factory_generation_service import (
+        ensure_operational_source_generations,
+        process_factory_generations,
+    )
+
+    source_generations_created = ensure_operational_source_generations(
+        session, now=now
+    )
     public_priority = prioritize_public_cohort_enrichment(session, now=now)
     accepted_ids = tuple(
         company.id for company in _accepted_public_cohort_companies(session)
@@ -1791,7 +1797,16 @@ def run_company_enrichment_cycle(
         )
         or 0
     )
-    capacity = _enrichment_refill_capacity(active_count)
+    capacity = _enrichment_refill_capacity(active_count, scale_config)
+    generation = process_factory_generations(
+        session,
+        selection_limit=scale_config.generation_selection_batch,
+        source_selection_limit=min(
+            scale_config.generation_selection_batch, capacity
+        ),
+        now=now,
+    )
+    capacity = max(0, capacity - int(generation.get("runs_scheduled") or 0))
     bootstrap_runs, bootstrap_jobs = (
         seed_existing_master_enrichment(
             session, limit=min(signal_limit, capacity), now=now
@@ -1806,6 +1821,7 @@ def run_company_enrichment_cycle(
         )
     else:
         consumption = ReplayConsumption(0, 0, 0, 0)
+    effective_reconcile_limit = min(reconcile_limit, scale_config.reconcile_batch)
     run_ids = tuple(
         session.scalars(
             select(CompanyEnrichmentRun.id)
@@ -1822,7 +1838,7 @@ def run_company_enrichment_cycle(
                 CompanyEnrichmentRun.updated_at,
                 CompanyEnrichmentRun.id,
             )
-            .limit(reconcile_limit)
+            .limit(effective_reconcile_limit)
             .with_for_update(skip_locked=True)
         )
     )
@@ -1844,8 +1860,12 @@ def run_company_enrichment_cycle(
         "jobs_created": consumption.jobs_created,
         "bootstrap_runs_created": bootstrap_runs,
         "bootstrap_jobs_created": bootstrap_jobs,
-        "active_run_limit": MAX_ACTIVE_ENRICHMENT_RUNS,
-        "refill_low_watermark": ENRICHMENT_REFILL_LOW_WATERMARK,
+        "active_run_limit": scale_config.active_run_limit,
+        "refill_low_watermark": scale_config.refill_low_watermark,
+        "bulk_batch_size": scale_config.bulk_batch_size,
+        "reconcile_batch": effective_reconcile_limit,
+        "source_generations_created": source_generations_created,
+        "factory_generation": generation,
         "runs_reconciled": len(run_ids),
         "run_statuses": dict(sorted(statuses.items())),
     }

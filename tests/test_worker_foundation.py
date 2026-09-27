@@ -627,6 +627,44 @@ def test_accepted_public_cohort_job_preempts_normal_fifo(worker_db):
     assert claimed.job_id != normal
 
 
+def test_claim_isolates_bulk_and_point_factory_lanes(worker_db):
+    registry = HandlerRegistry()
+    bulk_source = _identity("bulk-source")
+    point_source = _identity("point-source")
+    _register_fixture(worker_db, registry, bulk_source, _empty_handler)
+    _register_fixture(worker_db, registry, point_source, _empty_handler)
+    bulk = _create(
+        worker_db,
+        bulk_source,
+        idempotency_key=_identity("bulk-job"),
+        job_type="company_enrichment_local_replay",
+        schedule_metadata={"factory_lane": "bulk_enrichment"},
+        now=NOW,
+    )
+    point = _create(
+        worker_db,
+        point_source,
+        idempotency_key=_identity("point-job"),
+        job_type="company_enrichment_point_check",
+        schedule_metadata={"factory_lane": "point_enrichment"},
+        now=NOW - timedelta(seconds=1),
+    )
+
+    with worker_db() as session:
+        claimed = claim_next_job(
+            session,
+            registry,
+            worker_id="bulk-lane-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+            allowed_lanes=("bulk_enrichment",),
+        )
+        session.commit()
+
+    assert claimed.job_id == bulk
+    assert claimed.job_id != point
+
+
 def test_fencing_token_is_monotonic_after_success_deletes_lease(worker_db):
     registry = HandlerRegistry()
     source_id = _identity("source")

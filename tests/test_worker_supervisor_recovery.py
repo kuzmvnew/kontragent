@@ -21,7 +21,8 @@ def test_supervisor_recovers_stale_runs_before_claiming(monkeypatch):
         def __init__(self, **_kwargs):
             events.append("executor")
 
-        def run_once(self):
+        def run_once(self, *, allowed_lanes=None):
+            assert allowed_lanes == ("master_intake",)
             events.append("claim")
             return None
 

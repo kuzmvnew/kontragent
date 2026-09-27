@@ -230,6 +230,20 @@ class DataSet(Base):
         index=True,
     )
 
+    # Canonical source-roadmap metadata.  These fields describe what a dataset
+    # may prove and how it participates in coverage; they are not public risk
+    # scores and do not activate the disabled NEXT Index.
+    source_family: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    capability: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    risk_role: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    positive_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    coverage_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    applicability: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    freshness: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    precedence: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    publicability: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    impact_priority: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
     enabled: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

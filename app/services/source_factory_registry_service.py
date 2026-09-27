@@ -343,6 +343,69 @@ DATASETS = {
 }
 
 
+def _factory_metadata(code: str, spec: dict) -> dict:
+    if code in {"fns_egrip", "fns_npd"}:
+        entity_types = ["individual_entrepreneur"]
+    elif code in {
+        "fns_egrul",
+        "girbo_accounting",
+        "nostroy_sro_members_on_demand",
+        "nopriz_sro_members_on_demand",
+        "prime_corporate_disclosure",
+        "eis_rnp",
+        "rkn_personal_data_operators",
+        "rkn_communications_licenses",
+        "rkn_broadcast_licenses",
+        "rkn_registered_media",
+        "rkn_information_distributors",
+        "rkn_hosting_providers",
+        "mintrans_ted_registry",
+        "checko_arbitration_cases",
+        "fssp_enforcement",
+        "moscow_general_court_cases",
+        "eis_procurements",
+    }:
+        entity_types = ["legal"]
+    else:
+        entity_types = ["legal", "individual_entrepreneur"]
+    adverse_domains = {
+        "legal_events",
+        "arbitration_courts",
+        "general_courts",
+        "enforcement",
+        "procurement_rnp",
+    }
+    positive_domains = {
+        "financials",
+        "sro_membership",
+        "corporate_disclosure",
+        "communications_licenses",
+        "broadcast_licenses",
+        "transport_forwarding",
+    }
+    return {
+        "source_family": spec["source_code"],
+        "capability": spec["domain"],
+        "risk_role": (
+            "adverse_factor" if spec["domain"] in adverse_domains else "context"
+        ),
+        "positive_role": (
+            "positive_fact" if spec["domain"] in positive_domains else "none"
+        ),
+        "coverage_role": (
+            "identity" if spec["domain"] == "registry" else "supporting"
+        ),
+        "applicability": {"entity_types": entity_types},
+        "freshness": {
+            "policy": spec["freshness_policy"],
+            "schedule": spec["refresh_schedule"],
+        },
+        "precedence": int(spec["priority"]),
+        "publicability": "semantic_projection_only",
+        "impact_priority": int(spec["priority"]),
+    }
+
+
 def ensure_source_factory_datasets(session: Session) -> tuple[DataSet, ...]:
     """Idempotently register all wave datasets without changing activation."""
 
@@ -380,6 +443,7 @@ def ensure_source_factory_datasets(session: Session) -> tuple[DataSet, ...]:
             "description": spec.get(
                 "description", "Official source adapter executed by Worker Foundation."
             ),
+            **_factory_metadata(code, spec),
         }
         if existing is None:
             existing = DataSet(

@@ -7,6 +7,7 @@ from app.models.cbr_warning_list import (
     CbrWarningListEntry,
 )
 from app.models.corporate_disclosure import CorporateDisclosureCheck
+from app.models.factory import FactoryGeneration, FactoryGenerationCompany
 from app.models.roszdrav import (
     RoszdravClinicalOrganizationEntry,
     RoszdravLicenseEntry,
@@ -173,6 +174,8 @@ __all__ = [
     "DisqualifiedPersonSnapshot",
     "ErknmInspection",
     "FnsSmeSupportEntry",
+    "FactoryGeneration",
+    "FactoryGenerationCompany",
     "FirmotekaCatalogPage",
     "FirmotekaCompanySnapshot",
     "FirmotekaCrawlItem",
