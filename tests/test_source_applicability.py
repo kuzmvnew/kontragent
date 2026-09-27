@@ -290,7 +290,7 @@ def test_unknown_dataset_policy_blocks_frozen_plan_and_generation():
             source_id=code,
             dataset_id=dataset.id,
             status="pending",
-            cursor_company_id=0,
+            cursor_company_id=company.id - 1,
             created_at=NOW,
             updated_at=NOW,
         )
@@ -329,7 +329,7 @@ def test_unknown_company_scope_is_blocked_and_observable(tmp_path):
             source_id=code,
             dataset_id=dataset.id,
             status="pending",
-            cursor_company_id=0,
+            cursor_company_id=company.id - 1,
             created_at=NOW,
             updated_at=NOW,
         )
