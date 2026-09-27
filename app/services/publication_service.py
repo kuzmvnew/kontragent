@@ -27,6 +27,7 @@ from app.models.publication import (
     PublicPublicationRequest,
 )
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
+from app.services.replay_readiness_service import has_unresolved_replay
 from public_app.contracts import (
     CanonicalManifest,
     ChangedCompanySummary,
@@ -181,6 +182,13 @@ def _run_is_current_and_public_ready(
             CompanySourceCoverage.enrichment_run_id == run.id,
             CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
         )
+    ):
+        return False
+    if has_unresolved_replay(
+        session,
+        company_id=run.company_id,
+        run_id=run.id,
+        now=utc_now(),
     ):
         return False
     risk = session.scalar(

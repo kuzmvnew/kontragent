@@ -9,13 +9,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
+from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
 from app.models.factory import FactoryGeneration, FactoryGenerationCompany
 from app.models.registry_master import MasterReplaySignal
 from app.models.source import DataSet
+from app.services.replay_readiness_service import (
+    operational_replay_predicates,
+    unresolved_replay_exists_clause,
+)
 from app.services.source_applicability_service import (
     SourceApplicability,
     source_applicability_expression,
@@ -115,6 +120,86 @@ def collect_factory_metrics(
         """,
     )
     totals = {key: int(value or 0) for key, value in totals.items()}
+    ranked_runs = (
+        select(
+            CompanyEnrichmentRun.id.label("run_id"),
+            CompanyEnrichmentRun.company_id.label("company_id"),
+            CompanyEnrichmentRun.status.label("status"),
+            CompanyEnrichmentRun.public_ready.label("public_ready"),
+            CompanyEnrichmentRun.source_count.label("source_count"),
+            CompanyEnrichmentRun.completed_source_count.label(
+                "completed_source_count"
+            ),
+            CompanyEnrichmentRun.failed_source_count.label("failed_source_count"),
+            CompanyEnrichmentRun.risk_assessment_id.label("risk_assessment_id"),
+            CompanyEnrichmentRun.summary_id.label("summary_id"),
+            CompanyEnrichmentRun.finished_at.label("finished_at"),
+            func.row_number()
+            .over(
+                partition_by=CompanyEnrichmentRun.company_id,
+                order_by=(
+                    CompanyEnrichmentRun.created_at.desc(),
+                    CompanyEnrichmentRun.id.desc(),
+                ),
+            )
+            .label("position"),
+        )
+        .subquery()
+    )
+    latest_runs = select(ranked_runs).where(ranked_runs.c.position == 1).subquery()
+    coverage_blocker = (
+        select(CompanySourceCoverage.id)
+        .where(
+            CompanySourceCoverage.enrichment_run_id == latest_runs.c.run_id,
+            CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+        )
+        .exists()
+    )
+    unresolved_blocking = unresolved_replay_exists_clause(
+        latest_runs.c.company_id,
+        latest_runs.c.run_id,
+        now=observed_at,
+    )
+    unresolved_unknown = unresolved_replay_exists_clause(
+        latest_runs.c.company_id,
+        latest_runs.c.run_id,
+        now=observed_at,
+        outcomes=(SourceApplicability.UNKNOWN,),
+    )
+    fully_ready = (
+        latest_runs.c.status == "succeeded",
+        latest_runs.c.completed_source_count == latest_runs.c.source_count,
+        latest_runs.c.failed_source_count == 0,
+        ~coverage_blocker,
+        ~unresolved_blocking,
+    )
+    public_ready = (
+        latest_runs.c.public_ready.is_(True),
+        latest_runs.c.risk_assessment_id.is_not(None),
+        latest_runs.c.summary_id.is_not(None),
+        ~coverage_blocker,
+        ~unresolved_blocking,
+    )
+    totals["fully_enriched"] = int(
+        session.scalar(
+            select(func.count()).select_from(latest_runs).where(*fully_ready)
+        )
+        or 0
+    )
+    totals["public_ready"] = int(
+        session.scalar(
+            select(func.count()).select_from(latest_runs).where(*public_ready)
+        )
+        or 0
+    )
+    totals["applicability_blocked_runs"] = int(
+        session.scalar(
+            select(func.count())
+            .select_from(latest_runs)
+            .where(or_(coverage_blocker, unresolved_unknown))
+        )
+        or 0
+    )
     totals["enrichment_not_started"] = max(
         0, totals["master"] - totals["companies_with_run"]
     )
@@ -146,6 +231,12 @@ def collect_factory_metrics(
         """,
         observed_at=observed_at,
     )
+    queues["applicability_blocker_rows"] = int(
+        queues.get("applicability_blockers") or 0
+    )
+    # Operational blocker units are latest company workflows.  Coverage and
+    # replay are OR-ed, so recovery changes representation without double count.
+    queues["applicability_blockers"] = totals["applicability_blocked_runs"]
     applicability = source_applicability_expression(
         DataSet.applicability,
         Company.entity_type,
@@ -160,17 +251,7 @@ def collect_factory_metrics(
                 .join(Company, Company.id == MasterReplaySignal.company_id)
                 .where(
                     MasterReplaySignal.status.in_(("pending", "scheduled")),
-                    DataSet.enabled.is_(True),
-                    DataSet.auto_update_status == "configured",
-                    DataSet.operational_status == "current",
-                    DataSet.last_success_at.is_not(None),
-                    DataSet.coverage["operational_accepted"]
-                    .as_boolean()
-                    .is_not(False),
-                    (
-                        DataSet.next_expected_update_at.is_(None)
-                        | (DataSet.next_expected_update_at > observed_at)
-                    ),
+                    *operational_replay_predicates(DataSet, now=observed_at),
                     applicability == outcome.value,
                 )
             )
@@ -323,6 +404,22 @@ def collect_factory_metrics(
              WHERE fetched_at >= :cutoff AND status = 'succeeded') AS firmoteka_fetched
         """,
         cutoff=cutoff,
+    )
+    observed_counts["fully_enriched"] = int(
+        session.scalar(
+            select(func.count())
+            .select_from(latest_runs)
+            .where(*fully_ready, latest_runs.c.finished_at >= cutoff)
+        )
+        or 0
+    )
+    observed_counts["public_ready"] = int(
+        session.scalar(
+            select(func.count())
+            .select_from(latest_runs)
+            .where(*public_ready, latest_runs.c.finished_at >= cutoff)
+        )
+        or 0
     )
     rates = {
         key: _rate(int(value or 0), window_hours)

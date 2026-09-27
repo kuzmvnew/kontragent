@@ -26,6 +26,7 @@ from app.services.risk_v3_persistence_service import (
     calculate_company_risk_v3_from_persisted,
     get_or_create_summary_v3,
 )
+from app.services.replay_readiness_service import unresolved_replay_exists_clause
 from app.services.source_applicability_service import (
     SourceApplicability,
     parse_source_applicability,
@@ -249,7 +250,7 @@ def _schedule_source_members(
     return jobs_created, len(run_ids)
 
 
-def _latest_complete_run_query():
+def _latest_complete_run_query(*, now: datetime):
     ranked = (
         select(
             CompanyEnrichmentRun.id.label("run_id"),
@@ -276,6 +277,11 @@ def _latest_complete_run_query():
                 CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
             )
             .exists(),
+            ~unresolved_replay_exists_clause(
+                CompanyEnrichmentRun.company_id,
+                CompanyEnrichmentRun.id,
+                now=now,
+            ),
         )
         .subquery()
     )
@@ -289,7 +295,7 @@ def _recalculate_ruleset_members(
     limit: int,
     now: datetime,
 ) -> None:
-    ranked = _latest_complete_run_query()
+    ranked = _latest_complete_run_query(now=now)
     rows = tuple(
         session.execute(
             select(ranked.c.company_id, ranked.c.run_id)

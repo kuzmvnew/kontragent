@@ -17,6 +17,7 @@ from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCov
 from app.models.firmoteka import FirmotekaCrawlItem, FirmotekaRawArtifact
 from app.models.registry_master import MasterReplaySignal
 from app.models.source import DataSet
+from app.services.replay_readiness_service import unresolved_replay_exists_clause
 from app.services.source_applicability_service import source_applicability_clause
 
 
@@ -314,6 +315,11 @@ def collect_factory_pressure(
                     CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
                 )
                 .exists(),
+                ~unresolved_replay_exists_clause(
+                    CompanyEnrichmentRun.company_id,
+                    CompanyEnrichmentRun.id,
+                    now=now,
+                ),
             )
         )
         or 0
