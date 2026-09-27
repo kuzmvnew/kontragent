@@ -1,130 +1,711 @@
 {
-  "task": "SEO-10K-IMPL-01-A",
+  "task_id": "SEO-10K-IMPL-01-A-CORRECTION-01",
+  "repository": "kuzmvnew/kontragent",
+  "base_sha": "475b3bd9bc12408017dfe3858fe7f261c0cee0cf",
+  "head_sha": "816dd8a48ee0d874d28c0b447fa47a97d2b4d49a",
+  "source_tree_sha": "68b2dc48bc8edc1ea0baed66b84dea8afce660fc",
+  "evidence_head_identity": {
+    "binding": "source_commit",
+    "meaning": "head_sha is the immutable tested code commit",
+    "envelope_rule": "the final evidence commit must be a direct child of head_sha and may change only docs/evidence/SEO-10K-IMPL-01-A.json"
+  },
   "contract_version": "1.0",
-  "generated_at": "2026-09-27T14:16:44.060541+00:00",
+  "canonical_contract_sha256": "051b13f14a09d25f6bc9f7ec1079cab65bbc02db0c439e33838b32010bfdd599",
+  "generated_at": "2026-09-27T17:44:54.507963+00:00",
+  "test_runs": [
+    {
+      "gate_id": "SEOIMPL-A01",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_default_projection_passes_independent_compiler_not_legacy_flag",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "1 passed in 0.10s"
+    },
+    {
+      "gate_id": "SEOIMPL-A02",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_public_ready_alone_fails_closed_without_semantic_evidence",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "1 passed in 0.07s"
+    },
+    {
+      "gate_id": "SEOIMPL-A03",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_semantic_and_thin_gates_are_deterministic",
+        "tests/test_public_seo.py::test_unlinked_generated_action_text_cannot_satisfy_semantic_gate",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed in 0.07s"
+    },
+    {
+      "gate_id": "SEOIMPL-A04",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_semantic_and_thin_gates_are_deterministic",
+        "tests/test_public_seo.py::test_template_cluster_detection_flags_50_identical_non_identity_pages",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed in 0.09s"
+    },
+    {
+      "gate_id": "SEOIMPL-A05",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_metadata_jsonld_are_allowlisted_and_match_visible_identity",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "1 passed in 0.07s"
+    },
+    {
+      "gate_id": "SEOIMPL-A06",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_metadata_jsonld_are_allowlisted_and_match_visible_identity",
+        "tests/test_public_web.py::test_robots_sitemap_canonical_open_graph_jsonld_and_404",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed, 2 warnings in 0.31s"
+    },
+    {
+      "gate_id": "SEOIMPL-A07",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_web.py::test_company_url_normalization_and_tracking_parameters",
+        "tests/test_public_web.py::test_production_host_normalizes_http_www_and_legacy_path_in_one_hop",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed, 2 warnings in 0.24s"
+    },
+    {
+      "gate_id": "SEOIMPL-A08",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_web.py::test_search_by_name_and_search_is_noindex",
+        "tests/test_public_web.py::test_api_security_headers_and_no_cors",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed, 2 warnings in 0.23s"
+    },
+    {
+      "gate_id": "SEOIMPL-A09",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_sitemap_shard_is_first_sha256_nibble_and_stable",
+        "tests/test_public_web.py::test_robots_sitemap_canonical_open_graph_jsonld_and_404",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed, 2 warnings in 0.55s"
+    },
+    {
+      "gate_id": "SEOIMPL-A10",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_catalog_pagination_has_first_nearby_previous_and_next_links",
+        "tests/test_public_web.py::test_catalog_is_crawlable_and_query_variants_are_noindex",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed, 2 warnings in 0.24s"
+    },
+    {
+      "gate_id": "SEOIMPL-A11",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_active_release_switch_never_mixes_company_snapshot",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "1 passed in 1.34s"
+    },
+    {
+      "gate_id": "SEOIMPL-A12",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_partial_seo_storage_and_stored_noindex_are_fail_closed",
+        "tests/test_public_release_postgres.py::test_revision_mismatch_cannot_enter_page_sitemap_or_catalog",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed in 0.75s"
+    },
+    {
+      "gate_id": "SEOIMPL-A13",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_legacy_v1_reimport_after_v2_is_idempotent_without_backfill",
+        "tests/test_public_release_postgres.py::test_native_v2_reimport_verifies_derived_state_and_detects_tamper",
+        "tests/test_public_release_postgres.py::test_checksum_corruption_preserves_active_release",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "3 passed in 0.82s"
+    },
+    {
+      "gate_id": "SEOIMPL-A14",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_numeric_next_index_is_recursively_banned",
+        "tests/test_public_semantic.py::test_public_numeric_index_is_fail_closed_and_absent_from_semantic_contract",
+        "tests/test_public_web.py::test_numeric_index_payload_is_noindex_sanitized_and_absent_from_discovery",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "3 passed, 2 warnings in 0.25s"
+    },
+    {
+      "gate_id": "SEOIMPL-A15",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo_migration.py::test_public_0002_upgrade_downgrade_are_symmetric_and_preserve_existing_rows",
+        "tests/test_public_seo_migration.py::test_importer_detects_old_and_new_public_schema_without_guessing",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "2 passed in 0.18s"
+    },
+    {
+      "gate_id": "SEOIMPL-A16",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_search_visible_hash_ignores_technical_republish_but_changes_with_visible_fact",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "1 passed in 0.08s"
+    },
+    {
+      "gate_id": "SEOIMPL-A17",
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_active_public_release_without_seo_cohort_is_not_index_authority",
+        "-q",
+        "-rA"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "summary": "1 passed in 0.27s"
+    }
+  ],
+  "implementation_gates": {
+    "SEOIMPL-A01": {
+      "description": "SEO eligibility compiler",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_default_projection_passes_independent_compiler_not_legacy_flag"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_default_projection_passes_independent_compiler_not_legacy_flag",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "1 passed in 0.10s"
+    },
+    "SEOIMPL-A02": {
+      "description": "public_ready fail-closed",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_public_ready_alone_fails_closed_without_semantic_evidence"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_public_ready_alone_fails_closed_without_semantic_evidence",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "1 passed in 0.07s"
+    },
+    "SEOIMPL-A03": {
+      "description": "semantic minimum",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_semantic_and_thin_gates_are_deterministic",
+        "tests/test_public_seo.py::test_unlinked_generated_action_text_cannot_satisfy_semantic_gate"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_semantic_and_thin_gates_are_deterministic",
+        "tests/test_public_seo.py::test_unlinked_generated_action_text_cannot_satisfy_semantic_gate",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed in 0.07s"
+    },
+    "SEOIMPL-A04": {
+      "description": "thin-content protection",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_semantic_and_thin_gates_are_deterministic",
+        "tests/test_public_seo.py::test_template_cluster_detection_flags_50_identical_non_identity_pages"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_semantic_and_thin_gates_are_deterministic",
+        "tests/test_public_seo.py::test_template_cluster_detection_flags_50_identical_non_identity_pages",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed in 0.09s"
+    },
+    "SEOIMPL-A05": {
+      "description": "metadata allowlist",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_metadata_jsonld_are_allowlisted_and_match_visible_identity"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_metadata_jsonld_are_allowlisted_and_match_visible_identity",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "1 passed in 0.07s"
+    },
+    "SEOIMPL-A06": {
+      "description": "JSON-LD visible parity",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_metadata_jsonld_are_allowlisted_and_match_visible_identity",
+        "tests/test_public_web.py::test_robots_sitemap_canonical_open_graph_jsonld_and_404"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_metadata_jsonld_are_allowlisted_and_match_visible_identity",
+        "tests/test_public_web.py::test_robots_sitemap_canonical_open_graph_jsonld_and_404",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed, 2 warnings in 0.31s"
+    },
+    "SEOIMPL-A07": {
+      "description": "canonical redirects and real 404",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_web.py::test_company_url_normalization_and_tracking_parameters",
+        "tests/test_public_web.py::test_production_host_normalizes_http_www_and_legacy_path_in_one_hop"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_web.py::test_company_url_normalization_and_tracking_parameters",
+        "tests/test_public_web.py::test_production_host_normalizes_http_www_and_legacy_path_in_one_hop",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed, 2 warnings in 0.24s"
+    },
+    "SEOIMPL-A08": {
+      "description": "robots and API X-Robots",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_web.py::test_search_by_name_and_search_is_noindex",
+        "tests/test_public_web.py::test_api_security_headers_and_no_cors"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_web.py::test_search_by_name_and_search_is_noindex",
+        "tests/test_public_web.py::test_api_security_headers_and_no_cors",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed, 2 warnings in 0.23s"
+    },
+    "SEOIMPL-A09": {
+      "description": "16 deterministic sitemap shards",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_sitemap_shard_is_first_sha256_nibble_and_stable",
+        "tests/test_public_web.py::test_robots_sitemap_canonical_open_graph_jsonld_and_404"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_sitemap_shard_is_first_sha256_nibble_and_stable",
+        "tests/test_public_web.py::test_robots_sitemap_canonical_open_graph_jsonld_and_404",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed, 2 warnings in 0.55s"
+    },
+    "SEOIMPL-A10": {
+      "description": "catalog and pagination",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_catalog_pagination_has_first_nearby_previous_and_next_links",
+        "tests/test_public_web.py::test_catalog_is_crawlable_and_query_variants_are_noindex"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_catalog_pagination_has_first_nearby_previous_and_next_links",
+        "tests/test_public_web.py::test_catalog_is_crawlable_and_query_variants_are_noindex",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed, 2 warnings in 0.24s"
+    },
+    "SEOIMPL-A11": {
+      "description": "atomic company revision snapshot",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_release_postgres.py::test_active_release_switch_never_mixes_company_snapshot"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_active_release_switch_never_mixes_company_snapshot",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "1 passed in 1.34s"
+    },
+    "SEOIMPL-A12": {
+      "description": "mixed-version fail-closed authority",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_release_postgres.py::test_partial_seo_storage_and_stored_noindex_are_fail_closed",
+        "tests/test_public_release_postgres.py::test_revision_mismatch_cannot_enter_page_sitemap_or_catalog"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_partial_seo_storage_and_stored_noindex_are_fail_closed",
+        "tests/test_public_release_postgres.py::test_revision_mismatch_cannot_enter_page_sitemap_or_catalog",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed in 0.75s"
+    },
+    "SEOIMPL-A13": {
+      "description": "legacy and native reimport idempotency",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_release_postgres.py::test_legacy_v1_reimport_after_v2_is_idempotent_without_backfill",
+        "tests/test_public_release_postgres.py::test_native_v2_reimport_verifies_derived_state_and_detects_tamper",
+        "tests/test_public_release_postgres.py::test_checksum_corruption_preserves_active_release"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_legacy_v1_reimport_after_v2_is_idempotent_without_backfill",
+        "tests/test_public_release_postgres.py::test_native_v2_reimport_verifies_derived_state_and_detects_tamper",
+        "tests/test_public_release_postgres.py::test_checksum_corruption_preserves_active_release",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "3 passed in 0.82s"
+    },
+    "SEOIMPL-A14": {
+      "description": "public Numeric Index hard ban",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_numeric_next_index_is_recursively_banned",
+        "tests/test_public_semantic.py::test_public_numeric_index_is_fail_closed_and_absent_from_semantic_contract",
+        "tests/test_public_web.py::test_numeric_index_payload_is_noindex_sanitized_and_absent_from_discovery"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_numeric_next_index_is_recursively_banned",
+        "tests/test_public_semantic.py::test_public_numeric_index_is_fail_closed_and_absent_from_semantic_contract",
+        "tests/test_public_web.py::test_numeric_index_payload_is_noindex_sanitized_and_absent_from_discovery",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "3 passed, 2 warnings in 0.25s"
+    },
+    "SEOIMPL-A15": {
+      "description": "public_0002 data-preserving migration",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo_migration.py::test_public_0002_upgrade_downgrade_are_symmetric_and_preserve_existing_rows",
+        "tests/test_public_seo_migration.py::test_importer_detects_old_and_new_public_schema_without_guessing"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo_migration.py::test_public_0002_upgrade_downgrade_are_symmetric_and_preserve_existing_rows",
+        "tests/test_public_seo_migration.py::test_importer_detects_old_and_new_public_schema_without_guessing",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "2 passed in 0.18s"
+    },
+    "SEOIMPL-A16": {
+      "description": "search-visible hash and no-op republish",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_seo.py::test_search_visible_hash_ignores_technical_republish_but_changes_with_visible_fact"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_seo.py::test_search_visible_hash_ignores_technical_republish_but_changes_with_visible_fact",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "1 passed in 0.08s"
+    },
+    "SEOIMPL-A17": {
+      "description": "explicit SEO release-cohort authority",
+      "status": "PASS",
+      "test_ids": [
+        "tests/test_public_release_postgres.py::test_active_public_release_without_seo_cohort_is_not_index_authority"
+      ],
+      "evidence_command": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_public_release_postgres.py::test_active_public_release_without_seo_cohort_is_not_index_authority",
+        "-q",
+        "-rA"
+      ],
+      "result_summary": "1 passed in 0.27s"
+    }
+  },
+  "release_gates": {
+    "SEO10K-A01": {
+      "name": "Input integrity",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A02": {
+      "name": "Entity scope",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A03": {
+      "name": "Public boundary",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A04": {
+      "name": "Numeric Index off",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A05": {
+      "name": "Semantic compiler",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A06": {
+      "name": "Demand evidence",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A07": {
+      "name": "Cohort manifest",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A08": {
+      "name": "Index eligibility",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A09": {
+      "name": "SSR consistency",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A10": {
+      "name": "URL contract",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A11": {
+      "name": "Metadata",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A12": {
+      "name": "Structured data",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A13": {
+      "name": "Thin content",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A14": {
+      "name": "Freshness/dispute",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A15": {
+      "name": "robots/meta",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A16": {
+      "name": "Sitemap",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A17": {
+      "name": "Catalog/navigation",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A18": {
+      "name": "Cache/republish",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A19": {
+      "name": "Reliability",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A20": {
+      "name": "Recovery",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A21": {
+      "name": "Search consoles",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    },
+    "SEO10K-A22": {
+      "name": "Legal/error path",
+      "status": "NOT_RUN",
+      "evidence": null,
+      "release_blocking": true
+    }
+  },
   "no_averaged_score": true,
   "release_blocked": true,
+  "live_wordstat": "NOT_RUN",
+  "live_google": "NOT_RUN",
   "waves": {
     "500": "NOT_RELEASED",
     "2000": "NOT_RELEASED",
     "10000": "NOT_RELEASED"
-  },
-  "gates": {
-    "A01": {
-      "status": "PASS",
-      "description": "SEO eligibility compiler",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A02": {
-      "status": "PASS",
-      "description": "public_ready alone fails closed",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A03": {
-      "status": "PASS",
-      "description": "semantic evidence gate",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A04": {
-      "status": "PASS",
-      "description": "thin-content gate and cluster detection",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A05": {
-      "status": "PASS",
-      "description": "allowlisted metadata",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A06": {
-      "status": "NOT_RUN",
-      "description": "live Wordstat evidence",
-      "evidence": null,
-      "release_blocking": true
-    },
-    "A07": {
-      "status": "NOT_RUN",
-      "description": "live Google historical metrics",
-      "evidence": null,
-      "release_blocking": true
-    },
-    "A08": {
-      "status": "PASS",
-      "description": "visible-parity JSON-LD",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A09": {
-      "status": "PASS",
-      "description": "canonical and redirect contract",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A10": {
-      "status": "PASS",
-      "description": "robots and API X-Robots contract",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A11": {
-      "status": "PASS",
-      "description": "sitemap index membership",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A12": {
-      "status": "PASS",
-      "description": "16 deterministic shards",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A13": {
-      "status": "PASS",
-      "description": "crawlable catalog",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A14": {
-      "status": "PASS",
-      "description": "catalog pagination",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A15": {
-      "status": "PASS",
-      "description": "stale/disputed safety",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A16": {
-      "status": "PASS",
-      "description": "search-visible hash",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A17": {
-      "status": "PASS",
-      "description": "numeric index hard ban",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A18": {
-      "status": "PASS",
-      "description": "current public regression",
-      "evidence": "python -m pytest tests/test_public_seo.py tests/test_public_web.py tests/test_public_semantic.py tests/test_public_projection.py tests/test_public_seo_migration.py tests/test_seo10k_acceptance_evidence.py -q"
-    },
-    "A19": {
-      "status": "NOT_RUN",
-      "description": "production performance and 5x bot peak",
-      "evidence": null,
-      "release_blocking": true
-    },
-    "A20": {
-      "status": "NOT_RUN",
-      "description": "Search Console production observation",
-      "evidence": null,
-      "release_blocking": true
-    },
-    "A21": {
-      "status": "NOT_RUN",
-      "description": "Yandex Webmaster production observation",
-      "evidence": null,
-      "release_blocking": true
-    },
-    "A22": {
-      "status": "NOT_RUN",
-      "description": "production cohort release and deployment",
-      "evidence": null,
-      "release_blocking": true
-    }
   }
 }
