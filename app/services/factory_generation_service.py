@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.contracts.risk_v3 import UnsupportedSubjectOutcome
 from app.models.company import Company
-from app.models.company_enrichment import CompanyEnrichmentRun
+from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
 from app.models.factory import FactoryGeneration, FactoryGenerationCompany
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
 from app.models.source import DataSet
@@ -269,6 +269,13 @@ def _latest_complete_run_query():
             CompanyEnrichmentRun.completed_source_count
             == CompanyEnrichmentRun.source_count,
             CompanyEnrichmentRun.failed_source_count == 0,
+            ~select(CompanySourceCoverage.id)
+            .where(
+                CompanySourceCoverage.enrichment_run_id
+                == CompanyEnrichmentRun.id,
+                CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+            )
+            .exists(),
         )
         .subquery()
     )

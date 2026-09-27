@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
-from app.models.company_enrichment import CompanyEnrichmentRun
+from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
 from app.models.publication import (
     PublicProjectionPublication,
     PublicPublicationRequest,
@@ -174,6 +174,13 @@ def _run_is_current_and_public_ready(
         and run.public_ready
         and run.risk_assessment_id
         and run.summary_id
+    ):
+        return False
+    if session.scalar(
+        select(func.count(CompanySourceCoverage.id)).where(
+            CompanySourceCoverage.enrichment_run_id == run.id,
+            CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+        )
     ):
         return False
     risk = session.scalar(

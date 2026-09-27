@@ -13,7 +13,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
-from app.models.company_enrichment import CompanyEnrichmentRun
+from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
 from app.models.firmoteka import FirmotekaCrawlItem, FirmotekaRawArtifact
 from app.models.registry_master import MasterReplaySignal
 from app.models.source import DataSet
@@ -260,7 +260,15 @@ def collect_factory_pressure(
     ).where(
         CompanyEnrichmentRun.status.in_(
             ("pending", "waiting_sources", "retry_scheduled", "running")
+        ),
+        select(CompanySourceCoverage.id)
+        .where(
+            CompanySourceCoverage.enrichment_run_id == CompanyEnrichmentRun.id,
+            CompanySourceCoverage.execution_status.in_(
+                ("pending", "queued", "running", "retry_scheduled")
+            ),
         )
+        .exists(),
     )
     actionable_signals = (
         select(
@@ -299,6 +307,13 @@ def collect_factory_pressure(
                 CompanyEnrichmentRun.status == "succeeded",
                 CompanyEnrichmentRun.public_ready.is_(True),
                 CompanyEnrichmentRun.finished_at >= cutoff,
+                ~select(CompanySourceCoverage.id)
+                .where(
+                    CompanySourceCoverage.enrichment_run_id
+                    == CompanyEnrichmentRun.id,
+                    CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+                )
+                .exists(),
             )
         )
         or 0

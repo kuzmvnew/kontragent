@@ -152,13 +152,13 @@ class CompanySourceCoverage(Base):
         ),
         CheckConstraint(
             "status IN ('PENDING','RUNNING','FOUND','NOT_FOUND','NOT_APPLICABLE',"
-            "'SOURCE_UNAVAILABLE','TIMEOUT','PARSING_ERROR','STALE_DATA',"
+            "'APPLICABILITY_UNKNOWN','SOURCE_UNAVAILABLE','TIMEOUT','PARSING_ERROR','STALE_DATA',"
             "'ACCESS_REQUIRED')",
             name="ck_company_source_coverage_status",
         ),
         CheckConstraint(
             "execution_status IN ('pending','queued','running','retry_scheduled',"
-            "'succeeded','failed','cancelled')",
+            "'blocked','succeeded','failed','cancelled')",
             name="ck_company_source_coverage_execution_status",
         ),
         CheckConstraint(

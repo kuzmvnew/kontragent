@@ -54,7 +54,6 @@ from app.services.factory_scale_service import FactoryScaleConfig
 from app.services.source_applicability_service import (
     SourceApplicability,
     resolve_source_applicability,
-    source_applicability_clause,
     source_applicability_expression,
 )
 from app.services.risk_v3_persistence_service import (
@@ -154,6 +153,7 @@ class SourcePlan:
     source_data_date: date | None
     replay_pointer: str | None
     replay_checksum: str | None
+    applicability: SourceApplicability
     snapshot: dict[str, Any]
 
 
@@ -203,6 +203,7 @@ def _source_plan(
     dataset: DataSet,
     *,
     now: datetime,
+    allow_unknown: bool = False,
 ) -> SourcePlan | None:
     if not dataset.enabled:
         return None
@@ -253,7 +254,7 @@ def _source_plan(
     applicability = resolve_source_applicability(company, dataset)
     if applicability is SourceApplicability.NOT_APPLICABLE:
         return None
-    if applicability is SourceApplicability.UNKNOWN:
+    if applicability is SourceApplicability.UNKNOWN and not allow_unknown:
         raise SourceApplicabilityUnknownError(
             f"{dataset.code}: source applicability is unknown for company {company.id}"
         )
@@ -269,6 +270,9 @@ def _source_plan(
         source_data_date = dataset.source_as_of.date()
     pointer = state.active_pointer if state else None
     checksum = str(validation.get("checksum") or "") or None
+    applicability_policy = dataset.applicability
+    if isinstance(applicability_policy, Mapping):
+        applicability_policy = dict(applicability_policy)
     snapshot = {
         "dataset_id": dataset.id,
         "source_id": dataset.code,
@@ -278,8 +282,8 @@ def _source_plan(
         "handler_mode": registration_metadata.get("mode"),
         "operational_status": OperationalStatus.CURRENT.value,
         "operational_accepted": True,
-        "applicability": SourceApplicability.APPLICABLE.value,
-        "applicability_policy": dict(dataset.applicability or {}),
+        "applicability": applicability.value,
+        "applicability_policy": applicability_policy,
         "source_data_date": _iso(source_data_date),
         "last_success_at": _iso(dataset.last_success_at),
         "publication_generation": state.generation if state else None,
@@ -298,8 +302,37 @@ def _source_plan(
         source_data_date=source_data_date,
         replay_pointer=pointer,
         replay_checksum=checksum,
+        applicability=applicability,
         snapshot=snapshot,
     )
+
+
+def _freeze_operational_source_decisions(
+    session: Session,
+    company: Company,
+    *,
+    source_ids: Sequence[str] | None = None,
+    now: datetime,
+) -> tuple[SourcePlan, ...]:
+    """Freeze applicable work and unresolved applicability in one denominator."""
+
+    statement = select(DataSet).order_by(DataSet.code)
+    if source_ids is not None:
+        requested = tuple(dict.fromkeys(source_ids))
+        if not requested:
+            return ()
+        statement = statement.where(DataSet.code.in_(requested))
+    plans = (
+        _source_plan(
+            session,
+            company,
+            dataset,
+            now=now,
+            allow_unknown=True,
+        )
+        for dataset in session.scalars(statement)
+    )
+    return tuple(plan for plan in plans if plan is not None)
 
 
 def freeze_operational_sources(
@@ -312,17 +345,23 @@ def freeze_operational_sources(
     """Freeze the applicable sources that are operational at plan time."""
 
     now = now or utc_now()
-    statement = select(DataSet).order_by(DataSet.code)
-    if source_ids is not None:
-        requested = tuple(dict.fromkeys(source_ids))
-        if not requested:
-            return ()
-        statement = statement.where(DataSet.code.in_(requested))
-    plans = (
-        _source_plan(session, company, dataset, now=now)
-        for dataset in session.scalars(statement)
+    plans = _freeze_operational_source_decisions(
+        session,
+        company,
+        source_ids=source_ids,
+        now=now,
     )
-    return tuple(plan for plan in plans if plan is not None)
+    unknown = tuple(
+        plan.source_id
+        for plan in plans
+        if plan.applicability is SourceApplicability.UNKNOWN
+    )
+    if unknown:
+        raise SourceApplicabilityUnknownError(
+            "source applicability is unknown for company "
+            f"{company.id}: {', '.join(unknown)}"
+        )
+    return plans
 
 
 def create_enrichment_run(
@@ -356,7 +395,7 @@ def create_enrichment_run(
     company = session.get(Company, company_id)
     if company is None:
         raise ValueError("Company not found")
-    plans = freeze_operational_sources(
+    plans = _freeze_operational_source_decisions(
         session, company, source_ids=source_ids, now=now
     )
     if not plans:
@@ -385,6 +424,7 @@ def create_enrichment_run(
     session.add(run)
     session.flush()
     for plan in plans:
+        unresolved = plan.applicability is SourceApplicability.UNKNOWN
         session.add(
             CompanySourceCoverage(
                 enrichment_run_id=run.id,
@@ -393,8 +433,8 @@ def create_enrichment_run(
                 source_id=plan.source_id,
                 worker_source_id=plan.worker_source_id,
                 mode=plan.mode,
-                status="PENDING",
-                execution_status="pending",
+                status="APPLICABILITY_UNKNOWN" if unresolved else "PENDING",
+                execution_status="blocked" if unresolved else "pending",
                 source_snapshot=plan.snapshot,
                 handler_version=plan.handler_version,
                 publication_generation=plan.publication_generation,
@@ -404,6 +444,9 @@ def create_enrichment_run(
                 master_replay_signal_ids=[
                     str(value) for value in signal_map.get(plan.source_id, ())
                 ],
+                last_error=(
+                    "Source applicability is unresolved" if unresolved else None
+                ),
                 max_attempts=4 if plan.mode == "point_check" else 3,
                 created_at=now,
                 updated_at=now,
@@ -871,6 +914,48 @@ def enqueue_enrichment_work(
     return jobs_created
 
 
+def _pending_replay_signal_map(
+    session: Session,
+    company_id: int,
+    *,
+    outcomes: Sequence[SourceApplicability],
+    now: datetime,
+    skip_locked: bool = False,
+) -> dict[str, tuple[UUID, ...]]:
+    """Lock and group operational pending replay signals by semantic decision."""
+
+    decision = source_applicability_expression(
+        DataSet.applicability,
+        Company.entity_type,
+        Company.inn,
+    )
+    statement = (
+        select(MasterReplaySignal)
+        .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+        .join(Company, Company.id == MasterReplaySignal.company_id)
+        .where(
+            MasterReplaySignal.company_id == company_id,
+            MasterReplaySignal.status == "pending",
+            DataSet.enabled.is_(True),
+            DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
+            DataSet.operational_status == OperationalStatus.CURRENT,
+            DataSet.last_success_at.is_not(None),
+            DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
+            (
+                DataSet.next_expected_update_at.is_(None)
+                | (DataSet.next_expected_update_at > now)
+            ),
+            decision.in_([outcome.value for outcome in outcomes]),
+        )
+        .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
+        .with_for_update(skip_locked=skip_locked)
+    )
+    grouped: dict[str, list[UUID]] = defaultdict(list)
+    for signal in session.scalars(statement):
+        grouped[signal.target_source_id].append(signal.id)
+    return {source_id: tuple(values) for source_id, values in grouped.items()}
+
+
 def consume_master_replay_signals(
     session: Session,
     *,
@@ -884,6 +969,11 @@ def consume_master_replay_signals(
         raise ValueError("limit must be positive")
     accepted_ids = tuple(
         company.id for company in _accepted_public_cohort_companies(session)
+    )
+    decision = source_applicability_expression(
+        DataSet.applicability,
+        Company.entity_type,
+        Company.inn,
     )
     candidate_companies = tuple(
         session.scalars(
@@ -902,10 +992,11 @@ def consume_master_replay_signals(
                     DataSet.next_expected_update_at.is_(None)
                     | (DataSet.next_expected_update_at > now)
                 ),
-                source_applicability_clause(
-                    DataSet.applicability,
-                    Company.entity_type,
-                    Company.inn,
+                decision.in_(
+                    (
+                        SourceApplicability.APPLICABLE.value,
+                        SourceApplicability.UNKNOWN.value,
+                    )
                 ),
             )
             .group_by(MasterReplaySignal.company_id)
@@ -930,10 +1021,11 @@ def consume_master_replay_signals(
                     DataSet.next_expected_update_at.is_(None)
                     | (DataSet.next_expected_update_at > now)
                 ),
-                source_applicability_clause(
-                    DataSet.applicability,
-                    Company.entity_type,
-                    Company.inn,
+                decision.in_(
+                    (
+                        SourceApplicability.APPLICABLE.value,
+                        SourceApplicability.UNKNOWN.value,
+                    )
                 ),
             )
             .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
@@ -957,7 +1049,7 @@ def consume_master_replay_signals(
         # A replay signal names the changed source.  New-company intake emits
         # one signal per source, while a source refresh may name only one.
         # Freezing every operational source here caused unrelated replays.
-        plans = freeze_operational_sources(
+        plans = _freeze_operational_source_decisions(
             session, company, source_ids=tuple(sorted(by_source)), now=now
         )
         eligible_sources = {plan.source_id for plan in plans}
@@ -967,12 +1059,14 @@ def consume_master_replay_signals(
             source_id: tuple(by_source.get(source_id, ()))
             for source_id in sorted(eligible_sources)
         }
-        eligible_signal_ids = tuple(
+        relevant_signal_ids = tuple(
             signal_id
             for source_id in sorted(source_signal_ids)
             for signal_id in source_signal_ids[source_id]
         )
-        trigger_ids = eligible_signal_ids or tuple(signal.id for signal in company_signals)
+        trigger_ids = relevant_signal_ids or tuple(
+            signal.id for signal in company_signals
+        )
         key = f"master-replay:{company_id}:{_digest([str(value) for value in trigger_ids])}"
         creation = create_enrichment_run(
             session,
@@ -985,7 +1079,16 @@ def consume_master_replay_signals(
         )
         created_run_ids.append(creation.run.id)
         runs_created += int(creation.created)
-        scheduled_signal_ids.update(eligible_signal_ids)
+        actionable_sources = {
+            plan.source_id
+            for plan in plans
+            if plan.applicability is SourceApplicability.APPLICABLE
+        }
+        scheduled_signal_ids.update(
+            signal_id
+            for source_id in actionable_sources
+            for signal_id in source_signal_ids.get(source_id, ())
+        )
 
     jobs_created = enqueue_enrichment_work(session, created_run_ids, now=now)
     return ReplayConsumption(
@@ -1008,6 +1111,8 @@ def _latest_worker_run(session: Session, job_id: UUID) -> WorkerRun | None:
 def _sync_coverage_from_job(
     session: Session, coverage: CompanySourceCoverage, *, now: datetime
 ) -> None:
+    if coverage.execution_status == "blocked":
+        return
     if coverage.worker_job_id is None:
         return
     job = session.get(WorkerJob, coverage.worker_job_id)
@@ -1056,6 +1161,219 @@ def _sync_coverage_from_job(
         )
 
 
+def _apply_actionable_plan(
+    coverage: CompanySourceCoverage,
+    plan: SourcePlan,
+    *,
+    now: datetime,
+    resolved_from: SourceApplicability | None = SourceApplicability.UNKNOWN,
+) -> None:
+    previous_snapshot = dict(coverage.source_snapshot or {})
+    snapshot = dict(plan.snapshot)
+    if resolved_from is not None:
+        snapshot["applicability_resolution"] = {
+            "from": resolved_from.value,
+            "to": SourceApplicability.APPLICABLE.value,
+            "resolved_at": now.isoformat(),
+            "previous_frozen_at": previous_snapshot.get("frozen_at"),
+        }
+    else:
+        snapshot["replay_refresh"] = {
+            "previous_status": coverage.status,
+            "previous_frozen_at": previous_snapshot.get("frozen_at"),
+            "refrozen_at": now.isoformat(),
+        }
+    coverage.dataset_id = plan.dataset_id
+    coverage.worker_source_id = plan.worker_source_id
+    coverage.mode = plan.mode
+    coverage.handler_version = plan.handler_version
+    coverage.publication_generation = plan.publication_generation
+    coverage.source_data_date = plan.source_data_date
+    coverage.replay_pointer = plan.replay_pointer
+    coverage.replay_checksum = plan.replay_checksum
+    coverage.source_snapshot = snapshot
+    coverage.status = "PENDING"
+    coverage.execution_status = "pending"
+    coverage.worker_job_id = None
+    coverage.worker_run_id = None
+    coverage.attempt_count = 0
+    coverage.max_attempts = 4 if plan.mode == "point_check" else 3
+    coverage.fact_count = 0
+    coverage.checked_at = None
+    coverage.last_error = None
+    coverage.started_at = None
+    coverage.finished_at = None
+    coverage.updated_at = now
+
+
+def _new_coverage_from_plan(
+    run: CompanyEnrichmentRun,
+    plan: SourcePlan,
+    signal_ids: Sequence[UUID],
+    *,
+    now: datetime,
+) -> CompanySourceCoverage:
+    unresolved = plan.applicability is SourceApplicability.UNKNOWN
+    return CompanySourceCoverage(
+        enrichment_run_id=run.id,
+        company_id=run.company_id,
+        dataset_id=plan.dataset_id,
+        source_id=plan.source_id,
+        worker_source_id=plan.worker_source_id,
+        mode=plan.mode,
+        status="APPLICABILITY_UNKNOWN" if unresolved else "PENDING",
+        execution_status="blocked" if unresolved else "pending",
+        source_snapshot=plan.snapshot,
+        handler_version=plan.handler_version,
+        publication_generation=plan.publication_generation,
+        source_data_date=plan.source_data_date,
+        replay_pointer=plan.replay_pointer,
+        replay_checksum=plan.replay_checksum,
+        master_replay_signal_ids=[str(value) for value in signal_ids],
+        max_attempts=4 if plan.mode == "point_check" else 3,
+        last_error="Source applicability is unresolved" if unresolved else None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _synchronize_replay_denominator(
+    session: Session,
+    run: CompanyEnrichmentRun,
+    rows: Sequence[CompanySourceCoverage],
+    *,
+    company: Company,
+    now: datetime,
+) -> None:
+    """Resolve durable blockers and attach committed late replay decisions.
+
+    The caller holds the company row lock.  Registry replay writers take the
+    same lock, which makes "signal before Risk" a transaction-order invariant.
+    """
+
+    by_source = {row.source_id: row for row in rows}
+    unknown_signals = _pending_replay_signal_map(
+        session,
+        company.id,
+        outcomes=(SourceApplicability.UNKNOWN,),
+        now=now,
+    )
+    applicable_signals = _pending_replay_signal_map(
+        session,
+        company.id,
+        outcomes=(SourceApplicability.APPLICABLE,),
+        now=now,
+    )
+
+    for row in rows:
+        if row.status != "APPLICABILITY_UNKNOWN":
+            continue
+        dataset = session.get(DataSet, row.dataset_id) if row.dataset_id else None
+        if dataset is None:
+            row.last_error = "Applicability blocker dataset is missing"
+            row.updated_at = now
+            continue
+        decision = resolve_source_applicability(company, dataset)
+        signal_ids = tuple(
+            dict.fromkeys(
+                (*_uuid_values(row.master_replay_signal_ids),)
+                + unknown_signals.get(row.source_id, ())
+                + applicable_signals.get(row.source_id, ())
+            )
+        )
+        row.master_replay_signal_ids = [str(value) for value in signal_ids]
+        if decision is SourceApplicability.UNKNOWN:
+            row.last_error = "Source applicability is unresolved"
+            row.updated_at = now
+            continue
+        if decision is SourceApplicability.NOT_APPLICABLE:
+            snapshot = dict(row.source_snapshot or {})
+            snapshot["applicability"] = SourceApplicability.NOT_APPLICABLE.value
+            snapshot["applicability_resolution"] = {
+                "from": SourceApplicability.UNKNOWN.value,
+                "to": SourceApplicability.NOT_APPLICABLE.value,
+                "resolved_at": now.isoformat(),
+            }
+            row.source_snapshot = snapshot
+            row.status = "NOT_APPLICABLE"
+            row.execution_status = "succeeded"
+            row.checked_at = now
+            row.finished_at = now
+            row.last_error = None
+            row.updated_at = now
+            _complete_replay_signals(session, row, now=now)
+            continue
+        plan = _source_plan(session, company, dataset, now=now)
+        if plan is None:
+            row.last_error = (
+                "Applicability resolved as applicable but source is not actionable"
+            )
+            row.updated_at = now
+            continue
+        _apply_actionable_plan(row, plan, now=now)
+
+    late_sources = tuple(sorted(set(unknown_signals) | set(applicable_signals)))
+    if late_sources:
+        plans = _freeze_operational_source_decisions(
+            session,
+            company,
+            source_ids=late_sources,
+            now=now,
+        )
+        for plan in plans:
+            signal_ids = tuple(
+                dict.fromkeys(
+                    unknown_signals.get(plan.source_id, ())
+                    + applicable_signals.get(plan.source_id, ())
+                )
+            )
+            row = by_source.get(plan.source_id)
+            if row is None:
+                row = _new_coverage_from_plan(run, plan, signal_ids, now=now)
+                session.add(row)
+                by_source[plan.source_id] = row
+                continue
+            existing_ids = _uuid_values(row.master_replay_signal_ids)
+            unseen_signal_ids = tuple(
+                value for value in signal_ids if value not in set(existing_ids)
+            )
+            row.master_replay_signal_ids = [
+                str(value) for value in dict.fromkeys(existing_ids + signal_ids)
+            ]
+            if plan.applicability is SourceApplicability.UNKNOWN:
+                previous = dict(row.source_snapshot or {})
+                snapshot = dict(plan.snapshot)
+                snapshot["previous_coverage"] = {
+                    "status": row.status,
+                    "execution_status": row.execution_status,
+                    "frozen_at": previous.get("frozen_at"),
+                }
+                row.source_snapshot = snapshot
+                row.status = "APPLICABILITY_UNKNOWN"
+                row.execution_status = "blocked"
+                row.last_error = "Source applicability is unresolved"
+                row.finished_at = None
+                row.updated_at = now
+            elif unseen_signal_ids and row.status in SUCCESSFUL_COVERAGE_STATUSES:
+                _apply_actionable_plan(
+                    row,
+                    plan,
+                    now=now,
+                    resolved_from=None,
+                )
+
+    session.flush()
+    persisted = tuple(
+        session.scalars(
+            select(CompanySourceCoverage)
+            .where(CompanySourceCoverage.enrichment_run_id == run.id)
+            .order_by(CompanySourceCoverage.source_id)
+        )
+    )
+    run.source_count = len(persisted)
+    run.applicable_sources = [dict(row.source_snapshot or {}) for row in persisted]
+
+
 def _refresh_run_state(
     session: Session,
     run: CompanyEnrichmentRun,
@@ -1063,6 +1381,18 @@ def _refresh_run_state(
     now: datetime,
     allow_projection: bool,
 ) -> CompanyEnrichmentRun:
+    company = session.scalar(
+        select(Company).where(Company.id == run.company_id).with_for_update()
+    )
+    if company is None:
+        run.status = "failed"
+        run.stage = "failed"
+        run.public_ready = False
+        run.last_error_code = "company_missing"
+        run.last_error = "Company row is missing"
+        run.finished_at = now
+        run.updated_at = now
+        return run
     rows = tuple(
         session.scalars(
             select(CompanySourceCoverage)
@@ -1073,6 +1403,21 @@ def _refresh_run_state(
     )
     for row in rows:
         _sync_coverage_from_job(session, row, now=now)
+    _synchronize_replay_denominator(
+        session,
+        run,
+        rows,
+        company=company,
+        now=now,
+    )
+    rows = tuple(
+        session.scalars(
+            select(CompanySourceCoverage)
+            .where(CompanySourceCoverage.enrichment_run_id == run.id)
+            .order_by(CompanySourceCoverage.source_id)
+            .with_for_update()
+        )
+    )
     succeeded = sum(row.status in SUCCESSFUL_COVERAGE_STATUSES for row in rows)
     failed = sum(
         row.status in TRANSIENT_COVERAGE_STATUSES
@@ -1086,6 +1431,7 @@ def _refresh_run_state(
     run.failed_source_count = failed
     run.updated_at = now
     run.stage = "source_enrichment"
+    run.public_ready = False
     if not rows:
         run.status = "failed"
         run.stage = "failed"
@@ -1093,6 +1439,19 @@ def _refresh_run_state(
         run.last_error = "No applicable operational sources were frozen"
         run.finished_at = now
         return run
+    blockers = [row for row in rows if row.status == "APPLICABILITY_UNKNOWN"]
+    if blockers:
+        run.status = "waiting_sources"
+        run.last_error_code = "applicability_unknown"
+        run.last_error = (
+            "Source applicability is unresolved: "
+            + ", ".join(row.source_id for row in blockers)
+        )
+        run.finished_at = None
+        return run
+    if run.last_error_code == "applicability_unknown":
+        run.last_error_code = None
+        run.last_error = None
     if active:
         run.status = (
             "retry_scheduled"
@@ -1191,6 +1550,19 @@ def reconcile_enrichment_run(
     if run is None:
         raise LookupError(f"enrichment run not found: {run_id}")
     if run.status in {"succeeded", "cancelled"}:
+        return run
+    _refresh_run_state(session, run, now=now, allow_projection=False)
+    has_pending_work = bool(
+        session.scalar(
+            select(func.count(CompanySourceCoverage.id)).where(
+                CompanySourceCoverage.enrichment_run_id == run.id,
+                CompanySourceCoverage.execution_status == "pending",
+            )
+        )
+    )
+    if has_pending_work:
+        enqueue_enrichment_work(session, (run.id,), now=now)
+    if run.last_error_code == "applicability_unknown":
         return run
     return _refresh_run_state(session, run, now=now, allow_projection=True)
 
@@ -1292,6 +1664,15 @@ def get_company_public_readiness(
             "risk_assessment_id": None,
             "summary_id": None,
         }
+    blocker_count = int(
+        session.scalar(
+            select(func.count(CompanySourceCoverage.id)).where(
+                CompanySourceCoverage.enrichment_run_id == run.id,
+                CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+            )
+        )
+        or 0
+    )
     pending = max(
         0,
         run.source_count - run.completed_source_count - run.failed_source_count,
@@ -1301,6 +1682,7 @@ def get_company_public_readiness(
         and run.public_ready
         and run.risk_assessment_id
         and run.summary_id
+        and blocker_count == 0
     )
     status = (
         "READY"
@@ -1324,6 +1706,7 @@ def get_company_public_readiness(
         "pending_source_count": pending,
         "risk_assessment_id": run.risk_assessment_id,
         "summary_id": run.summary_id,
+        "applicability_blocker_count": blocker_count,
         "updated_at": run.updated_at,
     }
 
@@ -1465,7 +1848,7 @@ def canonical_enrichment_metrics(session: Session) -> dict[str, Any]:
             risk_ready += 1
         if run["summary_id"]:
             summary_ready += 1
-        if bool(run["public_ready"]):
+        if bool(run["public_ready"]) and is_complete:
             public_ready += 1
 
         expected += frozen_expected
@@ -1526,6 +1909,13 @@ def _current_public_ready_run(
         and run.summary_id
     ):
         return False
+    if session.scalar(
+        select(func.count(CompanySourceCoverage.id)).where(
+            CompanySourceCoverage.enrichment_run_id == run.id,
+            CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+        )
+    ):
+        return False
     risk = session.scalar(
         select(CompanyRiskAssessmentV3)
         .where(CompanyRiskAssessmentV3.company_id == run.company_id)
@@ -1556,63 +1946,24 @@ def _pending_signal_map(
     session: Session, company_id: int, *, now: datetime | None = None
 ) -> dict[str, tuple[UUID, ...]]:
     now = now or utc_now()
-    grouped: dict[str, list[UUID]] = defaultdict(list)
-    for signal in session.scalars(
-        select(MasterReplaySignal)
-        .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
-        .join(Company, Company.id == MasterReplaySignal.company_id)
-        .where(
-            MasterReplaySignal.company_id == company_id,
-            MasterReplaySignal.status == "pending",
-            DataSet.enabled.is_(True),
-            DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
-            DataSet.operational_status == OperationalStatus.CURRENT,
-            DataSet.last_success_at.is_not(None),
-            DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
-            (
-                DataSet.next_expected_update_at.is_(None)
-                | (DataSet.next_expected_update_at > now)
-            ),
-            source_applicability_clause(
-                DataSet.applicability,
-                Company.entity_type,
-                Company.inn,
-            ),
-        )
-        .order_by(MasterReplaySignal.created_at, MasterReplaySignal.id)
-        .with_for_update(skip_locked=True)
-    ):
-        grouped[signal.target_source_id].append(signal.id)
-    return {source_id: tuple(values) for source_id, values in grouped.items()}
+    return _pending_replay_signal_map(
+        session,
+        company_id,
+        outcomes=(SourceApplicability.APPLICABLE,),
+        now=now,
+        skip_locked=True,
+    )
 
 
 def _has_pending_unknown_source_applicability(
     session: Session, company_id: int, *, now: datetime
 ) -> bool:
-    decision = source_applicability_expression(
-        DataSet.applicability,
-        Company.entity_type,
-        Company.inn,
-    )
     return bool(
-        session.scalar(
-            select(func.count(MasterReplaySignal.id))
-            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
-            .join(Company, Company.id == MasterReplaySignal.company_id)
-            .where(
-                MasterReplaySignal.company_id == company_id,
-                MasterReplaySignal.status == "pending",
-                DataSet.enabled.is_(True),
-                DataSet.auto_update_status == AutoUpdateStatus.CONFIGURED,
-                DataSet.operational_status == OperationalStatus.CURRENT,
-                DataSet.last_success_at.is_not(None),
-                DataSet.coverage["operational_accepted"].as_boolean().is_not(False),
-                (
-                    DataSet.next_expected_update_at.is_(None)
-                    | (DataSet.next_expected_update_at > now)
-                ),
-                decision == SourceApplicability.UNKNOWN.value,
-            )
+        _pending_replay_signal_map(
+            session,
+            company_id,
+            outcomes=(SourceApplicability.UNKNOWN,),
+            now=now,
         )
     )
 
@@ -1866,7 +2217,16 @@ def run_company_enrichment_cycle(
             .where(
                 CompanyEnrichmentRun.status.in_(
                     ("pending", "waiting_sources", "retry_scheduled", "running")
+                ),
+                select(CompanySourceCoverage.id)
+                .where(
+                    CompanySourceCoverage.enrichment_run_id
+                    == CompanyEnrichmentRun.id,
+                    CompanySourceCoverage.execution_status.in_(
+                        ("pending", "queued", "running", "retry_scheduled")
+                    ),
                 )
+                .exists(),
             )
         )
         or 0

@@ -1,6 +1,8 @@
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from uuid import uuid4
+import threading
+import time
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -27,7 +29,11 @@ from app.services.company_enrichment_service import (
     prioritize_public_cohort_enrichment,
     reconcile_enrichment_run,
     restart_enrichment_run,
+    seed_existing_master_enrichment,
 )
+from app.services.factory_metrics_service import collect_factory_metrics
+from app.services.factory_scale_service import collect_factory_pressure
+from app.services.publication_service import publishable_runs
 
 
 NOW = datetime(2026, 9, 26, 8, tzinfo=timezone.utc)
@@ -292,6 +298,671 @@ def _workflow_rows(session: Session, company_id: int):
         )
     )
     return run, coverage
+
+
+def _set_signal_policy(
+    session: Session,
+    signals: dict[str, MasterReplaySignal],
+    *,
+    mode: str,
+) -> str:
+    signal = next(
+        item
+        for code, item in signals.items()
+        if session.scalar(sa.select(DataSet.update_mode).where(DataSet.code == code))
+        == mode
+    )
+    dataset = session.scalar(
+        sa.select(DataSet).where(DataSet.code == signal.target_source_id)
+    )
+    dataset.applicability = None
+    session.flush()
+    return dataset.code
+
+
+def test_mixed_applicable_unknown_is_a_durable_non_actionable_denominator_blocker(
+    tmp_path,
+):
+    with Session(engine) as session:
+        baseline_metrics = collect_factory_metrics(
+            session, window_hours=1, now=NOW, enforce_read_only=False
+        )
+        company, signals = _seed_workflow(session, tmp_path)
+        unknown_code = _set_signal_policy(session, signals, mode="api")
+        jobs_before = int(
+            session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0
+        )
+
+        result = consume_master_replay_signals(session, limit=10, now=NOW)
+        run, coverage = _workflow_rows(session, company.id)
+        blocker = next(row for row in coverage if row.source_id == unknown_code)
+        actionable = next(row for row in coverage if row.source_id != unknown_code)
+
+        assert result.signals_seen == 2
+        assert result.signals_scheduled == 1
+        assert result.runs_created == 1
+        assert result.jobs_created == 1
+        assert run.source_count == 2
+        assert blocker.status == "APPLICABILITY_UNKNOWN"
+        assert blocker.execution_status == "blocked"
+        assert blocker.worker_job_id is None
+        assert blocker.dataset_id is not None
+        assert blocker.source_snapshot["applicability"] == "UNKNOWN"
+        assert blocker.source_snapshot["applicability_policy"] is None
+        assert blocker.master_replay_signal_ids == [str(signals[unknown_code].id)]
+        assert signals[unknown_code].status == "pending"
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            - jobs_before
+        ) == 1
+
+        session.get(WorkerJob, actionable.worker_job_id).status = "succeeded"
+        blocked = reconcile_enrichment_run(session, run.id, now=NOW)
+        session.flush()
+        assert blocked.status == "waiting_sources"
+        assert blocked.stage == "source_enrichment"
+        assert blocked.last_error_code == "applicability_unknown"
+        assert blocked.completed_source_count == 1
+        assert blocked.risk_assessment_id is None
+        assert blocked.summary_id is None
+        assert blocked.public_ready is False
+        assert get_company_public_readiness(session, company.id)[
+            "applicability_blocker_count"
+        ] == 1
+        assert session.scalar(
+            sa.select(sa.func.count())
+            .select_from(CompanyRiskAssessmentV3)
+            .where(CompanyRiskAssessmentV3.company_id == company.id)
+        ) == 0
+        metrics = collect_factory_metrics(
+            session, window_hours=1, now=NOW, enforce_read_only=False
+        )
+        assert metrics["totals"]["fully_enriched"] == baseline_metrics["totals"][
+            "fully_enriched"
+        ]
+        assert metrics["totals"]["public_ready"] == baseline_metrics["totals"][
+            "public_ready"
+        ]
+        assert metrics["queues"]["applicability_blockers"] == (
+            baseline_metrics["queues"]["applicability_blockers"] + 1
+        )
+
+        session.expire_all()
+        persisted = session.scalar(
+            sa.select(CompanySourceCoverage).where(
+                CompanySourceCoverage.enrichment_run_id == run.id,
+                CompanySourceCoverage.source_id == unknown_code,
+            )
+        )
+        assert persisted.status == "APPLICABILITY_UNKNOWN"
+        assert persisted.execution_status == "blocked"
+        assert persisted.worker_job_id is None
+        session.rollback()
+
+
+def test_pure_and_multiple_unknown_sources_create_no_worker_jobs(tmp_path):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        for code in signals:
+            dataset = session.scalar(sa.select(DataSet).where(DataSet.code == code))
+            if dataset.last_success_at is not None:
+                dataset.applicability = None
+        session.flush()
+        jobs_before = int(
+            session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0
+        )
+        pressure_before = collect_factory_pressure(
+            session, raw_root=tmp_path, now=NOW
+        )
+
+        first = consume_master_replay_signals(session, limit=10, now=NOW)
+        repeated = consume_master_replay_signals(session, limit=10, now=NOW)
+        run, coverage = _workflow_rows(session, company.id)
+
+        assert first.signals_seen == 2
+        assert first.signals_scheduled == 0
+        assert first.runs_created == 1
+        assert first.jobs_created == 0
+        assert repeated.runs_created == 0
+        assert repeated.jobs_created == 0
+        assert run.source_count == 2
+        assert {row.status for row in coverage} == {"APPLICABILITY_UNKNOWN"}
+        assert {row.execution_status for row in coverage} == {"blocked"}
+        assert {row.worker_job_id for row in coverage} == {None}
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            == jobs_before
+        )
+        pressure_after = collect_factory_pressure(
+            session, raw_root=tmp_path, now=NOW
+        )
+        assert pressure_after.actionable_backlog == pressure_before.actionable_backlog
+        assert {signal.status for signal in signals.values() if signal.target_source_id in {
+            row.source_id for row in coverage
+        }} == {"pending"}
+
+        resolved_code = next(
+            row.source_id for row in coverage if row.mode == "point_check"
+        )
+        dataset = session.scalar(
+            sa.select(DataSet).where(DataSet.code == resolved_code)
+        )
+        dataset.applicability = {"entity_types": ["legal"]}
+        session.flush()
+        still_blocked = reconcile_enrichment_run(
+            session, run.id, now=NOW + timedelta(minutes=1)
+        )
+        session.flush()
+        refreshed_rows = tuple(
+            session.scalars(
+                sa.select(CompanySourceCoverage).where(
+                    CompanySourceCoverage.enrichment_run_id == run.id
+                )
+            )
+        )
+        assert sum(
+            row.status == "APPLICABILITY_UNKNOWN" for row in refreshed_rows
+        ) == 1
+        resolved = next(
+            row for row in refreshed_rows if row.source_id == resolved_code
+        )
+        assert resolved.execution_status == "queued"
+        assert resolved.worker_job_id is not None
+        assert still_blocked.last_error_code == "applicability_unknown"
+        assert still_blocked.risk_assessment_id is None
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            == jobs_before + 1
+        )
+        session.rollback()
+
+
+def test_unknown_blocker_survives_commit_and_new_session(tmp_path):
+    company_id = source_id = run_id = None
+    source_codes: tuple[str, ...] = ()
+    try:
+        with Session(engine) as session:
+            company, signals = _seed_workflow(session, tmp_path)
+            unknown_code = _set_signal_policy(session, signals, mode="api")
+            consume_master_replay_signals(session, limit=10, now=NOW)
+            run, coverage = _workflow_rows(session, company.id)
+            company_id = company.id
+            run_id = run.id
+            source_codes = tuple(signals)
+            source_id = session.scalar(
+                sa.select(DataSet.source_id).where(DataSet.code == unknown_code)
+            )
+            blocker = next(row for row in coverage if row.source_id == unknown_code)
+            assert blocker.status == "APPLICABILITY_UNKNOWN"
+            session.commit()
+
+        with Session(engine) as restarted:
+            run = restarted.get(CompanyEnrichmentRun, run_id)
+            blocker = restarted.scalar(
+                sa.select(CompanySourceCoverage).where(
+                    CompanySourceCoverage.enrichment_run_id == run_id,
+                    CompanySourceCoverage.status == "APPLICABILITY_UNKNOWN",
+                )
+            )
+            assert run.status == "waiting_sources"
+            assert run.last_error_code == "applicability_unknown"
+            assert run.public_ready is False
+            assert blocker is not None
+            assert blocker.execution_status == "blocked"
+            assert blocker.worker_job_id is None
+            assert restarted.scalar(
+                sa.select(MasterReplaySignal.status).where(
+                    MasterReplaySignal.id
+                    == UUID(blocker.master_replay_signal_ids[0])
+                )
+            ) == "pending"
+    finally:
+        if company_id is not None and source_id is not None:
+            with Session(engine) as cleanup:
+                cleanup.execute(
+                    sa.delete(Company).where(Company.id == company_id)
+                )
+                cleanup.execute(
+                    sa.delete(WorkerPublicationState).where(
+                        WorkerPublicationState.source_id.in_(source_codes)
+                    )
+                )
+                job_ids = tuple(
+                    cleanup.scalars(
+                        sa.select(WorkerJob.id).where(
+                            WorkerJob.source_id.in_(source_codes)
+                        )
+                    )
+                )
+                if job_ids:
+                    cleanup.execute(
+                        sa.delete(WorkerRun).where(WorkerRun.job_id.in_(job_ids))
+                    )
+                    cleanup.execute(
+                        sa.delete(WorkerJob).where(WorkerJob.id.in_(job_ids))
+                    )
+                cleanup.execute(
+                    sa.delete(WorkerHandlerRegistration).where(
+                        WorkerHandlerRegistration.source_id.in_(source_codes)
+                    )
+                )
+                cleanup.execute(
+                    sa.delete(DataSource).where(DataSource.id == source_id)
+                )
+                cleanup.commit()
+
+
+def test_unknown_resolves_to_not_applicable_without_worker_work(tmp_path):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        unknown_code = _set_signal_policy(session, signals, mode="api")
+        consume_master_replay_signals(session, limit=10, now=NOW)
+        run, coverage = _workflow_rows(session, company.id)
+        jobs_before = int(
+            session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0
+        )
+        dataset = session.scalar(
+            sa.select(DataSet).where(DataSet.code == unknown_code)
+        )
+        dataset.applicability = {
+            "entity_types": ["individual_entrepreneur"]
+        }
+        session.flush()
+
+        refreshed = reconcile_enrichment_run(
+            session, run.id, now=NOW + timedelta(minutes=1)
+        )
+        blocker = next(row for row in coverage if row.source_id == unknown_code)
+        assert blocker.status == "NOT_APPLICABLE"
+        assert blocker.execution_status == "succeeded"
+        assert blocker.worker_job_id is None
+        assert blocker.source_snapshot["applicability"] == "NOT_APPLICABLE"
+        assert blocker.source_snapshot["applicability_resolution"]["from"] == "UNKNOWN"
+        assert signals[unknown_code].status == "complete"
+        assert refreshed.last_error_code != "applicability_unknown"
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            == jobs_before
+        )
+        session.rollback()
+
+
+def test_unknown_resolves_to_applicable_before_risk_and_enqueues_once(tmp_path):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        unknown_code = _set_signal_policy(session, signals, mode="api")
+        consume_master_replay_signals(session, limit=10, now=NOW)
+        run, coverage = _workflow_rows(session, company.id)
+        applicable = next(row for row in coverage if row.source_id != unknown_code)
+        session.get(WorkerJob, applicable.worker_job_id).status = "succeeded"
+        dataset = session.scalar(
+            sa.select(DataSet).where(DataSet.code == unknown_code)
+        )
+        dataset.applicability = {"entity_types": ["legal"]}
+        session.flush()
+        jobs_before = int(
+            session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0
+        )
+
+        waiting = reconcile_enrichment_run(
+            session, run.id, now=NOW + timedelta(minutes=1)
+        )
+        converted = next(row for row in coverage if row.source_id == unknown_code)
+        assert converted.status == "RUNNING"
+        assert converted.execution_status == "queued"
+        assert converted.worker_job_id is not None
+        assert converted.source_snapshot["applicability"] == "APPLICABLE"
+        assert signals[unknown_code].status == "scheduled"
+        assert waiting.stage == "source_enrichment"
+        assert waiting.public_ready is False
+        assert waiting.risk_assessment_id is None
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            == jobs_before + 1
+        )
+
+        reconcile_enrichment_run(
+            session, run.id, now=NOW + timedelta(minutes=2)
+        )
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            == jobs_before + 1
+        )
+        session.rollback()
+
+
+def test_late_unknown_signal_is_attached_before_risk(tmp_path):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        consume_master_replay_signals(session, limit=10, now=NOW)
+        run, coverage = _workflow_rows(session, company.id)
+        for row in coverage:
+            session.get(WorkerJob, row.worker_job_id).status = "succeeded"
+
+        dormant_code = next(
+            code
+            for code in signals
+            if code not in {row.source_id for row in coverage}
+        )
+        dataset = session.scalar(
+            sa.select(DataSet).where(DataSet.code == dormant_code)
+        )
+        dataset.update_mode = "api"
+        dataset.dataset_kind = "on_demand_api"
+        dataset.last_success_at = NOW
+        dataset.coverage = {"operational_accepted": True}
+        dataset.operational_status = "current"
+        dataset.auto_update_status = "configured"
+        dataset.applicability = None
+        handler = session.scalar(
+            sa.select(WorkerHandlerRegistration).where(
+                WorkerHandlerRegistration.source_id == dormant_code
+            )
+        )
+        handler.metadata_json = {
+            "mode": "bounded_daily_master_exact_inn_sweep"
+        }
+        session.flush()
+        jobs_before = int(
+            session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0
+        )
+
+        blocked = reconcile_enrichment_run(
+            session, run.id, now=NOW + timedelta(minutes=1)
+        )
+        late = session.scalar(
+            sa.select(CompanySourceCoverage).where(
+                CompanySourceCoverage.enrichment_run_id == run.id,
+                CompanySourceCoverage.source_id == dormant_code,
+            )
+        )
+        assert late is not None
+        assert late.status == "APPLICABILITY_UNKNOWN"
+        assert late.execution_status == "blocked"
+        assert late.worker_job_id is None
+        assert run.source_count == 3
+        assert blocked.last_error_code == "applicability_unknown"
+        assert blocked.stage == "source_enrichment"
+        assert blocked.risk_assessment_id is None
+        assert blocked.summary_id is None
+        assert blocked.public_ready is False
+        assert signals[dormant_code].status == "pending"
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            == jobs_before
+        )
+        session.rollback()
+
+
+def test_committed_concurrent_unknown_signal_wins_before_risk(tmp_path):
+    company_id = source_id = run_id = None
+    source_codes: tuple[str, ...] = ()
+    writer: Session | None = None
+    try:
+        with Session(engine) as setup:
+            company, signals = _seed_workflow(setup, tmp_path)
+            source_codes = tuple(signals)
+            dormant_code = next(
+                code
+                for code in signals
+                if setup.scalar(
+                    sa.select(DataSet.last_success_at).where(DataSet.code == code)
+                )
+                is None
+            )
+            setup.delete(signals[dormant_code])
+            dataset = setup.scalar(
+                sa.select(DataSet).where(DataSet.code == dormant_code)
+            )
+            dataset.update_mode = "api"
+            dataset.dataset_kind = "on_demand_api"
+            dataset.last_success_at = NOW
+            dataset.coverage = {"operational_accepted": True}
+            dataset.operational_status = "current"
+            dataset.auto_update_status = "configured"
+            dataset.applicability = None
+            handler = setup.scalar(
+                sa.select(WorkerHandlerRegistration).where(
+                    WorkerHandlerRegistration.source_id == dormant_code
+                )
+            )
+            handler.metadata_json = {
+                "mode": "bounded_daily_master_exact_inn_sweep"
+            }
+            setup.flush()
+            consume_master_replay_signals(setup, limit=10, now=NOW)
+            run, coverage = _workflow_rows(setup, company.id)
+            for row in coverage:
+                setup.get(WorkerJob, row.worker_job_id).status = "succeeded"
+            company_id = company.id
+            run_id = run.id
+            source_id = dataset.source_id
+            setup.commit()
+
+        writer = Session(engine)
+        locked_company = writer.scalar(
+            sa.select(Company)
+            .where(Company.id == company_id)
+            .with_for_update()
+        )
+        change = CompanyRegistryChange(
+            source_id="concurrent-regression",
+            company_id=company_id,
+            run_id=None,
+            inn=locked_company.inn,
+            event_type="identity_changed",
+            changed_fields={"late_unknown": True},
+            source_data_date=NOW.date(),
+            source_record_key=f"concurrent:{uuid4().hex}",
+        )
+        writer.add(change)
+        writer.flush()
+        signal = MasterReplaySignal(
+            company_id=company_id,
+            target_source_id=dormant_code,
+            registry_change_id=change.id,
+            status="pending",
+            created_at=NOW + timedelta(seconds=1),
+        )
+        writer.add(signal)
+        writer.flush()
+        signal_id = signal.id
+
+        result: dict[str, object] = {}
+
+        def finish_run() -> None:
+            try:
+                with Session(engine) as gate:
+                    refreshed = reconcile_enrichment_run(
+                        gate, run_id, now=NOW + timedelta(minutes=1)
+                    )
+                    gate.commit()
+                    result.update(
+                        status=refreshed.status,
+                        stage=refreshed.stage,
+                        error=refreshed.last_error_code,
+                        risk=refreshed.risk_assessment_id,
+                        summary=refreshed.summary_id,
+                        public_ready=refreshed.public_ready,
+                    )
+            except Exception as error:  # pragma: no cover - surfaced below
+                result["exception"] = error
+
+        gate_thread = threading.Thread(target=finish_run, daemon=True)
+        gate_thread.start()
+        time.sleep(0.2)
+        assert gate_thread.is_alive(), "Risk gate did not wait for company lock"
+        writer.commit()
+        writer.close()
+        writer = None
+        gate_thread.join(timeout=10)
+        assert not gate_thread.is_alive()
+        assert "exception" not in result
+        assert result == {
+            "status": "waiting_sources",
+            "stage": "source_enrichment",
+            "error": "applicability_unknown",
+            "risk": None,
+            "summary": None,
+            "public_ready": False,
+        }
+
+        with Session(engine) as verify:
+            blocker = verify.scalar(
+                sa.select(CompanySourceCoverage).where(
+                    CompanySourceCoverage.enrichment_run_id == run_id,
+                    CompanySourceCoverage.source_id == dormant_code,
+                )
+            )
+            assert blocker.status == "APPLICABILITY_UNKNOWN"
+            assert blocker.execution_status == "blocked"
+            assert blocker.worker_job_id is None
+            assert str(signal_id) in blocker.master_replay_signal_ids
+            assert verify.get(MasterReplaySignal, signal_id).status == "pending"
+    finally:
+        if writer is not None:
+            writer.rollback()
+            writer.close()
+        if company_id is not None and source_id is not None:
+            with Session(engine) as cleanup:
+                cleanup.execute(sa.delete(Company).where(Company.id == company_id))
+                cleanup.execute(
+                    sa.delete(WorkerPublicationState).where(
+                        WorkerPublicationState.source_id.in_(source_codes)
+                    )
+                )
+                job_ids = tuple(
+                    cleanup.scalars(
+                        sa.select(WorkerJob.id).where(
+                            WorkerJob.source_id.in_(source_codes)
+                        )
+                    )
+                )
+                if job_ids:
+                    cleanup.execute(
+                        sa.delete(WorkerRun).where(WorkerRun.job_id.in_(job_ids))
+                    )
+                    cleanup.execute(
+                        sa.delete(WorkerJob).where(WorkerJob.id.in_(job_ids))
+                    )
+                cleanup.execute(
+                    sa.delete(WorkerHandlerRegistration).where(
+                        WorkerHandlerRegistration.source_id.in_(source_codes)
+                    )
+                )
+                cleanup.execute(
+                    sa.delete(DataSource).where(DataSource.id == source_id)
+                )
+                cleanup.commit()
+
+
+def test_existing_master_bootstrap_persists_unknown_blocker(tmp_path, monkeypatch):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        unknown_code = _set_signal_policy(session, signals, mode="api")
+        company.official_registry_verified = True
+        company.master_source = "fns_egrul"
+        company.created_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        monkeypatch.setattr(
+            enrichment_service,
+            "_accepted_public_cohort_companies",
+            lambda _session: (),
+        )
+        session.flush()
+
+        created, jobs = seed_existing_master_enrichment(
+            session, limit=1, now=NOW
+        )
+        run, coverage = _workflow_rows(session, company.id)
+        blocker = next(row for row in coverage if row.source_id == unknown_code)
+        assert created == 1
+        assert jobs >= 1
+        assert run.trigger == "existing_master_bootstrap"
+        assert blocker.status == "APPLICABILITY_UNKNOWN"
+        assert blocker.execution_status == "blocked"
+        assert blocker.worker_job_id is None
+        assert run.public_ready is False
+        session.rollback()
+
+
+def test_public_cohort_unknown_protection_uses_canonical_decision(tmp_path, monkeypatch):
+    with Session(engine) as session:
+        company, signals = _seed_workflow(session, tmp_path)
+        unknown_code = _set_signal_policy(session, signals, mode="api")
+        monkeypatch.setattr(
+            enrichment_service,
+            "_accepted_public_cohort_companies",
+            lambda _session: (company,),
+        )
+        jobs_before = int(
+            session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0
+        )
+
+        result = prioritize_public_cohort_enrichment(session, now=NOW)
+        assert result.blocked == 1
+        assert result.runs_created == 0
+        assert result.jobs_created == 0
+        assert session.scalar(
+            sa.select(CompanyEnrichmentRun).where(
+                CompanyEnrichmentRun.company_id == company.id
+            )
+        ) is None
+        assert signals[unknown_code].status == "pending"
+        assert (
+            int(session.scalar(sa.select(sa.func.count()).select_from(WorkerJob)) or 0)
+            == jobs_before
+        )
+        session.rollback()
+
+
+def test_publication_contract_rejects_unknown_blocker_even_if_ready_flag_is_stale(
+    tmp_path,
+):
+    with Session(engine) as session:
+        company, _signals = _seed_workflow(session, tmp_path)
+        consume_master_replay_signals(session, limit=10, now=NOW)
+        run, coverage = _workflow_rows(session, company.id)
+        for row in coverage:
+            session.get(WorkerJob, row.worker_job_id).status = "succeeded"
+        completed = reconcile_enrichment_run(
+            session, run.id, now=NOW + timedelta(minutes=1)
+        )
+        assert completed.status == "succeeded"
+        assert completed.public_ready is True
+        assert publishable_runs(session, [company]) == {company.id: completed}
+
+        session.add(
+            CompanySourceCoverage(
+                enrichment_run_id=run.id,
+                company_id=company.id,
+                dataset_id=None,
+                source_id=f"late_unknown_public_{uuid4().hex[:8]}",
+                worker_source_id="late_unknown_public",
+                mode="point_check",
+                status="APPLICABILITY_UNKNOWN",
+                execution_status="blocked",
+                source_snapshot={
+                    "applicability": "UNKNOWN",
+                    "applicability_policy": None,
+                    "frozen_at": NOW.isoformat(),
+                },
+                handler_version="blocked-v1",
+                master_replay_signal_ids=[],
+                last_error="Source applicability is unresolved",
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.flush()
+
+        # Simulate a stale/corrupt ready bit: the publication query must still
+        # enforce the durable blocker independently of orchestration state.
+        assert completed.public_ready is True
+        assert publishable_runs(session, [company]) == {}
+        readiness = get_company_public_readiness(session, company.id)
+        assert readiness["ready"] is False
+        assert readiness["applicability_blocker_count"] == 1
+        session.rollback()
 
 
 def test_postgresql_backlog_creates_local_replay_and_bounded_point_jobs(tmp_path):

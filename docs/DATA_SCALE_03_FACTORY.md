@@ -77,6 +77,23 @@ Source applicability is shared by scheduling, replay, generation, and pressure
 metrics. Exact INN identity remains mandatory. Unavailable sources do not
 become `NOT_FOUND`, and immutable provenance is retained.
 
+An unresolved applicability decision is persisted as a
+`company_source_coverage` row with semantic status `APPLICABILITY_UNKNOWN` and
+execution status `blocked`. The row retains company, dataset, source, replay
+signal IDs, the policy snapshot, and its frozen timestamp. It contributes to
+the run's frozen `source_count`, creates no worker job, and is reported
+separately from actionable backlog. Risk, Summary, fully-enriched throughput,
+`public_ready`, and publication remain closed until every such row resolves.
+Resolution to `NOT_APPLICABLE` records an explicit terminal decision;
+resolution to `APPLICABLE` first creates normal source work.
+
+The final replay scan and registry/Firmoteka replay emission serialize on the
+same company row lock. Under PostgreSQL `READ COMMITTED`, a replay signal whose
+writer commits before the Risk transaction acquires that lock must be included
+in the current denominator. A writer acquiring the lock afterwards is ordered
+after that projection and is handled by the next replay run. This transaction
+boundary prevents a signal committed "just before Risk" from being skipped.
+
 The scheduler exposes independent logical budgets for `master_intake`,
 `bulk_enrichment`, `point_enrichment`, and `source_control`. Risk, Summary,
 semantic projection, readiness, and publication remain explicit downstream

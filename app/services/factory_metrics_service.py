@@ -75,16 +75,41 @@ def collect_factory_metrics(
             WHERE position = 1 AND status = 'succeeded'
               AND completed_source_count = source_count
               AND failed_source_count = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM company_source_coverage c
+                WHERE c.enrichment_run_id = latest.id
+                  AND c.status = 'APPLICABILITY_UNKNOWN'
+              )
           ) AS fully_enriched,
           count(*) FILTER (
             WHERE position = 1 AND public_ready
               AND risk_assessment_id IS NOT NULL
               AND summary_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM company_source_coverage c
+                WHERE c.enrichment_run_id = latest.id
+                  AND c.status = 'APPLICABILITY_UNKNOWN'
+              )
           ) AS public_ready,
           count(*) FILTER (
             WHERE position = 1
               AND status IN ('pending','waiting_sources','retry_scheduled','running')
+              AND EXISTS (
+                SELECT 1 FROM company_source_coverage c
+                WHERE c.enrichment_run_id = latest.id
+                  AND c.execution_status IN (
+                    'pending','queued','running','retry_scheduled'
+                  )
+              )
           ) AS enrichment_active,
+          count(*) FILTER (
+            WHERE position = 1
+              AND EXISTS (
+                SELECT 1 FROM company_source_coverage c
+                WHERE c.enrichment_run_id = latest.id
+                  AND c.status = 'APPLICABILITY_UNKNOWN'
+              )
+          ) AS applicability_blocked_runs,
           count(*) FILTER (WHERE position = 1 AND status = 'failed') AS enrichment_failed
         FROM latest
         """,
@@ -106,6 +131,8 @@ def collect_factory_metrics(
           (SELECT count(*) FROM company_source_coverage
              WHERE execution_status IN ('pending','queued','running','retry_scheduled'))
              AS source_expectations,
+          (SELECT count(*) FROM company_source_coverage
+             WHERE status = 'APPLICABILITY_UNKNOWN') AS applicability_blockers,
           (SELECT count(*) FROM worker_jobs
              WHERE status IN ('queued','retry_scheduled')) AS worker_pending,
           (SELECT count(*) FROM worker_jobs WHERE status = 'running') AS worker_running,
@@ -263,6 +290,11 @@ def collect_factory_metrics(
              WHERE status = 'succeeded'
                AND completed_source_count = source_count
                AND failed_source_count = 0
+               AND NOT EXISTS (
+                 SELECT 1 FROM company_source_coverage c
+                 WHERE c.enrichment_run_id = company_enrichment_runs.id
+                   AND c.status = 'APPLICABILITY_UNKNOWN'
+               )
              GROUP BY company_id
            ) x WHERE first_ready_at >= :cutoff) AS fully_enriched,
           (SELECT count(*) FROM (
@@ -271,6 +303,11 @@ def collect_factory_metrics(
              WHERE public_ready
                AND risk_assessment_id IS NOT NULL
                AND summary_id IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM company_source_coverage c
+                 WHERE c.enrichment_run_id = company_enrichment_runs.id
+                   AND c.status = 'APPLICABILITY_UNKNOWN'
+               )
              GROUP BY company_id
            ) x WHERE first_ready_at >= :cutoff) AS public_ready,
           (SELECT count(*) FROM company_risk_assessments_v3

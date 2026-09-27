@@ -957,6 +957,10 @@ def _apply_master(
             manager.position = projection.get("manager_position")
             manager.observed_at = now
     if created or changed:
+        # Serialize replay emission with the company enrichment Risk gate.
+        session.scalar(
+            select(Company.id).where(Company.id == company.id).with_for_update()
+        )
         event_type = "created" if created else "identity_changed"
         record_key = f"{inn}:{row['content_hash']}:{event_type}"
         change = CompanyRegistryChange(
