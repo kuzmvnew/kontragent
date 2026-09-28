@@ -7,12 +7,13 @@ Callers own transaction boundaries so recovery can commit bounded batches.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Collection
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from app.models.company import Company
@@ -98,6 +99,28 @@ class StaleWorkerPlanItem:
 
 
 @dataclass(frozen=True)
+class StaleWorkerRecoveryPlan:
+    total_stale: int
+    total_recoverable: int
+    batch_size: int
+    batch_candidates: tuple[StaleWorkerPlanItem, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "total_stale": self.total_stale,
+            "total_recoverable": self.total_recoverable,
+            "total_nonrecoverable": self.total_stale - self.total_recoverable,
+            "batch_size": self.batch_size,
+            "batch_candidate_ids": [
+                str(item.run_id) for item in self.batch_candidates
+            ],
+            "batch_candidates": [
+                item.as_dict() for item in self.batch_candidates
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class EnrichmentRecoveryPlanItem:
     run_id: UUID
     company_id: int
@@ -126,7 +149,7 @@ class EnrichmentRecoveryBatch:
     items: tuple[EnrichmentRecoveryPlanItem, ...]
     scanned: int
     changed: int
-    last_company_id: int | None
+    next_cursor: EnrichmentRecoveryCursor | None
     reasons: dict[str, int]
 
     def as_dict(self) -> dict[str, Any]:
@@ -134,9 +157,21 @@ class EnrichmentRecoveryBatch:
             "items": [item.as_dict() for item in self.items],
             "scanned": self.scanned,
             "changed": self.changed,
-            "last_company_id": self.last_company_id,
+            "next_cursor": (
+                self.next_cursor.as_dict() if self.next_cursor is not None else None
+            ),
             "reasons": dict(self.reasons),
         }
+
+
+@dataclass(frozen=True)
+class EnrichmentRecoveryCursor:
+    company_id: int
+    created_at: datetime
+    run_id: UUID
+
+    def as_dict(self) -> dict[str, Any]:
+        return _json_value(asdict(self))
 
 
 def plan_stale_worker_recovery(
@@ -146,7 +181,7 @@ def plan_stale_worker_recovery(
     retry_policy: RetryPolicy,
     now: datetime | None = None,
     limit: int = 100,
-) -> tuple[StaleWorkerPlanItem, ...]:
+) -> StaleWorkerRecoveryPlan:
     """Describe canonical timeout recovery without mutating worker state."""
 
     observed_at = now or utc_now()
@@ -162,10 +197,9 @@ def plan_stale_worker_recovery(
                 WorkerRun.heartbeat_at <= observed_at - stale_after,
             )
             .order_by(WorkerRun.heartbeat_at, WorkerRun.id)
-            .limit(limit)
         )
     )
-    result: list[StaleWorkerPlanItem] = []
+    all_items: list[StaleWorkerPlanItem] = []
     timeout = WorkerTimeoutError("stale worker run recovered")
     for run, job, lease in rows:
         retry_eligible = retry_policy.allows(
@@ -178,7 +212,7 @@ def plan_stale_worker_recovery(
         )
         lease_expired = lease is None or lease.expires_at <= observed_at
         recoverable = deadline_exceeded or lease_expired
-        result.append(
+        all_items.append(
             StaleWorkerPlanItem(
                 run_id=run.id,
                 job_id=job.id,
@@ -200,7 +234,13 @@ def plan_stale_worker_recovery(
                 ),
             )
         )
-    return tuple(result)
+    recoverable_items = tuple(item for item in all_items if item.recoverable)
+    return StaleWorkerRecoveryPlan(
+        total_stale=len(all_items),
+        total_recoverable=len(recoverable_items),
+        batch_size=limit,
+        batch_candidates=recoverable_items[:limit],
+    )
 
 
 def apply_stale_worker_recovery(
@@ -209,6 +249,8 @@ def apply_stale_worker_recovery(
     stale_after: timedelta,
     retry_policy: RetryPolicy,
     now: datetime | None = None,
+    candidate_run_ids: Collection[UUID] | None = None,
+    limit: int | None = None,
 ) -> tuple[UUID, ...]:
     """Delegate mutation to the canonical Worker Foundation lifecycle."""
 
@@ -217,61 +259,65 @@ def apply_stale_worker_recovery(
         stale_after=stale_after,
         retry_policy=retry_policy,
         now=now,
+        candidate_run_ids=candidate_run_ids,
+        limit=limit,
     )
 
 
-def _latest_candidate_runs(
+def _recovery_candidate_runs(
     session: Session,
     *,
-    after_company_id: int,
+    after_cursor: EnrichmentRecoveryCursor | None,
     limit: int,
     lock: bool,
 ) -> tuple[CompanyEnrichmentRun, ...]:
-    ranked = (
-        select(
-            CompanyEnrichmentRun.id.label("run_id"),
-            CompanyEnrichmentRun.company_id.label("company_id"),
-            func.row_number()
-            .over(
-                partition_by=CompanyEnrichmentRun.company_id,
-                order_by=(
-                    CompanyEnrichmentRun.created_at.desc(),
-                    CompanyEnrichmentRun.id.desc(),
+    newer = aliased(CompanyEnrichmentRun)
+    is_latest = ~select(newer.id).where(
+        newer.company_id == CompanyEnrichmentRun.company_id,
+        or_(
+            newer.created_at > CompanyEnrichmentRun.created_at,
+            and_(
+                newer.created_at == CompanyEnrichmentRun.created_at,
+                newer.id > CompanyEnrichmentRun.id,
+            ),
+        ),
+    ).exists()
+    lifecycle_inconsistent = or_(
+        CompanyEnrichmentRun.status != "succeeded",
+        CompanyEnrichmentRun.stage != "complete",
+    )
+    recovery_scope = or_(
+        CompanyEnrichmentRun.status.in_(ACTIVE_ENRICHMENT_STATUSES),
+        and_(
+            CompanyEnrichmentRun.public_ready.is_(True),
+            or_(lifecycle_inconsistent, is_latest),
+        ),
+    )
+    statement = select(CompanyEnrichmentRun).where(recovery_scope)
+    if after_cursor is not None:
+        statement = statement.where(
+            or_(
+                CompanyEnrichmentRun.company_id > after_cursor.company_id,
+                and_(
+                    CompanyEnrichmentRun.company_id == after_cursor.company_id,
+                    CompanyEnrichmentRun.created_at > after_cursor.created_at,
+                ),
+                and_(
+                    CompanyEnrichmentRun.company_id == after_cursor.company_id,
+                    CompanyEnrichmentRun.created_at == after_cursor.created_at,
+                    CompanyEnrichmentRun.id > after_cursor.run_id,
                 ),
             )
-            .label("position"),
         )
-        .subquery()
-    )
-    ids = tuple(
-        session.scalars(
-            select(ranked.c.run_id)
-            .join(CompanyEnrichmentRun, CompanyEnrichmentRun.id == ranked.c.run_id)
-            .where(
-                ranked.c.position == 1,
-                ranked.c.company_id > after_company_id,
-                (
-                    CompanyEnrichmentRun.status.in_(ACTIVE_ENRICHMENT_STATUSES)
-                    | CompanyEnrichmentRun.public_ready.is_(True)
-                ),
-            )
-            .order_by(ranked.c.company_id, ranked.c.run_id)
-            .limit(limit)
-        )
-    )
-    if not ids:
-        return ()
-    order = case(
-        *((CompanyEnrichmentRun.id == value, index) for index, value in enumerate(ids)),
-        else_=len(ids),
-    )
-    statement = (
-        select(CompanyEnrichmentRun)
-        .where(CompanyEnrichmentRun.id.in_(ids))
-        .order_by(order)
-    )
+    statement = statement.order_by(
+        CompanyEnrichmentRun.company_id,
+        CompanyEnrichmentRun.created_at,
+        CompanyEnrichmentRun.id,
+    ).limit(limit)
     if lock:
-        statement = statement.with_for_update(skip_locked=True)
+        # Recovery is an exclusive maintenance operation. Waiting preserves the
+        # cursor order; SKIP LOCKED could advance past a still-active earlier run.
+        statement = statement.with_for_update()
     return tuple(session.scalars(statement))
 
 
@@ -315,49 +361,41 @@ def _coverage_counts(
 
 
 def _replay_counts(
-    session: Session, company_ids: tuple[int, ...]
-) -> dict[int, Counter[str]]:
-    result: dict[int, Counter[str]] = defaultdict(Counter)
-    if not company_ids:
+    session: Session,
+    runs: tuple[CompanyEnrichmentRun, ...],
+    *,
+    now: datetime,
+) -> dict[UUID, Counter[str]]:
+    result: dict[UUID, Counter[str]] = defaultdict(Counter)
+    if not runs:
         return result
-    latest = aliased(CompanyEnrichmentRun)
-    latest_run_id = (
-        select(latest.id)
-        .where(latest.company_id == MasterReplaySignal.company_id)
-        .order_by(latest.created_at.desc(), latest.id.desc())
-        .limit(1)
-        .correlate(MasterReplaySignal)
-        .scalar_subquery()
-    )
     decision = source_applicability_expression(
         DataSet.applicability, Company.entity_type, Company.inn
     )
-    rows = session.execute(
-        select(
-            MasterReplaySignal.company_id,
-            MasterReplaySignal.status,
-            func.count(MasterReplaySignal.id),
+    for run in runs:
+        rows = session.execute(
+            select(
+                MasterReplaySignal.status,
+                func.count(MasterReplaySignal.id),
+            )
+            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+            .join(Company, Company.id == MasterReplaySignal.company_id)
+            .where(
+                MasterReplaySignal.company_id == run.company_id,
+                MasterReplaySignal.status.in_(("pending", "scheduled", "failed")),
+                *operational_replay_predicates(DataSet, now=now),
+                decision.in_(
+                    (
+                        SourceApplicability.APPLICABLE.value,
+                        SourceApplicability.UNKNOWN.value,
+                    )
+                ),
+                ~signal_is_resolved_by_run_clause(MasterReplaySignal, run.id),
+            )
+            .group_by(MasterReplaySignal.status)
         )
-        .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
-        .join(Company, Company.id == MasterReplaySignal.company_id)
-        .where(
-            MasterReplaySignal.company_id.in_(company_ids),
-            MasterReplaySignal.status.in_(("pending", "scheduled", "failed")),
-            *operational_replay_predicates(DataSet, now=utc_now()),
-            decision.in_(
-                (
-                    SourceApplicability.APPLICABLE.value,
-                    SourceApplicability.UNKNOWN.value,
-                )
-            ),
-            ~signal_is_resolved_by_run_clause(
-                MasterReplaySignal, latest_run_id
-            ),
-        )
-        .group_by(MasterReplaySignal.company_id, MasterReplaySignal.status)
-    )
-    for company_id, status, count in rows:
-        result[int(company_id)][str(status)] = int(count)
+        for status, count in rows:
+            result[run.id][str(status)] = int(count)
     return result
 
 
@@ -432,29 +470,31 @@ def _current_conclusion_refs(
 def plan_enrichment_recovery_batch(
     session: Session,
     *,
-    after_company_id: int = 0,
+    after_cursor: EnrichmentRecoveryCursor | None = None,
     limit: int = 100,
     lock: bool = False,
+    now: datetime | None = None,
 ) -> EnrichmentRecoveryBatch:
-    """Plan latest-run repair in stable bounded company order."""
+    """Plan run-level repair in stable bounded run order."""
 
     if limit <= 0:
         raise ValueError("limit must be positive")
-    runs = _latest_candidate_runs(
+    observed_at = now or utc_now()
+    runs = _recovery_candidate_runs(
         session,
-        after_company_id=after_company_id,
+        after_cursor=after_cursor,
         limit=limit,
         lock=lock,
     )
     run_ids = tuple(run.id for run in runs)
     company_ids = tuple(run.company_id for run in runs)
     coverage = _coverage_counts(session, run_ids)
-    replay = _replay_counts(session, company_ids)
+    replay = _replay_counts(session, runs, now=observed_at)
     refs = _current_conclusion_refs(session, company_ids)
     items: list[EnrichmentRecoveryPlanItem] = []
     for run in runs:
         counts = coverage[run.id]
-        replay_counts = replay[run.company_id]
+        replay_counts = replay[run.id]
         pending = replay_counts["pending"] + replay_counts["scheduled"]
         failed = replay_counts["failed"]
         risk_ref, summary_ref, summary_risk_ref = refs.get(
@@ -519,7 +559,15 @@ def plan_enrichment_recovery_batch(
         items=tuple(items),
         scanned=len(items),
         changed=0,
-        last_company_id=max(company_ids) if company_ids else None,
+        next_cursor=(
+            EnrichmentRecoveryCursor(
+                company_id=runs[-1].company_id,
+                created_at=runs[-1].created_at,
+                run_id=runs[-1].id,
+            )
+            if runs
+            else None
+        ),
         reasons=dict(Counter(item.action for item in items)),
     )
 
@@ -527,7 +575,7 @@ def plan_enrichment_recovery_batch(
 def apply_enrichment_recovery_batch(
     session: Session,
     *,
-    after_company_id: int = 0,
+    after_cursor: EnrichmentRecoveryCursor | None = None,
     limit: int = 100,
     now: datetime | None = None,
 ) -> EnrichmentRecoveryBatch:
@@ -536,9 +584,10 @@ def apply_enrichment_recovery_batch(
     observed_at = now or utc_now()
     plan = plan_enrichment_recovery_batch(
         session,
-        after_company_id=after_company_id,
+        after_cursor=after_cursor,
         limit=limit,
         lock=True,
+        now=observed_at,
     )
     rows = {
         run.id: run
@@ -583,7 +632,7 @@ def apply_enrichment_recovery_batch(
         items=plan.items,
         scanned=plan.scanned,
         changed=changed,
-        last_company_id=plan.last_company_id,
+        next_cursor=plan.next_cursor,
         reasons=plan.reasons,
     )
 

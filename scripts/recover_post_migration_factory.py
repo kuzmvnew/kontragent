@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import subprocess
@@ -57,14 +57,14 @@ def _read_only(session) -> None:
 
 
 def _enrichment_plan(session, *, batch_size: int) -> dict[str, Any]:
-    cursor = 0
+    cursor = None
     active_items: list[dict[str, Any]] = []
     actions: Counter[str] = Counter()
     candidates = 0
     while True:
         batch = plan_enrichment_recovery_batch(
             session,
-            after_company_id=cursor,
+            after_cursor=cursor,
             limit=batch_size,
         )
         if not batch.items:
@@ -76,11 +76,11 @@ def _enrichment_plan(session, *, batch_size: int) -> dict[str, Any]:
             for item in batch.items
             if item.status in ACTIVE_ENRICHMENT_STATUSES
         )
-        cursor = int(batch.last_company_id or cursor)
+        cursor = batch.next_cursor
     return {
-        "latest_candidates": candidates,
+        "run_candidates": candidates,
         "action_counts": dict(sorted(actions.items())),
-        "latest_active_legacy_runs": active_items,
+        "active_recovery_runs": active_items,
     }
 
 
@@ -98,16 +98,13 @@ def _plan(args: argparse.Namespace) -> dict[str, Any]:
             "database_revision": _database_revision(session),
             "main_sha": _current_sha(),
             "applicability": plan_dataset_applicability_sync(session).as_dict(),
-            "worker_stale": [
-                item.as_dict()
-                for item in plan_stale_worker_recovery(
-                    session,
-                    stale_after=timedelta(seconds=args.stale_after_seconds),
-                    retry_policy=retry_policy,
-                    now=now,
-                    limit=args.batch_size,
-                )
-            ],
+            "worker_stale": plan_stale_worker_recovery(
+                session,
+                stale_after=timedelta(seconds=args.stale_after_seconds),
+                retry_policy=retry_policy,
+                now=now,
+                limit=args.batch_size,
+            ).as_dict(),
             "enrichment": _enrichment_plan(session, batch_size=args.batch_size),
             "replay_blockers": replay_blocker_counts(session, now=now),
             "readiness_invariants": recovery_invariants(session, now=now),
@@ -130,6 +127,74 @@ def _assert_apply_preconditions(session, args: argparse.Namespace) -> dict[str, 
     return {"database_revision": actual_revision, "main_sha": actual_sha}
 
 
+def _apply_worker_recovery_batches(
+    *,
+    stale_after: timedelta,
+    retry_policy: RetryPolicy,
+    batch_size: int,
+    now: datetime,
+    session_factory=SessionLocal,
+) -> dict[str, Any]:
+    """Recover exact planned worker IDs in fresh bounded transactions."""
+
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    batches: list[dict[str, Any]] = []
+    initial_total_stale = initial_total_recoverable = 0
+    first_plan = True
+    while True:
+        with session_factory() as session:
+            plan = plan_stale_worker_recovery(
+                session,
+                stale_after=stale_after,
+                retry_policy=retry_policy,
+                now=now,
+                limit=batch_size,
+            )
+            if first_plan:
+                initial_total_stale = plan.total_stale
+                initial_total_recoverable = plan.total_recoverable
+                first_plan = False
+            planned_ids = tuple(item.run_id for item in plan.batch_candidates)
+            if not planned_ids:
+                session.rollback()
+                break
+            recovered_ids = apply_stale_worker_recovery(
+                session,
+                stale_after=stale_after,
+                retry_policy=retry_policy,
+                now=now,
+                candidate_run_ids=planned_ids,
+                limit=batch_size,
+            )
+            unexpected = set(recovered_ids) - set(planned_ids)
+            if unexpected or len(recovered_ids) > batch_size:
+                raise RuntimeError("worker recovery exceeded its planned batch")
+            session.commit()
+        batches.append(
+            {
+                "planned_run_ids": [str(value) for value in planned_ids],
+                "recovered_run_ids": [str(value) for value in recovered_ids],
+                "recovered": len(recovered_ids),
+            }
+        )
+        if not recovered_ids:
+            raise RuntimeError("planned worker batch made no progress")
+    all_recovered_ids = [
+        run_id
+        for batch in batches
+        for run_id in batch["recovered_run_ids"]
+    ]
+    return {
+        "initial_total_stale": initial_total_stale,
+        "initial_total_recoverable": initial_total_recoverable,
+        "batch_size": batch_size,
+        "batches": batches,
+        "recovered": len(all_recovered_ids),
+        "run_ids": all_recovered_ids,
+    }
+
+
 def _apply(args: argparse.Namespace) -> dict[str, Any]:
     now = utc_now()
     retry_policy = RetryPolicy(
@@ -147,14 +212,12 @@ def _apply(args: argparse.Namespace) -> dict[str, Any]:
         applicability = apply_dataset_applicability_sync(session)
         session.commit()
 
-    with SessionLocal() as session:
-        recovered_worker_ids = apply_stale_worker_recovery(
-            session,
-            stale_after=timedelta(seconds=args.stale_after_seconds),
-            retry_policy=retry_policy,
-            now=now,
-        )
-        session.commit()
+    worker_recovery = _apply_worker_recovery_batches(
+        stale_after=timedelta(seconds=args.stale_after_seconds),
+        retry_policy=retry_policy,
+        batch_size=args.batch_size,
+        now=now,
+    )
 
     replay_totals = Counter()
     while True:
@@ -168,12 +231,12 @@ def _apply(args: argparse.Namespace) -> dict[str, Any]:
             break
 
     enrichment_totals: Counter[str] = Counter()
-    cursor = 0
+    cursor = None
     while True:
         with SessionLocal() as session:
             batch = apply_enrichment_recovery_batch(
                 session,
-                after_company_id=cursor,
+                after_cursor=cursor,
                 limit=args.batch_size,
                 now=now,
             )
@@ -196,7 +259,7 @@ def _apply(args: argparse.Namespace) -> dict[str, Any]:
                 enrichment_totals[f"demotion_{item.action}"] += 1
             elif not item.public_ready and item.action == "RECONCILE_TO_COMPLETE":
                 enrichment_totals["promoted"] += 1
-        cursor = int(batch.last_company_id or cursor)
+        cursor = batch.next_cursor
 
     with SessionLocal() as session:
         after = {
@@ -215,10 +278,7 @@ def _apply(args: argparse.Namespace) -> dict[str, Any]:
         "preconditions": preconditions,
         "before": before,
         "applicability": applicability.as_dict(),
-        "worker": {
-            "recovered": len(recovered_worker_ids),
-            "run_ids": [str(value) for value in recovered_worker_ids],
-        },
+        "worker": worker_recovery,
         "not_applicable_replay": dict(replay_totals),
         "enrichment": dict(enrichment_totals),
         "after": after,

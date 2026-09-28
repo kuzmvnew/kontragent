@@ -1,6 +1,6 @@
 """Transactional job, lease, execution, retry and publication foundation."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -817,22 +817,37 @@ def recover_stale_runs(
     stale_after: timedelta,
     retry_policy: RetryPolicy,
     now: datetime | None = None,
+    candidate_run_ids: Collection[UUID] | None = None,
+    limit: int | None = None,
 ) -> tuple[UUID, ...]:
     """Fence expired/stale runs and route timeout through the normal retry policy."""
 
     now = now or utc_now()
+    if stale_after <= timedelta(0):
+        raise ValueError("stale_after must be positive")
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be positive")
+    if candidate_run_ids is not None and not candidate_run_ids:
+        return ()
+    statement = (
+        select(WorkerRun)
+        .where(
+            WorkerRun.status == "running",
+            WorkerRun.heartbeat_at <= now - stale_after,
+        )
+        .order_by(WorkerRun.heartbeat_at, WorkerRun.id)
+    )
+    if candidate_run_ids is not None:
+        statement = statement.where(WorkerRun.id.in_(candidate_run_ids))
     runs = tuple(
         session.scalars(
-            select(WorkerRun)
-            .where(
-                WorkerRun.status == "running",
-                WorkerRun.heartbeat_at <= now - stale_after,
-            )
-            .with_for_update(skip_locked=True)
+            statement.with_for_update(skip_locked=True)
         )
     )
     recovered: list[UUID] = []
     for run in runs:
+        if limit is not None and len(recovered) >= limit:
+            break
         job = session.get(WorkerJob, run.job_id)
         if job is None:
             continue

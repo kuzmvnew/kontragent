@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.database.postgres import engine
 from app.models.company import Company
@@ -23,14 +23,17 @@ from app.services.dataset_applicability_sync_service import (
     plan_dataset_applicability_sync,
 )
 from app.services.post_migration_recovery_service import (
+    EnrichmentRecoveryCursor,
     apply_enrichment_recovery_batch,
     apply_stale_worker_recovery,
     plan_enrichment_recovery_batch,
     plan_stale_worker_recovery,
     reconcile_not_applicable_replay_batch,
+    recovery_invariants,
 )
 from app.services.source_applicability_service import parse_source_applicability
 from app.worker.execution import RetryPolicy
+from scripts.recover_post_migration_factory import _apply_worker_recovery_batches
 
 
 NOW = datetime(2026, 9, 28, 8, tzinfo=timezone.utc)
@@ -140,7 +143,9 @@ def _run(
     status: str = "running",
     stage: str = "risk",
     public_ready: bool = True,
+    created_at: datetime | None = None,
 ):
+    created_at = created_at or NOW - timedelta(hours=2)
     risk, summary = _risk_and_summary(session, company, suffix)
     run = CompanyEnrichmentRun(
         company_id=company.id,
@@ -156,7 +161,7 @@ def _run(
         summary_id=summary.summary_id,
         public_ready=public_ready,
         started_at=NOW - timedelta(hours=2),
-        created_at=NOW - timedelta(hours=2),
+        created_at=created_at,
         updated_at=NOW - timedelta(hours=1),
     )
     session.add(run)
@@ -182,6 +187,61 @@ def _run(
     session.add(coverage)
     session.flush()
     return run, risk, summary
+
+
+def _cursor_before(company: Company) -> EnrichmentRecoveryCursor:
+    return EnrichmentRecoveryCursor(
+        company_id=company.id - 1,
+        created_at=NOW,
+        run_id=uuid4(),
+    )
+
+
+def _stale_worker(session: Session, suffix: str, *, recoverable: bool = True):
+    job = WorkerJob(
+        source_id=f"stale-{suffix}",
+        job_type="fixture",
+        handler_version="fixture-v1",
+        schedule_metadata={},
+        idempotency_key=f"stale:{suffix}",
+        status="running",
+        max_attempts=3,
+        timeout_seconds=60 if recoverable else 86_400,
+        next_attempt_at=NOW - timedelta(hours=2),
+        created_at=NOW - timedelta(hours=2),
+        updated_at=NOW - timedelta(hours=2),
+    )
+    session.add(job)
+    session.flush()
+    run = WorkerRun(
+        job_id=job.id,
+        attempt_no=1,
+        started_at=NOW - timedelta(hours=2),
+        status="running",
+        worker_id=f"dead-worker-{suffix}",
+        fencing_token=1,
+        handler_version="fixture-v1",
+        current_stage="handler",
+        errors=[],
+        checksum_metadata={},
+        heartbeat_at=NOW - timedelta(hours=2),
+        retryable=False,
+    )
+    lease = WorkerLease(
+        source_id=job.source_id,
+        owner_worker_id=run.worker_id,
+        fencing_token=1,
+        acquired_at=NOW - timedelta(hours=2),
+        heartbeat_at=NOW - timedelta(hours=2),
+        expires_at=(
+            NOW - timedelta(hours=1)
+            if recoverable
+            else NOW + timedelta(hours=1)
+        ),
+    )
+    session.add_all((run, lease))
+    session.flush()
+    return job, run, lease
 
 
 def _signal(
@@ -325,45 +385,7 @@ def test_unknown_dataset_blocks_applicability_apply_before_mutation():
 def test_stale_worker_plan_and_apply_use_retry_policy_without_handler():
     with Session(engine) as session:
         suffix = uuid4().hex[:10]
-        job = WorkerJob(
-            source_id=f"stale-{suffix}",
-            job_type="fixture",
-            handler_version="fixture-v1",
-            schedule_metadata={},
-            idempotency_key=f"stale:{suffix}",
-            status="running",
-            max_attempts=3,
-            timeout_seconds=60,
-            next_attempt_at=NOW - timedelta(hours=2),
-            created_at=NOW - timedelta(hours=2),
-            updated_at=NOW - timedelta(hours=2),
-        )
-        session.add(job)
-        session.flush()
-        run = WorkerRun(
-            job_id=job.id,
-            attempt_no=1,
-            started_at=NOW - timedelta(hours=2),
-            status="running",
-            worker_id="dead-worker",
-            fencing_token=1,
-            handler_version="fixture-v1",
-            current_stage="handler",
-            errors=[],
-            checksum_metadata={},
-            heartbeat_at=NOW - timedelta(hours=2),
-            retryable=False,
-        )
-        lease = WorkerLease(
-            source_id=job.source_id,
-            owner_worker_id="dead-worker",
-            fencing_token=1,
-            acquired_at=NOW - timedelta(hours=2),
-            heartbeat_at=NOW - timedelta(hours=2),
-            expires_at=NOW - timedelta(hours=1),
-        )
-        session.add_all((run, lease))
-        session.flush()
+        job, run, _lease = _stale_worker(session, suffix)
         policy = RetryPolicy()
         plan = plan_stale_worker_recovery(
             session,
@@ -371,7 +393,7 @@ def test_stale_worker_plan_and_apply_use_retry_policy_without_handler():
             retry_policy=policy,
             now=NOW,
         )
-        item = next(item for item in plan if item.run_id == run.id)
+        item = next(item for item in plan.batch_candidates if item.run_id == run.id)
         assert item.recoverable is True
         assert item.expected_job_status == "retry_scheduled"
         recovered = apply_stale_worker_recovery(
@@ -393,6 +415,173 @@ def test_stale_worker_plan_and_apply_use_retry_policy_without_handler():
         session.rollback()
 
 
+def test_worker_plan_counts_all_stale_and_skips_nonrecoverable_for_preview():
+    with Session(engine) as session:
+        suffix = uuid4().hex[:10]
+        _job, protected_run, _lease = _stale_worker(
+            session, f"{suffix}-protected", recoverable=False
+        )
+        protected_run.heartbeat_at = NOW - timedelta(hours=3)
+        _job, recoverable_run, _lease = _stale_worker(
+            session, f"{suffix}-recoverable"
+        )
+        session.flush()
+
+        plan = plan_stale_worker_recovery(
+            session,
+            stale_after=timedelta(minutes=5),
+            retry_policy=RetryPolicy(),
+            now=NOW,
+            limit=1,
+        )
+
+        assert plan.total_stale == 2
+        assert plan.total_recoverable == 1
+        assert [item.run_id for item in plan.batch_candidates] == [
+            recoverable_run.id
+        ]
+        session.rollback()
+
+
+def test_two_stale_workers_apply_in_exact_one_one_zero_batches():
+    with Session(engine) as session:
+        suffix = uuid4().hex[:10]
+        jobs_and_runs = (
+            _stale_worker(session, f"{suffix}-first")[:2],
+            _stale_worker(session, f"{suffix}-second")[:2],
+        )
+        policy = RetryPolicy()
+        recovered_batches: list[tuple] = []
+        for expected_total in (2, 1):
+            plan = plan_stale_worker_recovery(
+                session,
+                stale_after=timedelta(minutes=5),
+                retry_policy=policy,
+                now=NOW,
+                limit=1,
+            )
+            assert plan.total_recoverable == expected_total
+            planned_ids = tuple(item.run_id for item in plan.batch_candidates)
+            recovered = apply_stale_worker_recovery(
+                session,
+                stale_after=timedelta(minutes=5),
+                retry_policy=policy,
+                now=NOW,
+                candidate_run_ids=planned_ids,
+                limit=1,
+            )
+            assert recovered == planned_ids
+            recovered_batches.append(recovered)
+
+        final_plan = plan_stale_worker_recovery(
+            session,
+            stale_after=timedelta(minutes=5),
+            retry_policy=policy,
+            now=NOW,
+            limit=1,
+        )
+        assert final_plan.total_recoverable == 0
+        assert apply_stale_worker_recovery(
+            session,
+            stale_after=timedelta(minutes=5),
+            retry_policy=policy,
+            now=NOW,
+            candidate_run_ids=(),
+            limit=1,
+        ) == ()
+        assert [len(batch) for batch in recovered_batches] == [1, 1]
+        for job, run in jobs_and_runs:
+            assert run.status == "timed_out"
+            assert run.retryable is True
+            assert job.status == "retry_scheduled"
+            assert session.get(WorkerLease, job.source_id) is None
+        assert recovery_invariants(session, now=NOW) == {
+            "public_ready_not_succeeded": 0,
+            "public_ready_not_complete": 0,
+            "public_ready_with_unresolved_replay": 0,
+            "public_ready_with_failed_replay": 0,
+            "active_enrichment_runs": 0,
+            "running_worker_jobs": 0,
+            "running_worker_runs": 0,
+        }
+        session.rollback()
+
+
+def test_cli_worker_batches_commit_one_recovery_per_fresh_session():
+    connection = engine.connect()
+    outer_transaction = connection.begin()
+    made_sessions: list[Session] = []
+    factory = sessionmaker(
+        bind=connection,
+        join_transaction_mode="create_savepoint",
+    )
+
+    def tracked_session():
+        session = factory()
+        made_sessions.append(session)
+        return session
+
+    try:
+        suffix = uuid4().hex[:10]
+        with tracked_session() as session:
+            first_job, first_run, _lease = _stale_worker(
+                session, f"{suffix}-first"
+            )
+            second_job, second_run, _lease = _stale_worker(
+                session, f"{suffix}-second"
+            )
+            worker_ids = (first_run.id, second_run.id)
+            job_ids = (first_job.id, second_job.id)
+            session.commit()
+
+        result = _apply_worker_recovery_batches(
+            stale_after=timedelta(minutes=5),
+            retry_policy=RetryPolicy(),
+            batch_size=1,
+            now=NOW,
+            session_factory=tracked_session,
+        )
+
+        assert result["initial_total_stale"] == 2
+        assert result["initial_total_recoverable"] == 2
+        assert [batch["recovered"] for batch in result["batches"]] == [1, 1]
+        assert all(
+            batch["planned_run_ids"] == batch["recovered_run_ids"]
+            for batch in result["batches"]
+        )
+        # Seed, two mutating batch sessions, then a final empty-plan session.
+        assert len(made_sessions) == 4
+        with tracked_session() as session:
+            assert set(
+                session.scalars(
+                    sa.select(WorkerRun.id).where(
+                        WorkerRun.id.in_(worker_ids),
+                        WorkerRun.status == "timed_out",
+                    )
+                )
+            ) == set(worker_ids)
+            assert set(
+                session.scalars(
+                    sa.select(WorkerJob.id).where(
+                        WorkerJob.id.in_(job_ids),
+                        WorkerJob.status == "retry_scheduled",
+                    )
+                )
+            ) == set(job_ids)
+            assert recovery_invariants(session, now=NOW) == {
+                "public_ready_not_succeeded": 0,
+                "public_ready_not_complete": 0,
+                "public_ready_with_unresolved_replay": 0,
+                "public_ready_with_failed_replay": 0,
+                "active_enrichment_runs": 0,
+                "running_worker_jobs": 0,
+                "running_worker_runs": 0,
+            }
+    finally:
+        outer_transaction.rollback()
+        connection.close()
+
+
 def test_legacy_recovery_completes_proven_run_and_parks_failed_replay():
     with Session(engine) as session:
         suffix = uuid4().hex[:10]
@@ -408,11 +597,11 @@ def test_legacy_recovery_completes_proven_run_and_parks_failed_replay():
             session, company=company, dataset=dataset, suffix=suffix
         )
         plan = plan_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert plan.items[0].action == "RECONCILE_TO_COMPLETE"
         applied = apply_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1, now=NOW
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert applied.changed == 1
         assert (run.status, run.stage, run.public_ready) == (
@@ -421,7 +610,7 @@ def test_legacy_recovery_completes_proven_run_and_parks_failed_replay():
             True,
         )
         repeated = apply_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1, now=NOW
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert repeated.changed == 0
 
@@ -433,12 +622,12 @@ def test_legacy_recovery_completes_proven_run_and_parks_failed_replay():
             status="failed",
         )
         plan = plan_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert plan.items[0].action == "BLOCKED_FAILED_REPLAY"
         historical = (risk.id, summary.id)
         applied = apply_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1, now=NOW
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert applied.changed == 1
         assert run.status == "cancelled"
@@ -475,12 +664,12 @@ def test_pending_replay_is_preserved_while_legacy_run_is_parked():
         )
 
         plan = plan_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert plan.items[0].pending_replay_blockers == 1
         assert plan.items[0].action == "INVALIDATE_AND_PARK"
         applied = apply_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1, now=NOW
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert applied.changed == 1
         assert (run.status, run.stage, run.public_ready) == (
@@ -518,12 +707,12 @@ def test_unknown_applicability_parks_without_creating_work():
         )
 
         plan = plan_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert plan.items[0].applicability_blocker_count == 1
         assert plan.items[0].action == "BLOCKED_APPLICABILITY"
         applied = apply_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1, now=NOW
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert applied.changed == 1
         assert run.status == "cancelled"
@@ -557,13 +746,13 @@ def test_terminal_semantic_status_with_failed_execution_is_not_completed():
         session.flush()
 
         plan = plan_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert plan.items[0].coverage_terminal_count == 0
         assert plan.items[0].coverage_failed_count == 1
         assert plan.items[0].action == "INVALIDATE_AND_PARK"
         apply_enrichment_recovery_batch(
-            session, after_company_id=company.id - 1, limit=1, now=NOW
+            session, after_cursor=_cursor_before(company), limit=1, now=NOW
         )
         assert run.status == "cancelled"
         assert run.public_ready is False
@@ -678,32 +867,227 @@ def test_enrichment_recovery_batches_resume_in_stable_company_order():
 
         first = apply_enrichment_recovery_batch(
             session,
-            after_company_id=first_company.id - 1,
+            after_cursor=_cursor_before(first_company),
             limit=1,
             now=NOW,
         )
         assert first.scanned == first.changed == 1
-        assert first.last_company_id == first_company.id
+        assert first.next_cursor is not None
+        assert first.next_cursor.company_id == first_company.id
         assert first_run.status == "succeeded"
         assert second_run.status == "running"
 
         second = apply_enrichment_recovery_batch(
             session,
-            after_company_id=int(first.last_company_id),
+            after_cursor=first.next_cursor,
             limit=1,
             now=NOW,
         )
         assert second.scanned == second.changed == 1
-        assert second.last_company_id == second_company.id
+        assert second.next_cursor is not None
+        assert second.next_cursor.company_id == second_company.id
         assert second_run.status == "succeeded"
 
         repeated = apply_enrichment_recovery_batch(
             session,
-            after_company_id=first_company.id - 1,
+            after_cursor=_cursor_before(first_company),
             limit=2,
             now=NOW,
         )
         assert repeated.scanned == 2
         assert repeated.changed == 0
         assert {item.action for item in repeated.items} == {"NO_CHANGE"}
+        session.rollback()
+
+
+def test_older_active_run_is_recovered_when_newer_run_is_cancelled():
+    with Session(engine) as session:
+        suffix = uuid4().hex[:10]
+        source = _source(session, suffix)
+        dataset = _dataset(
+            session,
+            source=source,
+            code=f"older-active-{suffix}",
+            applicability={"entity_types": ["legal"]},
+        )
+        company = _company(session, suffix)
+        older, _risk, _summary = _run(
+            session,
+            company=company,
+            dataset=dataset,
+            suffix=f"{suffix}-older",
+            created_at=NOW - timedelta(hours=3),
+        )
+        newer, _risk, _summary = _run(
+            session,
+            company=company,
+            dataset=dataset,
+            suffix=f"{suffix}-newer",
+            status="cancelled",
+            stage="failed",
+            public_ready=False,
+            created_at=NOW - timedelta(hours=1),
+        )
+
+        plan = plan_enrichment_recovery_batch(
+            session,
+            after_cursor=_cursor_before(company),
+            limit=1,
+            now=NOW,
+        )
+        assert [item.run_id for item in plan.items] == [older.id]
+        applied = apply_enrichment_recovery_batch(
+            session,
+            after_cursor=_cursor_before(company),
+            limit=1,
+            now=NOW,
+        )
+        assert applied.changed == 1
+        assert older.status not in {
+            "pending",
+            "waiting_sources",
+            "retry_scheduled",
+            "running",
+        }
+        assert newer.status == "cancelled"
+        assert recovery_invariants(session, now=NOW) == {
+            "public_ready_not_succeeded": 0,
+            "public_ready_not_complete": 0,
+            "public_ready_with_unresolved_replay": 0,
+            "public_ready_with_failed_replay": 0,
+            "active_enrichment_runs": 0,
+            "running_worker_jobs": 0,
+            "running_worker_runs": 0,
+        }
+        session.rollback()
+
+
+def test_same_company_active_runs_cross_run_cursor_without_skip_and_repeat_noop():
+    with Session(engine) as session:
+        suffix = uuid4().hex[:10]
+        source = _source(session, suffix)
+        dataset = _dataset(
+            session,
+            source=source,
+            code=f"same-company-batches-{suffix}",
+            applicability={"entity_types": ["legal"]},
+        )
+        company = _company(session, suffix)
+        first_run, _risk, _summary = _run(
+            session,
+            company=company,
+            dataset=dataset,
+            suffix=f"{suffix}-a",
+            created_at=NOW - timedelta(hours=4),
+        )
+        second_run, _risk, _summary = _run(
+            session,
+            company=company,
+            dataset=dataset,
+            suffix=f"{suffix}-b",
+            created_at=NOW - timedelta(hours=3),
+        )
+        _newest, _risk, _summary = _run(
+            session,
+            company=company,
+            dataset=dataset,
+            suffix=f"{suffix}-c",
+            status="cancelled",
+            stage="failed",
+            public_ready=False,
+            created_at=NOW - timedelta(hours=2),
+        )
+
+        cursor = _cursor_before(company)
+        handled: list = []
+        changed_per_batch: list[int] = []
+        while True:
+            batch = apply_enrichment_recovery_batch(
+                session,
+                after_cursor=cursor,
+                limit=1,
+                now=NOW,
+            )
+            if not batch.items:
+                break
+            assert batch.scanned == 1
+            handled.append(batch.items[0].run_id)
+            changed_per_batch.append(batch.changed)
+            cursor = batch.next_cursor
+
+        assert handled == [first_run.id, second_run.id]
+        assert changed_per_batch == [1, 1]
+        assert recovery_invariants(session, now=NOW)["active_enrichment_runs"] == 0
+
+        cursor = _cursor_before(company)
+        second_apply_changed = 0
+        while True:
+            batch = apply_enrichment_recovery_batch(
+                session,
+                after_cursor=cursor,
+                limit=1,
+                now=NOW,
+            )
+            if not batch.items:
+                break
+            second_apply_changed += batch.changed
+            cursor = batch.next_cursor
+        assert second_apply_changed == 0
+        session.rollback()
+
+
+def test_multiple_companies_and_runs_have_stable_run_level_pagination():
+    with Session(engine) as session:
+        suffix = uuid4().hex[:10]
+        source = _source(session, suffix)
+        dataset = _dataset(
+            session,
+            source=source,
+            code=f"multi-company-batches-{suffix}",
+            applicability={"entity_types": ["legal"]},
+        )
+        companies = (
+            _company(session, f"{suffix}-first"),
+            _company(session, f"{suffix}-second"),
+        )
+        expected: list = []
+        for company_index, company in enumerate(companies):
+            for run_index in range(2):
+                run, _risk, _summary = _run(
+                    session,
+                    company=company,
+                    dataset=dataset,
+                    suffix=f"{suffix}-{company_index}-{run_index}",
+                    created_at=NOW
+                    - timedelta(hours=4 - company_index - run_index),
+                )
+                expected.append(run.id)
+
+        cursor = _cursor_before(companies[0])
+        handled: list = []
+        while True:
+            batch = apply_enrichment_recovery_batch(
+                session,
+                after_cursor=cursor,
+                limit=1,
+                now=NOW,
+            )
+            if not batch.items:
+                break
+            assert batch.scanned <= 1
+            assert batch.changed <= 1
+            handled.append(batch.items[0].run_id)
+            cursor = batch.next_cursor
+
+        assert handled == expected
+        assert len(set(handled)) == len(expected)
+        assert recovery_invariants(session, now=NOW) == {
+            "public_ready_not_succeeded": 0,
+            "public_ready_not_complete": 0,
+            "public_ready_with_unresolved_replay": 0,
+            "public_ready_with_failed_replay": 0,
+            "active_enrichment_runs": 0,
+            "running_worker_jobs": 0,
+            "running_worker_runs": 0,
+        }
         session.rollback()

@@ -13,8 +13,10 @@ PYTHONPATH=. .venv/bin/python scripts/recover_post_migration_factory.py
 
 `--plan` and `--verify` start a read-only database transaction. `--apply` is
 refused unless both the database revision and the exact running Git SHA are
-confirmed. Apply commits applicability once, stale-worker recovery once, and
-then uses stable, restart-safe batches of 100 by default.
+confirmed. Apply commits applicability once and then uses stable, restart-safe
+batches of 100 by default. Every stale-worker batch is planned and committed
+in its own transaction; `batch_size` is a hard upper bound on recovered worker
+runs in that transaction.
 
 The provisioning source of truth is
 `app/services/dataset_applicability_policy.py`. It contains explicit policies
@@ -29,8 +31,8 @@ registry synchronizer. Subsequent state-repair batches may change only:
 
 - canonical stale Worker lifecycle fields through `recover_stale_runs()` and
   its normal timeout/retry fencing path;
-- a latest `company_enrichment_runs` lifecycle state, current Risk/Summary
-  pointers, completion timestamp, and recovery error fields;
+- every recovery-scope `company_enrichment_runs` lifecycle state, its
+  Risk/Summary pointers, completion timestamp, and recovery error fields;
 - `company_source_coverage` rows used to record exact-UUID successful
   `NOT_APPLICABLE` reconciliation, including the frozen policy/provenance;
 - actionable `master_replay_signals` from `pending`/`scheduled` to `complete`
@@ -43,6 +45,20 @@ UUID is already present in successful terminal coverage for the same source
 and current run. They are reported separately and never become actionable
 backlog automatically. Unsafe current conclusions are parked fail-closed and
 their run pointers are detached; immutable Risk and Summary rows are retained.
+
+Worker PLAN reports the total stale count, total recoverable count, configured
+batch size, and exact recoverable IDs previewed for the next batch. Protected
+stale rows with an unexpired lease do not consume that preview. APPLY passes
+only those IDs into the canonical `recover_stale_runs()` timeout/retry path.
+
+Enrichment recovery enumerates every active run and every public-ready run
+whose persisted lifecycle is inconsistent. It also examines the latest safe
+public-ready run so replay blockers remain fail-closed. Pagination uses the
+stable composite cursor `(company_id, created_at, run_id)`, so a batch boundary
+between two runs for one company cannot skip the later run. The batch limit is
+the number of runs, not companies. Normal publication and product reads keep
+their canonical latest/current-run semantics; only recovery enumeration is
+run-level.
 
 ## Isolated restore rehearsal for Infrastructure / Parser Workers (19)
 
