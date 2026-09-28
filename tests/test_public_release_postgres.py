@@ -12,6 +12,7 @@ from pathlib import Path
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from public_app.contracts import PublicProjection, ReleaseManifest
@@ -33,7 +34,68 @@ from tests.public_test_support import forty_projections
 
 TEST_URL = os.getenv("PUBLIC_TEST_DATABASE_URL")
 WEB_TEST_URL = os.getenv("PUBLIC_TEST_WEB_DATABASE_URL")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(not TEST_URL, reason="PUBLIC_TEST_DATABASE_URL is not configured")
+
+
+def migrate_public_schema(command: str, revision: str) -> None:
+    database_url = TEST_URL
+    if database_url and database_url.startswith("postgresql://"):
+        database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    environment = {**os.environ, "PUBLIC_IMPORT_DATABASE_URL": database_url or ""}
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            "public_alembic.ini",
+            command,
+            revision,
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def mark_releases_legacy(connection, *release_ids: str) -> None:
+    connection.execute(
+        """
+        UPDATE public_releases
+        SET seo_contract_version=NULL, seo_release_cohort=NULL, seo_released=FALSE
+        WHERE release_id = ANY(%s)
+        """,
+        (list(release_ids),),
+    )
+    connection.execute(
+        """
+        UPDATE public_company_projections
+        SET seo_projection=NULL, seo_decision=NULL, seo_compiler_version=NULL,
+            search_visible_hash=NULL, non_identity_content_hash=NULL,
+            sitemap_shard=NULL, seo_content_updated_at=NULL
+        WHERE release_id = ANY(%s)
+        """,
+        (list(release_ids),),
+    )
+
+
+def complete_public_state_snapshot(connection) -> tuple:
+    """Capture all importer-owned rows to prove a rejected replay is read-only."""
+
+    releases = connection.execute(
+        "SELECT * FROM public_releases ORDER BY release_id"
+    ).fetchall()
+    projections = connection.execute(
+        "SELECT * FROM public_company_projections ORDER BY release_id, inn"
+    ).fetchall()
+    publication_state = connection.execute(
+        "SELECT * FROM public_publication_state ORDER BY singleton"
+    ).fetchall()
+    return releases, projections, publication_state
 
 
 def bundle(
@@ -596,6 +658,295 @@ def test_native_v2_reimport_uses_empty_context_for_legacy_predecessor(tmp_path):
     assert len(timestamps) == 40
     assert all(timestamp == second_timestamp for (timestamp,) in timestamps)
     assert repeated["idempotent"] is True
+
+
+def test_real_legacy_v1_to_v2_reimport_rejects_predecessor_cycle_without_writes(tmp_path):
+    legacy_id = "public-v1-real-lineage-a"
+    native_id = "public-v2-real-lineage-b"
+    legacy = bundle(tmp_path, legacy_id)
+    native_timestamp = datetime(2026, 9, 26, 7, 0, tzinfo=UTC)
+    native = bundle(
+        tmp_path,
+        native_id,
+        previous=legacy_id,
+        technical_timestamp=native_timestamp,
+    )
+
+    migrate_public_schema("downgrade", "public_0001")
+    try:
+        with psycopg.connect(TEST_URL) as connection:
+            imported_legacy = import_release(connection, legacy)
+        assert imported_legacy["idempotent"] is False
+
+        migrate_public_schema("upgrade", "head")
+        with psycopg.connect(TEST_URL) as connection:
+            assert connection.execute(
+                "SELECT seo_contract_version FROM public_releases WHERE release_id=%s",
+                (legacy_id,),
+            ).fetchone()[0] is None
+            import_release(connection, native)
+            normal_repeat = import_release(connection, native)
+            timestamps = connection.execute(
+                """
+                SELECT seo_content_updated_at
+                FROM public_company_projections WHERE release_id=%s
+                """,
+                (native_id,),
+            ).fetchall()
+        assert normal_repeat["idempotent"] is True
+        assert all(value == native_timestamp for (value,) in timestamps)
+
+        with psycopg.connect(TEST_URL) as connection:
+            connection.execute(
+                "UPDATE public_releases SET previous_release_id=%s WHERE release_id=%s",
+                (native_id, legacy_id),
+            )
+            before = complete_public_state_snapshot(connection)
+        with psycopg.connect(TEST_URL) as connection, pytest.raises(
+            ValueError, match="predecessor lineage contains a cycle"
+        ):
+            import_release(connection, native)
+        with psycopg.connect(TEST_URL) as connection:
+            after = complete_public_state_snapshot(connection)
+        assert after == before
+        assert active_release() == native_id
+    finally:
+        with psycopg.connect(TEST_URL) as connection:
+            connection.execute(
+                "UPDATE public_releases SET previous_release_id=NULL WHERE release_id=%s",
+                (legacy_id,),
+            )
+        migrate_public_schema("upgrade", "head")
+
+
+def test_legacy_predecessor_self_cycle_fails_closed(tmp_path):
+    legacy_id = "public-v1-self-cycle-a"
+    candidate_id = "public-v2-self-cycle-b"
+    legacy = bundle(tmp_path, legacy_id)
+    candidate = bundle(tmp_path, candidate_id, previous=legacy_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, legacy)
+        mark_releases_legacy(connection, legacy_id)
+        connection.execute(
+            "UPDATE public_releases SET previous_release_id=%s WHERE release_id=%s",
+            (legacy_id, legacy_id),
+        )
+        before = complete_public_state_snapshot(connection)
+    try:
+        with psycopg.connect(TEST_URL) as connection, pytest.raises(
+            ValueError, match="predecessor lineage contains a cycle"
+        ):
+            import_release(connection, candidate)
+        with psycopg.connect(TEST_URL) as connection:
+            assert complete_public_state_snapshot(connection) == before
+            assert connection.execute(
+                "SELECT count(*) FROM public_releases WHERE release_id=%s",
+                (candidate_id,),
+            ).fetchone()[0] == 0
+        assert active_release() == legacy_id
+    finally:
+        with psycopg.connect(TEST_URL) as connection:
+            connection.execute(
+                "UPDATE public_releases SET previous_release_id=NULL WHERE release_id=%s",
+                (legacy_id,),
+            )
+
+
+def test_multi_legacy_predecessor_cycle_fails_closed(tmp_path):
+    oldest_id = "public-v1-multi-cycle-d"
+    middle_id = "public-v1-multi-cycle-c"
+    legacy_id = "public-v1-multi-cycle-a"
+    candidate_id = "public-v2-multi-cycle-b"
+    oldest = bundle(tmp_path, oldest_id)
+    middle = bundle(tmp_path, middle_id, previous=oldest_id)
+    legacy = bundle(tmp_path, legacy_id, previous=middle_id)
+    candidate = bundle(tmp_path, candidate_id, previous=legacy_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, oldest)
+        import_release(connection, middle)
+        import_release(connection, legacy)
+        mark_releases_legacy(connection, oldest_id, middle_id, legacy_id)
+        connection.execute(
+            "UPDATE public_releases SET previous_release_id=%s WHERE release_id=%s",
+            (legacy_id, oldest_id),
+        )
+        before = complete_public_state_snapshot(connection)
+    try:
+        with psycopg.connect(TEST_URL) as connection, pytest.raises(
+            ValueError, match="predecessor lineage contains a cycle"
+        ):
+            import_release(connection, candidate)
+        with psycopg.connect(TEST_URL) as connection:
+            assert complete_public_state_snapshot(connection) == before
+        assert active_release() == legacy_id
+    finally:
+        with psycopg.connect(TEST_URL) as connection:
+            connection.execute(
+                "UPDATE public_releases SET previous_release_id=NULL WHERE release_id=%s",
+                (oldest_id,),
+            )
+
+
+def test_mixed_legacy_native_predecessor_cycle_fails_closed(tmp_path):
+    native_ancestor_id = "public-v2-mixed-cycle-c"
+    legacy_id = "public-v1-mixed-cycle-a"
+    candidate_id = "public-v2-mixed-cycle-b"
+    native_ancestor = bundle(tmp_path, native_ancestor_id)
+    legacy = bundle(tmp_path, legacy_id, previous=native_ancestor_id)
+    candidate = bundle(tmp_path, candidate_id, previous=legacy_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, native_ancestor)
+        import_release(connection, legacy)
+        mark_releases_legacy(connection, legacy_id)
+        connection.execute(
+            "UPDATE public_releases SET previous_release_id=%s WHERE release_id=%s",
+            (legacy_id, native_ancestor_id),
+        )
+        before = complete_public_state_snapshot(connection)
+    try:
+        with psycopg.connect(TEST_URL) as connection, pytest.raises(
+            ValueError, match="predecessor lineage contains a cycle"
+        ):
+            import_release(connection, candidate)
+        with psycopg.connect(TEST_URL) as connection:
+            assert complete_public_state_snapshot(connection) == before
+        assert active_release() == legacy_id
+    finally:
+        with psycopg.connect(TEST_URL) as connection:
+            connection.execute(
+                "UPDATE public_releases SET previous_release_id=NULL WHERE release_id=%s",
+                (native_ancestor_id,),
+            )
+
+
+def test_missing_ancestor_behind_legacy_fails_closed(tmp_path):
+    legacy_id = "public-v1-missing-ancestor-a"
+    candidate_id = "public-v2-missing-ancestor-b"
+    missing_id = "public-v1-missing-ancestor-x"
+    legacy = bundle(tmp_path, legacy_id)
+    candidate = bundle(tmp_path, candidate_id, previous=legacy_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, legacy)
+        mark_releases_legacy(connection, legacy_id)
+        foreign_key = connection.execute(
+            """
+            SELECT conname FROM pg_constraint
+            WHERE conrelid='public_releases'::regclass
+              AND contype='f' AND confrelid='public_releases'::regclass
+            """
+        ).fetchone()[0]
+        connection.execute(
+            sql.SQL("ALTER TABLE public_releases DROP CONSTRAINT {}").format(
+                sql.Identifier(foreign_key)
+            )
+        )
+        connection.execute(
+            "UPDATE public_releases SET previous_release_id=%s WHERE release_id=%s",
+            (missing_id, legacy_id),
+        )
+        connection.execute(
+            sql.SQL(
+                """
+                ALTER TABLE public_releases ADD CONSTRAINT {}
+                FOREIGN KEY (previous_release_id) REFERENCES public_releases(release_id)
+                ON DELETE RESTRICT NOT VALID
+                """
+            ).format(sql.Identifier(foreign_key))
+        )
+        before = complete_public_state_snapshot(connection)
+    try:
+        with psycopg.connect(TEST_URL) as connection, pytest.raises(
+            ValueError, match="predecessor does not exist"
+        ):
+            import_release(connection, candidate)
+        with psycopg.connect(TEST_URL) as connection:
+            assert complete_public_state_snapshot(connection) == before
+        assert active_release() == legacy_id
+    finally:
+        with psycopg.connect(TEST_URL) as connection:
+            connection.execute(
+                "UPDATE public_releases SET previous_release_id=NULL WHERE release_id=%s",
+                (legacy_id,),
+            )
+            connection.execute(
+                sql.SQL("ALTER TABLE public_releases VALIDATE CONSTRAINT {}").format(
+                    sql.Identifier(foreign_key)
+                )
+            )
+
+
+def test_valid_legacy_predecessor_chain_is_an_seo_context_barrier(tmp_path):
+    oldest_id = "public-v1-valid-chain-l"
+    legacy_id = "public-v1-valid-chain-a"
+    native_id = "public-v2-valid-chain-b"
+    oldest_timestamp = datetime(2026, 9, 24, 7, 0, tzinfo=UTC)
+    legacy_timestamp = oldest_timestamp + timedelta(days=1)
+    native_timestamp = legacy_timestamp + timedelta(days=1)
+    oldest = bundle(tmp_path, oldest_id, technical_timestamp=oldest_timestamp)
+    legacy = bundle(
+        tmp_path,
+        legacy_id,
+        previous=oldest_id,
+        technical_timestamp=legacy_timestamp,
+    )
+    native = bundle(
+        tmp_path,
+        native_id,
+        previous=legacy_id,
+        technical_timestamp=native_timestamp,
+    )
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, oldest)
+        import_release(connection, legacy)
+        mark_releases_legacy(connection, oldest_id, legacy_id)
+        import_release(connection, native)
+        before = complete_public_state_snapshot(connection)
+        repeated = import_release(connection, native)
+        timestamps = connection.execute(
+            """
+            SELECT seo_content_updated_at
+            FROM public_company_projections WHERE release_id=%s
+            """,
+            (native_id,),
+        ).fetchall()
+        after = complete_public_state_snapshot(connection)
+    assert repeated["idempotent"] is True
+    assert repeated["active"] is True
+    assert before == after
+    assert all(value == native_timestamp for (value,) in timestamps)
+
+
+def test_legacy_predecessor_with_unversioned_seo_still_fails_closed(tmp_path):
+    legacy_id = "public-v1-malformed-seo-a"
+    candidate_id = "public-v2-malformed-seo-b"
+    legacy = bundle(tmp_path, legacy_id)
+    candidate = bundle(tmp_path, candidate_id, previous=legacy_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, legacy)
+        search_hash = connection.execute(
+            """
+            SELECT search_visible_hash FROM public_company_projections
+            WHERE release_id=%s ORDER BY inn LIMIT 1
+            """,
+            (legacy_id,),
+        ).fetchone()[0]
+        mark_releases_legacy(connection, legacy_id)
+        connection.execute(
+            """
+            UPDATE public_company_projections SET search_visible_hash=%s
+            WHERE release_id=%s
+              AND inn=(SELECT min(inn) FROM public_company_projections WHERE release_id=%s)
+            """,
+            (search_hash, legacy_id, legacy_id),
+        )
+        before = complete_public_state_snapshot(connection)
+    with psycopg.connect(TEST_URL) as connection, pytest.raises(
+        ValueError, match="legacy predecessor contains unversioned SEO derived state"
+    ):
+        import_release(connection, candidate)
+    with psycopg.connect(TEST_URL) as connection:
+        assert complete_public_state_snapshot(connection) == before
+    assert active_release() == legacy_id
 
 
 def test_malformed_predecessor_seo_fails_closed_before_new_activation(tmp_path):

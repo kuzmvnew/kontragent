@@ -92,9 +92,10 @@ def _load_previous_seo(
 ) -> dict[str, SeoProjection]:
     """Load and verify usable SEO rows from the exact persisted predecessor.
 
-    Historical native-v2 rows are replayed against their own persisted
-    predecessor before they can become compiler input. Legacy releases and
-    legitimately absent per-company SEO rows contribute no fabricated state.
+    Every persisted predecessor edge is traversed for structural integrity.
+    Historical native-v2 rows are replayed against their own predecessor before
+    they can become compiler input. Legacy releases remain SEO context barriers,
+    and legitimately absent per-company SEO rows contribute no fabricated state.
     """
 
     if previous_release_id is None:
@@ -138,6 +139,11 @@ def _load_previous_seo(
         "sitemap_shard",
         "seo_content_updated_at",
     )
+    ancestor_seo = _load_previous_seo(
+        cursor,
+        release["previous_release_id"],
+        _lineage=_lineage | {previous_release_id},
+    )
     marker = release["seo_contract_version"]
     if marker is None:
         if any(any(row[name] is not None for name in seo_fields) for row in rows):
@@ -145,12 +151,6 @@ def _load_previous_seo(
         return {}
     if marker != SEO_COMPILER_VERSION:
         raise ValueError("predecessor release uses unsupported SEO compiler version")
-
-    ancestor_seo = _load_previous_seo(
-        cursor,
-        release["previous_release_id"],
-        _lineage=_lineage | {previous_release_id},
-    )
     released = bool(
         release["seo_released"] and release["seo_release_cohort"] in {500, 2000, 10000}
     )

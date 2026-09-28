@@ -21,7 +21,7 @@ def test_evidence_keeps_implementation_and_canonical_release_gates_separate():
         gate_results=gate_results,
         generated_at="2026-09-27T00:00:00+00:00",
     )
-    assert evidence["task_id"] == "SEO-10K-IMPL-01-A-CORRECTION-04-REBASE"
+    assert evidence["task_id"] == "SEO-10K-IMPL-01-A-CORRECTION-05"
     assert evidence["base_sha"] == "08839ee701c4bbacaefdca0a6f0c287ad84eb0d5"
     assert evidence["head_sha"] == "a" * 40
     assert evidence["source_tree_sha"] == "b" * 40
