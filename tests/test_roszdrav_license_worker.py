@@ -21,6 +21,7 @@ from app.providers.roszdrav_open_data_provider import (
     parse_open_data_release,
 )
 from app.services import data_readiness_scheduler as scheduler
+from app.services import data_readiness_service
 from app.services import roszdrav_service
 from scripts import run_data_readiness_scheduler as supervisor
 
@@ -403,7 +404,7 @@ def test_postgresql_bulk_api_requires_all_three_fresh_categories(
             )
             dataset.operational_status = "current"
             dataset.last_data_date = date(2026, 9, 20)
-            dataset.official_actual_until = date(2026, 9, 27)
+            dataset.official_actual_until = NOW.date()
             dataset.record_count = 1
             session.add(
                 RoszdravLicenseEntry(
@@ -420,13 +421,14 @@ def test_postgresql_bulk_api_requires_all_three_fresh_categories(
             )
         session.flush()
         monkeypatch.setattr(roszdrav_service, "get_session", roszdrav_db)
+        monkeypatch.setattr(data_readiness_service, "utc_now", lambda: NOW)
 
         found = roszdrav_service.get_roszdrav_bulk_license_check_for_inn(inn)
         assert found["checked"] is True
         assert found["result"] == "found"
         assert found["records"][0]["category"] == "pharma"
 
-        datasets["narcotics"].official_actual_until = date(2026, 9, 24)
+        datasets["narcotics"].official_actual_until = NOW.date() - timedelta(days=1)
         session.flush()
         stale = roszdrav_service.get_roszdrav_bulk_license_check_for_inn(inn)
         assert stale["checked"] is False
