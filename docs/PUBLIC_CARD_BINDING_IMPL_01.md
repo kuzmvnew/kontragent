@@ -36,12 +36,14 @@ locator. Public payloads never contain `company_id`.
     "sections": [
       {
         "section_key": "finances",
+        "title": "Финансы",
         "state": "<human-safe state>",
         "items": [
           {
             "fact_ref": "fact:<uuid>",
             "item_ref": "item:<uuid>",
             "field_key": "REVENUE",
+            "label": "Выручка",
             "period": "YEAR:2025",
             "value": {"value": "9673000.00", "currency": "RUB"},
             "state": "Сведения найдены",
@@ -52,7 +54,15 @@ locator. Public payloads never contain `company_id`.
               "confidence": 1.0,
               "freshness": "CURRENT"
             },
-            "alternative_sources": [],
+            "alternative_sources": [
+              {
+                "name": "Firmoteka · вторичный источник",
+                "source_data_date": "2025-12-31",
+                "retrieved_at": "<timestamp>",
+                "confidence": 0.75,
+                "freshness": "CURRENT"
+              }
+            ],
             "limitations": []
           }
         ]
@@ -75,8 +85,10 @@ The section order is stable:
 `limitations`, `anchors`, `links`.
 
 SSR places the identical revision on the card root as
-`data-view-revision` and exposes `data-section-key` bindings. Existing markup
-remains version-compatible until the accepted Card V2 design is implemented.
+`data-view-revision`, exposes `data-section-key`, `data-fact-ref`, and
+`data-item-ref` bindings, and renders the public semantic sections without
+reading Firmoteka snapshots. The implementation is data-complete but does not
+attempt the pending pixel-perfect Card V2 design.
 
 ## Rights and precedence
 
@@ -85,10 +97,21 @@ Firmoteka authorized bridge, then derived evidence. Ties use source data date,
 retrieval time, and source code. Alternatives are retained. Materially
 different values produce `CONFLICTING_EVIDENCE`.
 
-Firmoteka-only facts default to `AUTHENTICATED_ONLY`. A public fact selected
-from an accepted official source remains public, while its non-public bridge
-alternative is removed from the public projection. Contacts are not
-normalized unless an explicit accepted-rights flag is supplied.
+Firmoteka authorized-bridge facts in the accepted company domains are
+`PUBLIC`: legal identity/form/status/registration, address/region,
+activities, manager name and position, founder name/share, capital, finance,
+employee counts, tax history and paid taxes, licenses, safe divisions,
+company events, and enforcement. Public selection still follows authority:
+accepted official evidence wins and the bridge remains corroborating or
+alternative evidence. When no official equivalent exists, the bridge fact is
+the public selected evidence.
+
+Rights are assigned by field/domain, never by hiding the whole source.
+Contacts remain non-public (`AUTHENTICATED_ONLY`) even when explicitly
+normalized. Founder personal INNs, personal contact data, provider URLs,
+provider row IDs, raw payloads, checksums, and parser fields are not present in
+the public semantic value. The public provenance label is `Firmoteka ·
+вторичный источник`; the internal source code is never serialized publicly.
 
 ## Firmoteka mapping
 
@@ -99,3 +122,8 @@ tax paid, licenses, divisions, events, and enforcement aggregate/items.
 Finance, tax, employee, event, and enforcement dates are derived from their
 own periods/snapshots. Registration date is never used as their freshness
 date.
+
+Collection values are explicit public whitelists rather than provider-shaped
+objects. In particular, events retain only date and human description, while
+enforcement rows use the case number, dates/state, subject, public amounts,
+and department. No fixed UI limit is applied to event or enforcement rows.

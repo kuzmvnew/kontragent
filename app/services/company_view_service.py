@@ -315,6 +315,111 @@ def _append(values: list[SemanticCandidate], candidate: SemanticCandidate | None
         values.append(candidate)
 
 
+def _event_description(item: dict[str, Any]) -> str | None:
+    parts = item.get("parts") or ()
+    if not isinstance(parts, list):
+        return None
+    text = "".join(
+        str(part.get("text") or "")
+        for part in parts
+        if isinstance(part, dict)
+    )
+    return re.sub(r"\s+", " ", text).strip() or None
+
+
+def _event_identity(item: dict[str, Any], description: str | None) -> str:
+    """Return a semantic event coordinate without provider row IDs or URLs."""
+
+    event_date = _date(item.get("date"))
+    kind = str(item.get("kind") or "event").strip().casefold()
+    folded = (description or "").casefold()
+    discriminator = next(
+        (
+            code
+            for marker, code in (
+                ("пенсион", "pension-fund"),
+                ("социальн", "social-insurance"),
+                ("налогов", "tax-authority"),
+                ("учред", "founders"),
+                ("зарегистрирована", "registration"),
+                ("микропредприят", "sme-register"),
+            )
+            if marker in folded
+        ),
+        "event",
+    )
+    return f"{event_date.isoformat() if event_date else 'undated'}:{kind}:{discriminator}"
+
+
+def _semantic_text(value: Any) -> str | None:
+    if value is None or isinstance(value, (dict, list, tuple)):
+        return None
+    return re.sub(r"\s+", " ", str(value)).strip() or None
+
+
+def _safe_amount_breakdown(value: Any) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    for item in value if isinstance(value, list) else ():
+        if not isinstance(item, dict):
+            continue
+        name = _semantic_text(item.get("name"))
+        amount = _decimal(item.get("amount"))
+        if name and amount is not None:
+            result.append({"name": name, "amount": str(amount)})
+    return result
+
+
+def _safe_collection_value(collection_key: str, item: dict[str, Any]) -> dict[str, Any] | None:
+    """Whitelist public business fields; never forward provider objects verbatim."""
+
+    if collection_key == "events":
+        description = _event_description(item)
+        event_date = _date(item.get("date"))
+        if not (description or event_date):
+            return None
+        return {
+            "date": event_date,
+            "description": description,
+        }
+    if collection_key == "licenses":
+        value = {
+            "number": _semantic_text(item.get("number") or item.get("license_number")),
+            "status": _semantic_text(item.get("status")),
+            "authority": _semantic_text(item.get("authority") or item.get("authority_name")),
+            "activity": _semantic_text(item.get("activity") or item.get("activity_type")),
+            "start_date": _date(item.get("start_date") or item.get("date")),
+            "end_date": _date(item.get("end_date")),
+        }
+    elif collection_key == "divisions":
+        value = {
+            "name": _semantic_text(item.get("name") or item.get("title")),
+            "type": _semantic_text(item.get("type")),
+            "address": _semantic_text(item.get("address")),
+        }
+    else:
+        return None
+    return {key: child for key, child in value.items() if child not in (None, "", [], {})} or None
+
+
+def _safe_enforcement_case(item: dict[str, Any]) -> dict[str, Any] | None:
+    number = str(item.get("number") or "").strip()
+    if not number:
+        return None
+    value = {
+        "number": number,
+        "started_on": _date(item.get("date")),
+        "document_type": _semantic_text(item.get("doc_type")),
+        "document_date": _date(item.get("doc_date")),
+        "document_number": _semantic_text(item.get("doc_number")),
+        "subject": _semantic_text(item.get("subject")),
+        "state": _semantic_text(item.get("state") or item.get("status")),
+        "amount_due": _decimal(item.get("amount_due")),
+        "amount_remaining": _decimal(item.get("amount_rest")),
+        "department": _semantic_text(item.get("department")),
+    }
+    return {key: child for key, child in value.items() if child not in (None, "", [], {})}
+
+
 def normalize_firmoteka_projection(
     projection: dict[str, Any],
     *,
@@ -335,7 +440,7 @@ def normalize_firmoteka_projection(
         source_class=EvidenceSourceClass.AUTHORIZED_BRIDGE,
         evidence_identity=snapshot_identity,
         retrieved_at=retrieved_at,
-        rights=FactRights.AUTHENTICATED_ONLY,
+        rights=FactRights.PUBLIC,
         confidence=0.75,
         limitations=("Сведения получены через авторизованный агрегатор, а не напрямую из первичного реестра.",),
     )
@@ -488,7 +593,11 @@ def normalize_firmoteka_projection(
             )
     for period, count in (projection.get("employee_counts") or {}).items():
         period_date = _date(period)
-        if period_date is None:
+        if period_date is None or count is None:
+            continue
+        try:
+            employee_count = int(count)
+        except (TypeError, ValueError):
             continue
         period_identity = (
             f"YEAR:{period_date.year}"
@@ -501,7 +610,7 @@ def normalize_firmoteka_projection(
                 company_id,
                 "employees",
                 FinanceMetricCode.EMPLOYEE_COUNT.value,
-                int(count),
+                employee_count,
                 period_identity=period_identity,
                 source_data_date=period_date,
                 **bridge,
@@ -513,13 +622,18 @@ def normalize_firmoteka_projection(
         data_date = _date(debt.get("date"))
         if data_date is None:
             continue
+        total = _decimal(debt.get("total"))
         _append(
             values,
             _candidate(
                 company_id,
                 "tax",
                 "debt",
-                {"total": str(_decimal(debt.get("total")) or 0), "currency": "RUB", "breakdown": debt.get("breakdown") or []},
+                {
+                    "total": str(total) if total is not None else None,
+                    "currency": "RUB",
+                    "breakdown": _safe_amount_breakdown(debt.get("breakdown")),
+                },
                 period_identity=f"DATE:{data_date.isoformat()}",
                 source_data_date=data_date,
                 **bridge,
@@ -529,13 +643,18 @@ def normalize_firmoteka_projection(
         if not isinstance(paid, dict) or not str(paid.get("year", "")).isdigit():
             continue
         year = int(paid["year"])
+        total = _decimal(paid.get("total"))
         _append(
             values,
             _candidate(
                 company_id,
                 "tax",
                 "paid",
-                {"total": str(_decimal(paid.get("total")) or 0), "currency": "RUB", "breakdown": paid.get("breakdown") or []},
+                {
+                    "total": str(total) if total is not None else None,
+                    "currency": "RUB",
+                    "breakdown": _safe_amount_breakdown(paid.get("breakdown")),
+                },
                 period_identity=f"YEAR:{year}",
                 source_data_date=date(year, 12, 31),
                 **bridge,
@@ -546,22 +665,25 @@ def normalize_firmoteka_projection(
         ("divisions", "address", "division"),
         ("events", "events", "event"),
     ):
-        for index, item in enumerate(projection.get(collection_key) or ()): 
+        for index, item in enumerate(projection.get(collection_key) or ()):
             if not isinstance(item, dict):
                 continue
-            identity = str(
-                item.get("number")
-                or item.get("license_number")
-                or item.get("id")
-                or f"{item.get('date') or ''}:{item.get('kind') or ''}:{_canonical(item.get('parts') or item)}"
-            )
+            normalized = _safe_collection_value(collection_key, item)
+            if normalized is None:
+                continue
+            if collection_key == "events":
+                identity = _event_identity(item, normalized.get("description"))
+            elif collection_key == "licenses":
+                identity = str(normalized.get("number") or f"license:{index}")
+            else:
+                identity = str(normalized.get("name") or normalized.get("address") or f"division:{index}")
             _append(
                 values,
                 _candidate(
                     company_id,
                     section_key,
                     field_key,
-                    item,
+                    normalized,
                     item_identity=identity[:300],
                     source_data_date=_date(item.get("date") or item.get("start_date")) or egrul_date,
                     evidence_identity=f"{snapshot_identity}:{collection_key}:{index}",
@@ -591,16 +713,17 @@ def normalize_firmoteka_projection(
         for item in enforcement.get("items") or ():
             if not isinstance(item, dict):
                 continue
-            identity = str(item.get("number") or "").strip()
-            if not identity:
+            normalized = _safe_enforcement_case(item)
+            if normalized is None:
                 continue
+            identity = str(normalized["number"])
             _append(
                 values,
                 _candidate(
                     company_id,
                     "enforcement",
                     "case",
-                    item,
+                    normalized,
                     item_identity=identity,
                     source_data_date=enforcement_date,
                     evidence_identity=f"{snapshot_identity}:enforcement:{identity}",
@@ -619,7 +742,10 @@ def normalize_firmoteka_projection(
                         {"type": contact_type, "value": contact},
                         item_identity=f"{contact_type}:{contact}",
                         source_data_date=egrul_date,
-                        **bridge,
+                        **{
+                            **bridge,
+                            "rights": FactRights.AUTHENTICATED_ONLY,
+                        },
                     ),
                 )
     return tuple(values)

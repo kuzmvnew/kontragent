@@ -5,6 +5,7 @@ preloaded from the retained real 0100000614 artifact and actual official rows.
 """
 
 from datetime import UTC, datetime
+import json
 import os
 
 import psycopg
@@ -130,24 +131,31 @@ def test_real_alan_firmoteka_to_semantic_official_risk_summary():
     assert profit_loss.metric != net_profit.metric
     assert revenue.source_data_date.isoformat() == "2025-12-31"
 
-    founders = _facts(authenticated, "founders")
-    capital = _facts(authenticated, "capital")
+    founders = _facts(public, "founders")
+    capital = _facts(public, "capital")
     assert len(founders) == 1
     assert founders[0].selected_evidence.value["share"] == "100%"
     assert capital[0].selected_evidence.value == {"amount": "10000", "currency": "RUB"}
-    assert len([item for item in authenticated.finances if item.metric == FinanceMetricCode.REVENUE]) == 4
-    assert len([item for item in authenticated.finances if item.metric == FinanceMetricCode.EMPLOYEE_COUNT]) == 3
-    assert len({item.anchor.period_identity for item in _facts(authenticated, "tax") if item.anchor.field_key == "debt"}) == 3
-    assert len([item for item in _facts(authenticated, "enforcement") if item.anchor.field_key == "case"]) == 13
-    assert len(_facts(authenticated, "events")) == 6
-    enforcement = next(item for item in _facts(authenticated, "enforcement") if item.anchor.field_key == "aggregate")
+    assert len([item for item in public.finances if item.metric == FinanceMetricCode.REVENUE]) == 4
+    assert {
+        item.period.identity: int(item.value)
+        for item in public.finances
+        if item.metric == FinanceMetricCode.EMPLOYEE_COUNT
+    } == {"YEAR:2023": 16, "YEAR:2024": 12, "YEAR:2025": 6}
+    assert len({item.anchor.period_identity for item in _facts(public, "tax") if item.anchor.field_key == "debt"}) == 3
+    assert len([item for item in _facts(public, "enforcement") if item.anchor.field_key == "case"]) == 13
+    assert len(_facts(public, "events")) == 6
+    enforcement = next(item for item in _facts(public, "enforcement") if item.anchor.field_key == "aggregate")
     assert enforcement.selected_evidence.source_data_date.isoformat() == "2026-09-16"
     assert enforcement.selected_evidence.source_data_date.isoformat() != "2022-01-19"
 
-    assert not any(item.metric == FinanceMetricCode.NET_PROFIT for item in public.finances)
+    assert _metric(public, FinanceMetricCode.NET_PROFIT, "YEAR:2025").value == 26_000
+    assert _metric(public, FinanceMetricCode.NET_PROFIT, "YEAR:2025").source == "FIRMOTEKA_AUTHORIZED_BRIDGE"
     assert _metric(public, FinanceMetricCode.REVENUE, "YEAR:2025").source == "REVEXP"
     public_revenue_fact = next(item for item in _facts(public, "finances") if item.fact_ref == revenue.fact_ref)
-    assert not public_revenue_fact.alternative_evidence
+    assert [item.source_code for item in public_revenue_fact.alternative_evidence] == [
+        "FIRMOTEKA_AUTHORIZED_BRIDGE"
+    ]
 
     assert internal.risk_ref and internal.summary_ref
     with engine.connect() as connection:
@@ -187,6 +195,61 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
     assert f'data-view-revision="{revision}"' in card.text
     assert payload["view"]["contract_version"] == "company-view-v1"
     assert len(payload["view"]["sections"]) == 21
+    sections = {item["section_key"]: item for item in payload["view"]["sections"]}
+    assert {
+        "identity",
+        "status",
+        "registration",
+        "address",
+        "activity",
+        "management",
+        "founders",
+        "capital",
+        "finances",
+        "employees",
+        "tax",
+        "enforcement",
+        "events",
+        "risk",
+        "summary",
+        "source_coverage",
+        "freshness",
+    }.issubset(sections)
+    founder = sections["founders"]["items"]
+    capital = sections["capital"]["items"]
+    finances = sections["finances"]["items"]
+    employees = sections["employees"]["items"]
+    tax = sections["tax"]["items"]
+    enforcement = sections["enforcement"]["items"]
+    events = sections["events"]["items"]
+    assert len(founder) == 1 and founder[0]["value"]["share"] == "100%"
+    assert capital[0]["value"] == {"amount": "10000", "currency": "RUB"}
+    assert len([item for item in finances if item["field_key"] == "REVENUE"]) == 4
+    revenue_2025 = next(item for item in finances if item["field_key"] == "REVENUE" and item["period"] == "YEAR:2025")
+    net_profit_2025 = next(item for item in finances if item["field_key"] == "NET_PROFIT" and item["period"] == "YEAR:2025")
+    assert revenue_2025["value"]["value"] == "9673000.00"
+    assert revenue_2025["source"]["name"] == "Доходы и расходы по данным ФНС"
+    assert revenue_2025["alternative_sources"][0]["name"] == "Firmoteka · вторичный источник"
+    assert net_profit_2025["value"]["value"] == "26000"
+    assert net_profit_2025["source"]["name"] == "Firmoteka · вторичный источник"
+    assert {item["period"]: item["value"] for item in employees} == {
+        "YEAR:2023": 16,
+        "YEAR:2024": 12,
+        "YEAR:2025": 6,
+    }
+    assert len([item for item in tax if item["field_key"] == "debt"]) == 3
+    assert len([item for item in enforcement if item["field_key"] == "case"]) == 13
+    assert len(events) == 6
+    assert payload["assessment"]["title"]
+    assert payload["summary"]["short_conclusion"]
+    assert card.text.count('class="enforcement-case"') == 13
+    assert card.text.count('class="company-event"') == 6
+    assert card.text.count('class="semantic-card founder-card"') == 1
+    assert "Чистая прибыль" in card.text and "26 000 ₽" in card.text
+    assert "10 000 ₽" in card.text
+    assert "2023" in card.text and ">16<" in card.text
+    assert "Firmoteka · вторичный источник" in card.text
+    assert "data-fact-ref=" in card.text and "data-item-ref=" in card.text
     forbidden = {
         "company_id",
         "raw_sha256",
@@ -202,5 +265,12 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "TAX_OFFENCE_PRESENT",
         "raw_sha256",
         "parser_version",
+        "page_sha256",
+        "provider_row_id",
+        "010701178084",
     ):
         assert value not in rendered
+    assert "facts[]" not in rendered
+    assert "normalized_payload" not in rendered
+    assert "raw payload" not in rendered.casefold()
+    assert "company_id" not in json.dumps(payload, ensure_ascii=False)

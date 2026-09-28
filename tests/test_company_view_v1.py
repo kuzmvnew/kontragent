@@ -140,6 +140,130 @@ def test_firmoteka_legal_form_object_and_string_normalize_without_registration_f
     assert object_form.source_data_date.isoformat() != base["registration_date"]
 
 
+def test_firmoteka_public_domain_rights_and_privacy_whitelist():
+    facts = normalize_firmoteka_projection(
+        {
+            "requested_inn": "0100000614",
+            "rendered_inn": "0100000614",
+            "fns_egrul_as_of": "2026-09-16",
+            "founders": [
+                {
+                    "type": "person",
+                    "items": [
+                        {
+                            "name": "Иванов Иван Иванович",
+                            "tin": "010701178084",
+                            "share": "100%",
+                        }
+                    ],
+                }
+            ],
+            "events": [
+                {
+                    "date": "2022-01-19",
+                    "kind": "founders",
+                    "source": "egrul",
+                    "parts": [
+                        {"text": "Учредитель при регистрации: "},
+                        {
+                            "text": "Иванов Иван Иванович",
+                            "url": "/p/010701178084",
+                        },
+                    ],
+                }
+            ],
+            "enforcements": {
+                "count": 1,
+                "snapshot": "2026-09-16",
+                "items": [
+                    {
+                        "number": "1/26/01-ИП",
+                        "date": "2026-01-10",
+                        "subject": "Взыскание",
+                        "amount_due": 100,
+                        "provider_row_id": 999,
+                    }
+                ],
+            },
+            "tax_debts": [
+                {
+                    "date": "2026-08-01",
+                    "total": 100,
+                    "breakdown": [
+                        {
+                            "name": "Суммы пеней",
+                            "amount": 25,
+                            "provider_row_id": 777,
+                        }
+                    ],
+                }
+            ],
+            "contacts": {"phone": ["+7 900 000-00-00"]},
+        },
+        company_id=1,
+        snapshot_identity="snapshot:privacy",
+        retrieved_at=NOW,
+        include_contacts=True,
+    )
+    public_facts = tuple(item for item in facts if item.rights == FactRights.PUBLIC)
+    restricted = tuple(item for item in facts if item.rights != FactRights.PUBLIC)
+    assert public_facts
+    assert {item.field_key for item in restricted} == {"contact"}
+    founder = next(item for item in public_facts if item.field_key == "founder")
+    event = next(item for item in public_facts if item.field_key == "event")
+    enforcement = next(item for item in public_facts if item.field_key == "case")
+    tax_debt = next(item for item in public_facts if item.field_key == "debt")
+    assert founder.value == {
+        "name": "Иванов Иван Иванович",
+        "type": "person",
+        "share": "100%",
+        "since": None,
+    }
+    assert "010701178084" not in str(founder.value)
+    assert event.value == {
+        "date": "2022-01-19",
+        "description": "Учредитель при регистрации: Иванов Иван Иванович",
+    }
+    assert "url" not in event.value and "source" not in event.value
+    assert enforcement.value == {
+        "number": "1/26/01-ИП",
+        "started_on": "2026-01-10",
+        "subject": "Взыскание",
+        "amount_due": "100",
+    }
+    assert "provider_row_id" not in enforcement.value
+    assert tax_debt.value["breakdown"] == [
+        {"name": "Суммы пеней", "amount": "25"}
+    ]
+    from app.contracts.company_view_v1 import CompanyViewModelV1, CompanyViewSectionV1
+
+    contact_fact = next(
+        item for item in select_semantic_facts(facts) if item.anchor.field_key == "contact"
+    )
+    contact_view = CompanyViewModelV1(
+        revision="cv1:" + "b" * 64,
+        generated_at=NOW,
+        audience=Audience.INTERNAL,
+        company_id=1,
+        inn="0100000614",
+        sections=(
+            CompanyViewSectionV1(
+                section_key="identity",
+                state=DataState.FOUND,
+                facts=(contact_fact,),
+            ),
+        ),
+    )
+    assert not filter_company_view(
+        contact_view,
+        audience=Audience.PUBLIC,
+    ).sections[0].facts
+    assert filter_company_view(
+        contact_view,
+        audience=Audience.AUTHENTICATED,
+    ).sections[0].facts == (contact_fact,)
+
+
 def test_resolver_is_exact_read_only_and_public_hides_company_id():
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT current_database()")) != "kontragent"

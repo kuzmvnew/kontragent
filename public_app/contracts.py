@@ -398,6 +398,7 @@ class PublicViewFact(PublicModel):
     fact_ref: str = Field(pattern=r"^fact:[0-9a-f-]{36}$")
     item_ref: str = Field(pattern=r"^item:[0-9a-f-]{36}$")
     field_key: str = Field(min_length=1, max_length=120)
+    label: str | None = Field(default=None, min_length=1, max_length=240)
     period: str | None = Field(default=None, max_length=80)
     value: Any
     state: str = Field(min_length=1, max_length=160)
@@ -408,8 +409,14 @@ class PublicViewFact(PublicModel):
 
 class PublicViewSection(PublicModel):
     section_key: str = Field(min_length=1, max_length=80)
+    title: str | None = Field(default=None, min_length=1, max_length=240)
     state: str = Field(min_length=1, max_length=160)
     items: tuple[PublicViewFact, ...] = ()
+
+    def facts(self, field_key: str | None = None) -> tuple[PublicViewFact, ...]:
+        if field_key is None:
+            return self.items
+        return tuple(item for item in self.items if item.field_key == field_key)
 
 
 class PublicCompanyViewV1(PublicModel):
@@ -434,6 +441,12 @@ class PublicCompanyViewV1(PublicModel):
         if len(keys) != len(set(keys)):
             raise ValueError("public view section keys must be unique")
         return self
+
+    def section(self, section_key: str) -> PublicViewSection | None:
+        return next(
+            (section for section in self.sections if section.section_key == section_key),
+            None,
+        )
 
 
 class PublicProjection(PublicModel):

@@ -1,4 +1,8 @@
 {% extends "base.html" %}
+{% macro fact_source(item) -%}
+  <p class="fact-source">Источник: {{ item.source.name }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date | public_date }}{% endif %}</p>
+  {% if item.alternative_sources %}<p class="fact-alternatives">Также подтверждают: {% for source in item.alternative_sources %}{{ source.name }}{% if source.source_data_date %} ({{ source.source_data_date | public_date }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+{%- endmacro %}
 {% block head %}
 <title>{{ projection.company.name }} — ИНН {{ projection.company.inn }} | NEXT Company</title>
 <meta name="description" content="{{ description }}">
@@ -13,6 +17,20 @@
 {% endblock %}
 {% block content %}
 {% set company = projection.company %}
+{% set view = projection.company_view %}
+{% if view %}
+  {% set identity = view.section('identity') %}
+  {% set activity = view.section('activity') %}
+  {% set founders = view.section('founders') %}
+  {% set capital = view.section('capital') %}
+  {% set finances = view.section('finances') %}
+  {% set employees = view.section('employees') %}
+  {% set tax = view.section('tax') %}
+  {% set enforcement = view.section('enforcement') %}
+  {% set licenses = view.section('licenses') %}
+  {% set address = view.section('address') %}
+  {% set events = view.section('events') %}
+{% endif %}
 <article class="company-page"{% if projection.company_view %} data-view-contract="{{ projection.company_view.contract_version }}" data-view-revision="{{ projection.company_view.revision }}"{% endif %}>
   <section class="company-hero" data-section-key="identity status registration">
     <div>
@@ -49,8 +67,76 @@
       <div><dt>Дата регистрации</dt><dd>{{ company.registration_date.strftime('%d.%m.%Y') if company.registration_date else 'Не указана' }}</dd></div>
       <div><dt>Юридический адрес</dt><dd>{{ company.address or 'Не указан' }}</dd></div>
       <div><dt>Руководитель</dt><dd>{{ company.director_name or 'Не указан' }}{% if company.director_position %}<small>{{ company.director_position }}</small>{% endif %}</dd></div>
+      {% if view and identity and identity.facts('legal_form') %}{% set item = identity.facts('legal_form') | first %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><dt>{{ item.label }}</dt><dd>{{ item.value.name or item.value.code or '—' }}</dd></div>{% endif %}
+      {% if view and activity and activity.facts('okved') %}{% set item = activity.facts('okved') | first %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><dt>ОКВЭД</dt><dd>{{ item.value }}{% if activity.facts('okved_name') %}<small>{{ (activity.facts('okved_name') | first).value }}</small>{% endif %}</dd></div>{% endif %}
     </dl>
   </section>
+
+  {% if view and ((founders and founders.items) or (capital and capital.items)) %}
+  <section class="content-section" data-section-key="founders capital">
+    <p class="section-kicker">Состав и капитал</p><h2>Учредители и уставный капитал</h2>
+    <div class="semantic-grid">
+      {% if founders %}{% for item in founders.facts('founder') %}
+      <article class="semantic-card founder-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">
+        <h3>{{ item.value.name }}</h3>
+        <dl><div><dt>Доля</dt><dd>{{ item.value.share or '—' }}</dd></div>{% if item.value.since %}<div><dt>Сведения с</dt><dd>{{ item.value.since | public_date }}</dd></div>{% endif %}</dl>
+        {{ fact_source(item) }}
+      </article>
+      {% endfor %}{% endif %}
+      {% if capital %}{% for item in capital.facts('authorized_capital') %}
+      <article class="semantic-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">
+        <h3>Уставный капитал</h3><p class="metric-value">{{ item.value.amount | public_number }} ₽</p>{{ fact_source(item) }}
+      </article>
+      {% endfor %}{% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if view and finances and finances.items %}
+  <section class="content-section" data-section-key="finances">
+    <p class="section-kicker">По данным бухгалтерской отчётности</p><h2>Финансы</h2>
+    <div class="table-scroll"><table class="semantic-table"><thead><tr><th>Период</th><th>Показатель</th><th>Значение</th><th>Источник</th></tr></thead><tbody>
+    {% for item in finances.items %}<tr data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><td>{{ item.period | public_period }}</td><td>{{ item.label }}</td><td>{{ item.value.value | public_number }}{% if item.value.currency == 'RUB' %} ₽{% endif %}</td><td>{{ item.source.name }}{% if item.alternative_sources %}<small>Подтверждает: {% for source in item.alternative_sources %}{{ source.name }}{% if not loop.last %}; {% endif %}{% endfor %}</small>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+  {% endif %}
+
+  {% if view and employees and employees.items %}
+  <section class="content-section" data-section-key="employees">
+    <p class="section-kicker">История показателя</p><h2>Численность сотрудников</h2>
+    <div class="metric-list">{% for item in employees.items %}<article data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><span>{{ item.period | public_period }}</span><strong>{{ item.value | public_number }}</strong>{{ fact_source(item) }}</article>{% endfor %}</div>
+  </section>
+  {% endif %}
+
+  {% if view and tax and tax.items %}
+  <section class="content-section" data-section-key="tax">
+    <p class="section-kicker">Текущие и исторические наблюдения</p><h2>Налоги</h2>
+    <div class="semantic-grid">{% for item in tax.items %}<article class="semantic-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><p class="fact-period">{{ item.period | public_period }}</p><h3>{{ item.label }}</h3>{% if item.value.total is defined %}<p class="metric-value">{{ item.value.total | public_number }} ₽</p>{% elif item.value.fine_amount is defined %}<p class="metric-value">{{ item.value.fine_amount | public_number }} ₽</p>{% endif %}{{ fact_source(item) }}</article>{% endfor %}</div>
+  </section>
+  {% endif %}
+
+  {% if view and enforcement and enforcement.items %}
+  <section class="content-section" data-section-key="enforcement">
+    <p class="section-kicker">Сведения о взысканиях</p><h2>Исполнительные производства</h2>
+    {% for item in enforcement.facts('aggregate') %}<div class="aggregate-grid" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><div><span>Всего производств</span><strong>{{ item.value.count | public_number }}</strong></div><div><span>Сумма взысканий</span><strong>{{ item.value.total_due | public_number }} ₽</strong></div><div><span>Остаток</span><strong>{{ item.value.total_remaining | public_number }} ₽</strong></div></div>{{ fact_source(item) }}{% endfor %}
+    {% if enforcement.facts('case') %}<div class="table-scroll"><table class="semantic-table"><thead><tr><th>Производство</th><th>Дата</th><th>Предмет</th><th>Сумма / остаток</th><th>Источник</th></tr></thead><tbody>{% for item in enforcement.facts('case') %}<tr class="enforcement-case" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><td>{{ item.value.number }}{% if item.value.state %}<small>{{ item.value.state }}</small>{% endif %}</td><td>{{ item.value.started_on | public_date }}</td><td>{{ item.value.subject or item.value.document_type or '—' }}{% if item.value.department %}<small>{{ item.value.department }}</small>{% endif %}</td><td>{{ item.value.amount_due | public_number }} ₽<small>Остаток: {{ item.value.amount_remaining | public_number }} ₽</small></td><td>{{ item.source.name }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if view and events and events.items %}
+  <section class="content-section" data-section-key="events">
+    <p class="section-kicker">Хронология</p><h2>События компании</h2>
+    <ol class="timeline">{% for item in events.items %}<li class="company-event" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><time>{{ item.value.date | public_date }}</time><div><strong>{{ item.value.description or item.value.type or item.label }}</strong>{% if item.value.status %}<p>{{ item.value.status }}</p>{% endif %}{{ fact_source(item) }}</div></li>{% endfor %}</ol>
+  </section>
+  {% endif %}
+
+  {% if view and licenses and licenses.items %}
+  <section class="content-section" data-section-key="licenses"><p class="section-kicker">Разрешения</p><h2>Лицензии</h2><div class="semantic-grid">{% for item in licenses.items %}<article class="semantic-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><h3>{{ item.value.number or 'Лицензия' }}</h3><p>{{ item.value.activity or item.value.status or '' }}</p>{{ fact_source(item) }}</article>{% endfor %}</div></section>
+  {% endif %}
+
+  {% if view and address and address.facts('division') %}
+  <section class="content-section" data-section-key="address"><p class="section-kicker">Территориальная структура</p><h2>Подразделения</h2><div class="semantic-grid">{% for item in address.facts('division') %}<article class="semantic-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><h3>{{ item.value.name or item.value.type or 'Подразделение' }}</h3><p>{{ item.value.address or 'Адрес не указан' }}</p>{{ fact_source(item) }}</article>{% endfor %}</div></section>
+  {% endif %}
 
   <section class="content-section" data-section-key="finances employees tax source_coverage freshness">
     <p class="section-kicker">Официальные наборы данных</p><h2>Налоги и финансовые показатели</h2>
