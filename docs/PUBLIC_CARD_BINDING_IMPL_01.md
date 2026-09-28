@@ -90,6 +90,13 @@ SSR places the identical revision on the card root as
 reading Firmoteka snapshots. The implementation is data-complete but does not
 attempt the pending pixel-perfect Card V2 design.
 
+The ordinary public Risk payload is compiled from the persisted Risk model.
+Internal `meaning_id`, factor/rule identifiers, and engine versions remain
+available to internal processing but are omitted before the recursive
+fail-closed public validator runs. Public API and visible SSR retain only the
+compiled category, severity, explanations, user meaning, provenance, and
+dates required for display.
+
 ## Rights and precedence
 
 Selection is deterministic: official primary, official API/open data,
@@ -127,3 +134,10 @@ Collection values are explicit public whitelists rather than provider-shaped
 objects. In particular, events retain only date and human description, while
 enforcement rows use the case number, dates/state, subject, public amounts,
 and department. No fixed UI limit is applied to event or enforcement rows.
+
+The opt-in real E2E pins its evidence identity to ООО «АЛАН» snapshot
+`1eac2a0e-c777-4173-bb71-6fd42cb0ca2d` and asserts debt periods
+`DATE:2026-06-01`, `DATE:2026-07-01`, `DATE:2026-08-01`, and
+`DATE:2026-09-01` as an exact set. A disposable database containing a
+different retained snapshot is reported as unavailable for that assertion;
+the test never fabricates or mutates evidence to satisfy the manifest.

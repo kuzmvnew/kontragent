@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.contracts import semantic_v4
-from public_app.contracts import Freshness, PublicProjection, PublicSourceBlock, PublicState
+from public_app.contracts import (
+    Freshness,
+    PublicCompanyViewV1,
+    PublicProjection,
+    PublicSourceBlock,
+    PublicState,
+)
 from public_app.main import create_app
 from public_app.semantic import (
     MeaningInput,
@@ -46,6 +52,9 @@ INTERNAL_MARKERS = (
     "TAXOFFENCE",
     "Risk v3",
     "rules-v3",
+    "meaning_id",
+    "FIRMOTEKA_AUTHORIZED_BRIDGE",
+    "TAX_OFFENCE_PRESENT",
 )
 
 
@@ -587,6 +596,95 @@ def test_risk_v3_adapter_compiles_codes_deduplicates_factors_and_never_stringifi
     assert "{'" not in serialized
     assert "recommendation_code" not in serialized
     assert "limitation_code" not in serialized
+
+
+def test_public_api_sanitizes_internal_meaning_identity_before_fail_closed_validation():
+    raw_factor = {
+        "factor_ref": "risk-v3:factor:tax-debt:accepted",
+        "factor_code": "TAX_DEBT_PRESENT",
+        "fact_ref": "fact:tax-debt:accepted",
+        "recommendation_code": "REQUEST_TAX_DEBT_CLEARANCE",
+        "rule_version": "risk-rules-v3.9.7",
+        "recency": "CURRENT",
+        "source_refs": ["source:fns-tax-debt"],
+        "source_as_of": "2026-09-01T00:00:00+00:00",
+        "parameters": {"total_debt": "125000.00"},
+    }
+    persisted_risk = {
+        "calculated_at": NOW,
+        "risk_model_version": "risk-v3.9.7",
+        "ruleset_version": "risk-rules-v3.9.7",
+        "factors": [raw_factor],
+        "limitations": [],
+        "coverage_snapshot": {"mandatory_hard_checks_resolved": True},
+    }
+    public_risk = _risk_projection(persisted_risk)
+    internal_meaning_id = public_risk.factors[0].meaning_id
+    assert internal_meaning_id == "meaning:risk-v3:factor:tax-debt:accepted"
+    public_summary = _summary_projection(
+        {
+            "generated_at": NOW,
+            "structured_payload": {
+                "recommendations": [
+                    {"recommendation_code": "REQUEST_TAX_DEBT_CLEARANCE"}
+                ]
+            },
+        },
+        public_risk,
+    )
+    item = projection().model_copy(
+        update={
+            "risk": public_risk,
+            "summary": public_summary,
+            "company_view": PublicCompanyViewV1(
+                revision="cv1:" + "c" * 64,
+                generated_at=datetime.fromisoformat(NOW),
+                inn=projection().company.inn,
+                sections=(),
+            ),
+        }
+    )
+    web = TestClient(create_app(_Repository(item)))
+    api = web.get(f"/api/company/{item.company.inn}")
+    card = web.get(f"/companies/{item.company.inn}")
+    assert api.status_code == card.status_code == 200
+    payload = api.json()
+    serialized = json.dumps(payload, ensure_ascii=False)
+
+    def keys(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield key
+                yield from keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from keys(child)
+
+    assert "meaning_id" not in set(keys(payload))
+    assert internal_meaning_id not in serialized
+    assert internal_meaning_id not in card.text
+    headline = public_risk.factors[0].public_headline
+    assert headline in serialized and headline in card.text
+    assert item.public_conclusion in serialized and item.public_conclusion in card.text
+    revision = payload["view"]["revision"]
+    assert revision == item.company_view.revision
+    assert f'data-view-revision="{revision}"' in card.text
+    validate_public_text(payload)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"meaning_id": "meaning:risk-v3:factor:1"},
+        {"safe": "meaning:risk-v3:factor:1"},
+        {"safe": "FIRMOTEKA_AUTHORIZED_BRIDGE"},
+        {"safe": "TAX_OFFENCE_PRESENT"},
+        {"nested": {"raw_sha256": "a" * 64}},
+    ],
+)
+def test_public_semantic_validator_rejects_internal_keys_and_values(value):
+    with pytest.raises(SemanticCompilerError):
+        validate_public_text(value)
 
 
 def test_public_numeric_index_is_fail_closed_and_absent_from_semantic_contract():

@@ -21,6 +21,7 @@ from app.services.company_view_service import build_company_view_v1, materialize
 from sqlalchemy.orm import Session
 from public_app.contracts import PublicationInfo, SCHEMA_VERSION
 from public_app.main import create_app
+from public_app.semantic import validate_public_text
 from scripts.export_public_release import build_projection
 
 
@@ -31,6 +32,20 @@ pytestmark = pytest.mark.skipif(
 
 INN = "0100000614"
 NOW = datetime(2026, 9, 17, 22, tzinfo=UTC)
+PINNED_REAL_EVIDENCE = {
+    "company_id": 1,
+    "raw_sha256": "33e528f8fd67cf6342539f6f49831451b3c62ee1f37eaed28463ef2f08a0e814",
+    "snapshot_id": "1eac2a0e-c777-4173-bb71-6fd42cb0ca2d",
+    "debt_periods": frozenset(
+        {
+            "DATE:2026-06-01",
+            "DATE:2026-07-01",
+            "DATE:2026-08-01",
+            "DATE:2026-09-01",
+        }
+    ),
+    "semantic_fact_count": 88,
+}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -98,6 +113,31 @@ def _all_keys(value):
             yield from _all_keys(child)
 
 
+def _require_pinned_real_evidence():
+    with engine.connect() as connection:
+        row = connection.execute(
+            sa.text(
+                """SELECT c.id AS company_id, s.id AS snapshot_id,
+                          s.raw_sha256
+                   FROM companies c
+                   JOIN firmoteka_company_snapshots s ON s.company_id=c.id
+                   WHERE c.inn=:inn AND s.is_current=TRUE
+                   ORDER BY s.retrieved_at DESC
+                   LIMIT 1"""
+            ),
+            {"inn": INN},
+        ).mappings().one_or_none()
+    expected = PINNED_REAL_EVIDENCE
+    if not row or (
+        row["company_id"] != expected["company_id"]
+        or str(row["snapshot_id"]) != expected["snapshot_id"]
+        or row["raw_sha256"] != expected["raw_sha256"]
+    ):
+        pytest.skip(
+            "pinned retained Alan evidence is not installed in this disposable DB"
+        )
+
+
 def test_real_alan_firmoteka_to_semantic_official_risk_summary():
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT current_database()")) != "kontragent"
@@ -142,7 +182,11 @@ def test_real_alan_firmoteka_to_semantic_official_risk_summary():
         for item in public.finances
         if item.metric == FinanceMetricCode.EMPLOYEE_COUNT
     } == {"YEAR:2023": 16, "YEAR:2024": 12, "YEAR:2025": 6}
-    assert len({item.anchor.period_identity for item in _facts(public, "tax") if item.anchor.field_key == "debt"}) == 3
+    assert {
+        item.anchor.period_identity
+        for item in _facts(public, "tax")
+        if item.anchor.field_key == "debt"
+    }
     assert len([item for item in _facts(public, "enforcement") if item.anchor.field_key == "case"]) == 13
     assert len(_facts(public, "events")) == 6
     enforcement = next(item for item in _facts(public, "enforcement") if item.anchor.field_key == "aggregate")
@@ -179,8 +223,37 @@ def test_real_alan_firmoteka_to_semantic_official_risk_summary():
         assert persisted_count >= 80
 
 
+def test_real_alan_pinned_debt_history_matches_retained_evidence_manifest():
+    _require_pinned_real_evidence()
+    company_id, public = _view(Audience.PUBLIC)
+    assert company_id == PINNED_REAL_EVIDENCE["company_id"]
+    periods = {
+        item.anchor.period_identity
+        for item in _facts(public, "tax")
+        if item.anchor.field_key == "debt"
+    }
+    assert periods == PINNED_REAL_EVIDENCE["debt_periods"]
+    projected = _projection()
+    tax_section = projected.company_view.section("tax")
+    assert {
+        item.period
+        for item in tax_section.facts("debt")
+    } == PINNED_REAL_EVIDENCE["debt_periods"]
+    with engine.connect() as connection:
+        persisted_count = connection.scalar(
+            sa.select(sa.func.count()).select_from(CompanySemanticFact).where(
+                CompanySemanticFact.company_id == company_id,
+                CompanySemanticFact.is_current.is_(True),
+            )
+        )
+    assert persisted_count == PINNED_REAL_EVIDENCE["semantic_fact_count"]
+
+
 def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
     projection = _projection()
+    internal_meaning_ids = tuple(
+        item.meaning_id for item in projection.risk.factors if item.meaning_id
+    )
 
     class Repository:
         def get_company(self, inn):
@@ -237,7 +310,7 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "YEAR:2024": 12,
         "YEAR:2025": 6,
     }
-    assert len([item for item in tax if item["field_key"] == "debt"]) == 3
+    assert [item for item in tax if item["field_key"] == "debt"]
     assert len([item for item in enforcement if item["field_key"] == "case"]) == 13
     assert len(events) == 6
     assert payload["assessment"]["title"]
@@ -257,6 +330,10 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "worker_job_id",
         "worker_run_id",
         "raw_payload",
+        "meaning_id",
+        "page_sha256",
+        "normalized_payload",
+        "provider_row_id",
     }
     assert not (forbidden & set(_all_keys(payload)))
     rendered = api.text + card.text
@@ -270,7 +347,10 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "010701178084",
     ):
         assert value not in rendered
+    for value in internal_meaning_ids:
+        assert value not in rendered
     assert "facts[]" not in rendered
     assert "normalized_payload" not in rendered
     assert "raw payload" not in rendered.casefold()
     assert "company_id" not in json.dumps(payload, ensure_ascii=False)
+    validate_public_text(payload)

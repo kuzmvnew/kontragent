@@ -204,6 +204,36 @@ class PublicRiskFactor(PublicModel):
             return self.explanation
         return "Фактор показан без расширенной интерпретации; изучите подтверждённые сведения и дату источника."
 
+    def public_payload(self) -> dict[str, Any]:
+        """Compile display semantics without exposing Risk engine identity."""
+
+        return {
+            "category": self.category,
+            "severity": self.severity,
+            "headline": self.public_headline,
+            "short_explanation": self.public_explanation,
+            "full_explanation": self.full_explanation or self.public_explanation,
+            "client_meaning": self.client_meaning,
+            "what_it_does_not_mean": self.what_it_does_not_mean,
+            "recommendation_effect": self.recommendation_effect,
+            "current_state": self.current_state,
+            "previous_state": self.previous_state,
+            "change": self.change,
+            "trend": self.trend,
+            "frequency": self.frequency,
+            "recency": self.recency,
+            "duration": self.duration,
+            "materiality": self.materiality,
+            "counter_evidence": list(self.counter_evidence),
+            "confidence": self.confidence,
+            "source": self.source_name,
+            "source_data_date": (
+                self.source_data_date.isoformat()
+                if self.source_data_date
+                else None
+            ),
+        }
+
 
 class PublicRisk(PublicModel):
     state: PublicState
@@ -480,32 +510,7 @@ class PublicProjection(PublicModel):
     def public_payload(self) -> dict[str, Any]:
         """Return the ordinary-user API shape with no operational identifiers."""
 
-        factors = [
-            {
-                "meaning_id": item.meaning_id,
-                "category": item.category,
-                "severity": item.severity,
-                "headline": item.public_headline,
-                "short_explanation": item.public_explanation,
-                "full_explanation": item.full_explanation or item.public_explanation,
-                "client_meaning": item.client_meaning,
-                "what_it_does_not_mean": item.what_it_does_not_mean,
-                "recommendation_effect": item.recommendation_effect,
-                "current_state": item.current_state,
-                "previous_state": item.previous_state,
-                "change": item.change,
-                "trend": item.trend,
-                "frequency": item.frequency,
-                "recency": item.recency,
-                "duration": item.duration,
-                "materiality": item.materiality,
-                "counter_evidence": list(item.counter_evidence),
-                "confidence": item.confidence,
-                "source": item.source_name,
-                "source_data_date": item.source_data_date.isoformat() if item.source_data_date else None,
-            }
-            for item in self.risk.factors
-        ]
+        factors = [item.public_payload() for item in self.risk.factors]
         limitations = [item.model_dump(mode="json") for item in self.public_limitations]
         recommendations = [item.model_dump(mode="json") for item in self.summary.recommendations]
         payload = {
