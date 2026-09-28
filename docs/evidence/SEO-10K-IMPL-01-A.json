@@ -1,9 +1,9 @@
 {
-  "task_id": "SEO-10K-IMPL-01-A-CORRECTION-04",
+  "task_id": "SEO-10K-IMPL-01-A-CORRECTION-04-REBASE",
   "repository": "kuzmvnew/kontragent",
-  "base_sha": "5b0e1e8d4e05325a8f9a4549b6154bdba3ec654c",
-  "head_sha": "77f31d5cbd13c50b3074ae88759480c36b7ca2af",
-  "source_tree_sha": "c5ee61cb4e8db83f7b5dfb2e13cc71e4d4a79b22",
+  "base_sha": "08839ee701c4bbacaefdca0a6f0c287ad84eb0d5",
+  "head_sha": "575429aa73cd99ac747d76ad06200aa7e16edd28",
+  "source_tree_sha": "2dac70aee90d23c93d2cc581794df727c2f97184",
   "evidence_head_identity": {
     "binding": "source_commit",
     "meaning": "head_sha is the immutable tested code commit",
@@ -11,7 +11,7 @@
   },
   "contract_version": "1.0",
   "canonical_contract_sha256": "051b13f14a09d25f6bc9f7ec1079cab65bbc02db0c439e33838b32010bfdd599",
-  "generated_at": "2026-09-28T04:33:06.981184+00:00",
+  "generated_at": "2026-09-28T05:58:57.886835+00:00",
   "test_runs": [
     {
       "gate_id": "SEOIMPL-A01",
@@ -25,7 +25,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed in 0.08s"
+      "summary": "1 passed in 0.19s"
     },
     {
       "gate_id": "SEOIMPL-A02",
@@ -39,7 +39,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed in 0.07s"
+      "summary": "1 passed in 0.08s"
     },
     {
       "gate_id": "SEOIMPL-A03",
@@ -69,7 +69,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed in 0.08s"
+      "summary": "2 passed in 0.10s"
     },
     {
       "gate_id": "SEOIMPL-A05",
@@ -83,7 +83,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed in 0.06s"
+      "summary": "1 passed in 0.08s"
     },
     {
       "gate_id": "SEOIMPL-A06",
@@ -98,7 +98,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.29s"
+      "summary": "2 passed, 2 warnings in 0.46s"
     },
     {
       "gate_id": "SEOIMPL-A07",
@@ -113,7 +113,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.21s"
+      "summary": "2 passed, 2 warnings in 0.24s"
     },
     {
       "gate_id": "SEOIMPL-A08",
@@ -128,7 +128,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.19s"
+      "summary": "2 passed, 2 warnings in 0.24s"
     },
     {
       "gate_id": "SEOIMPL-A09",
@@ -143,7 +143,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.50s"
+      "summary": "2 passed, 2 warnings in 0.53s"
     },
     {
       "gate_id": "SEOIMPL-A10",
@@ -158,7 +158,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.20s"
+      "summary": "2 passed, 2 warnings in 0.22s"
     },
     {
       "gate_id": "SEOIMPL-A11",
@@ -172,7 +172,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed, 2 warnings in 2.21s"
+      "summary": "1 passed, 2 warnings in 2.14s"
     },
     {
       "gate_id": "SEOIMPL-A12",
@@ -187,7 +187,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.89s"
+      "summary": "2 passed, 2 warnings in 1.04s"
     },
     {
       "gate_id": "SEOIMPL-A13",
@@ -211,7 +211,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "16 passed, 2 warnings in 5.24s"
+      "summary": "16 passed, 2 warnings in 5.55s"
     },
     {
       "gate_id": "SEOIMPL-A14",
@@ -270,7 +270,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed, 2 warnings in 0.35s"
+      "summary": "1 passed, 2 warnings in 0.36s"
     },
     {
       "gate_id": "SEOIMPL-A18",
@@ -294,7 +294,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "22 passed, 2 warnings in 12.07s"
+      "summary": "22 passed, 2 warnings in 12.43s"
     }
   ],
   "implementation_gates": {
@@ -312,7 +312,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed in 0.08s"
+      "result_summary": "1 passed in 0.19s"
     },
     "SEOIMPL-A02": {
       "description": "public_ready fail-closed",
@@ -328,7 +328,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed in 0.07s"
+      "result_summary": "1 passed in 0.08s"
     },
     "SEOIMPL-A03": {
       "description": "semantic minimum",
@@ -364,7 +364,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed in 0.08s"
+      "result_summary": "2 passed in 0.10s"
     },
     "SEOIMPL-A05": {
       "description": "metadata allowlist",
@@ -380,7 +380,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed in 0.06s"
+      "result_summary": "1 passed in 0.08s"
     },
     "SEOIMPL-A06": {
       "description": "JSON-LD visible parity",
@@ -398,7 +398,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.29s"
+      "result_summary": "2 passed, 2 warnings in 0.46s"
     },
     "SEOIMPL-A07": {
       "description": "canonical redirects and real 404",
@@ -416,7 +416,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.21s"
+      "result_summary": "2 passed, 2 warnings in 0.24s"
     },
     "SEOIMPL-A08": {
       "description": "robots and API X-Robots",
@@ -434,7 +434,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.19s"
+      "result_summary": "2 passed, 2 warnings in 0.24s"
     },
     "SEOIMPL-A09": {
       "description": "16 deterministic sitemap shards",
@@ -452,7 +452,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.50s"
+      "result_summary": "2 passed, 2 warnings in 0.53s"
     },
     "SEOIMPL-A10": {
       "description": "catalog and pagination",
@@ -470,7 +470,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.20s"
+      "result_summary": "2 passed, 2 warnings in 0.22s"
     },
     "SEOIMPL-A11": {
       "description": "atomic company revision snapshot",
@@ -486,7 +486,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed, 2 warnings in 2.21s"
+      "result_summary": "1 passed, 2 warnings in 2.14s"
     },
     "SEOIMPL-A12": {
       "description": "mixed-version fail-closed authority",
@@ -504,7 +504,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.89s"
+      "result_summary": "2 passed, 2 warnings in 1.04s"
     },
     "SEOIMPL-A13": {
       "description": "legacy and native reimport idempotency",
@@ -540,7 +540,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "16 passed, 2 warnings in 5.24s"
+      "result_summary": "16 passed, 2 warnings in 5.55s"
     },
     "SEOIMPL-A14": {
       "description": "public Numeric Index hard ban",
@@ -610,7 +610,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed, 2 warnings in 0.35s"
+      "result_summary": "1 passed, 2 warnings in 0.36s"
     },
     "SEOIMPL-A18": {
       "description": "stored SEO page/discovery integrity parity",
@@ -646,7 +646,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "22 passed, 2 warnings in 12.07s"
+      "result_summary": "22 passed, 2 warnings in 12.43s"
     }
   },
   "release_gates": {
