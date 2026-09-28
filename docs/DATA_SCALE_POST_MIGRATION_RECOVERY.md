@@ -90,7 +90,7 @@ PYTHONPATH=. .venv/bin/python scripts/recover_post_migration_factory.py \
 
 PYTHONPATH=. .venv/bin/python scripts/recover_post_migration_factory.py \
   --apply \
-  --expected-db-revision c2a4f6d8e0b1 \
+  --expected-db-revision d1e2f3a4b5c6 \
   --expected-main-sha "$RECOVERY_MAIN_SHA" \
   --batch-size 100 \
   > data-scale-recovery-apply-1.json
@@ -101,7 +101,7 @@ PYTHONPATH=. .venv/bin/python scripts/recover_post_migration_factory.py \
 
 PYTHONPATH=. .venv/bin/python scripts/recover_post_migration_factory.py \
   --apply \
-  --expected-db-revision c2a4f6d8e0b1 \
+  --expected-db-revision d1e2f3a4b5c6 \
   --expected-main-sha "$RECOVERY_MAIN_SHA" \
   --batch-size 100 \
   > data-scale-recovery-apply-2.json

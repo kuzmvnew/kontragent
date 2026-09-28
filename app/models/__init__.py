@@ -85,6 +85,7 @@ from app.models.publication import (
     PublicPublicationRequest,
 )
 from app.models.summary import CompanySummary
+from app.models.semantic_fact import CompanySemanticFact
 from app.models.source import (
     CompanySourceData,
     DatasetPublication,
@@ -152,6 +153,7 @@ __all__ = [
     "CompanyRiskAssessmentV3",
     "CompanySummary",
     "CompanySummaryV3",
+    "CompanySemanticFact",
     "PublicProjectionPublication",
     "PublicPublicationRequest",
     "CompanySourceData",

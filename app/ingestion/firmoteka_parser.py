@@ -133,6 +133,59 @@ def _date(value: Any) -> str | None:
     return None
 
 
+def _legal_form(value: Any) -> dict[str, str | None] | None:
+    """Normalize both historic string and current object representations."""
+
+    if isinstance(value, dict):
+        name = clean_text(value.get("name") or value.get("title"))
+        code = clean_text(value.get("code"))
+        if not (name or code):
+            return None
+        return {"code": code, "name": name}
+    name = clean_text(value)
+    return {"code": None, "name": name} if name else None
+
+
+def _fact_source_date(field: str, result: dict[str, Any]) -> str | None:
+    if field in {"enforcements", "fssp_count", "fssp_remaining_amount"}:
+        value = result.get("enforcements")
+        return _date(value.get("snapshot")) if isinstance(value, dict) else None
+    if field == "tax_debts":
+        dates = [
+            _date(row.get("date"))
+            for row in result.get(field, [])
+            if isinstance(row, dict)
+        ]
+        return max((value for value in dates if value), default=None)
+    if field == "taxes_paid":
+        years = [
+            int(row["year"])
+            for row in result.get(field, [])
+            if isinstance(row, dict) and str(row.get("year", "")).isdigit()
+        ]
+        return f"{max(years)}-12-31" if years else None
+    if field == "financials":
+        years = [
+            int(point["label"])
+            for series in (result.get(field) or {}).values()
+            if isinstance(series, dict)
+            for point in series.get("values") or []
+            if isinstance(point, dict) and str(point.get("label", "")).isdigit()
+        ]
+        return f"{max(years)}-12-31" if years else None
+    if field == "employee_counts":
+        dates = [_date(value) for value in (result.get(field) or {})]
+        return max((value for value in dates if value), default=None)
+    if field == "events":
+        dates = [
+            _date(row.get("date"))
+            for row in result.get(field, [])
+            if isinstance(row, dict)
+        ]
+        return max((value for value in dates if value), default=None)
+    return result.get("fns_egrul_as_of")
+
+
 def parse_firmoteka_page(
     raw: bytes, *, requested_inn: str, url: str, fetched_at: datetime
 ) -> dict[str, Any]:
@@ -193,6 +246,9 @@ def parse_firmoteka_page(
     manager = manager_items[0] if manager_items and isinstance(manager_items[0], dict) else {}
     enforcements = company_payload.get("enforcements")
     enforcements = enforcements if isinstance(enforcements, dict) else {}
+    fns_date_match = re.search(
+        r"Данные ФНС \(ЕГРЮЛ\) на (\d{2}\.\d{2}\.\d{4})", page_text
+    )
     result: dict[str, Any] = {
         "requested_inn": requested_inn,
         "rendered_inn": rendered_inn,
@@ -207,17 +263,19 @@ def parse_firmoteka_page(
         "entity_type": "individual_entrepreneur" if len(requested_inn) == 12 else "legal",
         "status_text": status_text,
         "status_normalized": status,
-        "legal_form": clean_text(company_payload.get("legal_form")),
+        "legal_form": _legal_form(company_payload.get("legal_form")),
         "registration_date": _date(company_payload.get("registration_date") or org.get("foundingDate")),
         "termination_date": _date(company_payload.get("termination_date") or org.get("dissolutionDate")),
         "address": clean_text(company_payload.get("legal_address") or address.get("streetAddress")),
         "region": clean_text(company_payload.get("town") or address.get("addressRegion") or address.get("addressLocality")),
         "okved": okved_match.group(1) if okved_match else None,
         "okved_name": clean_text(okved_match.group(2)) if okved_match else None,
+        "additional_okved": _data_value(company_payload, "Дополнительные виды деятельности") or [],
         "manager": clean_text(manager.get("name")),
         "manager_position": clean_text(manager.get("position")),
         "founders": _data_value(company_payload, "Учредители"),
         "authorized_capital": _data_value(company_payload, "Уставный капитал"),
+        "fns_egrul_as_of": _date(fns_date_match.group(1)) if fns_date_match else None,
         "financials": company_payload.get("revenues") or {},
         "tax_debts": company_payload.get("tax_debts") or [],
         "taxes_paid": company_payload.get("taxes_paid") or [],
@@ -235,6 +293,7 @@ def parse_firmoteka_page(
     fact_fields = (
         "name", "full_name", "ogrn", "kpp", "entity_type", "status_normalized",
         "registration_date", "termination_date", "address", "region", "okved",
+        "okved_name", "additional_okved",
         "manager", "manager_position", "founders", "authorized_capital",
         "financials", "tax_debts", "taxes_paid", "licenses", "divisions",
         "events", "employee_counts", "contacts", "enforcements",
@@ -246,6 +305,7 @@ def parse_firmoteka_page(
             "source": "firmoteka_authorized_bridge",
             "source_url": url,
             "fetched_at": fetched_at.isoformat(),
+            "source_data_date": _fact_source_date(field, result),
             "confidence": "MEDIUM",
             "page_sha256": result["page_sha256"],
         }
@@ -256,12 +316,18 @@ def parse_firmoteka_page(
 
 
 def source_as_of(projection: dict[str, Any]) -> date | None:
+    """Return the newest explicit source observation date.
+
+    Registration/termination are business-event dates and must never masquerade
+    as freshness for finance, tax, or enforcement evidence.
+    """
+
     values: list[date] = []
-    for key in ("registration_date", "termination_date"):
-        value = projection.get(key)
+    for fact in projection.get("facts") or ():
+        value = fact.get("source_data_date") if isinstance(fact, dict) else None
         if value:
             try:
-                values.append(date.fromisoformat(str(value)))
+                values.append(date.fromisoformat(str(value)[:10]))
             except ValueError:
                 pass
     return max(values) if values else None

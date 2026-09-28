@@ -60,6 +60,7 @@ from app.services.risk_v3_persistence_service import (
     calculate_company_risk_v3_from_persisted,
     get_or_create_summary_v3,
 )
+from app.services.company_view_service import materialize_company_view_v1
 from app.services.publication_service import accepted_cohort
 from app.services.replay_readiness_service import (
     ACTIONABLE_REPLAY_STATUSES,
@@ -1570,6 +1571,12 @@ def _refresh_run_state(
             if summary_row is None:
                 raise RuntimeError("Summary v3 was not persisted after Risk v3")
             run.summary_id = summary_row.summary_id
+            materialize_company_view_v1(
+                session,
+                company_id=run.company_id,
+                generated_at=now,
+            )
+            session.flush()
             run.status = "succeeded"
             run.stage = "complete"
             run.public_ready = True

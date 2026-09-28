@@ -39,6 +39,7 @@ FORBIDDEN_KEY_PARTS = {
     "cookie",
     "authorization",
     "credentials",
+    "company_id",
 }
 PRIVATE_PATH = re.compile(r"(?:^|\s)(?:/Users/|/home/|/private/|file://|[A-Za-z]:\\)")
 
@@ -385,12 +386,63 @@ class PublicSourceBlock(PublicModel):
         ).visual_state
 
 
+class PublicFactSource(PublicModel):
+    name: str = Field(min_length=1, max_length=250)
+    source_data_date: date | None = None
+    retrieved_at: datetime
+    confidence: float = Field(ge=0, le=1)
+    freshness: Freshness
+
+
+class PublicViewFact(PublicModel):
+    fact_ref: str = Field(pattern=r"^fact:[0-9a-f-]{36}$")
+    item_ref: str = Field(pattern=r"^item:[0-9a-f-]{36}$")
+    field_key: str = Field(min_length=1, max_length=120)
+    period: str | None = Field(default=None, max_length=80)
+    value: Any
+    state: str = Field(min_length=1, max_length=160)
+    source: PublicFactSource
+    alternative_sources: tuple[PublicFactSource, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+
+class PublicViewSection(PublicModel):
+    section_key: str = Field(min_length=1, max_length=80)
+    state: str = Field(min_length=1, max_length=160)
+    items: tuple[PublicViewFact, ...] = ()
+
+
+class PublicCompanyViewV1(PublicModel):
+    contract_version: Literal["company-view-v1"] = "company-view-v1"
+    revision: str = Field(pattern=r"^cv1:[0-9a-f]{64}$")
+    generated_at: datetime
+    inn: str
+    sections: tuple[PublicViewSection, ...]
+    action_context: None = None
+    links: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("inn")
+    @classmethod
+    def legal_inn_only(cls, value: str) -> str:
+        if not valid_legal_inn(value):
+            raise ValueError("only a valid legal-entity INN is public")
+        return value
+
+    @model_validator(mode="after")
+    def unique_sections(self) -> "PublicCompanyViewV1":
+        keys = tuple(section.section_key for section in self.sections)
+        if len(keys) != len(set(keys)):
+            raise ValueError("public view section keys must be unique")
+        return self
+
+
 class PublicProjection(PublicModel):
     publication: PublicationInfo
     company: CompanyInfo
     risk: PublicRisk
     summary: PublicSummary
     sources: tuple[PublicSourceBlock, ...] = Field(min_length=4, max_length=4)
+    company_view: PublicCompanyViewV1 | None = None
 
     @model_validator(mode="after")
     def validate_projection(self) -> PublicProjection:
@@ -477,6 +529,8 @@ class PublicProjection(PublicModel):
                 for item in self.sources
             ],
         }
+        if self.company_view is not None:
+            payload["view"] = self.company_view.model_dump(mode="json")
         validate_public_text(payload)
         return payload
 

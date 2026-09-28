@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from uuid import UUID, uuid5
 
 import psycopg
 from psycopg.rows import dict_row
@@ -29,6 +30,10 @@ from public_app.contracts import (
     Freshness,
     PublicationInfo,
     PublicProjection,
+    PublicCompanyViewV1,
+    PublicFactSource,
+    PublicViewFact,
+    PublicViewSection,
     PublicLimitation,
     PublicRecommendation,
     PublicRisk,
@@ -39,6 +44,8 @@ from public_app.contracts import (
     ReleaseManifest,
     strongest_state,
 )
+from app.contracts.company_view_v1 import Audience, CompanyViewModelV1, DataState
+from app.services.company_view_service import build_company_view_v1
 from public_app.semantic import (
     MeaningInput,
     aggregate_clean_conclusion_proof,
@@ -69,6 +76,29 @@ SOURCE_CHECK_CODES = {
     "TAXOFFENCE": "tax_offence",
 }
 CANONICAL_COHORT_PATH = "docs/releases/public-v1-cohort-40.json"
+_PUBLIC_VIEW_NAMESPACE = UUID("9b9b3d87-82a6-40f8-bd1f-8a5e10b9bb96")
+_PUBLIC_SOURCE_NAMES = {
+    "MASTER_REGISTRY": "Единый государственный реестр юридических лиц",
+    "REVEXP": "Доходы и расходы по данным ФНС",
+    "PAYTAX": "Уплаченные налоги и сборы по данным ФНС",
+    "DEBTAM": "Налоговая задолженность по данным ФНС",
+    "TAXOFFENCE": "Налоговые правонарушения по данным ФНС",
+    "HEADCOUNT": "Среднесписочная численность по данным ФНС",
+    "ROSZDRAV_LICENSES": "Единый реестр лицензий Росздравнадзора",
+}
+_PUBLIC_STATE_LABELS = {
+    DataState.FOUND: "Сведения найдены",
+    DataState.NOT_FOUND: "Сведения не найдены в завершённой проверке",
+    DataState.NOT_APPLICABLE: "Проверка неприменима",
+    DataState.NOT_CHECKED: "Сведения пока не проверены",
+    DataState.SOURCE_UNAVAILABLE: "Источник временно недоступен",
+    DataState.TIMEOUT: "Источник не ответил вовремя",
+    DataState.PARSING_ERROR: "Сведения источника не удалось обработать",
+    DataState.STALE_DATA: "Сведения требуют обновления",
+    DataState.UNKNOWN: "Статус сведений не определён",
+    DataState.PARTIAL: "Доступна часть сведений",
+    DataState.CONFLICTING_EVIDENCE: "Источники содержат различающиеся сведения",
+}
 
 
 def _json_default(value: Any):
@@ -481,6 +511,144 @@ def _index_eligible(
     )
 
 
+def _semantic_value(view: CompanyViewModelV1, section_key: str, field_key: str):
+    for section in view.sections:
+        if section.section_key != section_key:
+            continue
+        for fact in section.facts:
+            if fact.anchor.field_key == field_key:
+                return fact.selected_evidence.value
+    return None
+
+
+def _public_source(source_code: str, evidence) -> PublicFactSource:
+    return PublicFactSource(
+        name=_PUBLIC_SOURCE_NAMES.get(source_code, "Принятый официальный источник"),
+        source_data_date=evidence.source_data_date,
+        retrieved_at=evidence.retrieved_at,
+        confidence=evidence.confidence,
+        freshness=Freshness(evidence.freshness.value),
+    )
+
+
+def _virtual_view_fact(
+    *,
+    company_id: int,
+    section_key: str,
+    field_key: str,
+    value: Any,
+    generated_at: datetime,
+    source_name: str,
+    source_data_date: date | None,
+    identity: str | None = None,
+) -> PublicViewFact:
+    coordinate = f"{company_id}|{section_key}|{field_key}|{identity or ''}"
+    return PublicViewFact(
+        fact_ref=f"fact:{uuid5(_PUBLIC_VIEW_NAMESPACE, 'fact|' + coordinate)}",
+        item_ref=f"item:{uuid5(_PUBLIC_VIEW_NAMESPACE, 'item|' + coordinate)}",
+        field_key=field_key,
+        value=value,
+        state="Сведения найдены",
+        source=PublicFactSource(
+            name=source_name,
+            source_data_date=source_data_date,
+            retrieved_at=generated_at,
+            confidence=1.0,
+            freshness=Freshness.CURRENT,
+        ),
+    )
+
+
+def _public_company_view(
+    semantic_view: CompanyViewModelV1,
+    *,
+    company_id: int,
+    risk: PublicRisk,
+    summary: PublicSummary,
+    sources: tuple[PublicSourceBlock, ...],
+) -> PublicCompanyViewV1:
+    sections: list[PublicViewSection] = []
+    for section in semantic_view.sections:
+        items = [
+            PublicViewFact(
+                fact_ref=fact.fact_ref,
+                item_ref=fact.item_ref,
+                field_key=fact.anchor.field_key,
+                period=fact.anchor.period_identity or None,
+                value=fact.selected_evidence.value,
+                state=_PUBLIC_STATE_LABELS[fact.state],
+                source=_public_source(fact.selected_evidence.source_code, fact.selected_evidence),
+                alternative_sources=tuple(
+                    _public_source(item.source_code, item)
+                    for item in fact.alternative_evidence
+                ),
+                limitations=fact.selected_evidence.limitations,
+            )
+            for fact in section.facts
+        ]
+        if section.section_key == "risk":
+            items.append(
+                _virtual_view_fact(
+                    company_id=company_id,
+                    section_key="risk",
+                    field_key="assessment",
+                    value={
+                        "title": risk.public_title,
+                        "explanation": risk.public_explanation,
+                        "assessment_date": risk.assessment_date.isoformat(),
+                    },
+                    generated_at=semantic_view.generated_at,
+                    source_name="Сохранённая аналитическая оценка",
+                    source_data_date=risk.assessment_date,
+                )
+            )
+        elif section.section_key == "summary":
+            items.append(
+                _virtual_view_fact(
+                    company_id=company_id,
+                    section_key="summary",
+                    field_key="conclusion",
+                    value={"text": summary.short_conclusion},
+                    generated_at=summary.generated_at,
+                    source_name="Сохранённое резюме проверки",
+                    source_data_date=summary.generated_at.date(),
+                )
+            )
+        elif section.section_key == "source_coverage":
+            for source in sources:
+                items.append(
+                    _virtual_view_fact(
+                        company_id=company_id,
+                        section_key="source_coverage",
+                        field_key="source",
+                        value={
+                            "name": source.public_name,
+                            "status": source.public_status,
+                            "explanation": source.public_explanation,
+                        },
+                        generated_at=semantic_view.generated_at,
+                        source_name=source.public_name,
+                        source_data_date=source.source_data_date,
+                        identity=source.code,
+                    )
+                )
+        state = "Сведения найдены" if items else _PUBLIC_STATE_LABELS[section.state]
+        sections.append(
+            PublicViewSection(
+                section_key=section.section_key,
+                state=state,
+                items=tuple(items),
+            )
+        )
+    return PublicCompanyViewV1(
+        revision=semantic_view.revision,
+        generated_at=semantic_view.generated_at,
+        inn=semantic_view.inn,
+        sections=tuple(sections),
+        links=semantic_view.links,
+    )
+
+
 def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicProjection:
     cursor.execute("SELECT to_jsonb(c) AS value FROM companies c WHERE inn=%s", (inn,))
     row = cursor.fetchone()
@@ -489,6 +657,12 @@ def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicPr
     company = row["value"]
     if company.get("entity_type") != "legal":
         raise ValueError(f"INN {inn}: IP/non-legal entity rejected")
+    semantic_view = build_company_view_v1(
+        cursor,
+        company_id=int(company["id"]),
+        audience=Audience.PUBLIC,
+        generated_at=publication.published_at,
+    )
     risk = _load_latest(cursor, "company_risk_assessments_v3", company["id"], "calculated_at")
     if not risk:
         raise ValueError(f"INN {inn}: persisted Risk v3 is missing")
@@ -498,25 +672,25 @@ def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicPr
     registration = _registration(risk)
     if registration.get("requested_inn") not in {None, inn}:
         raise ValueError(f"INN {inn}: registration evidence identity mismatch")
-    director_name, director_position = _director(cursor, company["id"], risk)
+    manager_value = _semantic_value(semantic_view, "management", "manager") or {}
     projection_result_date = _aware(risk["calculated_at"]).date()
     sources = tuple(
         _source_block(cursor, code, company["id"], risk, projection_result_date)
         for code in ("REVEXP", "PAYTAX", "DEBTAM", "TAXOFFENCE")
     )
     public_risk = _risk_projection(risk)
-    status = registration.get("status_detail") or registration.get("status_normalized") or company.get("status")
+    status = _semantic_value(semantic_view, "status", "status")
     company_info = CompanyInfo(
-        name=company.get("short_name") or company.get("name") or registration.get("name"),
-        full_name=company.get("full_name") or registration.get("full_name"),
+        name=_semantic_value(semantic_view, "identity", "short_name") or _semantic_value(semantic_view, "identity", "name"),
+        full_name=_semantic_value(semantic_view, "identity", "full_name"),
         legal_status=str(status)[:240] if status else None,
         inn=inn,
-        kpp=company.get("kpp") or registration.get("kpp"),
-        ogrn=company.get("ogrn") or registration.get("ogrn"),
-        address=company.get("address") or registration.get("address"),
-        registration_date=_date(company.get("registration_date") or registration.get("registration_date")),
-        director_name=director_name,
-        director_position=director_position,
+        kpp=_semantic_value(semantic_view, "identity", "kpp"),
+        ogrn=_semantic_value(semantic_view, "identity", "ogrn"),
+        address=_semantic_value(semantic_view, "address", "registered_address"),
+        registration_date=_date(_semantic_value(semantic_view, "registration", "registration_date")),
+        director_name=manager_value.get("name") if isinstance(manager_value, dict) else None,
+        director_position=manager_value.get("position") if isinstance(manager_value, dict) else None,
     )
     index_eligible = _index_eligible(company_info, sources, public_risk)
     content_candidates = [_aware(risk["calculated_at"]), _aware(summary["generated_at"])]
@@ -530,12 +704,20 @@ def build_projection(cursor, inn: str, publication: PublicationInfo) -> PublicPr
             "result_date": projection_result_date,
         }
     )
+    public_summary = _summary_projection(summary, public_risk)
     return PublicProjection(
         publication=per_company_publication,
         company=company_info,
         risk=public_risk,
-        summary=_summary_projection(summary, public_risk),
+        summary=public_summary,
         sources=sources,
+        company_view=_public_company_view(
+            semantic_view,
+            company_id=int(company["id"]),
+            risk=public_risk,
+            summary=public_summary,
+            sources=sources,
+        ),
     )
 
 

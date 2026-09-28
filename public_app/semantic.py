@@ -719,7 +719,7 @@ def compile_recommendation(code: str | None) -> CompiledRecommendation | None:
 
 
 _BANNED_TEXT = (
-    "{'", '"origin_ref"', "fact_ref", "origin_check_ref", "limitation_code",
+    "{'", '"origin_ref"', "origin_check_ref", "limitation_code",
     "recommendation_code", "parameters", "evidence_refs", "APPLICABILITY_UNKNOWN",
     "STALE_DATA", "SOURCE_UNAVAILABLE", "NOT_CHECKED", "REVEXP", "PAYTAX",
     "DEBTAM", "TAXOFFENCE", "компания ненадёжна", "компания подозрительна",
@@ -727,7 +727,7 @@ _BANNED_TEXT = (
     "мы не нашли", "много судов", "тяжёлое финансовое состояние",
 )
 _BANNED_KEYS = {
-    "origin_ref", "fact_ref", "origin_check_ref", "limitation_code",
+    "origin_ref", "origin_check_ref", "limitation_code",
     "recommendation_code", "parameters", "evidence_refs", "ruleset_version",
     "model_version", "source_code", "factor_code",
 }

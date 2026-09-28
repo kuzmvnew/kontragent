@@ -13,8 +13,8 @@
 {% endblock %}
 {% block content %}
 {% set company = projection.company %}
-<article class="company-page">
-  <section class="company-hero">
+<article class="company-page"{% if projection.company_view %} data-view-contract="{{ projection.company_view.contract_version }}" data-view-revision="{{ projection.company_view.revision }}"{% endif %}>
+  <section class="company-hero" data-section-key="identity status registration">
     <div>
       <p class="eyebrow">Карточка юридического лица</p>
       <h1>{{ company.name }}</h1>
@@ -29,20 +29,20 @@
     <p class="result-date">Дата результата <time datetime="{{ projection.publication.result_date }}">{{ projection.publication.result_date.strftime('%d.%m.%Y') }}</time></p>
   </section>
 
-  <section class="summary-panel risk-state-{{ projection.risk.public_visual_state }}">
+  <section class="summary-panel risk-state-{{ projection.risk.public_visual_state }}" data-section-key="summary">
     <p class="section-kicker">Краткий вывод</p>
     <h2>{{ projection.public_conclusion }}</h2>
     {% if projection.risk.factors %}<ul>{% for factor in projection.risk.factors %}<li>{{ factor.public_headline }}</li>{% endfor %}</ul>{% endif %}
   </section>
 
-  <section class="content-section">
+  <section class="content-section" data-section-key="risk">
     <div class="section-heading"><div><p class="section-kicker">Аналитическая оценка</p><h2>{{ projection.risk.public_title }}</h2></div><span class="state-badge state-{{ projection.risk.public_visual_state }}">{{ projection.risk.public_status }}</span></div>
     <p class="lead">{{ projection.risk.public_explanation }}</p>
     {% if projection.risk.factors %}<div class="factor-grid">{% for factor in projection.risk.factors %}<article><p class="section-kicker">{{ factor.category }} · {{ factor.severity }}</p><h3>{{ factor.public_headline }}</h3><p>{{ factor.public_explanation }}</p>{% if factor.client_meaning %}<p>{{ factor.client_meaning }}</p>{% endif %}{% if factor.what_it_does_not_mean %}<p class="limitation"><strong>Что это не означает:</strong> {{ factor.what_it_does_not_mean }}</p>{% endif %}{% if factor.source_name %}<small>{{ factor.source_name }}{% if factor.source_data_date %} · {{ factor.source_data_date.strftime('%d.%m.%Y') }}{% endif %}</small>{% endif %}</article>{% endfor %}</div>{% endif %}
     <p class="engine-meta">Дата оценки: {{ projection.risk.assessment_date.strftime('%d.%m.%Y') }}</p>
   </section>
 
-  <section class="content-section">
+  <section class="content-section" data-section-key="identity address management">
     <p class="section-kicker">Основные сведения</p><h2>О компании</h2>
     <dl class="details-grid">
       <div><dt>Полное наименование</dt><dd>{{ company.full_name or company.name }}</dd></div>
@@ -52,7 +52,7 @@
     </dl>
   </section>
 
-  <section class="content-section">
+  <section class="content-section" data-section-key="finances employees tax source_coverage freshness">
     <p class="section-kicker">Официальные наборы данных</p><h2>Налоги и финансовые показатели</h2>
     <div class="source-grid">
     {% for source in projection.sources %}
@@ -67,7 +67,7 @@
   </section>
 
   {% if projection.public_limitations or projection.summary.recommendations %}
-  <section class="content-section two-column">
+  <section class="content-section two-column" data-section-key="limitations">
     <div><p class="section-kicker">Ограничения</p><h2>Что учитывать</h2><ul>{% for item in projection.public_limitations %}<li><strong>{{ item.headline }}</strong> {{ item.short_explanation }} {{ item.effect_on_conclusion }} {{ item.what_remains_unknown }}</li>{% endfor %}</ul></div>
     <div><p class="section-kicker">Рекомендации</p><h2>Что делать</h2><ul>{% for item in projection.summary.recommendations %}<li><strong>{{ item.action }}</strong> {{ item.rationale }} {{ item.effect }}</li>{% endfor %}</ul></div>
   </section>

@@ -1073,7 +1073,7 @@ def test_legacy_unknown_fails_closed_before_recovery_then_materializes_once(
 ):
     with Session(engine) as session:
         assert session.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-            "c2a4f6d8e0b1"
+            "d1e2f3a4b5c6"
         )
         baseline = collect_factory_metrics(
             session, window_hours=1, now=NOW, enforce_read_only=False
