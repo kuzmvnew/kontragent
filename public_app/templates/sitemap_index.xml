@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<sitemap><loc>{{ origin }}/sitemaps/static.xml.gz</loc></sitemap>
+{% for shard in shards %}<sitemap><loc>{{ origin }}/sitemaps/companies-{{ shard }}.xml.gz</loc></sitemap>
+{% endfor %}</sitemapindex>

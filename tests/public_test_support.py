@@ -100,5 +100,9 @@ def projection(
     )
 
 
-def forty_projections(release_id: str) -> list[PublicProjection]:
-    return [projection(sequence=100_000_000 + index, release_id=release_id) for index in range(40)]
+def forty_projections(
+    release_id: str,
+    *,
+    sequence_start: int = 100_000_000,
+) -> list[PublicProjection]:
+    return [projection(sequence=sequence_start + index, release_id=release_id) for index in range(40)]

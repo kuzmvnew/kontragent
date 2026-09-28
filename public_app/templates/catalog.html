@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block head %}
+<title>Компании — страница {{ pagination.page }} | NEXT</title>
+<meta name="description" content="Каталог опубликованных карточек юридических лиц NEXT Company.">
+<meta name="robots" content="{{ robots }}">
+<link rel="canonical" href="{{ canonical }}">
+{% endblock %}
+{% block content %}
+<section class="page-shell">
+  <p class="eyebrow">Каталог юридических лиц</p>
+  <h1>Компании{% if pagination.page > 1 %} — страница {{ pagination.page }}{% endif %}</h1>
+  <div class="result-list">
+    {% for item in items %}
+    <a class="result-card" href="/companies/{{ item.company.inn }}">
+      <strong>{{ item.company.name }}</strong>
+      <span>ИНН {{ item.company.inn }}{% if item.company.legal_status %} · {{ item.company.legal_status }}{% endif %}</span>
+      <span class="arrow">→</span>
+    </a>
+    {% endfor %}
+  </div>
+  <nav class="pagination" aria-label="Страницы каталога">
+    {% if pagination.previous_url %}<a rel="prev" href="{{ pagination.previous_url }}">Предыдущая</a>{% endif %}
+    {% for number, url in pagination.page_links %}<a href="{{ url }}"{% if number == pagination.page %} aria-current="page"{% endif %}>{{ number }}</a>{% endfor %}
+    {% if pagination.next_url %}<a rel="next" href="{{ pagination.next_url }}">Следующая</a>{% endif %}
+  </nav>
+</section>
+{% endblock %}

@@ -1,0 +1,109 @@
+# SEO 10K implementation foundation
+
+Task: `SEO-10K-IMPL-01-A-CORRECTION-04`
+
+Status: implemented and locally testable; **not production accepted**
+
+Release status: Wave 500 / 2000 / 10000 **NOT RELEASED**
+
+## Architecture
+
+`public_app.seo` is a pure compiler over one immutable `PublicProjection` and a
+release-owned `SeoEligibilityContext`. It produces one typed `SeoProjection`
+containing metadata, JSON-LD, canonical/robots decisions, deterministic hashes,
+sitemap/catalog membership and internal evidence. Routes receive only the
+compiled render fields; reason codes and evidence references are not added to
+ordinary HTML or API responses.
+
+The active public release is the serving boundary, but it is not SEO release
+authorization. The importer compiles versioned SEO rows in the same database
+transaction as a new projection import and records the derived-state compiler
+version. `public_0002` also adds explicit `seo_release_cohort` and
+`seo_released` fields to the isolated public release table. They default to no
+authorization; the migration does not backfill legacy rows or assign INDEX.
+The migration is committed but not deployed by this task.
+
+The company HTML route reads release id, public facts and persisted SEO state
+with one repository statement. A single canonical stored-projection validator
+then produces exactly `VALID_INDEX`, `VALID_NOINDEX` or `INVALID`. It validates
+the full strict schema and nested structures, deterministic metadata/JSON-LD,
+canonical URL, revision/INN, decisions, robots and discovery membership,
+compiler/contract authority, hashes, timestamp and every scalar mirror.
+The complete typed `SeoEligibilityResult` must equal the canonical compiler
+result, including decision, reason codes, evidence references and nested
+compiler version. Tuple order is compiler-defined and significant: persisted
+reason/evidence reordering is not normalized or trusted. `content_updated_at`
+remains a separate mirror check so no-op republish timestamp preservation is
+not replaced by naive equality of the entire `SeoProjection`.
+Missing, malformed, unauthorized or revision-mismatched SEO state is rendered
+as `noindex, follow`; it is never upgraded to INDEX at request time. The page,
+sitemap and catalog all consume this same typed result.
+
+SQL only performs cheap fail-closed candidate filtering. One sitemap request
+fetches and validates candidates for its requested SHA-256 shard, not the full
+10K corpus. Catalog discovery uses a PostgreSQL server-side cursor and validates
+ordered candidates in bounded batches of 256. It retains at most one batch plus
+the 24 requested projections while still scanning all candidates to compute an
+exact valid total and fill pages without corrupt-row holes. Thus time is O(N)
+per catalog page, application memory is O(256 + 24), and no 10K list of full
+`PublicProjection` objects is materialized. Both discovery scans run in one
+read-only `REPEATABLE READ` transaction so a response cannot mix releases.
+Legacy rows and partial storage produce no membership; valid stored NOINDEX
+always wins over what a runtime compiler might otherwise derive. The 16 stable
+company shards use the first hexadecimal digit of SHA-256(INN). SEO
+`content_updated_at` changes only when search-visible content changes; a
+technical publication alone does not change it.
+
+Repeated import distinguishes a legacy release by its null release-level SEO
+contract marker. Such a release must still have all derived SEO fields null and
+is accepted idempotently without mutation. A native-v2 release has a compiler
+marker and must reproduce every stored derived field; partial or tampered state
+fails. Both first import and repeated verification compile through the same
+derivation path. Repeated verification reloads the exact persisted
+`previous_release_id` chain, verifies usable predecessor SEO fail-closed and
+therefore reproduces the original canonical timestamp without trusting the
+current release as its own history. Missing legacy or per-company predecessor
+SEO contributes `previous=None`; no historical state is fabricated.
+
+## Commands
+
+Focused foundation suite:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m pytest \
+  tests/test_public_seo.py tests/test_public_web.py \
+  tests/test_public_semantic.py tests/test_public_projection.py \
+  tests/test_public_seo_migration.py tests/test_seo10k_contract.py \
+  tests/test_seo10k_acceptance_evidence.py -q
+```
+
+Machine-readable acceptance evidence:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/accept_seo10k_foundation.py \
+  --output docs/evidence/SEO-10K-IMPL-01-A.json
+```
+
+PostgreSQL atomic-switch, mixed-version, importer and tamper regressions require
+an isolated test database and `PUBLIC_TEST_DATABASE_URL`; no migration command
+targets production in this task.
+
+The evidence generator runs each `SEOIMPL-A*` gate from its own explicit test
+IDs. Skipped tests become `NOT_RUN`, never PASS. Canonical
+`SEO10K-A01...A22` retain the names and meanings in the approved contract and
+remain a separate release matrix.
+
+Evidence is bound to an immutable source commit and tree. Because writing the
+JSON changes Git HEAD, the final evidence-only commit must be a direct child of
+the recorded `head_sha` and may change only
+`docs/evidence/SEO-10K-IMPL-01-A.json`.
+
+## Explicitly not accepted here
+
+- Live Wordstat and Google historical demand evidence.
+- Wave 500, Wave 2000 or Wave 10000 activation.
+- Search Console and Yandex Webmaster production observation.
+- Production sitemap submission, cache purge, bot-peak/TTFB acceptance.
+- Production migration/deployment and changes to the current 40-card cohort.
+
+The canonical A01–A22 release matrix remains `NOT_RUN` and release-blocking.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 from datetime import datetime, timezone
 
@@ -7,6 +8,9 @@ from fastapi.testclient import TestClient
 
 from public_app.main import create_app
 from public_app.contracts import PublicProjection
+from public_app.repository import CompanyPageSnapshot
+from public_app.seo import SeoEligibilityContext, compile_seo_projection
+from public_app.stored_seo import StoredSeoProjectionState
 from tests.public_test_support import projection
 
 
@@ -21,11 +25,40 @@ class FakeRepository:
     def get_company(self, inn):
         return self.item if inn == self.item.company.inn else None
 
+    def get_company_page_snapshot(self, inn):
+        if inn != self.item.company.inn:
+            return None
+        seo = compile_seo_projection(
+            self.item,
+            context=SeoEligibilityContext(
+                active_revision_id=self.item.publication.release_id,
+                public_ready=True,
+                released=True,
+            ),
+        )
+        return CompanyPageSnapshot(
+            release_id=self.item.publication.release_id,
+            projection=self.item,
+            seo=seo,
+            seo_release_cohort=500,
+            seo_released=True,
+            stored_seo_valid=True,
+            stored_seo_state=StoredSeoProjectionState.VALID_INDEX,
+        )
+
     def search(self, query, limit=20):
         return [self.item] if query.casefold() in self.item.company.name.casefold() else []
 
-    def sitemap_rows(self):
+    def sitemap_rows(self, shard=None):
+        seo = self.get_company_page_snapshot(self.item.company.inn).seo
+        if not seo.sitemap_eligible or (shard is not None and seo.sitemap_shard != shard):
+            return []
         return [{"inn": self.item.company.inn, "content_updated_at": datetime(2026, 9, 25, tzinfo=timezone.utc)}]
+
+    def catalog_page(self, page, page_size=24):
+        seo = self.get_company_page_snapshot(self.item.company.inn).seo
+        eligible = seo.catalog_eligible and page == 1 and page_size == 24
+        return ([self.item] if eligible else []), (1 if seo.catalog_eligible else 0)
 
     def ready(self):
         return True, self.item.publication.release_id, 40
@@ -109,16 +142,22 @@ def test_stale_unavailable_and_unknown_never_become_no_violations():
     for internal_text in ("STALE_DATA", "SOURCE_UNAVAILABLE", "state-stale_data", "state-source_unavailable"):
         assert internal_text not in response.text
     assert "нарушений нет" not in response.text.casefold()
+    assert "data-nosnippet" in response.text
 
 
 def test_robots_sitemap_canonical_open_graph_jsonld_and_404():
     web, repository = client()
     robots = web.get("/robots.txt")
-    assert "Disallow: /search" in robots.text
-    assert "Disallow: /api/" in robots.text
+    assert "Allow: /" in robots.text
+    assert "Disallow: /api/" not in robots.text
+    assert "Disallow: /admin/" in robots.text
     assert "Sitemap: https://nextcompany.pro/sitemap.xml" in robots.text
     sitemap = web.get("/sitemap.xml")
-    assert f"/companies/{repository.item.company.inn}" in sitemap.text
+    assert "<sitemapindex" in sitemap.text
+    assert sitemap.text.count("/sitemaps/companies-") == 16
+    shard = __import__("hashlib").sha256(repository.item.company.inn.encode()).hexdigest()[0]
+    company_sitemap = web.get(f"/sitemaps/companies-0{shard}.xml.gz")
+    assert f"/companies/{repository.item.company.inn}" in company_sitemap.text
     card = web.get(f"/companies/{repository.item.company.inn}")
     assert f'<link rel="canonical" href="https://nextcompany.pro/companies/{repository.item.company.inn}">' in card.text
     assert 'property="og:title"' in card.text
@@ -126,6 +165,62 @@ def test_robots_sitemap_canonical_open_graph_jsonld_and_404():
     missing = web.get("/companies/7700000000")
     assert missing.status_code == 404
     assert "noindex" in missing.headers["x-robots-tag"]
+
+
+def test_catalog_is_crawlable_and_query_variants_are_noindex():
+    web, repository = client()
+    response = web.get("/companies")
+    assert response.status_code == 200
+    assert f'href="/companies/{repository.item.company.inn}"' in response.text
+    assert '<meta name="robots" content="index, follow">' in response.text
+    variant = web.get("/companies?sort=name")
+    assert variant.status_code == 200
+    assert variant.headers["x-robots-tag"] == "noindex, follow"
+    assert '<meta name="robots" content="noindex, follow">' in variant.text
+    first = web.get("/companies/page/1", follow_redirects=False)
+    assert first.status_code == 308
+    assert first.headers["location"] == "/companies"
+    assert web.get("/companies/page/2").status_code == 404
+
+
+def test_company_url_normalization_and_tracking_parameters():
+    web, repository = client()
+    inn = repository.item.company.inn
+    trailing = web.get(f"/companies/{inn}/", follow_redirects=False)
+    assert trailing.status_code == 308
+    assert trailing.headers["location"] == f"/companies/{inn}"
+    tracked = web.get(f"/companies/{inn}?utm_source=test&gclid=abc", follow_redirects=False)
+    assert tracked.status_code == 308
+    assert tracked.headers["location"] == f"/companies/{inn}"
+    variant = web.get(f"/companies/{inn}?view=compact")
+    assert variant.status_code == 200
+    assert variant.headers["x-robots-tag"] == "noindex, follow"
+    assert web.get("/company/123", follow_redirects=False).status_code == 404
+
+
+def test_production_host_normalizes_http_www_and_legacy_path_in_one_hop():
+    repository = FakeRepository()
+    web = TestClient(create_app(repository), base_url="http://www.nextcompany.pro")
+    inn = repository.item.company.inn
+    response = web.get(f"/company/{inn}?utm_source=test", follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["location"] == f"https://nextcompany.pro/companies/{inn}"
+
+
+def test_numeric_index_payload_is_noindex_sanitized_and_absent_from_discovery():
+    web, repository = client()
+    value = repository.item.model_dump(mode="json")
+    value["sources"][0]["values"]["next_index"] = 81
+    repository.item = PublicProjection.model_validate(value)
+    inn = repository.item.company.inn
+    card = web.get(f"/companies/{inn}")
+    assert card.status_code == 200
+    assert card.headers["x-robots-tag"] == "noindex, follow"
+    assert "next_index" not in card.text
+    assert "next_index" not in json.dumps(web.get(f"/api/company/{inn}").json())
+    shard = __import__("hashlib").sha256(inn.encode()).hexdigest()[0]
+    assert f"/companies/{inn}" not in web.get(f"/sitemaps/companies-0{shard}.xml.gz").text
+    assert web.get("/companies").status_code == 404
 
 
 def test_docs_openapi_and_internal_are_absent():

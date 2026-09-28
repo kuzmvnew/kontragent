@@ -41,6 +41,10 @@ FORBIDDEN_KEY_PARTS = {
     "credentials",
 }
 PRIVATE_PATH = re.compile(r"(?:^|\s)(?:/Users/|/home/|/private/|file://|[A-Za-z]:\\)")
+NUMERIC_INDEX_KEY = re.compile(
+    r"(?:next[ _-]*index|индекс[ _-]*next|score|rating(?:value)?|aggregate[ _-]*rating|band|рейтинг)",
+    re.IGNORECASE,
+)
 
 
 class PublicModel(BaseModel):
@@ -384,6 +388,12 @@ class PublicSourceBlock(PublicModel):
             negative_closure_proven=self.negative_closure_proven,
         ).visual_state
 
+    @property
+    def public_values(self) -> dict[str, PublicScalar]:
+        """Remove forbidden numeric reliability fields at the public boundary."""
+
+        return {key: value for key, value in self.values.items() if not NUMERIC_INDEX_KEY.search(key)}
+
 
 class PublicProjection(PublicModel):
     publication: PublicationInfo
@@ -470,7 +480,7 @@ class PublicProjection(PublicModel):
                     "name": item.public_name,
                     "status": item.public_status,
                     "explanation": item.public_explanation,
-                    "values": item.values,
+                    "values": item.public_values,
                     "source_data_date": item.source_data_date.isoformat() if item.source_data_date else None,
                     "result_date": item.result_date.isoformat(),
                 }
