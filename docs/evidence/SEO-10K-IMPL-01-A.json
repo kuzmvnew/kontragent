@@ -1,9 +1,9 @@
 {
-  "task_id": "SEO-10K-IMPL-01-A-CORRECTION-04-REBASE",
+  "task_id": "SEO-10K-IMPL-01-A-CORRECTION-05",
   "repository": "kuzmvnew/kontragent",
   "base_sha": "08839ee701c4bbacaefdca0a6f0c287ad84eb0d5",
-  "head_sha": "575429aa73cd99ac747d76ad06200aa7e16edd28",
-  "source_tree_sha": "2dac70aee90d23c93d2cc581794df727c2f97184",
+  "head_sha": "568d349fa35924d08c0dd8a0d38ae70225de82b2",
+  "source_tree_sha": "f54a9116824a2f00daf6e7c71ce73e721114bc1c",
   "evidence_head_identity": {
     "binding": "source_commit",
     "meaning": "head_sha is the immutable tested code commit",
@@ -11,7 +11,7 @@
   },
   "contract_version": "1.0",
   "canonical_contract_sha256": "051b13f14a09d25f6bc9f7ec1079cab65bbc02db0c439e33838b32010bfdd599",
-  "generated_at": "2026-09-28T05:58:57.886835+00:00",
+  "generated_at": "2026-09-28T06:48:43.354559+00:00",
   "test_runs": [
     {
       "gate_id": "SEOIMPL-A01",
@@ -25,7 +25,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed in 0.19s"
+      "summary": "1 passed in 0.09s"
     },
     {
       "gate_id": "SEOIMPL-A02",
@@ -39,7 +39,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed in 0.08s"
+      "summary": "1 passed in 0.07s"
     },
     {
       "gate_id": "SEOIMPL-A03",
@@ -54,7 +54,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed in 0.07s"
+      "summary": "2 passed in 0.08s"
     },
     {
       "gate_id": "SEOIMPL-A04",
@@ -69,7 +69,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed in 0.10s"
+      "summary": "2 passed in 0.09s"
     },
     {
       "gate_id": "SEOIMPL-A05",
@@ -83,7 +83,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed in 0.08s"
+      "summary": "1 passed in 0.07s"
     },
     {
       "gate_id": "SEOIMPL-A06",
@@ -98,7 +98,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.46s"
+      "summary": "2 passed, 2 warnings in 0.32s"
     },
     {
       "gate_id": "SEOIMPL-A07",
@@ -113,7 +113,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.24s"
+      "summary": "2 passed, 2 warnings in 0.23s"
     },
     {
       "gate_id": "SEOIMPL-A08",
@@ -128,7 +128,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.24s"
+      "summary": "2 passed, 2 warnings in 0.22s"
     },
     {
       "gate_id": "SEOIMPL-A09",
@@ -143,7 +143,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 0.53s"
+      "summary": "2 passed, 2 warnings in 0.51s"
     },
     {
       "gate_id": "SEOIMPL-A10",
@@ -172,7 +172,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed, 2 warnings in 2.14s"
+      "summary": "1 passed, 2 warnings in 2.36s"
     },
     {
       "gate_id": "SEOIMPL-A12",
@@ -187,7 +187,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed, 2 warnings in 1.04s"
+      "summary": "2 passed, 2 warnings in 1.20s"
     },
     {
       "gate_id": "SEOIMPL-A13",
@@ -201,6 +201,13 @@
         "tests/test_public_release_postgres.py::test_native_v2_reimport_with_changed_visible_content_uses_new_timestamp",
         "tests/test_public_release_postgres.py::test_native_v2_mixed_release_replays_partial_predecessor_per_inn",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_uses_empty_context_for_legacy_predecessor",
+        "tests/test_public_release_postgres.py::test_real_legacy_v1_to_v2_reimport_rejects_predecessor_cycle_without_writes",
+        "tests/test_public_release_postgres.py::test_legacy_predecessor_self_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_multi_legacy_predecessor_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_mixed_legacy_native_predecessor_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_missing_ancestor_behind_legacy_fails_closed",
+        "tests/test_public_release_postgres.py::test_valid_legacy_predecessor_chain_is_an_seo_context_barrier",
+        "tests/test_public_release_postgres.py::test_legacy_predecessor_with_unversioned_seo_still_fails_closed",
         "tests/test_public_release_postgres.py::test_malformed_predecessor_seo_fails_closed_before_new_activation",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_timestamp_and_lineage_tamper",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_current_release_seo_tamper",
@@ -211,7 +218,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "16 passed, 2 warnings in 5.55s"
+      "summary": "23 passed, 2 warnings in 9.13s"
     },
     {
       "gate_id": "SEOIMPL-A14",
@@ -227,7 +234,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "3 passed, 2 warnings in 0.22s"
+      "summary": "3 passed, 2 warnings in 0.25s"
     },
     {
       "gate_id": "SEOIMPL-A15",
@@ -242,7 +249,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "2 passed in 0.15s"
+      "summary": "2 passed in 0.14s"
     },
     {
       "gate_id": "SEOIMPL-A16",
@@ -270,7 +277,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "1 passed, 2 warnings in 0.36s"
+      "summary": "1 passed, 2 warnings in 0.48s"
     },
     {
       "gate_id": "SEOIMPL-A18",
@@ -294,7 +301,7 @@
       ],
       "returncode": 0,
       "status": "PASS",
-      "summary": "22 passed, 2 warnings in 12.43s"
+      "summary": "22 passed, 2 warnings in 13.85s"
     }
   ],
   "implementation_gates": {
@@ -312,7 +319,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed in 0.19s"
+      "result_summary": "1 passed in 0.09s"
     },
     "SEOIMPL-A02": {
       "description": "public_ready fail-closed",
@@ -328,7 +335,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed in 0.08s"
+      "result_summary": "1 passed in 0.07s"
     },
     "SEOIMPL-A03": {
       "description": "semantic minimum",
@@ -346,7 +353,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed in 0.07s"
+      "result_summary": "2 passed in 0.08s"
     },
     "SEOIMPL-A04": {
       "description": "thin-content protection",
@@ -364,7 +371,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed in 0.10s"
+      "result_summary": "2 passed in 0.09s"
     },
     "SEOIMPL-A05": {
       "description": "metadata allowlist",
@@ -380,7 +387,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed in 0.08s"
+      "result_summary": "1 passed in 0.07s"
     },
     "SEOIMPL-A06": {
       "description": "JSON-LD visible parity",
@@ -398,7 +405,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.46s"
+      "result_summary": "2 passed, 2 warnings in 0.32s"
     },
     "SEOIMPL-A07": {
       "description": "canonical redirects and real 404",
@@ -416,7 +423,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.24s"
+      "result_summary": "2 passed, 2 warnings in 0.23s"
     },
     "SEOIMPL-A08": {
       "description": "robots and API X-Robots",
@@ -434,7 +441,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.24s"
+      "result_summary": "2 passed, 2 warnings in 0.22s"
     },
     "SEOIMPL-A09": {
       "description": "16 deterministic sitemap shards",
@@ -452,7 +459,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 0.53s"
+      "result_summary": "2 passed, 2 warnings in 0.51s"
     },
     "SEOIMPL-A10": {
       "description": "catalog and pagination",
@@ -486,7 +493,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed, 2 warnings in 2.14s"
+      "result_summary": "1 passed, 2 warnings in 2.36s"
     },
     "SEOIMPL-A12": {
       "description": "mixed-version fail-closed authority",
@@ -504,7 +511,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed, 2 warnings in 1.04s"
+      "result_summary": "2 passed, 2 warnings in 1.20s"
     },
     "SEOIMPL-A13": {
       "description": "legacy and native reimport idempotency",
@@ -516,6 +523,13 @@
         "tests/test_public_release_postgres.py::test_native_v2_reimport_with_changed_visible_content_uses_new_timestamp",
         "tests/test_public_release_postgres.py::test_native_v2_mixed_release_replays_partial_predecessor_per_inn",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_uses_empty_context_for_legacy_predecessor",
+        "tests/test_public_release_postgres.py::test_real_legacy_v1_to_v2_reimport_rejects_predecessor_cycle_without_writes",
+        "tests/test_public_release_postgres.py::test_legacy_predecessor_self_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_multi_legacy_predecessor_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_mixed_legacy_native_predecessor_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_missing_ancestor_behind_legacy_fails_closed",
+        "tests/test_public_release_postgres.py::test_valid_legacy_predecessor_chain_is_an_seo_context_barrier",
+        "tests/test_public_release_postgres.py::test_legacy_predecessor_with_unversioned_seo_still_fails_closed",
         "tests/test_public_release_postgres.py::test_malformed_predecessor_seo_fails_closed_before_new_activation",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_timestamp_and_lineage_tamper",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_current_release_seo_tamper",
@@ -532,6 +546,13 @@
         "tests/test_public_release_postgres.py::test_native_v2_reimport_with_changed_visible_content_uses_new_timestamp",
         "tests/test_public_release_postgres.py::test_native_v2_mixed_release_replays_partial_predecessor_per_inn",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_uses_empty_context_for_legacy_predecessor",
+        "tests/test_public_release_postgres.py::test_real_legacy_v1_to_v2_reimport_rejects_predecessor_cycle_without_writes",
+        "tests/test_public_release_postgres.py::test_legacy_predecessor_self_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_multi_legacy_predecessor_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_mixed_legacy_native_predecessor_cycle_fails_closed",
+        "tests/test_public_release_postgres.py::test_missing_ancestor_behind_legacy_fails_closed",
+        "tests/test_public_release_postgres.py::test_valid_legacy_predecessor_chain_is_an_seo_context_barrier",
+        "tests/test_public_release_postgres.py::test_legacy_predecessor_with_unversioned_seo_still_fails_closed",
         "tests/test_public_release_postgres.py::test_malformed_predecessor_seo_fails_closed_before_new_activation",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_timestamp_and_lineage_tamper",
         "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_current_release_seo_tamper",
@@ -540,7 +561,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "16 passed, 2 warnings in 5.55s"
+      "result_summary": "23 passed, 2 warnings in 9.13s"
     },
     "SEOIMPL-A14": {
       "description": "public Numeric Index hard ban",
@@ -560,7 +581,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "3 passed, 2 warnings in 0.22s"
+      "result_summary": "3 passed, 2 warnings in 0.25s"
     },
     "SEOIMPL-A15": {
       "description": "public_0002 data-preserving migration",
@@ -578,7 +599,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "2 passed in 0.15s"
+      "result_summary": "2 passed in 0.14s"
     },
     "SEOIMPL-A16": {
       "description": "search-visible hash and no-op republish",
@@ -610,7 +631,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "1 passed, 2 warnings in 0.36s"
+      "result_summary": "1 passed, 2 warnings in 0.48s"
     },
     "SEOIMPL-A18": {
       "description": "stored SEO page/discovery integrity parity",
@@ -646,7 +667,7 @@
         "-q",
         "-rA"
       ],
-      "result_summary": "22 passed, 2 warnings in 12.43s"
+      "result_summary": "22 passed, 2 warnings in 13.85s"
     }
   },
   "release_gates": {
