@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.public_release_common import load_bundle, payload_sha256  # noqa: E402
+from public_app.contracts import PublicProjection  # noqa: E402
 from public_app.seo import (  # noqa: E402
     SEO_COMPILER_VERSION,
     SeoEligibilityContext,
@@ -63,6 +64,131 @@ def _seo_storage_available(cursor) -> bool:
     return found == expected
 
 
+def _compile_expected_release_seo(
+    projection: PublicProjection,
+    *,
+    release_id: str,
+    released: bool,
+    previous: dict[str, SeoProjection],
+) -> SeoProjection:
+    """Compile one release row from the canonical persisted lineage context."""
+
+    return compile_seo_projection(
+        projection,
+        context=SeoEligibilityContext(
+            active_revision_id=release_id,
+            public_ready=True,
+            released=released,
+        ),
+        previous=previous.get(projection.company.inn),
+    )
+
+
+def _load_previous_seo(
+    cursor,
+    previous_release_id: str | None,
+    *,
+    _lineage: frozenset[str] = frozenset(),
+) -> dict[str, SeoProjection]:
+    """Load and verify usable SEO rows from the exact persisted predecessor.
+
+    Historical native-v2 rows are replayed against their own persisted
+    predecessor before they can become compiler input. Legacy releases and
+    legitimately absent per-company SEO rows contribute no fabricated state.
+    """
+
+    if previous_release_id is None:
+        return {}
+    if previous_release_id in _lineage:
+        raise ValueError("public release predecessor lineage contains a cycle")
+
+    cursor.execute(
+        """
+        SELECT release_id, previous_release_id, record_count, seo_contract_version,
+               seo_release_cohort, seo_released
+        FROM public_releases
+        WHERE release_id=%s
+        """,
+        (previous_release_id,),
+    )
+    release = cursor.fetchone()
+    if release is None:
+        raise ValueError("public release predecessor does not exist")
+
+    cursor.execute(
+        """
+        SELECT inn, payload, payload_sha256, seo_projection, seo_decision,
+               seo_compiler_version, search_visible_hash,
+               non_identity_content_hash, sitemap_shard,
+               seo_content_updated_at
+        FROM public_company_projections
+        WHERE release_id=%s
+        """,
+        (previous_release_id,),
+    )
+    rows = cursor.fetchall()
+    if len(rows) != release["record_count"]:
+        raise ValueError("predecessor release projection set is incomplete")
+    seo_fields = (
+        "seo_projection",
+        "seo_decision",
+        "seo_compiler_version",
+        "search_visible_hash",
+        "non_identity_content_hash",
+        "sitemap_shard",
+        "seo_content_updated_at",
+    )
+    marker = release["seo_contract_version"]
+    if marker is None:
+        if any(any(row[name] is not None for name in seo_fields) for row in rows):
+            raise ValueError("legacy predecessor contains unversioned SEO derived state")
+        return {}
+    if marker != SEO_COMPILER_VERSION:
+        raise ValueError("predecessor release uses unsupported SEO compiler version")
+
+    ancestor_seo = _load_previous_seo(
+        cursor,
+        release["previous_release_id"],
+        _lineage=_lineage | {previous_release_id},
+    )
+    released = bool(
+        release["seo_released"] and release["seo_release_cohort"] in {500, 2000, 10000}
+    )
+    loaded: dict[str, SeoProjection] = {}
+    for row in rows:
+        present = tuple(row[name] is not None for name in seo_fields)
+        if not any(present):
+            continue
+        if not all(present):
+            raise ValueError("predecessor release SEO projection is incomplete")
+        try:
+            projection = PublicProjection.model_validate(row["payload"])
+            stored = SeoProjection.model_validate(row["seo_projection"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("predecessor release SEO projection is invalid") from exc
+        expected = _compile_expected_release_seo(
+            projection,
+            release_id=previous_release_id,
+            released=released,
+            previous=ancestor_seo,
+        )
+        if (
+            stored != expected
+            or row["inn"] != projection.company.inn
+            or projection.publication.release_id != previous_release_id
+            or row["payload_sha256"] != payload_sha256(projection)
+            or row["seo_decision"] != expected.eligibility.decision.value
+            or row["seo_compiler_version"] != expected.compiler_version
+            or row["search_visible_hash"] != expected.search_visible_hash
+            or row["non_identity_content_hash"] != expected.non_identity_content_hash
+            or row["sitemap_shard"] != expected.sitemap_shard
+            or row["seo_content_updated_at"] != expected.content_updated_at
+        ):
+            raise ValueError("predecessor release SEO projection is not canonical")
+        loaded[row["inn"]] = stored
+    return loaded
+
+
 def import_release(connection, bundle_dir: Path, expected_release_id: str | None = None) -> dict:
     manifest, projections, manifest_sha = load_bundle(bundle_dir)
     if expected_release_id and manifest.release_id != expected_release_id:
@@ -77,6 +203,13 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
         if existing:
             if existing["manifest_sha256"] != manifest_sha or existing["record_count"] != manifest.record_count:
                 raise ValueError("release_id already exists with different content")
+            if (
+                manifest.previous_release_id is not None
+                and existing["previous_release_id"] != manifest.previous_release_id
+            ):
+                raise ValueError(
+                    "stored release previous_release_id does not match repeated bundle"
+                )
             cursor.execute(
                 "SELECT inn, payload_sha256 FROM public_company_projections WHERE release_id=%s",
                 (manifest.release_id,),
@@ -119,6 +252,10 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
                 else:
                     if marker != SEO_COMPILER_VERSION:
                         raise ValueError("stored release uses unsupported SEO compiler version")
+                    previous_seo = _load_previous_seo(
+                        cursor,
+                        existing["previous_release_id"],
+                    )
                     released = bool(
                         existing["seo_released"]
                         and existing["seo_release_cohort"] in {500, 2000, 10000}
@@ -141,13 +278,11 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
                             )
                         ):
                             raise ValueError("stored release SEO projection is incomplete")
-                        expected_seo = compile_seo_projection(
+                        expected_seo = _compile_expected_release_seo(
                             projection,
-                            context=SeoEligibilityContext(
-                                active_revision_id=manifest.release_id,
-                                public_ready=True,
-                                released=released,
-                            ),
+                            release_id=manifest.release_id,
+                            released=released,
+                            previous=previous_seo,
                         )
                         try:
                             stored_projection = SeoProjection.model_validate(row["seo_projection"])
@@ -187,20 +322,9 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
         active_release_id = state["active_release_id"] if state else None
         if manifest.previous_release_id and manifest.previous_release_id != active_release_id:
             raise ValueError("bundle previous_release_id does not match the active release")
-        previous_seo: dict[str, SeoProjection] = {}
-        if seo_storage and active_release_id:
-            cursor.execute(
-                """
-                SELECT inn, seo_projection
-                FROM public_company_projections
-                WHERE release_id=%s AND seo_projection IS NOT NULL
-                """,
-                (active_release_id,),
-            )
-            previous_seo = {
-                row["inn"]: SeoProjection.model_validate(row["seo_projection"])
-                for row in cursor.fetchall()
-            }
+        previous_seo = (
+            _load_previous_seo(cursor, active_release_id) if seo_storage else {}
+        )
 
         release_values = (
             manifest.release_id,
@@ -245,14 +369,11 @@ def import_release(connection, bundle_dir: Path, expected_release_id: str | None
                 projection.publication.index_eligible,
             )
             if seo_storage:
-                seo = compile_seo_projection(
+                seo = _compile_expected_release_seo(
                     projection,
-                    context=SeoEligibilityContext(
-                        active_revision_id=manifest.release_id,
-                        public_ready=True,
-                        released=False,
-                    ),
-                    previous=previous_seo.get(projection.company.inn),
+                    release_id=manifest.release_id,
+                    released=False,
+                    previous=previous_seo,
                 )
                 cursor.execute(
                     """

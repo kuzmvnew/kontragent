@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import gzip
+import json
 import os
+import subprocess
+import sys
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +21,7 @@ from public_app.seo import (
     SEO_COMPILER_VERSION,
     SeoDecision,
     SeoEligibilityContext,
+    SeoProjection,
     compile_seo_projection,
     sitemap_shard,
 )
@@ -39,23 +43,31 @@ def bundle(
     *,
     name_prefix: str = "ООО ТЕСТ",
     sequence_start: int = 100_000_000,
+    technical_timestamp: datetime | None = None,
+    visible_change_indexes: frozenset[int] = frozenset(),
 ) -> Path:
     path = tmp_path / release_id
     path.mkdir()
     projections = forty_projections(release_id, sequence_start=sequence_start)
-    if name_prefix != "ООО ТЕСТ":
-        renamed = []
-        for item in projections:
+    if name_prefix != "ООО ТЕСТ" or technical_timestamp or visible_change_indexes:
+        rewritten = []
+        for index, item in enumerate(projections):
             value = item.model_dump(mode="json")
             suffix = item.company.inn
-            value["company"]["name"] = f"{name_prefix} {suffix}"
-            value["company"]["full_name"] = f"{name_prefix} ПОЛНОЕ {suffix}"
-            renamed.append(PublicProjection.model_validate(value))
-        projections = renamed
+            if name_prefix != "ООО ТЕСТ":
+                value["company"]["name"] = f"{name_prefix} {suffix}"
+                value["company"]["full_name"] = f"{name_prefix} ПОЛНОЕ {suffix}"
+            if technical_timestamp:
+                value["publication"]["published_at"] = technical_timestamp
+                value["publication"]["content_updated_at"] = technical_timestamp
+            if index in visible_change_indexes:
+                value["company"]["address"] = f"г. Екатеринбург, изменение {index}"
+            rewritten.append(PublicProjection.model_validate(value))
+        projections = rewritten
     with gzip.open(path / "companies.jsonl.gz", "wt", encoding="utf-8", newline="\n") as stream:
         for item in projections:
             stream.write(canonical_json(item.model_dump(mode="json")).decode() + "\n")
-    now = datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
+    now = technical_timestamp or datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
     manifest = ReleaseManifest(
         schema_version="public-projection-v1", release_id=release_id,
         source_main_sha="9b00e84ac5c81ae405e191e614a29ac35182c6c3",
@@ -73,6 +85,23 @@ def bundle(
 def authorize_seo_release(connection, release_id: str) -> None:
     """Test-only explicit cohort activation with complete persisted SEO rows."""
 
+    previous_release_id = connection.execute(
+        "SELECT previous_release_id FROM public_releases WHERE release_id=%s",
+        (release_id,),
+    ).fetchone()[0]
+    previous = {}
+    if previous_release_id:
+        previous = {
+            inn: SeoProjection.model_validate(seo_projection)
+            for inn, seo_projection in connection.execute(
+                """
+                SELECT inn, seo_projection
+                FROM public_company_projections
+                WHERE release_id=%s AND seo_projection IS NOT NULL
+                """,
+                (previous_release_id,),
+            ).fetchall()
+        }
     rows = connection.execute(
         "SELECT inn, payload FROM public_company_projections WHERE release_id=%s",
         (release_id,),
@@ -86,6 +115,7 @@ def authorize_seo_release(connection, release_id: str) -> None:
                 public_ready=True,
                 released=True,
             ),
+            previous=previous.get(inn),
         )
         connection.execute(
             """
@@ -228,6 +258,35 @@ def active_release() -> str | None:
         return connection.execute("SELECT active_release_id FROM public_publication_state WHERE singleton=TRUE").fetchone()[0]
 
 
+def stored_release_snapshot(connection, release_id: str) -> tuple:
+    """Return every persisted field protected by repeated-import verification."""
+
+    release = connection.execute(
+        """
+        SELECT release_id, schema_version, source_main_sha, previous_release_id,
+               created_at, record_count, manifest_sha256, status,
+               seo_contract_version, seo_release_cohort, seo_released
+        FROM public_releases WHERE release_id=%s
+        """,
+        (release_id,),
+    ).fetchone()
+    rows = connection.execute(
+        """
+        SELECT inn, payload_sha256, seo_projection, seo_decision,
+               seo_compiler_version, search_visible_hash,
+               non_identity_content_hash, sitemap_shard,
+               seo_content_updated_at
+        FROM public_company_projections
+        WHERE release_id=%s ORDER BY inn
+        """,
+        (release_id,),
+    ).fetchall()
+    active = connection.execute(
+        "SELECT active_release_id FROM public_publication_state WHERE singleton=TRUE"
+    ).fetchone()[0]
+    return release, rows, active
+
+
 def test_atomic_import_and_idempotent_repeat(tmp_path):
     first = bundle(tmp_path, "public-v1-test-a")
     with psycopg.connect(TEST_URL) as connection:
@@ -315,6 +374,7 @@ def test_native_v2_reimport_verifies_derived_state_and_detects_tamper(tmp_path):
             ("public-v2-native-repeat",),
         ).fetchone()[0]
     assert imported["idempotent"] is False
+    assert imported["active"] is True
     assert repeated["idempotent"] is True
     assert marker == SEO_COMPILER_VERSION
 
@@ -332,6 +392,375 @@ def test_native_v2_reimport_verifies_derived_state_and_detects_tamper(tmp_path):
         ValueError, match="does not match repeated bundle"
     ):
         import_release(connection, release)
+
+
+def test_native_v2_reimport_replays_original_predecessor_context_without_writes(tmp_path):
+    first_id = "public-v2-replay-a"
+    second_id = "public-v2-replay-b"
+    first_timestamp = datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
+    second_timestamp = first_timestamp + timedelta(days=1)
+    first = bundle(tmp_path, first_id, technical_timestamp=first_timestamp)
+    second = bundle(
+        tmp_path,
+        second_id,
+        previous=first_id,
+        technical_timestamp=second_timestamp,
+    )
+
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        imported = import_release(connection, second)
+        timestamps = connection.execute(
+            """
+            SELECT a.inn, a.search_visible_hash, b.search_visible_hash,
+                   a.seo_content_updated_at, b.seo_content_updated_at
+            FROM public_company_projections a
+            JOIN public_company_projections b USING (inn)
+            WHERE a.release_id=%s AND b.release_id=%s
+            ORDER BY a.inn
+            """,
+            (first_id, second_id),
+        ).fetchall()
+        before = stored_release_snapshot(connection, second_id)
+    assert imported["idempotent"] is False
+    assert len(timestamps) == 40
+    assert all(a_hash == b_hash for _, a_hash, b_hash, _, _ in timestamps)
+    assert all(a_time == b_time == first_timestamp for _, _, _, a_time, b_time in timestamps)
+
+    restarted = subprocess.run(
+        [
+            sys.executable,
+            "scripts/import_public_release.py",
+            str(second),
+            "--database-url",
+            TEST_URL,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert restarted.returncode == 0, restarted.stderr
+    repeats = [json.loads(restarted.stdout)]
+    with psycopg.connect(TEST_URL) as connection:
+        assert stored_release_snapshot(connection, second_id) == before
+
+    for _ in range(2):
+        with psycopg.connect(TEST_URL) as connection:
+            repeats.append(import_release(connection, second))
+            assert stored_release_snapshot(connection, second_id) == before
+    assert all(result["idempotent"] is True for result in repeats)
+    assert all(result["active"] is True for result in repeats)
+
+
+def test_native_v2_reimport_with_changed_visible_content_uses_new_timestamp(tmp_path):
+    first_id = "public-v2-visible-change-a"
+    second_id = "public-v2-visible-change-b"
+    first_timestamp = datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
+    second_timestamp = first_timestamp + timedelta(days=1)
+    first = bundle(tmp_path, first_id, technical_timestamp=first_timestamp)
+    second = bundle(
+        tmp_path,
+        second_id,
+        previous=first_id,
+        name_prefix="ООО ИЗМЕНЁННЫЙ ТЕСТ",
+        technical_timestamp=second_timestamp,
+    )
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        import_release(connection, second)
+        rows = connection.execute(
+            """
+            SELECT a.search_visible_hash, b.search_visible_hash,
+                   b.seo_content_updated_at
+            FROM public_company_projections a
+            JOIN public_company_projections b USING (inn)
+            WHERE a.release_id=%s AND b.release_id=%s
+            """,
+            (first_id, second_id),
+        ).fetchall()
+        repeated = import_release(connection, second)
+    assert len(rows) == 40
+    assert all(a_hash != b_hash for a_hash, b_hash, _ in rows)
+    assert all(timestamp == second_timestamp for _, _, timestamp in rows)
+    assert repeated["idempotent"] is True
+
+
+def test_native_v2_mixed_release_replays_partial_predecessor_per_inn(tmp_path):
+    first_id = "public-v2-mixed-a"
+    second_id = "public-v2-mixed-b"
+    first_timestamp = datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
+    second_timestamp = first_timestamp + timedelta(days=1)
+    changed_indexes = frozenset(range(10, 20))
+    missing_indexes = frozenset(range(35, 40))
+    projections = forty_projections(first_id)
+    changed_inns = {projections[index].company.inn for index in changed_indexes}
+    missing_inns = {projections[index].company.inn for index in missing_indexes}
+    first = bundle(tmp_path, first_id, technical_timestamp=first_timestamp)
+    second = bundle(
+        tmp_path,
+        second_id,
+        previous=first_id,
+        technical_timestamp=second_timestamp,
+        visible_change_indexes=changed_indexes,
+    )
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        first_hashes = dict(
+            connection.execute(
+                """
+                SELECT inn, search_visible_hash
+                FROM public_company_projections WHERE release_id=%s
+                """,
+                (first_id,),
+            ).fetchall()
+        )
+        connection.execute(
+            """
+            UPDATE public_company_projections
+            SET seo_projection=NULL, seo_decision=NULL, seo_compiler_version=NULL,
+                search_visible_hash=NULL, non_identity_content_hash=NULL,
+                sitemap_shard=NULL, seo_content_updated_at=NULL
+            WHERE release_id=%s AND inn = ANY(%s)
+            """,
+            (first_id, list(missing_inns)),
+        )
+        import_release(connection, second)
+        second_rows = {
+            inn: (search_hash, timestamp)
+            for inn, search_hash, timestamp in connection.execute(
+                """
+                SELECT inn, search_visible_hash, seo_content_updated_at
+                FROM public_company_projections WHERE release_id=%s
+                """,
+                (second_id,),
+            ).fetchall()
+        }
+        repeated = import_release(connection, second)
+
+    unchanged_inns = set(second_rows) - changed_inns - missing_inns
+    assert len(second_rows) == 40
+    assert all(second_rows[inn] == (first_hashes[inn], first_timestamp) for inn in unchanged_inns)
+    assert all(
+        second_rows[inn][0] != first_hashes[inn]
+        and second_rows[inn][1] == second_timestamp
+        for inn in changed_inns
+    )
+    assert all(
+        second_rows[inn] == (first_hashes[inn], second_timestamp)
+        for inn in missing_inns
+    )
+    assert repeated["idempotent"] is True
+
+
+def test_native_v2_reimport_uses_empty_context_for_legacy_predecessor(tmp_path):
+    first_id = "public-v1-legacy-predecessor"
+    second_id = "public-v2-after-legacy"
+    second_timestamp = datetime(2026, 9, 26, 7, 0, tzinfo=UTC)
+    first = bundle(tmp_path, first_id)
+    second = bundle(
+        tmp_path,
+        second_id,
+        previous=first_id,
+        technical_timestamp=second_timestamp,
+    )
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        connection.execute(
+            """
+            UPDATE public_releases
+            SET seo_contract_version=NULL, seo_release_cohort=NULL, seo_released=FALSE
+            WHERE release_id=%s
+            """,
+            (first_id,),
+        )
+        connection.execute(
+            """
+            UPDATE public_company_projections
+            SET seo_projection=NULL, seo_decision=NULL, seo_compiler_version=NULL,
+                search_visible_hash=NULL, non_identity_content_hash=NULL,
+                sitemap_shard=NULL, seo_content_updated_at=NULL
+            WHERE release_id=%s
+            """,
+            (first_id,),
+        )
+        import_release(connection, second)
+        timestamps = connection.execute(
+            """
+            SELECT seo_content_updated_at FROM public_company_projections
+            WHERE release_id=%s
+            """,
+            (second_id,),
+        ).fetchall()
+        repeated = import_release(connection, second)
+    assert len(timestamps) == 40
+    assert all(timestamp == second_timestamp for (timestamp,) in timestamps)
+    assert repeated["idempotent"] is True
+
+
+def test_malformed_predecessor_seo_fails_closed_before_new_activation(tmp_path):
+    first_id = "public-v2-malformed-parent-a"
+    second_id = "public-v2-malformed-parent-b"
+    first = bundle(tmp_path, first_id)
+    second = bundle(tmp_path, second_id, previous=first_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        inn, stored = connection.execute(
+            """
+            SELECT inn, seo_projection FROM public_company_projections
+            WHERE release_id=%s ORDER BY inn LIMIT 1
+            """,
+            (first_id,),
+        ).fetchone()
+        stored["metadata"]["title"] += " forged"
+        connection.execute(
+            """
+            UPDATE public_company_projections SET seo_projection=%s
+            WHERE release_id=%s AND inn=%s
+            """,
+            (Jsonb(stored), first_id, inn),
+        )
+    with psycopg.connect(TEST_URL) as connection, pytest.raises(
+        ValueError, match="predecessor release SEO projection is not canonical"
+    ):
+        import_release(connection, second)
+    assert active_release() == first_id
+    with psycopg.connect(TEST_URL) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM public_releases WHERE release_id=%s",
+            (second_id,),
+        ).fetchone()[0] == 0
+
+
+def test_native_v2_reimport_rejects_timestamp_and_lineage_tamper(tmp_path):
+    first_id = "public-v2-timestamp-parent-a"
+    second_id = "public-v2-timestamp-parent-b"
+    first = bundle(tmp_path, first_id)
+    second = bundle(tmp_path, second_id, previous=first_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        import_release(connection, second)
+        inn, stored = connection.execute(
+            """
+            SELECT inn, seo_projection FROM public_company_projections
+            WHERE release_id=%s ORDER BY inn LIMIT 1
+            """,
+            (second_id,),
+        ).fetchone()
+        tampered = datetime.fromisoformat(stored["content_updated_at"]) + timedelta(days=2)
+        stored["content_updated_at"] = tampered.isoformat()
+        connection.execute(
+            """
+            UPDATE public_company_projections
+            SET seo_projection=%s, seo_content_updated_at=%s
+            WHERE release_id=%s AND inn=%s
+            """,
+            (Jsonb(stored), tampered, second_id, inn),
+        )
+    with psycopg.connect(TEST_URL) as connection, pytest.raises(
+        ValueError, match="does not match repeated bundle"
+    ):
+        import_release(connection, second)
+    assert active_release() == second_id
+
+    with psycopg.connect(TEST_URL) as connection:
+        connection.execute(
+            "UPDATE public_releases SET previous_release_id=%s WHERE release_id=%s",
+            (second_id, second_id),
+        )
+    with psycopg.connect(TEST_URL) as connection, pytest.raises(
+        ValueError, match="previous_release_id"
+    ):
+        import_release(connection, second)
+    assert active_release() == second_id
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "search_visible_hash",
+        "metadata",
+        "eligibility",
+        "json_ld",
+        "non_identity_content_hash",
+        "sitemap_shard",
+    ),
+)
+def test_native_v2_reimport_rejects_current_release_seo_tamper(tmp_path, case):
+    first_id = f"public-v2-current-{case}-a"
+    second_id = f"public-v2-current-{case}-b"
+    first = bundle(tmp_path, first_id)
+    second = bundle(tmp_path, second_id, previous=first_id)
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        import_release(connection, second)
+        inn, stored = connection.execute(
+            """
+            SELECT inn, seo_projection FROM public_company_projections
+            WHERE release_id=%s ORDER BY inn LIMIT 1
+            """,
+            (second_id,),
+        ).fetchone()
+        scalar_update = ""
+        scalar_value = None
+        if case == "search_visible_hash":
+            scalar_value = stored[case] = "0" * 64
+            scalar_update = ", search_visible_hash=%s"
+        elif case == "metadata":
+            stored["metadata"]["title"] += " forged"
+        elif case == "eligibility":
+            stored["eligibility"]["reason_codes"] = ["PUBLIC_NOT_READY"]
+        elif case == "json_ld":
+            stored["json_ld"]["@graph"][0]["name"] += " forged"
+        elif case == "non_identity_content_hash":
+            scalar_value = stored[case] = "0" * 64
+            scalar_update = ", non_identity_content_hash=%s"
+        else:
+            scalar_value = stored[case] = "0" if stored[case] != "0" else "1"
+            scalar_update = ", sitemap_shard=%s"
+        parameters = [Jsonb(stored)]
+        if scalar_update:
+            parameters.append(scalar_value)
+        parameters.extend((second_id, inn))
+        connection.execute(
+            f"""
+            UPDATE public_company_projections
+            SET seo_projection=%s{scalar_update}
+            WHERE release_id=%s AND inn=%s
+            """,
+            tuple(parameters),
+        )
+    with psycopg.connect(TEST_URL) as connection, pytest.raises(
+        ValueError, match="does not match repeated bundle"
+    ):
+        import_release(connection, second)
+    assert active_release() == second_id
+
+
+def test_native_v2_reimport_replays_predecessor_for_released_context(tmp_path):
+    first_id = "public-v2-released-parent-a"
+    second_id = "public-v2-released-parent-b"
+    first = bundle(tmp_path, first_id)
+    second = bundle(
+        tmp_path,
+        second_id,
+        previous=first_id,
+        technical_timestamp=datetime(2026, 9, 26, 7, 0, tzinfo=UTC),
+    )
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+        import_release(connection, second)
+        authorize_seo_release(connection, second_id)
+        repeated = import_release(connection, second)
+        decisions = connection.execute(
+            """
+            SELECT DISTINCT seo_decision FROM public_company_projections
+            WHERE release_id=%s
+            """,
+            (second_id,),
+        ).fetchall()
+    assert repeated["idempotent"] is True
+    assert decisions == [(SeoDecision.INDEX.value,)]
 
 
 def test_partial_seo_storage_and_stored_noindex_are_fail_closed(tmp_path):

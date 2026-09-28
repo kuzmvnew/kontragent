@@ -1,6 +1,6 @@
 # SEO 10K implementation foundation
 
-Task: `SEO-10K-IMPL-01-A-CORRECTION-03`
+Task: `SEO-10K-IMPL-01-A-CORRECTION-04`
 
 Status: implemented and locally testable; **not production accepted**
 
@@ -50,14 +50,20 @@ per catalog page, application memory is O(256 + 24), and no 10K list of full
 read-only `REPEATABLE READ` transaction so a response cannot mix releases.
 Legacy rows and partial storage produce no membership; valid stored NOINDEX
 always wins over what a runtime compiler might otherwise derive. The 16 stable
-company shards use the first hexadecimal digit of SHA-256(INN). Import reuses
-the prior SEO `content_updated_at` when `search_visible_hash` is unchanged.
+company shards use the first hexadecimal digit of SHA-256(INN). SEO
+`content_updated_at` changes only when search-visible content changes; a
+technical publication alone does not change it.
 
 Repeated import distinguishes a legacy release by its null release-level SEO
 contract marker. Such a release must still have all derived SEO fields null and
 is accepted idempotently without mutation. A native-v2 release has a compiler
 marker and must reproduce every stored derived field; partial or tampered state
-fails.
+fails. Both first import and repeated verification compile through the same
+derivation path. Repeated verification reloads the exact persisted
+`previous_release_id` chain, verifies usable predecessor SEO fail-closed and
+therefore reproduces the original canonical timestamp without trusting the
+current release as its own history. Missing legacy or per-company predecessor
+SEO contributes `previous=None`; no historical state is fabricated.
 
 ## Commands
 

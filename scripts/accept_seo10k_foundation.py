@@ -134,6 +134,14 @@ IMPLEMENTATION_GATE_SPECS = (
         (
             "tests/test_public_release_postgres.py::test_legacy_v1_reimport_after_v2_is_idempotent_without_backfill",
             "tests/test_public_release_postgres.py::test_native_v2_reimport_verifies_derived_state_and_detects_tamper",
+            "tests/test_public_release_postgres.py::test_native_v2_reimport_replays_original_predecessor_context_without_writes",
+            "tests/test_public_release_postgres.py::test_native_v2_reimport_with_changed_visible_content_uses_new_timestamp",
+            "tests/test_public_release_postgres.py::test_native_v2_mixed_release_replays_partial_predecessor_per_inn",
+            "tests/test_public_release_postgres.py::test_native_v2_reimport_uses_empty_context_for_legacy_predecessor",
+            "tests/test_public_release_postgres.py::test_malformed_predecessor_seo_fails_closed_before_new_activation",
+            "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_timestamp_and_lineage_tamper",
+            "tests/test_public_release_postgres.py::test_native_v2_reimport_rejects_current_release_seo_tamper",
+            "tests/test_public_release_postgres.py::test_native_v2_reimport_replays_predecessor_for_released_context",
             "tests/test_public_release_postgres.py::test_checksum_corruption_preserves_active_release",
         ),
     ),
@@ -265,7 +273,7 @@ def build_evidence(
         for gate_id, name in RELEASE_GATES.items()
     }
     return {
-        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-03",
+        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-04",
         "repository": "kuzmvnew/kontragent",
         "base_sha": BASE_SHA,
         "head_sha": head_sha,
