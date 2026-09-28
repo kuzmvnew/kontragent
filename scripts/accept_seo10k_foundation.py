@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "SEO-10K_RELEASE_CONTRACT.md"
 CONTRACT_SHA256 = "051b13f14a09d25f6bc9f7ec1079cab65bbc02db0c439e33838b32010bfdd599"
-BASE_SHA = "5b0e1e8d4e05325a8f9a4549b6154bdba3ec654c"
+BASE_SHA = "08839ee701c4bbacaefdca0a6f0c287ad84eb0d5"
 
 RELEASE_GATES = {
     "SEO10K-A01": "Input integrity",
@@ -273,7 +273,7 @@ def build_evidence(
         for gate_id, name in RELEASE_GATES.items()
     }
     return {
-        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-04",
+        "task_id": "SEO-10K-IMPL-01-A-CORRECTION-04-REBASE",
         "repository": "kuzmvnew/kontragent",
         "base_sha": BASE_SHA,
         "head_sha": head_sha,
