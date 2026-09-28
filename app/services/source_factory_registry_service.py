@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.contracts.data_readiness import AutoUpdateStatus, OperationalStatus
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import (
+    canonical_dataset_applicability,
+)
 from app.services.source_applicability_service import parse_source_applicability
 
 
@@ -369,10 +372,13 @@ def registry_applicability_inventory() -> dict[str, int]:
     """Return validation counts without inventing policy for incomplete specs."""
 
     missing = invalid = 0
-    for spec in DATASETS.values():
+    for code, spec in DATASETS.items():
         if "applicability" not in spec:
             missing += 1
-        elif parse_source_applicability(spec["applicability"]) is None:
+        elif (
+            parse_source_applicability(spec["applicability"]) is None
+            or spec["applicability"] != canonical_dataset_applicability(code)
+        ):
             invalid += 1
     return {
         "total": len(DATASETS),
@@ -386,6 +392,9 @@ def _factory_metadata(code: str, spec: dict) -> dict:
     applicability = spec.get("applicability")
     if parse_source_applicability(applicability) is None:
         raise ValueError(f"{code}: explicit valid applicability is required")
+    canonical_applicability = canonical_dataset_applicability(code)
+    if applicability != canonical_applicability:
+        raise ValueError(f"{code}: applicability differs from canonical policy")
     adverse_domains = {
         "legal_events",
         "arbitration_courts",
@@ -413,9 +422,7 @@ def _factory_metadata(code: str, spec: dict) -> dict:
         "coverage_role": (
             "identity" if spec["domain"] == "registry" else "supporting"
         ),
-        "applicability": {
-            "entity_types": list(applicability["entity_types"]),
-        },
+        "applicability": canonical_applicability,
         "freshness": {
             "policy": spec["freshness_policy"],
             "schedule": spec["refresh_schedule"],

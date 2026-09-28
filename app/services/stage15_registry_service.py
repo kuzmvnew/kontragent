@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 
 SOURCES = {
@@ -41,6 +42,7 @@ def ensure_stage15_dataset(source_code: str) -> int:
         dataset_values = {
             "source_id": source_id,
             "code": dataset_code,
+            "applicability": canonical_dataset_applicability(dataset_code),
             "name": dataset_name,
             "domain": domain,
             "update_mode": "api",

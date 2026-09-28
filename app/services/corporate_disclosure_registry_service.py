@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 
 SOURCE_CODE = "prime_disclosure"
@@ -27,6 +28,7 @@ def ensure_corporate_disclosure_dataset() -> None:
         dataset_values = {
             "source_id": source_id,
             "code": DATASET_CODE,
+            "applicability": canonical_dataset_applicability(DATASET_CODE),
             "name": "ПРАЙМ: корпоративное раскрытие",
             "domain": "corporate_disclosure",
             "update_mode": "api",

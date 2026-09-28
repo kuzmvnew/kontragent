@@ -19,6 +19,7 @@ from app.models.registry_master import MasterReplaySignal
 from app.models.source import DataSet
 from app.services.replay_readiness_service import (
     operational_replay_predicates,
+    signal_is_resolved_by_run_clause,
     unresolved_replay_exists_clause,
 )
 from app.services.source_applicability_service import (
@@ -266,6 +267,38 @@ def collect_factory_metrics(
     )
     queues["master_replay_applicability_unknown"] = replay_count(
         SourceApplicability.UNKNOWN
+    )
+    latest_signal_run_id = (
+        select(CompanyEnrichmentRun.id)
+        .where(CompanyEnrichmentRun.company_id == MasterReplaySignal.company_id)
+        .order_by(
+            CompanyEnrichmentRun.created_at.desc(),
+            CompanyEnrichmentRun.id.desc(),
+        )
+        .limit(1)
+        .correlate(MasterReplaySignal)
+        .scalar_subquery()
+    )
+    queues["master_replay_failed_blocking"] = int(
+        session.scalar(
+            select(func.count(MasterReplaySignal.id))
+            .join(DataSet, DataSet.code == MasterReplaySignal.target_source_id)
+            .join(Company, Company.id == MasterReplaySignal.company_id)
+            .where(
+                MasterReplaySignal.status == "failed",
+                *operational_replay_predicates(DataSet, now=observed_at),
+                applicability.in_(
+                    (
+                        SourceApplicability.APPLICABLE.value,
+                        SourceApplicability.UNKNOWN.value,
+                    )
+                ),
+                ~signal_is_resolved_by_run_clause(
+                    MasterReplaySignal, latest_signal_run_id
+                ),
+            )
+        )
+        or 0
     )
     generation_counts = dict(
         session.execute(

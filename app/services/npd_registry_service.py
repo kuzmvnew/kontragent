@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 
 DATASET_CODE = "fns_npd"
@@ -36,6 +37,7 @@ def ensure_npd_dataset():
         values = {
             "source_id": source.id,
             "code": DATASET_CODE,
+            "applicability": canonical_dataset_applicability(DATASET_CODE),
             "name": (
                 "ФНС: Статус плательщика НПД"
             ),

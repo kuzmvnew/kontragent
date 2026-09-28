@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 
 SOURCES = {
@@ -12,12 +13,15 @@ SOURCES = {
 
 
 def build_sro_dataset_specs(source_ids):
-    return [
+    specs = [
         {"source_id": source_ids["nostroy"], "code": "nostroy_sro_members_on_demand", "name": "НОСТРОЙ: члены строительных СРО", "domain": "sro_membership", "update_mode": "api", "data_format": "json", "refresh_schedule": "on_demand", "priority": 10, "enabled": True, "source_url": "https://reestr.nostroy.ru/sro/all/member/list", "description": "Exact-INN dated cache; current and historical membership."},
         {"source_id": source_ids["nopriz"], "code": "nopriz_sro_members_on_demand", "name": "НОПРИЗ: члены СРО изыскателей и проектировщиков", "domain": "sro_membership", "update_mode": "api", "data_format": "json", "refresh_schedule": "on_demand", "priority": 10, "enabled": True, "source_url": "https://reestr.nopriz.ru/sro/all/member/list", "description": "Exact-INN dated cache; current and historical membership."},
         {"source_id": source_ids["nopriz"], "code": "nopriz_nrs_private_on_demand", "name": "НРС НОПРИЗ: специалисты", "domain": "professional_registry_private", "update_mode": "api", "data_format": "json", "refresh_schedule": "on_demand", "priority": 10, "enabled": True, "source_url": "https://nrs.nopriz.ru/", "description": "Exact official registration-number lookup; PRIVATE_INTERNAL only."},
         {"source_id": source_ids["nostroy"], "code": "nostroy_nrs_protected", "name": "НРС НОСТРОЙ: специалисты", "domain": "professional_registry_private", "update_mode": "api", "data_format": "html_images", "refresh_schedule": "manual", "priority": 10, "enabled": False, "source_url": "https://nrs.nostroy.ru/", "description": "Public view protects identifiers as images; automatic decoding disabled pending access/legal review."},
     ]
+    for spec in specs:
+        spec["applicability"] = canonical_dataset_applicability(spec["code"])
+    return specs
 
 
 def ensure_sro_datasets():
