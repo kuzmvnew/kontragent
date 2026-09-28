@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 
 SOURCE_CODE = "roszdravnadzor"
@@ -30,7 +31,7 @@ def build_roszdrav_source_spec() -> dict:
 
 def build_roszdrav_dataset_specs(source_id: int) -> list[dict]:
     common = {"source_id": source_id, "priority": 10, "enabled": True}
-    return [
+    specs = [
         {**common, "code": LICENSE_DATASETS["pharma"], "name": "Росздравнадзор: лицензии на фармацевтическую деятельность", "domain": "healthcare_licenses", "update_mode": "bulk", "data_format": "zip_xml", "refresh_schedule": "weekly", "source_url": "https://roszdravnadzor.gov.ru/opendata/7710537160-ls_licenses", "description": "Официальный полный XML snapshot лицензий по фармацевтической деятельности."},
         {**common, "code": LICENSE_DATASETS["narcotics"], "name": "Росздравнадзор: лицензии на оборот наркотических средств", "domain": "healthcare_licenses", "update_mode": "bulk", "data_format": "zip_xml", "refresh_schedule": "weekly", "source_url": "https://roszdravnadzor.gov.ru/opendata/7710537160-nark_licenses", "description": "Официальный полный XML snapshot лицензий по обороту наркотических средств и психотропных веществ."},
         {**common, "code": LICENSE_DATASETS["medical_device_maintenance"], "name": "Росздравнадзор: лицензии на обслуживание медицинских изделий", "domain": "healthcare_licenses", "update_mode": "bulk", "data_format": "zip_xml", "refresh_schedule": "weekly", "source_url": "https://roszdravnadzor.gov.ru/opendata/7710537160-md_licenses", "description": "Официальный полный XML snapshot лицензий на техническое обслуживание медицинских изделий."},
@@ -38,6 +39,9 @@ def build_roszdrav_dataset_specs(source_id: int) -> list[dict]:
         {**common, "code": MEDICAL_DEVICE_DATASET, "name": "Росздравнадзор: государственный реестр медицинских изделий", "domain": "medical_devices", "update_mode": "api", "data_format": "json", "refresh_schedule": "on_demand", "source_url": "https://elk.roszdravnadzor.gov.ru/widget/", "description": "Lookup по точному номеру регистрационного удостоверения. Автопривязка к Company запрещена: публичный ответ не содержит ИНН/ОГРН производителя."},
         {**common, "code": CLINICAL_ORG_DATASET, "name": "Росздравнадзор: организации для клинических исследований медицинских изделий", "domain": "healthcare_permissions", "update_mode": "bulk", "data_format": "csv", "refresh_schedule": "weekly", "source_url": "https://roszdravnadzor.gov.ru/opendata/7710537160-organizations", "description": "Официальный полный CSV-перечень организаций с exact ИНН."},
     ]
+    for spec in specs:
+        spec["applicability"] = canonical_dataset_applicability(spec["code"])
+    return specs
 
 
 def ensure_roszdrav_datasets() -> None:

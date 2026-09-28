@@ -6,6 +6,9 @@ from app.models.source import (
     DataSet,
     DataSource,
 )
+from app.services.dataset_applicability_policy import (
+    canonical_dataset_applicability,
+)
 
 
 # =========================================================
@@ -414,6 +417,14 @@ DEFAULT_DATASETS = [
     },
 ]
 
+# Registration consumes the shared provisioning policy. Runtime decisions
+# continue to read only the persisted DataSet.applicability value.
+for _dataset_spec in DEFAULT_DATASETS:
+    _dataset_spec["applicability"] = canonical_dataset_applicability(
+        _dataset_spec["code"]
+    )
+del _dataset_spec
+
 
 # =========================================================
 # SYNC REGISTRY
@@ -631,6 +642,11 @@ def sync_default_registry():
                         "description": (
                             values[
                                 "description"
+                            ]
+                        ),
+                        "applicability": (
+                            values[
+                                "applicability"
                             ]
                         ),
                     },

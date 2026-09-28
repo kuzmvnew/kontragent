@@ -5,6 +5,7 @@ from app.models.source import (
     DataSet,
     DataSource,
 )
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 
 DATASET_CODE = "fns_tax_offence"
@@ -144,6 +145,7 @@ def main():
         dataset = DataSet(
             source_id=source.id,
             code=DATASET_CODE,
+            applicability=canonical_dataset_applicability(DATASET_CODE),
             name=DATASET_NAME,
             domain="tax_offence",
             update_mode="bulk",

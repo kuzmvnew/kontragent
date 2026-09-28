@@ -1433,6 +1433,84 @@ def test_replay_signal_already_terminally_represented_does_not_false_block(
         session.rollback()
 
 
+def test_failed_replay_blocks_all_read_guards_but_not_actionable_backlog(
+    tmp_path,
+):
+    with Session(engine) as session:
+        baseline_pressure = collect_factory_pressure(
+            session, raw_root=tmp_path, now=NOW
+        )
+        baseline_metrics = collect_factory_metrics(
+            session, window_hours=1, now=NOW, enforce_read_only=False
+        )
+        company, _signals, run, _dataset, signal = (
+            _legacy_ready_run_with_replay_outside_coverage(
+                session,
+                tmp_path,
+                applicability={"entity_types": ["legal"]},
+            )
+        )
+        signal.status = "failed"
+        signal.last_error = "fixture failure"
+        signal.completed_at = NOW + timedelta(minutes=1)
+        session.flush()
+
+        readiness = get_company_public_readiness(session, company.id)
+        assert readiness["ready"] is False
+        assert readiness["unresolved_replay"] is True
+        assert publication_service._run_is_current_and_public_ready(session, run) is False
+        assert enrichment_service._current_public_ready_run(session, run) is False
+        assert publishable_runs(session, [company]) == {}
+        ranked = factory_generation_service._latest_complete_run_query(now=NOW)
+        assert company.id not in set(
+            session.scalars(
+                sa.select(ranked.c.company_id).where(ranked.c.position == 1)
+            )
+        )
+
+        pressure = collect_factory_pressure(session, raw_root=tmp_path, now=NOW)
+        metrics = collect_factory_metrics(
+            session, window_hours=1, now=NOW, enforce_read_only=False
+        )
+        assert pressure.actionable_backlog == baseline_pressure.actionable_backlog
+        assert (
+            metrics["queues"]["master_replay_actionable"]
+            == baseline_metrics["queues"]["master_replay_actionable"]
+        )
+        assert (
+            metrics["queues"]["master_replay_failed_blocking"]
+            == baseline_metrics["queues"]["master_replay_failed_blocking"] + 1
+        )
+
+        # The failed lifecycle status remains auditable. Only exact UUID
+        # coverage is allowed to prove that its requested fact was reconciled.
+        session.add(
+            CompanySourceCoverage(
+                enrichment_run_id=run.id,
+                company_id=company.id,
+                dataset_id=None,
+                source_id=signal.target_source_id,
+                worker_source_id=signal.target_source_id,
+                mode="point_check",
+                status="NOT_FOUND",
+                execution_status="succeeded",
+                source_snapshot={"fixture": True},
+                handler_version="failed-replay-coverage-v1",
+                master_replay_signal_ids=[str(signal.id)],
+                fact_count=0,
+                checked_at=NOW + timedelta(minutes=2),
+                finished_at=NOW + timedelta(minutes=2),
+                created_at=NOW + timedelta(minutes=2),
+                updated_at=NOW + timedelta(minutes=2),
+            )
+        )
+        session.flush()
+        assert signal.status == "failed"
+        assert get_company_public_readiness(session, company.id)["ready"] is True
+        assert publication_service._run_is_current_and_public_ready(session, run) is True
+        session.rollback()
+
+
 def test_legacy_recovery_targets_latest_run_and_obeys_limit(tmp_path):
     with Session(engine) as session:
         first_company, _signals, first, _dataset, first_signal = (

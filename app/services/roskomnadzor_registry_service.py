@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 SOURCE_CODE = "roskomnadzor"
 DATASETS = {
@@ -21,7 +22,7 @@ def build_roskomnadzor_source_spec():
 
 def build_roskomnadzor_dataset_specs(source_id):
     common = {"source_id": source_id, "priority": 10, "enabled": True}
-    return [
+    specs = [
         {**common, "code": DATASETS["communications"], "name": "Роскомнадзор: лицензии связи", "domain": "communications_licenses", "update_mode": "bulk", "data_format": "xml", "refresh_schedule": "manual", "source_url": "https://rkn.gov.ru/opendata/7705846236-LicComm/", "description": "Полный официальный XML snapshot; exact ИНН/ОГРН."},
         {**common, "code": DATASETS["broadcast"], "name": "Роскомнадзор: лицензии вещания", "domain": "broadcast_licenses", "update_mode": "bulk", "data_format": "xml", "refresh_schedule": "manual", "source_url": "https://rkn.gov.ru/opendata/7705846236-LicBroadcast/", "description": "Полный официальный XML snapshot; exact ИНН/ОГРН."},
         {**common, "code": DATASETS["media"], "name": "Роскомнадзор: зарегистрированные СМИ", "domain": "media_registry", "update_mode": "bulk", "data_format": "xml", "refresh_schedule": "manual", "source_url": "https://rkn.gov.ru/opendata/7705846236-ResolutionSMI/", "description": "Exact ИНН означает учредителя СМИ, но не доказывает текущий контроль."},
@@ -29,6 +30,9 @@ def build_roskomnadzor_dataset_specs(source_id):
         {**common, "code": DATASETS["hosting"], "name": "Роскомнадзор: провайдеры хостинга", "domain": "hosting_registry", "update_mode": "bulk", "data_format": "xlsx", "refresh_schedule": "manual", "source_url": "https://rkn.gov.ru/activity/connection/register/p1578/", "description": "Официальный XLSX; публичный слой очищен от контактных лиц."},
         {**common, "code": DATASETS["pd_operators"], "name": "Роскомнадзор: операторы персональных данных", "domain": "personal_data_registry", "update_mode": "api", "data_format": "html", "refresh_schedule": "on_demand", "source_url": "https://pd.rkn.gov.ru/operators-registry/operators-list/", "description": "Low-load exact-INN lookup с датированным cache; без массового обхода."},
     ]
+    for spec in specs:
+        spec["applicability"] = canonical_dataset_applicability(spec["code"])
+    return specs
 
 
 def ensure_roskomnadzor_datasets():

@@ -26,7 +26,11 @@ from app.services.source_applicability_service import (
 )
 
 
-UNRESOLVED_REPLAY_STATUSES = ("pending", "scheduled")
+ACTIONABLE_REPLAY_STATUSES = ("pending", "scheduled")
+READINESS_BLOCKING_REPLAY_STATUSES = ("pending", "scheduled", "failed")
+# Compatibility name for mutation/recovery callers.  Failed signals are
+# readiness blockers but never become actionable backlog implicitly.
+UNRESOLVED_REPLAY_STATUSES = ACTIONABLE_REPLAY_STATUSES
 BLOCKING_REPLAY_OUTCOMES = (
     SourceApplicability.APPLICABLE,
     SourceApplicability.UNKNOWN,
@@ -76,6 +80,7 @@ def unresolved_replay_exists_clause(
     *,
     now: datetime,
     outcomes: Sequence[SourceApplicability] = BLOCKING_REPLAY_OUTCOMES,
+    statuses: Sequence[str] = READINESS_BLOCKING_REPLAY_STATUSES,
 ):
     """Return a correlated EXISTS for relevant replay unresolved by ``run_id``.
 
@@ -98,7 +103,7 @@ def unresolved_replay_exists_clause(
         .join(company, company.id == signal.company_id)
         .where(
             signal.company_id == company_id,
-            signal.status.in_(UNRESOLVED_REPLAY_STATUSES),
+            signal.status.in_(tuple(statuses)),
             *operational_replay_predicates(dataset, now=now),
             decision.in_(tuple(outcome.value for outcome in outcomes)),
             ~signal_is_resolved_by_run_clause(signal, run_id),
@@ -114,6 +119,7 @@ def has_unresolved_replay(
     run_id: UUID,
     now: datetime,
     outcomes: Sequence[SourceApplicability] = BLOCKING_REPLAY_OUTCOMES,
+    statuses: Sequence[str] = READINESS_BLOCKING_REPLAY_STATUSES,
 ) -> bool:
     """Read-only current-run replay safety decision."""
 
@@ -125,6 +131,7 @@ def has_unresolved_replay(
                     run_id,
                     now=now,
                     outcomes=outcomes,
+                    statuses=statuses,
                 )
             )
         )
@@ -138,6 +145,7 @@ def unresolved_replay_signal_map(
     run_id: UUID | None,
     now: datetime,
     outcomes: Sequence[SourceApplicability],
+    statuses: Sequence[str] = ACTIONABLE_REPLAY_STATUSES,
     lock: bool = False,
     skip_locked: bool = False,
 ) -> dict[str, tuple[UUID, ...]]:
@@ -154,7 +162,7 @@ def unresolved_replay_signal_map(
         .join(Company, Company.id == MasterReplaySignal.company_id)
         .where(
             MasterReplaySignal.company_id == company_id,
-            MasterReplaySignal.status.in_(UNRESOLVED_REPLAY_STATUSES),
+            MasterReplaySignal.status.in_(tuple(statuses)),
             *operational_replay_predicates(DataSet, now=now),
             decision.in_(tuple(outcome.value for outcome in outcomes)),
             ~signal_is_resolved_by_run_clause(MasterReplaySignal, run_id),

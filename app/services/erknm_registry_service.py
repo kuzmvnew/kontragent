@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.postgres import get_session
 from app.models.source import DataSet, DataSource
+from app.services.dataset_applicability_policy import canonical_dataset_applicability
 
 
 SOURCE_CODE = "genproc"
@@ -28,6 +29,7 @@ def build_erknm_dataset_spec(source_id: int) -> dict:
     return {
         "source_id": source_id,
         "code": DATASET_CODE,
+        "applicability": canonical_dataset_applicability(DATASET_CODE),
         "name": "ФГИС ЕРКНМ: контрольные мероприятия по 248-ФЗ",
         "domain": "inspections",
         "update_mode": "bulk",

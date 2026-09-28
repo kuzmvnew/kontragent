@@ -62,7 +62,7 @@ from app.services.risk_v3_persistence_service import (
 )
 from app.services.publication_service import accepted_cohort
 from app.services.replay_readiness_service import (
-    UNRESOLVED_REPLAY_STATUSES,
+    ACTIONABLE_REPLAY_STATUSES,
     has_unresolved_replay,
     operational_replay_predicates,
     signal_is_resolved_by_run_clause,
@@ -1721,7 +1721,7 @@ def recover_legacy_replay_denominators(
             .where(
                 CompanyEnrichmentRun.id == latest_id,
                 CompanyEnrichmentRun.status == "succeeded",
-                MasterReplaySignal.status.in_(UNRESOLVED_REPLAY_STATUSES),
+                MasterReplaySignal.status.in_(ACTIONABLE_REPLAY_STATUSES),
                 *operational_replay_predicates(DataSet, now=now),
                 decision.in_(
                     (
