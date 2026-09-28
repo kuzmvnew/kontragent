@@ -181,6 +181,13 @@ def test_real_alan_firmoteka_to_semantic_official_risk_summary():
     capital = _facts(public, "capital")
     assert len(founders) == 1
     assert founders[0].selected_evidence.value["share"] == "100%"
+    assert founders[0].selected_evidence.value["identifiers"] == [
+        {"identifier_type": "INN", "value": "010701178084"}
+    ]
+    assert {item["relation_type"] for item in founders[0].selected_evidence.value["relations"]} == {
+        "FOUNDER",
+        "MANAGER",
+    }
     assert capital[0].selected_evidence.value == {"amount": "10000", "currency": "RUB"}
     assert len([item for item in public.finances if item.metric == FinanceMetricCode.REVENUE]) == 4
     assert {
@@ -276,7 +283,7 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
     revision = payload["view"]["revision"]
     assert f'data-view-revision="{revision}"' in card.text
     assert payload["view"]["contract_version"] == "company-view-v1"
-    assert len(payload["view"]["sections"]) == 21
+    assert len(payload["view"]["sections"]) == 22
     sections = {item["section_key"]: item for item in payload["view"]["sections"]}
     assert {
         "identity",
@@ -286,6 +293,7 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "activity",
         "management",
         "founders",
+        "contacts",
         "capital",
         "finances",
         "employees",
@@ -298,6 +306,7 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "freshness",
     }.issubset(sections)
     founder = sections["founders"]["items"]
+    contacts = sections["contacts"]["items"]
     capital = sections["capital"]["items"]
     finances = sections["finances"]["items"]
     employees = sections["employees"]["items"]
@@ -305,6 +314,19 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
     enforcement = sections["enforcement"]["items"]
     events = sections["events"]["items"]
     assert len(founder) == 1 and founder[0]["value"]["share"] == "100%"
+    assert founder[0]["value"]["identifiers"] == [
+        {"identifier_type": "INN", "value": "010701178084"}
+    ]
+    assert {item["relation_type"] for item in founder[0]["value"]["relations"]} == {
+        "FOUNDER",
+        "MANAGER",
+    }
+    assert founder[0]["source"]["name"] == "Firmoteka · вторичный источник"
+    assert founder[0]["source"]["source_class"] == "Публичный вторичный источник"
+    assert founder[0]["source"]["reference"] == "https://firmoteka.ru/0100000614"
+    assert founder[0]["source"]["source_data_date"]
+    assert founder[0]["source"]["retrieved_at"]
+    assert contacts == []
     assert capital[0]["value"] == {"amount": "10000", "currency": "RUB"}
     assert len([item for item in finances if item["field_key"] == "REVENUE"]) == 4
     revenue_2025 = next(item for item in finances if item["field_key"] == "REVENUE" and item["period"] == "YEAR:2025")
@@ -343,6 +365,13 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "page_sha256",
         "normalized_payload",
         "provider_row_id",
+        "source_ref",
+        "passport",
+        "passport_number",
+        "passport_series",
+        "registration_address",
+        "residential_address",
+        "home_address",
     }
     assert not (forbidden & set(_all_keys(payload)))
     rendered = api.text + card.text
@@ -353,9 +382,11 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "parser_version",
         "page_sha256",
         "provider_row_id",
-        "010701178084",
     ):
         assert value not in rendered
+    assert "010701178084" in rendered
+    assert "Чундышко Гисса Арамбиевич" in rendered
+    assert "Директор" in rendered
     for value in internal_meaning_ids:
         assert value not in rendered
     assert "facts[]" not in rendered

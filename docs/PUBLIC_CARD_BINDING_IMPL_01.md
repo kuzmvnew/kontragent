@@ -49,6 +49,8 @@ locator. Public payloads never contain `company_id`.
             "state": "Сведения найдены",
             "source": {
               "name": "Доходы и расходы по данным ФНС",
+              "source_class": "Официальные открытые данные",
+              "reference": null,
               "source_data_date": "2025-12-31",
               "retrieved_at": "<timestamp>",
               "confidence": 1.0,
@@ -57,6 +59,8 @@ locator. Public payloads never contain `company_id`.
             "alternative_sources": [
               {
                 "name": "Firmoteka · вторичный источник",
+                "source_class": "Публичный вторичный источник",
+                "reference": "https://firmoteka.ru/{inn}",
                 "source_data_date": "2025-12-31",
                 "retrieved_at": "<timestamp>",
                 "confidence": 0.75,
@@ -80,7 +84,7 @@ locator. Public payloads never contain `company_id`.
 The section order is stable:
 
 `identity`, `status`, `registration`, `address`, `activity`, `management`,
-`founders`, `capital`, `finances`, `employees`, `tax`, `enforcement`,
+`founders`, `contacts`, `capital`, `finances`, `employees`, `tax`, `enforcement`,
 `licenses`, `events`, `risk`, `summary`, `source_coverage`, `freshness`,
 `limitations`, `anchors`, `links`.
 
@@ -113,12 +117,29 @@ accepted official evidence wins and the bridge remains corroborating or
 alternative evidence. When no official equivalent exists, the bridge fact is
 the public selected evidence.
 
-Rights are assigned by field/domain, never by hiding the whole source.
-Contacts remain non-public (`AUTHENTICATED_ONLY`) even when explicitly
-normalized. Founder personal INNs, personal contact data, provider URLs,
-provider row IDs, raw payloads, checksums, and parser fields are not present in
-the public semantic value. The public provenance label is `Firmoteka ·
-вторичный источник`; the internal source code is never serialized publicly.
+Rights are assigned by field/domain, never by hiding the whole source. A
+related person is a typed value with a stable semantic `person_ref`, one or
+more `MANAGER`, `FOUNDER`, `PARTICIPANT`, `INDIVIDUAL_ENTREPRENEUR`, or
+`OTHER_PUBLIC_RELATION` relationships, `CURRENT`/`HISTORICAL` state, public
+INN/OGRNIP identifiers, related-company context, role/share, and dated
+provenance. The same person can carry several relationships without creating
+another `Company`.
+
+Actually observed public-source phones and emails are `PUBLIC` typed facts in
+the `contacts` section. Their value records `PHONE`/`EMAIL`,
+`CORPORATE`/`PERSONAL`/`UNKNOWN`, optional related-person reference and name,
+role context, related company, and current/historical state. Evidence records
+the human source name and class, permitted HTTP(S) reference, source data date,
+and retrieval time. Contact scope is metadata, not a publication gate. No
+phone or email is guessed, derived, or assigned to a person without explicit
+source context.
+
+Passport fields, passport values, registration/residential/home addresses,
+provider row IDs, raw payloads, checksums, parser fields, worker identifiers,
+credentials, non-public source references, and internal source enums remain
+forbidden by both normalization whitelists and recursive public validation.
+The public provenance label is `Firmoteka · вторичный источник`; the internal
+source code is never serialized publicly.
 
 ## Firmoteka mapping
 

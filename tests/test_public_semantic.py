@@ -8,6 +8,17 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.contracts import semantic_v4
+from app.contracts.company_view_v1 import (
+    Audience,
+    CompanyViewModelV1,
+    CompanyViewSectionV1,
+    DataState,
+)
+from app.services.company_view_service import (
+    filter_company_view,
+    normalize_firmoteka_projection,
+    select_semantic_facts,
+)
 from public_app.contracts import (
     Freshness,
     PublicCompanyViewV1,
@@ -29,6 +40,7 @@ from public_app.semantic import (
 )
 from scripts.export_public_release import (
     _index_eligible,
+    _public_company_view,
     _risk_projection,
     _summary_projection,
 )
@@ -672,14 +684,193 @@ def test_public_api_sanitizes_internal_meaning_identity_before_fail_closed_valid
     validate_public_text(payload)
 
 
+def test_public_related_person_identifiers_and_public_source_contacts_reach_api_and_ssr():
+    base = projection()
+    observed_at = datetime.fromisoformat(NOW)
+    candidates = normalize_firmoteka_projection(
+        {
+            "requested_inn": base.company.inn,
+            "rendered_inn": base.company.inn,
+            "name": base.company.name,
+            "url": f"https://firmoteka.ru/{base.company.inn}",
+            "fns_egrul_as_of": "2026-09-16",
+            "manager": "Чундышко Гисса Арамбиевич",
+            "manager_position": "Директор",
+            "manager_details": {
+                "name": "Чундышко Гисса Арамбиевич",
+                "position": "Директор",
+                "tin": "010701178084",
+                "passport_number": "NEVER-PUBLIC",
+                "home_address": "NEVER-PUBLIC",
+            },
+            "founders": [
+                {
+                    "type": "person",
+                    "title": "Физические лица (1)",
+                    "items": [
+                        {
+                            "name": "Чундышко Гисса Арамбиевич",
+                            "tin": "010701178084",
+                            "share": "100%",
+                            "date": "2022-01-19",
+                            "passport_series": "NEVER-PUBLIC",
+                            "registration_address": "NEVER-PUBLIC",
+                        }
+                    ],
+                }
+            ],
+            "contacts": {
+                "phones": [
+                    {
+                        "value": "+7 900 100-20-30",
+                        "scope": "corporate",
+                        "source_as_of": "2026-09-20",
+                    },
+                    {
+                        "value": "+7 900 100-20-31",
+                        "scope": "personal",
+                        "person_name": "Чундышко Гисса Арамбиевич",
+                        "role": "Учредитель",
+                        "source_as_of": "2026-09-20",
+                        "passport": "NEVER-PUBLIC",
+                    },
+                ],
+                "emails": [
+                    {
+                        "value": "office@example.test",
+                        "scope": "corporate",
+                        "source_as_of": "2026-09-20",
+                    },
+                    {
+                        "value": "owner@example.test",
+                        "scope": "personal",
+                        "person_name": "Чундышко Гисса Арамбиевич",
+                        "source_as_of": "2026-09-20",
+                        "residential_address": "NEVER-PUBLIC",
+                    },
+                ],
+            },
+        },
+        company_id=1,
+        snapshot_identity="snapshot:public-person-contact",
+        retrieved_at=observed_at,
+    )
+    facts = select_semantic_facts(candidates, observed_at=observed_at)
+    sections = tuple(
+        CompanyViewSectionV1(
+            section_key=section_key,
+            state=DataState.FOUND,
+            facts=tuple(
+                fact for fact in facts if fact.anchor.section_key == section_key
+            ),
+        )
+        for section_key in ("management", "founders", "contacts")
+    )
+    semantic_view = filter_company_view(
+        CompanyViewModelV1(
+            revision="cv1:" + "c" * 64,
+            generated_at=observed_at,
+            audience=Audience.INTERNAL,
+            company_id=1,
+            inn=base.company.inn,
+            sections=sections,
+        ),
+        audience=Audience.PUBLIC,
+    )
+    public_view = _public_company_view(
+        semantic_view,
+        company_id=1,
+        risk=base.risk,
+        summary=base.summary,
+        sources=base.sources,
+    )
+    raw = base.model_dump(mode="json")
+    raw["company_view"] = public_view.model_dump(mode="json")
+    item = PublicProjection.model_validate(raw)
+    web = TestClient(create_app(_Repository(item)))
+    api = web.get(f"/api/company/{base.company.inn}")
+    card = web.get(f"/companies/{base.company.inn}")
+    assert api.status_code == card.status_code == 200
+    payload = api.json()
+    sections_by_key = {
+        section["section_key"]: section for section in payload["view"]["sections"]
+    }
+    founder = sections_by_key["founders"]["items"][0]
+    manager = sections_by_key["management"]["items"][0]
+    contacts = sections_by_key["contacts"]["items"]
+    assert founder["value"]["name"] == "Чундышко Гисса Арамбиевич"
+    assert founder["value"]["identifiers"] == [
+        {"identifier_type": "INN", "value": "010701178084"}
+    ]
+    assert founder["value"]["person_ref"] == manager["value"]["person_ref"]
+    assert {item["relation_type"] for item in founder["value"]["relations"]} == {
+        "FOUNDER",
+        "MANAGER",
+    }
+    assert len(contacts) == 4
+    assert {item["value"]["contact_type"] for item in contacts} == {"PHONE", "EMAIL"}
+    assert {item["value"]["contact_scope"] for item in contacts} == {
+        "CORPORATE",
+        "PERSONAL",
+    }
+    personal = [
+        item for item in contacts if item["value"]["contact_scope"] == "PERSONAL"
+    ]
+    assert all(
+        item["value"]["related_person_ref"] == founder["value"]["person_ref"]
+        for item in personal
+    )
+    assert all(item["source"]["name"] == "Firmoteka · вторичный источник" for item in contacts)
+    assert all(item["source"]["source_class"] == "Публичный вторичный источник" for item in contacts)
+    assert all(item["source"]["reference"] == f"https://firmoteka.ru/{base.company.inn}" for item in contacts)
+    assert all(item["source"]["source_data_date"] == "2026-09-20" for item in contacts)
+    assert all(
+        datetime.fromisoformat(item["source"]["retrieved_at"].replace("Z", "+00:00"))
+        == observed_at
+        for item in contacts
+    )
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "010701178084" in serialized
+    assert "010701178084" in card.text
+    assert "Чундышко Гисса Арамбиевич" in card.text
+    assert card.text.count('class="semantic-card contact-card"') == 4
+    for value in (
+        "+7 900 100-20-30",
+        "+7 900 100-20-31",
+        "office@example.test",
+        "owner@example.test",
+        "Публичный вторичный источник",
+    ):
+        assert value in serialized and value in card.text
+    for forbidden in (
+        "NEVER-PUBLIC",
+        "passport_number",
+        "passport_series",
+        "registration_address",
+        "residential_address",
+        "home_address",
+        "FIRMOTEKA_AUTHORIZED_BRIDGE",
+        "company_id",
+        "source_ref",
+    ):
+        assert forbidden not in serialized and forbidden not in card.text
+    validate_public_text(payload)
+
+
 @pytest.mark.parametrize(
     "value",
     [
         {"meaning_id": "meaning:risk-v3:factor:1"},
         {"safe": "meaning:risk-v3:factor:1"},
         {"safe": "FIRMOTEKA_AUTHORIZED_BRIDGE"},
+        {"safe": "AUTHORIZED_BRIDGE"},
         {"safe": "TAX_OFFENCE_PRESENT"},
         {"nested": {"raw_sha256": "a" * 64}},
+        {"nested": {"passport_number": "1234 567890"}},
+        {"nested": {"registration_address": "private"}},
+        {"nested": {"residential_address": "private"}},
+        {"nested": {"home_address": "private"}},
+        {"nested": {"source_ref": "internal://source"}},
     ],
 )
 def test_public_semantic_validator_rejects_internal_keys_and_values(value):

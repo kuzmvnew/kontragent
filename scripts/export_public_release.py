@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid5
 
 import psycopg
@@ -87,6 +88,12 @@ _PUBLIC_SOURCE_NAMES = {
     "ROSZDRAV_LICENSES": "Единый реестр лицензий Росздравнадзора",
     "FIRMOTEKA_AUTHORIZED_BRIDGE": "Firmoteka · вторичный источник",
 }
+_PUBLIC_SOURCE_CLASS_NAMES = {
+    "OFFICIAL_PRIMARY": "Официальный первичный источник",
+    "OFFICIAL_API_OPEN_DATA": "Официальные открытые данные",
+    "AUTHORIZED_BRIDGE": "Публичный вторичный источник",
+    "DERIVED": "Расчёт на основе опубликованных данных",
+}
 _PUBLIC_SECTION_TITLES = {
     "identity": "Основные сведения",
     "status": "Статус",
@@ -95,6 +102,7 @@ _PUBLIC_SECTION_TITLES = {
     "activity": "Виды деятельности",
     "management": "Руководство",
     "founders": "Учредители",
+    "contacts": "Контакты из публичных источников",
     "capital": "Уставный капитал",
     "finances": "Финансы",
     "employees": "Численность сотрудников",
@@ -131,6 +139,8 @@ _PUBLIC_FIELD_LABELS = {
     "additional_okved": "Дополнительный вид деятельности",
     "manager": "Руководитель",
     "founder": "Учредитель",
+    "phone": "Телефон",
+    "email": "Электронная почта",
     "authorized_capital": "Уставный капитал",
     "REVENUE": "Выручка",
     "EXPENSES": "Расходы",
@@ -586,9 +596,25 @@ def _semantic_value(view: CompanyViewModelV1, section_key: str, field_key: str):
     return None
 
 
+def _public_reference(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = urlsplit(str(value))
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        return None
+    return str(value)
+
+
 def _public_source(source_code: str, evidence) -> PublicFactSource:
     return PublicFactSource(
         name=_PUBLIC_SOURCE_NAMES.get(source_code, "Открытый источник"),
+        source_class=_PUBLIC_SOURCE_CLASS_NAMES[evidence.source_class.value],
+        reference=_public_reference(evidence.source_ref),
         source_data_date=evidence.source_data_date,
         retrieved_at=evidence.retrieved_at,
         confidence=evidence.confidence,
@@ -617,6 +643,7 @@ def _virtual_view_fact(
         state="Сведения найдены",
         source=PublicFactSource(
             name=source_name,
+            source_class="Сохранённый публичный результат",
             source_data_date=source_data_date,
             retrieved_at=generated_at,
             confidence=1.0,

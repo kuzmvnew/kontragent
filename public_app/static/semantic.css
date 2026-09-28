@@ -15,6 +15,9 @@
 .semantic-card dl div { display: flex; justify-content: space-between; gap: 20px; }
 .semantic-card dt { color: var(--muted); }
 .semantic-card dd { margin: 0; font-weight: 750; }
+.person-relations { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
+.person-relations li + li { margin-top: 6px; }
+.contact-card h3 a, .fact-source a { color: var(--accent); }
 .metric-value { font-family: Georgia, serif; font-size: 30px; margin: 10px 0; }
 .fact-source, .fact-alternatives { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 13px 0 0; }
 .fact-alternatives { color: var(--green); margin-top: 4px; }

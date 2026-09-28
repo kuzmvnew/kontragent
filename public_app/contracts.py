@@ -6,6 +6,7 @@ import re
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -40,6 +41,11 @@ FORBIDDEN_KEY_PARTS = {
     "authorization",
     "credentials",
     "company_id",
+    "source_ref",
+    "passport",
+    "registration_address",
+    "residential_address",
+    "home_address",
 }
 PRIVATE_PATH = re.compile(r"(?:^|\s)(?:/Users/|/home/|/private/|file://|[A-Za-z]:\\)")
 
@@ -418,10 +424,24 @@ class PublicSourceBlock(PublicModel):
 
 class PublicFactSource(PublicModel):
     name: str = Field(min_length=1, max_length=250)
+    source_class: str = Field(default="Источник данных", min_length=1, max_length=250)
+    reference: str | None = Field(default=None, max_length=2000)
     source_data_date: date | None = None
     retrieved_at: datetime
     confidence: float = Field(ge=0, le=1)
     freshness: Freshness
+
+    @field_validator("reference")
+    @classmethod
+    def public_http_reference_only(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("public source reference must be an HTTP(S) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("public source reference cannot contain credentials")
+        return value
 
 
 class PublicViewFact(PublicModel):

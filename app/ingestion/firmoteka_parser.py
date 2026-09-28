@@ -244,6 +244,21 @@ def parse_firmoteka_page(
     managers = _data_value(company_payload, "Руководство")
     manager_items = managers.get("items", []) if isinstance(managers, dict) else []
     manager = manager_items[0] if manager_items and isinstance(manager_items[0], dict) else {}
+    manager_details = {
+        "name": clean_text(manager.get("name")),
+        "position": clean_text(manager.get("position")),
+        "tin": clean_text(manager.get("tin") or manager.get("inn")),
+        "ogrnip": clean_text(manager.get("ogrnip") or manager.get("psrn")),
+        "date": _date(manager.get("date") or manager.get("since")),
+        "end_date": _date(manager.get("end_date") or manager.get("until")),
+        "status": clean_text(manager.get("status")),
+        "ip_status": clean_text(manager.get("ip_status")),
+        "ip_registration_date": _date(manager.get("ip_registration_date")),
+        "termination_date": _date(manager.get("termination_date")),
+    }
+    manager_details = {
+        key: value for key, value in manager_details.items() if value not in (None, "")
+    }
     enforcements = company_payload.get("enforcements")
     enforcements = enforcements if isinstance(enforcements, dict) else {}
     fns_date_match = re.search(
@@ -273,6 +288,7 @@ def parse_firmoteka_page(
         "additional_okved": _data_value(company_payload, "Дополнительные виды деятельности") or [],
         "manager": clean_text(manager.get("name")),
         "manager_position": clean_text(manager.get("position")),
+        "manager_details": manager_details,
         "founders": _data_value(company_payload, "Учредители"),
         "authorized_capital": _data_value(company_payload, "Уставный капитал"),
         "fns_egrul_as_of": _date(fns_date_match.group(1)) if fns_date_match else None,
@@ -294,7 +310,7 @@ def parse_firmoteka_page(
         "name", "full_name", "ogrn", "kpp", "entity_type", "status_normalized",
         "registration_date", "termination_date", "address", "region", "okved",
         "okved_name", "additional_okved",
-        "manager", "manager_position", "founders", "authorized_capital",
+        "manager", "manager_position", "manager_details", "founders", "authorized_capital",
         "financials", "tax_debts", "taxes_paid", "licenses", "divisions",
         "events", "employee_counts", "contacts", "enforcements",
     )

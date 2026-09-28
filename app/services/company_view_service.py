@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.contracts.company_view_v1 import (
     Audience,
+    ContactScope,
+    ContactType,
     CompanyResolutionV1,
     CompanyViewModelV1,
     CompanyViewSectionV1,
@@ -31,6 +33,15 @@ from app.contracts.company_view_v1 import (
     FinancePeriod,
     FinancePeriodKind,
     Freshness,
+    IndividualEntrepreneurRegistration,
+    PersonIdentifier,
+    PersonIdentifierType,
+    PublicContactValue,
+    RelatedCompany,
+    RelatedPersonRelation,
+    RelatedPersonRelationType,
+    RelatedPersonValue,
+    RelationStatus,
     ResolutionState,
     SemanticEvidence,
     SemanticFact,
@@ -47,6 +58,7 @@ SECTION_KEYS = (
     "activity",
     "management",
     "founders",
+    "contacts",
     "capital",
     "finances",
     "employees",
@@ -87,6 +99,7 @@ class SemanticCandidate(BaseModel):
     source_code: str
     source_class: EvidenceSourceClass
     evidence_identity: str
+    source_ref: str | None = None
     source_data_date: date | None = None
     retrieved_at: datetime
     confidence: float = Field(ge=0, le=1)
@@ -218,6 +231,7 @@ def _evidence(candidate: SemanticCandidate) -> SemanticEvidence:
         evidence_ref=f"evidence:{uuid5(_ANCHOR_NAMESPACE, identity)}",
         source_code=candidate.source_code,
         source_class=candidate.source_class,
+        source_ref=candidate.source_ref,
         value=_json_value(candidate.value),
         source_data_date=candidate.source_data_date,
         retrieved_at=candidate.retrieved_at,
@@ -281,6 +295,7 @@ def _candidate(
     source_class: EvidenceSourceClass,
     evidence_identity: str,
     retrieved_at: datetime,
+    source_ref: str | None = None,
     source_data_date: date | None = None,
     rights: FactRights,
     period_identity: str = "",
@@ -299,6 +314,7 @@ def _candidate(
         source_code=source_code,
         source_class=source_class,
         evidence_identity=evidence_identity,
+        source_ref=source_ref,
         source_data_date=source_data_date,
         retrieved_at=retrieved_at,
         confidence=confidence,
@@ -420,13 +436,345 @@ def _safe_enforcement_case(item: dict[str, Any]) -> dict[str, Any] | None:
     return {key: child for key, child in value.items() if child not in (None, "", [], {})}
 
 
+def _person_name_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
+def _related_person_ref(company_id: int, name: str) -> str:
+    identity = f"related-person|{company_id}|{_person_name_key(name)}"
+    return f"person:{uuid5(_ANCHOR_NAMESPACE, identity)}"
+
+
+def _historical_status(value: dict[str, Any]) -> RelationStatus:
+    if any(
+        _date(value.get(key)) is not None
+        for key in ("until", "end_date", "termination_date", "left_on")
+    ):
+        return RelationStatus.HISTORICAL
+    status = str(value.get("status") or value.get("relation_status") or "").casefold()
+    if any(
+        marker in status
+        for marker in (
+            "historical",
+            "former",
+            "terminated",
+            "inactive",
+            "бывш",
+            "прекрат",
+            "исключ",
+        )
+    ):
+        return RelationStatus.HISTORICAL
+    return RelationStatus.CURRENT
+
+
+def _related_company(projection: dict[str, Any]) -> RelatedCompany:
+    inn = str(projection.get("requested_inn") or projection.get("rendered_inn") or "")
+    name = _semantic_text(projection.get("name") or projection.get("full_name"))
+    return RelatedCompany(inn=inn, name=name or f"ИНН {inn}")
+
+
+def _related_person_values(
+    projection: dict[str, Any], *, company_id: int
+) -> dict[str, RelatedPersonValue]:
+    people: dict[str, dict[str, Any]] = {}
+
+    def add_relation(
+        raw: dict[str, Any],
+        relation_type: RelatedPersonRelationType,
+        *,
+        role: Any = None,
+        context: Any = None,
+        share: Any = None,
+        since: Any = None,
+        until: Any = None,
+    ) -> None:
+        name = _semantic_text(raw.get("name"))
+        if not name:
+            return
+        key = _person_name_key(name)
+        entry = people.setdefault(
+            key,
+            {
+                "name": name,
+                "identifiers": set(),
+                "relations": [],
+                "ip": None,
+            },
+        )
+        inn = _semantic_text(raw.get("tin") or raw.get("inn"))
+        if inn and re.fullmatch(r"\d{12}", inn):
+            entry["identifiers"].add((PersonIdentifierType.INN, inn))
+        ogrnip = _semantic_text(raw.get("ogrnip") or raw.get("psrn"))
+        if ogrnip and re.fullmatch(r"\d{15}", ogrnip):
+            entry["identifiers"].add((PersonIdentifierType.OGRNIP, ogrnip))
+        end_date = _date(
+            until
+            or raw.get("until")
+            or raw.get("end_date")
+            or raw.get("termination_date")
+            or raw.get("left_on")
+        )
+        status = RelationStatus.HISTORICAL if end_date else _historical_status(raw)
+        relation = RelatedPersonRelation(
+            relation_type=relation_type,
+            role=_semantic_text(role),
+            context=_semantic_text(context),
+            share=_semantic_text(share),
+            since=_date(since or raw.get("since") or raw.get("date") or raw.get("registration_date")),
+            until=end_date,
+            status=status,
+        )
+        if relation not in entry["relations"]:
+            entry["relations"].append(relation)
+        if ogrnip and re.fullmatch(r"\d{15}", ogrnip):
+            termination_date = _date(raw.get("termination_date"))
+            ip_status = _historical_status(raw) if termination_date is None else RelationStatus.HISTORICAL
+            entry["ip"] = IndividualEntrepreneurRegistration(
+                ogrnip=ogrnip,
+                status=_semantic_text(raw.get("ip_status") or raw.get("status")),
+                registration_date=_date(raw.get("ip_registration_date") or raw.get("registration_date")),
+                termination_date=termination_date,
+                current_status=ip_status,
+            )
+            ip_relation = RelatedPersonRelation(
+                relation_type=RelatedPersonRelationType.INDIVIDUAL_ENTREPRENEUR,
+                role="Индивидуальный предприниматель",
+                context="Публичная регистрация ИП",
+                since=entry["ip"].registration_date,
+                until=entry["ip"].termination_date,
+                status=entry["ip"].current_status,
+            )
+            if ip_relation not in entry["relations"]:
+                entry["relations"].append(ip_relation)
+
+    manager_details = projection.get("manager_details")
+    manager_raw = dict(manager_details) if isinstance(manager_details, dict) else {}
+    manager_raw["name"] = manager_raw.get("name") or projection.get("manager")
+    manager_raw["position"] = manager_raw.get("position") or projection.get("manager_position")
+    if manager_raw.get("name"):
+        add_relation(
+            manager_raw,
+            RelatedPersonRelationType.MANAGER,
+            role=manager_raw.get("position"),
+            context="Руководство компании",
+            since=manager_raw.get("date"),
+        )
+
+    founder_groups = projection.get("founders") or ()
+    if isinstance(founder_groups, dict):
+        founder_groups = founder_groups.get("items") or (founder_groups,)
+    for group in founder_groups if isinstance(founder_groups, list) else ():
+        if not isinstance(group, dict):
+            continue
+        items = group.get("items")
+        rows = items or ((group,) if group.get("name") else ())
+        for founder in rows:
+            if not isinstance(founder, dict):
+                continue
+            inn = _semantic_text(founder.get("tin") or founder.get("inn"))
+            ogrnip = _semantic_text(founder.get("ogrnip") or founder.get("psrn"))
+            group_type = str(founder.get("type") or group.get("type") or "").casefold()
+            is_person = bool(
+                (inn and re.fullmatch(r"\d{12}", inn))
+                or (ogrnip and re.fullmatch(r"\d{15}", ogrnip))
+                or any(marker in group_type for marker in ("person", "физ", "individual"))
+            )
+            if not is_person:
+                continue
+            explicit_relation = founder.get("relation_type") or group.get("relation_type")
+            relation_marker = str(
+                explicit_relation or group.get("title") or "founder"
+            ).casefold()
+            if any(marker in relation_marker for marker in ("participant", "участник")):
+                relation_type = RelatedPersonRelationType.PARTICIPANT
+            elif not explicit_relation or any(
+                marker in relation_marker for marker in ("founder", "учред")
+            ):
+                relation_type = RelatedPersonRelationType.FOUNDER
+            elif any(marker in relation_marker for marker in ("entrepreneur", "ип")):
+                relation_type = RelatedPersonRelationType.INDIVIDUAL_ENTREPRENEUR
+            else:
+                relation_type = RelatedPersonRelationType.OTHER_PUBLIC_RELATION
+            add_relation(
+                founder,
+                relation_type,
+                role=founder.get("role"),
+                context=group.get("title") or "Учредители и участники компании",
+                share=founder.get("share"),
+                since=founder.get("date"),
+            )
+
+    related_company = _related_company(projection)
+    result: dict[str, RelatedPersonValue] = {}
+    for key, entry in people.items():
+        relations = tuple(
+            sorted(
+                entry["relations"],
+                key=lambda item: (
+                    item.relation_type.value,
+                    item.role or "",
+                    item.share or "",
+                    item.since or date.min,
+                ),
+            )
+        )
+        identifiers = tuple(
+            PersonIdentifier(identifier_type=identifier_type, value=value)
+            for identifier_type, value in sorted(
+                entry["identifiers"], key=lambda item: (item[0].value, item[1])
+            )
+        )
+        relation_types = tuple(dict.fromkeys(item.relation_type for item in relations))
+        current_status = (
+            RelationStatus.CURRENT
+            if any(item.status == RelationStatus.CURRENT for item in relations)
+            else RelationStatus.HISTORICAL
+        )
+        manager = next(
+            (item for item in relations if item.relation_type == RelatedPersonRelationType.MANAGER),
+            None,
+        )
+        ownership = next(
+            (
+                item
+                for item in relations
+                if item.relation_type
+                in {RelatedPersonRelationType.FOUNDER, RelatedPersonRelationType.PARTICIPANT}
+            ),
+            None,
+        )
+        result[key] = RelatedPersonValue(
+            person_ref=_related_person_ref(company_id, entry["name"]),
+            name=entry["name"],
+            relation_types=relation_types,
+            relations=relations,
+            identifiers=identifiers,
+            related_company=related_company,
+            current_status=current_status,
+            individual_entrepreneur=entry["ip"],
+            type="person",
+            position=manager.role if manager else None,
+            share=ownership.share if ownership else None,
+            since=ownership.since if ownership else manager.since if manager else None,
+        )
+    return result
+
+
+def _contact_candidates(
+    projection: dict[str, Any],
+    *,
+    company_id: int,
+    people: dict[str, RelatedPersonValue],
+    bridge: dict[str, Any],
+) -> tuple[SemanticCandidate, ...]:
+    contacts = projection.get("contacts")
+    if not isinstance(contacts, dict):
+        return ()
+    accepted_keys = {
+        "phone": ContactType.PHONE,
+        "phones": ContactType.PHONE,
+        "telephone": ContactType.PHONE,
+        "telephones": ContactType.PHONE,
+        "email": ContactType.EMAIL,
+        "emails": ContactType.EMAIL,
+        "e-mail": ContactType.EMAIL,
+    }
+    normalized: list[tuple[ContactType, PublicContactValue, date | None]] = []
+    for raw_key, raw_values in contacts.items():
+        contact_type = accepted_keys.get(str(raw_key).strip().casefold())
+        if contact_type is None:
+            continue
+        values = raw_values if isinstance(raw_values, list) else (raw_values,)
+        for raw in values:
+            item = raw if isinstance(raw, dict) else {"value": raw}
+            raw_value = item.get("value")
+            if raw_value is None:
+                raw_value = (
+                    item.get("email") or item.get("email_address")
+                    if contact_type == ContactType.EMAIL
+                    else item.get("phone") or item.get("telephone")
+                )
+            value = _semantic_text(raw_value)
+            if not value:
+                continue
+            if contact_type == ContactType.EMAIL:
+                value = value.casefold()
+                if re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is None:
+                    continue
+            elif len(re.sub(r"\D", "", value)) < 7:
+                continue
+            scope_marker = str(item.get("scope") or item.get("contact_scope") or "").casefold()
+            if scope_marker in {"corporate", "company", "organization", "корпоративный", "организация"}:
+                scope = ContactScope.CORPORATE
+            elif scope_marker in {"personal", "person", "личный", "персональный"}:
+                scope = ContactScope.PERSONAL
+            else:
+                scope = ContactScope.UNKNOWN
+            person_name = _semantic_text(
+                item.get("person_name")
+                or item.get("related_person_name")
+                or item.get("owner_name")
+            )
+            person = people.get(_person_name_key(person_name)) if person_name else None
+            normalized.append(
+                (
+                    contact_type,
+                    PublicContactValue(
+                        contact_type=contact_type,
+                        contact_scope=scope,
+                        value=value,
+                        related_person_ref=person.person_ref if person else None,
+                        person_name=person_name,
+                        role_context=_semantic_text(item.get("role") or item.get("context")),
+                        related_company=_related_company(projection),
+                        current_status=_historical_status(item),
+                    ),
+                    _date(item.get("source_as_of") or item.get("source_data_date") or item.get("date")),
+                )
+            )
+    normalized.sort(
+        key=lambda item: (
+            item[0].value,
+            item[1].related_person_ref or "",
+            item[1].contact_scope.value,
+            item[1].value,
+        )
+    )
+    slots: dict[tuple[str, str, str, str], int] = defaultdict(int)
+    result: list[SemanticCandidate] = []
+    for contact_type, contact, source_date in normalized:
+        slot_key = (
+            contact_type.value,
+            contact.related_person_ref or "company",
+            contact.contact_scope.value,
+            contact.current_status.value,
+        )
+        slots[slot_key] += 1
+        item_identity = ":".join((*slot_key, str(slots[slot_key])))
+        _append(
+            result,
+            _candidate(
+                company_id,
+                "contacts",
+                contact_type.value.casefold(),
+                contact.model_dump(mode="json"),
+                item_identity=item_identity,
+                source_data_date=source_date,
+                evidence_identity=f"{bridge['evidence_identity']}:contacts:{item_identity}",
+                **{key: value for key, value in bridge.items() if key != "evidence_identity"},
+            ),
+        )
+    return tuple(result)
+
+
 def normalize_firmoteka_projection(
     projection: dict[str, Any],
     *,
     company_id: int,
     snapshot_identity: str,
     retrieved_at: datetime,
-    include_contacts: bool = False,
+    include_contacts: bool = True,
 ) -> tuple[SemanticCandidate, ...]:
     """Map provider-shaped Firmoteka JSON to business coordinates."""
 
@@ -439,6 +787,7 @@ def normalize_firmoteka_projection(
         source_code="FIRMOTEKA_AUTHORIZED_BRIDGE",
         source_class=EvidenceSourceClass.AUTHORIZED_BRIDGE,
         evidence_identity=snapshot_identity,
+        source_ref=_semantic_text(projection.get("url")),
         retrieved_at=retrieved_at,
         rights=FactRights.PUBLIC,
         confidence=0.75,
@@ -498,16 +847,22 @@ def normalize_firmoteka_projection(
                 **bridge,
             ),
         )
+    people = _related_person_values(projection, company_id=company_id)
     manager = projection.get("manager")
     if manager:
         manager_identity = re.sub(r"\s+", " ", str(manager).casefold()).strip()
+        manager_value = people.get(_person_name_key(manager))
         _append(
             values,
             _candidate(
                 company_id,
                 "management",
                 "manager",
-                {"name": manager, "position": projection.get("manager_position")},
+                (
+                    manager_value.model_dump(mode="json")
+                    if manager_value
+                    else {"name": manager, "position": projection.get("manager_position")}
+                ),
                 item_identity=manager_identity,
                 source_data_date=egrul_date,
                 **bridge,
@@ -521,15 +876,27 @@ def normalize_firmoteka_projection(
         for founder in items or ((group,) if isinstance(group, dict) and group.get("name") else ()):
             if not isinstance(founder, dict):
                 continue
-            identity = str(founder.get("tin") or founder.get("ogrn") or founder.get("name") or "").strip()
+            identity = str(
+                founder.get("tin")
+                or founder.get("inn")
+                or founder.get("ogrnip")
+                or founder.get("ogrn")
+                or founder.get("name")
+                or ""
+            ).strip()
             if not identity:
                 continue
-            normalized = {
-                "name": founder.get("name"),
-                "type": founder.get("type") or (group.get("type") if isinstance(group, dict) else None),
-                "share": founder.get("share"),
-                "since": _date(founder.get("date")),
-            }
+            person = people.get(_person_name_key(founder.get("name")))
+            normalized = (
+                person.model_dump(mode="json")
+                if person
+                else {
+                    "name": founder.get("name"),
+                    "type": founder.get("type") or (group.get("type") if isinstance(group, dict) else None),
+                    "share": founder.get("share"),
+                    "since": _date(founder.get("date")),
+                }
+            )
             _append(
                 values,
                 _candidate(
@@ -542,6 +909,15 @@ def normalize_firmoteka_projection(
                     **bridge,
                 ),
             )
+    if include_contacts:
+        values.extend(
+            _contact_candidates(
+                projection,
+                company_id=company_id,
+                people=people,
+                bridge=bridge,
+            )
+        )
     capital = _decimal(projection.get("authorized_capital"))
     _append(
         values,
@@ -730,24 +1106,6 @@ def normalize_firmoteka_projection(
                     **{key: value for key, value in bridge.items() if key != "evidence_identity"},
                 ),
             )
-    if include_contacts:
-        for contact_type, contact_values in (projection.get("contacts") or {}).items():
-            for contact in contact_values if isinstance(contact_values, list) else (contact_values,):
-                _append(
-                    values,
-                    _candidate(
-                        company_id,
-                        "identity",
-                        "contact",
-                        {"type": contact_type, "value": contact},
-                        item_identity=f"{contact_type}:{contact}",
-                        source_data_date=egrul_date,
-                        **{
-                            **bridge,
-                            "rights": FactRights.AUTHENTICATED_ONLY,
-                        },
-                    ),
-                )
     return tuple(values)
 
 

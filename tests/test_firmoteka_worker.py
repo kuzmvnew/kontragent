@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database.postgres import engine
 from app.ingestion import firmoteka_worker as worker
+from app.ingestion import firmoteka_parser as parser
 from app.ingestion.firmoteka_parser import parse_firmoteka_page
 from app.models.company import Company
 from app.models.firmoteka import FirmotekaCrawlRun
@@ -58,6 +59,51 @@ def test_parser_requires_exact_rendered_inn_and_keeps_bridge_provenance():
         url=f"https://firmoteka.ru/{INN}", fetched_at=NOW,
     )
     assert mismatch["identity_match"] is False
+
+
+def test_parser_preserves_public_person_identifiers_with_safe_manager_shape(monkeypatch):
+    monkeypatch.setattr(
+        parser,
+        "_decode_nuxt_company",
+        lambda _decoded: {
+            "tin": INN,
+            "short_name": "ПАО ТЕСТ",
+            "status": {"name": "Действующая организация"},
+            "data": [
+                {
+                    "values": [
+                        {
+                            "name": "Руководство",
+                            "value": {
+                                "items": [
+                                    {
+                                        "name": "Иванов Иван Иванович",
+                                        "position": "Директор",
+                                        "tin": "010701178084",
+                                        "ogrnip": "326010700000001",
+                                        "passport_number": "NEVER-PUBLIC",
+                                        "home_address": "NEVER-PUBLIC",
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                }
+            ],
+            "contacts": {"phone": ["+7 900 000-00-00"]},
+        },
+    )
+    parsed = parse_firmoteka_page(
+        _page(), requested_inn=INN, url=f"https://firmoteka.ru/{INN}", fetched_at=NOW
+    )
+    assert parsed["manager_details"] == {
+        "name": "Иванов Иван Иванович",
+        "position": "Директор",
+        "tin": "010701178084",
+        "ogrnip": "326010700000001",
+    }
+    assert parsed["contacts"] == {"phone": ["+7 900 000-00-00"]}
+    assert "NEVER-PUBLIC" not in str(parsed["manager_details"])
 
 
 def test_catalog_extraction_is_same_origin_exact_inn_and_rejects_api():

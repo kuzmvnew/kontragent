@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% macro fact_source(item) -%}
-  <p class="fact-source">Источник: {{ item.source.name }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date | public_date }}{% endif %}</p>
+  <p class="fact-source">Источник: {{ item.source.name }} · {{ item.source.source_class }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date | public_date }}{% endif %}{% if item.source.reference %} · <a href="{{ item.source.reference }}" rel="nofollow noreferrer">открыть источник</a>{% endif %}</p>
   {% if item.alternative_sources %}<p class="fact-alternatives">Также подтверждают: {% for source in item.alternative_sources %}{{ source.name }}{% if source.source_data_date %} ({{ source.source_data_date | public_date }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
 {%- endmacro %}
 {% block head %}
@@ -21,7 +21,9 @@
 {% if view %}
   {% set identity = view.section('identity') %}
   {% set activity = view.section('activity') %}
+  {% set management = view.section('management') %}
   {% set founders = view.section('founders') %}
+  {% set contacts = view.section('contacts') %}
   {% set capital = view.section('capital') %}
   {% set finances = view.section('finances') %}
   {% set employees = view.section('employees') %}
@@ -66,7 +68,7 @@
       <div><dt>Полное наименование</dt><dd>{{ company.full_name or company.name }}</dd></div>
       <div><dt>Дата регистрации</dt><dd>{{ company.registration_date.strftime('%d.%m.%Y') if company.registration_date else 'Не указана' }}</dd></div>
       <div><dt>Юридический адрес</dt><dd>{{ company.address or 'Не указан' }}</dd></div>
-      <div><dt>Руководитель</dt><dd>{{ company.director_name or 'Не указан' }}{% if company.director_position %}<small>{{ company.director_position }}</small>{% endif %}</dd></div>
+      {% if view and management and management.facts('manager') %}{% set item = management.facts('manager') | first %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><dt>Руководитель</dt><dd>{{ item.value.name }}{% if item.value.position %}<small>{{ item.value.position }}</small>{% endif %}{% for identifier in item.value.identifiers or [] %}<small>{{ identifier.identifier_type }}: {{ identifier.value }}</small>{% endfor %}{% if item.value.current_status %}<small>{% if item.value.current_status == 'CURRENT' %}Текущая связь{% else %}Историческая связь{% endif %}</small>{% endif %}</dd></div>{% else %}<div><dt>Руководитель</dt><dd>Не указан</dd></div>{% endif %}
       {% if view and identity and identity.facts('legal_form') %}{% set item = identity.facts('legal_form') | first %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><dt>{{ item.label }}</dt><dd>{{ item.value.name or item.value.code or '—' }}</dd></div>{% endif %}
       {% if view and activity and activity.facts('okved') %}{% set item = activity.facts('okved') | first %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><dt>ОКВЭД</dt><dd>{{ item.value }}{% if activity.facts('okved_name') %}<small>{{ (activity.facts('okved_name') | first).value }}</small>{% endif %}</dd></div>{% endif %}
     </dl>
@@ -79,7 +81,8 @@
       {% if founders %}{% for item in founders.facts('founder') %}
       <article class="semantic-card founder-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">
         <h3>{{ item.value.name }}</h3>
-        <dl><div><dt>Доля</dt><dd>{{ item.value.share or '—' }}</dd></div>{% if item.value.since %}<div><dt>Сведения с</dt><dd>{{ item.value.since | public_date }}</dd></div>{% endif %}</dl>
+        <dl><div><dt>Доля</dt><dd>{{ item.value.share or '—' }}</dd></div>{% if item.value.since %}<div><dt>Сведения с</dt><dd>{{ item.value.since | public_date }}</dd></div>{% endif %}{% for identifier in item.value.identifiers or [] %}<div><dt>{{ identifier.identifier_type }}</dt><dd>{{ identifier.value }}</dd></div>{% endfor %}{% if item.value.individual_entrepreneur %}<div><dt>Статус ИП</dt><dd>{{ item.value.individual_entrepreneur.status or ('Действующий' if item.value.individual_entrepreneur.current_status == 'CURRENT' else 'Прекращён') }}</dd></div>{% endif %}<div><dt>Связь</dt><dd>{% if item.value.current_status == 'CURRENT' %}Текущая{% else %}Историческая{% endif %}</dd></div></dl>
+        {% if item.value.relations %}<ul class="person-relations">{% for relation in item.value.relations %}<li>{{ relation.role or relation.context or relation.relation_type }}{% if relation.share %} · доля {{ relation.share }}{% endif %} · {% if relation.status == 'CURRENT' %}текущая{% else %}историческая{% endif %}</li>{% endfor %}</ul>{% endif %}
         {{ fact_source(item) }}
       </article>
       {% endfor %}{% endif %}
@@ -89,6 +92,13 @@
       </article>
       {% endfor %}{% endif %}
     </div>
+  </section>
+  {% endif %}
+
+  {% if view and contacts and contacts.items %}
+  <section class="content-section" data-section-key="contacts">
+    <p class="section-kicker">Фактически опубликованные сведения</p><h2>Телефоны и электронная почта</h2>
+    <div class="semantic-grid">{% for item in contacts.items %}<article class="semantic-card contact-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><p class="section-kicker">{{ item.label }} · {% if item.value.contact_scope == 'CORPORATE' %}корпоративный{% elif item.value.contact_scope == 'PERSONAL' %}личный{% else %}принадлежность не указана{% endif %}</p><h3>{% if item.value.contact_type == 'EMAIL' %}<a href="mailto:{{ item.value.value }}">{{ item.value.value }}</a>{% else %}<a href="tel:{{ item.value.value }}">{{ item.value.value }}</a>{% endif %}</h3>{% if item.value.person_name %}<p>Связанное лицо: {{ item.value.person_name }}{% if item.value.role_context %} · {{ item.value.role_context }}{% endif %}</p>{% else %}<p>Связанная компания: {{ item.value.related_company.name }}</p>{% endif %}<p>{% if item.value.current_status == 'CURRENT' %}Текущий контакт{% else %}Исторический контакт{% endif %}</p>{{ fact_source(item) }}</article>{% endfor %}</div>
   </section>
   {% endif %}
 

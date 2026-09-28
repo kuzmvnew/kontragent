@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -84,6 +85,122 @@ class FinanceMetricCode(StrEnum):
     EMPLOYEE_COUNT = "EMPLOYEE_COUNT"
 
 
+class RelatedPersonRelationType(StrEnum):
+    MANAGER = "MANAGER"
+    FOUNDER = "FOUNDER"
+    PARTICIPANT = "PARTICIPANT"
+    INDIVIDUAL_ENTREPRENEUR = "INDIVIDUAL_ENTREPRENEUR"
+    OTHER_PUBLIC_RELATION = "OTHER_PUBLIC_RELATION"
+
+
+class RelationStatus(StrEnum):
+    CURRENT = "CURRENT"
+    HISTORICAL = "HISTORICAL"
+
+
+class PersonIdentifierType(StrEnum):
+    INN = "INN"
+    OGRNIP = "OGRNIP"
+
+
+class ContactType(StrEnum):
+    PHONE = "PHONE"
+    EMAIL = "EMAIL"
+
+
+class ContactScope(StrEnum):
+    CORPORATE = "CORPORATE"
+    PERSONAL = "PERSONAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class RelatedCompany(ContractModel):
+    inn: str = Field(pattern=r"^(?:\d{10}|\d{12})$")
+    name: str = Field(min_length=1, max_length=1000)
+
+
+class PersonIdentifier(ContractModel):
+    identifier_type: PersonIdentifierType
+    value: str
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> "PersonIdentifier":
+        pattern = r"\d{12}" if self.identifier_type == PersonIdentifierType.INN else r"\d{15}"
+        if re.fullmatch(pattern, self.value) is None:
+            raise ValueError(f"invalid {self.identifier_type.value}")
+        return self
+
+
+class RelatedPersonRelation(ContractModel):
+    relation_type: RelatedPersonRelationType
+    role: str | None = Field(default=None, max_length=500)
+    context: str | None = Field(default=None, max_length=1000)
+    share: str | None = Field(default=None, max_length=200)
+    since: date | None = None
+    until: date | None = None
+    status: RelationStatus
+
+    @model_validator(mode="after")
+    def historical_end_is_not_current(self) -> "RelatedPersonRelation":
+        if self.until is not None and self.status != RelationStatus.HISTORICAL:
+            raise ValueError("ended relationship must be historical")
+        return self
+
+
+class IndividualEntrepreneurRegistration(ContractModel):
+    ogrnip: str = Field(pattern=r"^\d{15}$")
+    status: str | None = Field(default=None, max_length=500)
+    registration_date: date | None = None
+    termination_date: date | None = None
+    current_status: RelationStatus
+
+    @model_validator(mode="after")
+    def terminated_ip_is_historical(self) -> "IndividualEntrepreneurRegistration":
+        if self.termination_date is not None and self.current_status != RelationStatus.HISTORICAL:
+            raise ValueError("terminated individual entrepreneur must be historical")
+        return self
+
+
+class RelatedPersonValue(ContractModel):
+    person_ref: str = Field(pattern=r"^person:[0-9a-f-]{36}$")
+    name: str = Field(min_length=1, max_length=1000)
+    relation_types: tuple[RelatedPersonRelationType, ...] = Field(min_length=1)
+    relations: tuple[RelatedPersonRelation, ...] = Field(min_length=1)
+    identifiers: tuple[PersonIdentifier, ...] = ()
+    related_company: RelatedCompany
+    current_status: RelationStatus
+    individual_entrepreneur: IndividualEntrepreneurRegistration | None = None
+    # Compatibility fields retained for current CompanyView consumers.
+    type: str | None = Field(default=None, max_length=100)
+    position: str | None = Field(default=None, max_length=500)
+    share: str | None = Field(default=None, max_length=200)
+    since: date | None = None
+
+    @model_validator(mode="after")
+    def relation_types_match_relations(self) -> "RelatedPersonValue":
+        relation_types = tuple(dict.fromkeys(item.relation_type for item in self.relations))
+        if set(relation_types) != set(self.relation_types):
+            raise ValueError("relation_types must describe relations")
+        if self.current_status == RelationStatus.HISTORICAL and any(
+            item.status == RelationStatus.CURRENT for item in self.relations
+        ):
+            raise ValueError("person with a current relation cannot be historical")
+        return self
+
+
+class PublicContactValue(ContractModel):
+    contact_type: ContactType
+    contact_scope: ContactScope
+    value: str = Field(min_length=3, max_length=500)
+    related_person_ref: str | None = Field(
+        default=None, pattern=r"^person:[0-9a-f-]{36}$"
+    )
+    person_name: str | None = Field(default=None, max_length=1000)
+    role_context: str | None = Field(default=None, max_length=1000)
+    related_company: RelatedCompany
+    current_status: RelationStatus = RelationStatus.CURRENT
+
+
 class CompanyResolutionV1(ContractModel):
     contract_version: Literal["company-resolution-v1"] = COMPANY_RESOLUTION_VERSION
     state: ResolutionState
@@ -146,6 +263,7 @@ class SemanticEvidence(ContractModel):
     evidence_ref: str = Field(min_length=1, max_length=240)
     source_code: str = Field(min_length=1, max_length=100)
     source_class: EvidenceSourceClass
+    source_ref: str | None = Field(default=None, max_length=2000)
     value: Any
     source_data_date: date | None = None
     retrieved_at: datetime

@@ -145,7 +145,18 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
         {
             "requested_inn": "0100000614",
             "rendered_inn": "0100000614",
+            "name": "ООО АЛАН",
+            "url": "https://firmoteka.ru/0100000614",
             "fns_egrul_as_of": "2026-09-16",
+            "manager": "Иванов Иван Иванович",
+            "manager_position": "Директор",
+            "manager_details": {
+                "name": "Иванов Иван Иванович",
+                "position": "Директор",
+                "tin": "010701178084",
+                "passport_number": "NEVER-PUBLIC",
+                "home_address": "NEVER-PUBLIC",
+            },
             "founders": [
                 {
                     "type": "person",
@@ -154,6 +165,8 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
                             "name": "Иванов Иван Иванович",
                             "tin": "010701178084",
                             "share": "100%",
+                            "passport_series": "NEVER-PUBLIC",
+                            "registration_address": "NEVER-PUBLIC",
                         }
                     ],
                 }
@@ -198,7 +211,30 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
                     ],
                 }
             ],
-            "contacts": {"phone": ["+7 900 000-00-00"]},
+            "contacts": {
+                "phone": [
+                    {"value": "+7 900 000-00-00", "scope": "corporate"},
+                    {
+                        "value": "+7 900 000-00-01",
+                        "scope": "personal",
+                        "person_name": "Иванов Иван Иванович",
+                        "role": "Учредитель",
+                        "source_as_of": "2026-09-15",
+                        "passport": "NEVER-PUBLIC",
+                        "residential_address": "NEVER-PUBLIC",
+                    },
+                ],
+                "email": [
+                    {"value": "info@example.test", "scope": "corporate"},
+                    {
+                        "value": "owner@example.test",
+                        "scope": "personal",
+                        "person_name": "Иванов Иван Иванович",
+                    },
+                ],
+                "passport": ["NEVER-PUBLIC"],
+                "registration_address": ["NEVER-PUBLIC"],
+            },
         },
         company_id=1,
         snapshot_identity="snapshot:privacy",
@@ -208,18 +244,27 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
     public_facts = tuple(item for item in facts if item.rights == FactRights.PUBLIC)
     restricted = tuple(item for item in facts if item.rights != FactRights.PUBLIC)
     assert public_facts
-    assert {item.field_key for item in restricted} == {"contact"}
+    assert not restricted
     founder = next(item for item in public_facts if item.field_key == "founder")
+    manager = next(item for item in public_facts if item.field_key == "manager")
     event = next(item for item in public_facts if item.field_key == "event")
     enforcement = next(item for item in public_facts if item.field_key == "case")
     tax_debt = next(item for item in public_facts if item.field_key == "debt")
-    assert founder.value == {
-        "name": "Иванов Иван Иванович",
-        "type": "person",
-        "share": "100%",
-        "since": None,
+    assert founder.value["name"] == "Иванов Иван Иванович"
+    assert founder.value["share"] == "100%"
+    assert founder.value["identifiers"] == [
+        {"identifier_type": "INN", "value": "010701178084"}
+    ]
+    assert founder.value["related_company"] == {
+        "inn": "0100000614",
+        "name": "ООО АЛАН",
     }
-    assert "010701178084" not in str(founder.value)
+    assert {item["relation_type"] for item in founder.value["relations"]} == {
+        "FOUNDER",
+        "MANAGER",
+    }
+    assert founder.value["person_ref"] == manager.value["person_ref"]
+    assert founder.source_ref == "https://firmoteka.ru/0100000614"
     assert event.value == {
         "date": "2022-01-19",
         "description": "Учредитель при регистрации: Иванов Иван Иванович",
@@ -235,10 +280,38 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
     assert tax_debt.value["breakdown"] == [
         {"name": "Суммы пеней", "amount": "25"}
     ]
+    contact_candidates = tuple(
+        item for item in public_facts if item.section_key == "contacts"
+    )
+    assert len(contact_candidates) == 4
+    assert {item.field_key for item in contact_candidates} == {"phone", "email"}
+    assert {item.value["contact_scope"] for item in contact_candidates} == {
+        "CORPORATE",
+        "PERSONAL",
+    }
+    personal = tuple(
+        item for item in contact_candidates if item.value["contact_scope"] == "PERSONAL"
+    )
+    assert {item.value["contact_type"] for item in personal} == {"PHONE", "EMAIL"}
+    assert all(item.value["related_person_ref"] == founder.value["person_ref"] for item in personal)
+    assert all(item.value["person_name"] == "Иванов Иван Иванович" for item in personal)
+    assert all(item.value["related_company"]["inn"] == "0100000614" for item in contact_candidates)
+    assert all(item.source_ref == "https://firmoteka.ru/0100000614" for item in contact_candidates)
+    dated_phone = next(
+        item for item in personal if item.value["contact_type"] == "PHONE"
+    )
+    assert dated_phone.source_data_date.isoformat() == "2026-09-15"
+    serialized = str([item.value for item in public_facts])
+    assert "NEVER-PUBLIC" not in serialized
+    assert "passport" not in serialized.casefold()
+    assert "home_address" not in serialized
+    assert "registration_address" not in serialized
     from app.contracts.company_view_v1 import CompanyViewModelV1, CompanyViewSectionV1
 
-    contact_fact = next(
-        item for item in select_semantic_facts(facts) if item.anchor.field_key == "contact"
+    contact_facts = tuple(
+        item
+        for item in select_semantic_facts(facts)
+        if item.anchor.section_key == "contacts"
     )
     contact_view = CompanyViewModelV1(
         revision="cv1:" + "b" * 64,
@@ -248,20 +321,72 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
         inn="0100000614",
         sections=(
             CompanyViewSectionV1(
-                section_key="identity",
+                section_key="contacts",
                 state=DataState.FOUND,
-                facts=(contact_fact,),
+                facts=contact_facts,
             ),
         ),
     )
-    assert not filter_company_view(
+    public_contacts = filter_company_view(
         contact_view,
         audience=Audience.PUBLIC,
     ).sections[0].facts
-    assert filter_company_view(
+    assert len(public_contacts) == 4
+    assert all(item.anchor.company_id is None for item in public_contacts)
+    assert len(filter_company_view(
         contact_view,
         audience=Audience.AUTHENTICATED,
-    ).sections[0].facts == (contact_fact,)
+    ).sections[0].facts) == 4
+
+
+def test_related_person_ip_registration_and_historical_relationship_are_typed():
+    facts = normalize_firmoteka_projection(
+        {
+            "requested_inn": "0100000614",
+            "rendered_inn": "0100000614",
+            "name": "ООО АЛАН",
+            "url": "https://firmoteka.ru/0100000614",
+            "fns_egrul_as_of": "2026-09-16",
+            "founders": [
+                {
+                    "type": "person",
+                    "title": "Участники",
+                    "relation_type": "participant",
+                    "items": [
+                        {
+                            "name": "Иванов Иван Иванович",
+                            "tin": "010701178084",
+                            "ogrnip": "326010700000001",
+                            "share": "25%",
+                            "registration_date": "2020-02-03",
+                            "termination_date": "2024-05-06",
+                            "end_date": "2024-05-06",
+                            "ip_status": "Деятельность прекращена",
+                        }
+                    ],
+                }
+            ],
+        },
+        company_id=1,
+        snapshot_identity="snapshot:ip-history",
+        retrieved_at=NOW,
+    )
+    founder = next(item for item in facts if item.field_key == "founder")
+    value = founder.value
+    assert value["relation_types"] == ["INDIVIDUAL_ENTREPRENEUR", "PARTICIPANT"]
+    assert value["identifiers"] == [
+        {"identifier_type": "INN", "value": "010701178084"},
+        {"identifier_type": "OGRNIP", "value": "326010700000001"},
+    ]
+    assert value["individual_entrepreneur"] == {
+        "ogrnip": "326010700000001",
+        "status": "Деятельность прекращена",
+        "registration_date": "2020-02-03",
+        "termination_date": "2024-05-06",
+        "current_status": "HISTORICAL",
+    }
+    assert value["current_status"] == "HISTORICAL"
+    assert all(item["status"] == "HISTORICAL" for item in value["relations"])
 
 
 def test_resolver_is_exact_read_only_and_public_hides_company_id():
