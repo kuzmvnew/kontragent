@@ -719,17 +719,29 @@ def compile_recommendation(code: str | None) -> CompiledRecommendation | None:
 
 
 _BANNED_TEXT = (
-    "{'", '"origin_ref"', "fact_ref", "origin_check_ref", "limitation_code",
+    "{'", '"origin_ref"', "origin_check_ref", "limitation_code",
     "recommendation_code", "parameters", "evidence_refs", "APPLICABILITY_UNKNOWN",
     "STALE_DATA", "SOURCE_UNAVAILABLE", "NOT_CHECKED", "REVEXP", "PAYTAX",
     "DEBTAM", "TAXOFFENCE", "компания ненадёжна", "компания подозрительна",
     "всё хорошо", "безопасная компания", "можно доверять", "NEXT не нашёл",
     "мы не нашли", "много судов", "тяжёлое финансовое состояние",
+    "company_id", "meaning_id", "meaning:", "raw_sha256", "page_sha256",
+    "raw_payload", "normalized_payload", "parser_version", "provider_row_id",
+    "worker_job_id", "worker_run_id", "FIRMOTEKA_AUTHORIZED_BRIDGE",
+    "OFFICIAL_PRIMARY", "OFFICIAL_API_OPEN_DATA", "AUTHORIZED_BRIDGE",
+    "passport", "passport_series", "passport_number", "passport_issued_by",
+    "passport_issue_date", "registration_address", "residential_address",
+    "home_address", "TAX_OFFENCE_PRESENT",
 )
 _BANNED_KEYS = {
-    "origin_ref", "fact_ref", "origin_check_ref", "limitation_code",
+    "origin_ref", "origin_check_ref", "limitation_code",
     "recommendation_code", "parameters", "evidence_refs", "ruleset_version",
     "model_version", "source_code", "factor_code",
+    "company_id", "meaning_id", "raw_sha256", "page_sha256", "raw_payload",
+    "normalized_payload", "parser_version", "provider_row_id", "worker_job_id",
+    "worker_run_id", "source_ref", "passport", "passport_series",
+    "passport_number", "passport_issued_by", "passport_issue_date",
+    "registration_address", "residential_address", "home_address",
 }
 _INTERNAL_VERSION = re.compile(r"(?:risk|summary|rules?)-v\d", re.IGNORECASE)
 

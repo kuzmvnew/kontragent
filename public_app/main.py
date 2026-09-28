@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Callable
 
@@ -28,6 +30,47 @@ MAX_QUERY_LENGTH = 160
 MAX_BODY_BYTES = 16_384
 
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
+
+
+def _public_date(value) -> str:
+    if value in (None, ""):
+        return "—"
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    try:
+        return date.fromisoformat(str(value)[:10]).strftime("%d.%m.%Y")
+    except ValueError:
+        return str(value)
+
+
+def _public_number(value) -> str:
+    if value in (None, ""):
+        return "—"
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return str(value)
+    rendered = f"{number:,.2f}" if number != number.to_integral() else f"{number:,.0f}"
+    return rendered.replace(",", " ").replace(".", ",")
+
+
+def _public_period(value) -> str:
+    text = str(value or "")
+    if text.startswith("YEAR:"):
+        return text.removeprefix("YEAR:")
+    if text.startswith("DATE:"):
+        return _public_date(text.removeprefix("DATE:"))
+    if text.startswith("QUARTER:"):
+        year, quarter = text.removeprefix("QUARTER:").split(":", 1)
+        return f"{quarter}, {year}"
+    return text or "—"
+
+
+templates.env.filters["public_date"] = _public_date
+templates.env.filters["public_number"] = _public_number
+templates.env.filters["public_period"] = _public_period
 
 
 def _repo(request: Request):

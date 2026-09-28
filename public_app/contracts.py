@@ -6,6 +6,7 @@ import re
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -39,6 +40,12 @@ FORBIDDEN_KEY_PARTS = {
     "cookie",
     "authorization",
     "credentials",
+    "company_id",
+    "source_ref",
+    "passport",
+    "registration_address",
+    "residential_address",
+    "home_address",
 }
 PRIVATE_PATH = re.compile(r"(?:^|\s)(?:/Users/|/home/|/private/|file://|[A-Za-z]:\\)")
 
@@ -202,6 +209,36 @@ class PublicRiskFactor(PublicModel):
         if self.meaning_id and self.explanation:
             return self.explanation
         return "Фактор показан без расширенной интерпретации; изучите подтверждённые сведения и дату источника."
+
+    def public_payload(self) -> dict[str, Any]:
+        """Compile display semantics without exposing Risk engine identity."""
+
+        return {
+            "category": self.category,
+            "severity": self.severity,
+            "headline": self.public_headline,
+            "short_explanation": self.public_explanation,
+            "full_explanation": self.full_explanation or self.public_explanation,
+            "client_meaning": self.client_meaning,
+            "what_it_does_not_mean": self.what_it_does_not_mean,
+            "recommendation_effect": self.recommendation_effect,
+            "current_state": self.current_state,
+            "previous_state": self.previous_state,
+            "change": self.change,
+            "trend": self.trend,
+            "frequency": self.frequency,
+            "recency": self.recency,
+            "duration": self.duration,
+            "materiality": self.materiality,
+            "counter_evidence": list(self.counter_evidence),
+            "confidence": self.confidence,
+            "source": self.source_name,
+            "source_data_date": (
+                self.source_data_date.isoformat()
+                if self.source_data_date
+                else None
+            ),
+        }
 
 
 class PublicRisk(PublicModel):
@@ -385,12 +422,90 @@ class PublicSourceBlock(PublicModel):
         ).visual_state
 
 
+class PublicFactSource(PublicModel):
+    name: str = Field(min_length=1, max_length=250)
+    source_class: str = Field(default="Источник данных", min_length=1, max_length=250)
+    reference: str | None = Field(default=None, max_length=2000)
+    source_data_date: date | None = None
+    retrieved_at: datetime
+    confidence: float = Field(ge=0, le=1)
+    freshness: Freshness
+
+    @field_validator("reference")
+    @classmethod
+    def public_http_reference_only(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("public source reference must be an HTTP(S) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("public source reference cannot contain credentials")
+        return value
+
+
+class PublicViewFact(PublicModel):
+    fact_ref: str = Field(pattern=r"^fact:[0-9a-f-]{36}$")
+    item_ref: str = Field(pattern=r"^item:[0-9a-f-]{36}$")
+    field_key: str = Field(min_length=1, max_length=120)
+    label: str | None = Field(default=None, min_length=1, max_length=240)
+    period: str | None = Field(default=None, max_length=80)
+    value: Any
+    state: str = Field(min_length=1, max_length=160)
+    source: PublicFactSource
+    alternative_sources: tuple[PublicFactSource, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+
+class PublicViewSection(PublicModel):
+    section_key: str = Field(min_length=1, max_length=80)
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    state: str = Field(min_length=1, max_length=160)
+    items: tuple[PublicViewFact, ...] = ()
+
+    def facts(self, field_key: str | None = None) -> tuple[PublicViewFact, ...]:
+        if field_key is None:
+            return self.items
+        return tuple(item for item in self.items if item.field_key == field_key)
+
+
+class PublicCompanyViewV1(PublicModel):
+    contract_version: Literal["company-view-v1"] = "company-view-v1"
+    revision: str = Field(pattern=r"^cv1:[0-9a-f]{64}$")
+    generated_at: datetime
+    inn: str
+    sections: tuple[PublicViewSection, ...]
+    action_context: None = None
+    links: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("inn")
+    @classmethod
+    def legal_inn_only(cls, value: str) -> str:
+        if not valid_legal_inn(value):
+            raise ValueError("only a valid legal-entity INN is public")
+        return value
+
+    @model_validator(mode="after")
+    def unique_sections(self) -> "PublicCompanyViewV1":
+        keys = tuple(section.section_key for section in self.sections)
+        if len(keys) != len(set(keys)):
+            raise ValueError("public view section keys must be unique")
+        return self
+
+    def section(self, section_key: str) -> PublicViewSection | None:
+        return next(
+            (section for section in self.sections if section.section_key == section_key),
+            None,
+        )
+
+
 class PublicProjection(PublicModel):
     publication: PublicationInfo
     company: CompanyInfo
     risk: PublicRisk
     summary: PublicSummary
     sources: tuple[PublicSourceBlock, ...] = Field(min_length=4, max_length=4)
+    company_view: PublicCompanyViewV1 | None = None
 
     @model_validator(mode="after")
     def validate_projection(self) -> PublicProjection:
@@ -415,32 +530,7 @@ class PublicProjection(PublicModel):
     def public_payload(self) -> dict[str, Any]:
         """Return the ordinary-user API shape with no operational identifiers."""
 
-        factors = [
-            {
-                "meaning_id": item.meaning_id,
-                "category": item.category,
-                "severity": item.severity,
-                "headline": item.public_headline,
-                "short_explanation": item.public_explanation,
-                "full_explanation": item.full_explanation or item.public_explanation,
-                "client_meaning": item.client_meaning,
-                "what_it_does_not_mean": item.what_it_does_not_mean,
-                "recommendation_effect": item.recommendation_effect,
-                "current_state": item.current_state,
-                "previous_state": item.previous_state,
-                "change": item.change,
-                "trend": item.trend,
-                "frequency": item.frequency,
-                "recency": item.recency,
-                "duration": item.duration,
-                "materiality": item.materiality,
-                "counter_evidence": list(item.counter_evidence),
-                "confidence": item.confidence,
-                "source": item.source_name,
-                "source_data_date": item.source_data_date.isoformat() if item.source_data_date else None,
-            }
-            for item in self.risk.factors
-        ]
+        factors = [item.public_payload() for item in self.risk.factors]
         limitations = [item.model_dump(mode="json") for item in self.public_limitations]
         recommendations = [item.model_dump(mode="json") for item in self.summary.recommendations]
         payload = {
@@ -477,6 +567,8 @@ class PublicProjection(PublicModel):
                 for item in self.sources
             ],
         }
+        if self.company_view is not None:
+            payload["view"] = self.company_view.model_dump(mode="json")
         validate_public_text(payload)
         return payload
 
