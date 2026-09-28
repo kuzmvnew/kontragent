@@ -44,6 +44,7 @@ PINNED_REAL_EVIDENCE = {
             "DATE:2026-09-01",
         }
     ),
+    "enforcement_source_data_date": "2026-09-27",
     "semantic_fact_count": 88,
 }
 
@@ -118,7 +119,9 @@ def _require_pinned_real_evidence():
         row = connection.execute(
             sa.text(
                 """SELECT c.id AS company_id, s.id AS snapshot_id,
-                          s.raw_sha256
+                          s.raw_sha256,
+                          s.projection->'enforcements'->>'snapshot'
+                              AS enforcement_source_data_date
                    FROM companies c
                    JOIN firmoteka_company_snapshots s ON s.company_id=c.id
                    WHERE c.inn=:inn AND s.is_current=TRUE
@@ -132,6 +135,8 @@ def _require_pinned_real_evidence():
         row["company_id"] != expected["company_id"]
         or str(row["snapshot_id"]) != expected["snapshot_id"]
         or row["raw_sha256"] != expected["raw_sha256"]
+        or row["enforcement_source_data_date"]
+        != expected["enforcement_source_data_date"]
     ):
         pytest.skip(
             "pinned retained Alan evidence is not installed in this disposable DB"
@@ -139,6 +144,7 @@ def _require_pinned_real_evidence():
 
 
 def test_real_alan_firmoteka_to_semantic_official_risk_summary():
+    _require_pinned_real_evidence()
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT current_database()")) != "kontragent"
     company_id, internal = _view(Audience.INTERNAL)
@@ -190,7 +196,10 @@ def test_real_alan_firmoteka_to_semantic_official_risk_summary():
     assert len([item for item in _facts(public, "enforcement") if item.anchor.field_key == "case"]) == 13
     assert len(_facts(public, "events")) == 6
     enforcement = next(item for item in _facts(public, "enforcement") if item.anchor.field_key == "aggregate")
-    assert enforcement.selected_evidence.source_data_date.isoformat() == "2026-09-16"
+    assert (
+        enforcement.selected_evidence.source_data_date.isoformat()
+        == PINNED_REAL_EVIDENCE["enforcement_source_data_date"]
+    )
     assert enforcement.selected_evidence.source_data_date.isoformat() != "2022-01-19"
 
     assert _metric(public, FinanceMetricCode.NET_PROFIT, "YEAR:2025").value == 26_000
