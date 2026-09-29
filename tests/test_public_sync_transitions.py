@@ -126,10 +126,19 @@ def _configure_build(
     legacy_inns: set[str] | None = None,
     inactive_inns: set[str] | None = None,
     drift_inns: set[str] | None = None,
+    missing_state_inns: set[str] | None = None,
+    baseline_release_overrides: dict[str, str] | None = None,
+    parent_payload_overrides: dict[str, object] | None = None,
+    missing_endpoint_inns: set[str] | None = None,
+    ready_record_count: int | None = None,
 ):
     legacy_inns = legacy_inns or set()
     inactive_inns = inactive_inns or set()
     drift_inns = drift_inns or set()
+    missing_state_inns = missing_state_inns or set()
+    baseline_release_overrides = baseline_release_overrides or {}
+    parent_payload_overrides = parent_payload_overrides or {}
+    missing_endpoint_inns = missing_endpoint_inns or set()
     universe = {item.company.inn: item for item in (*live_records, *target_records)}
     companies = [
         SimpleNamespace(id=index + 1, inn=inn)
@@ -140,7 +149,9 @@ def _configure_build(
     target = {item.company.inn: item for item in target_records}
     states = []
     for inn, item in universe.items():
-        if inn not in live and inn not in inactive_inns:
+        if inn in missing_state_inns or (
+            inn not in live and inn not in inactive_inns
+        ):
             continue
         states.append(
             SimpleNamespace(
@@ -159,7 +170,9 @@ def _configure_build(
                     else HASH_ALGORITHM_VERSION
                 ),
                 is_published=inn not in inactive_inns,
-                last_published_release_id=parent_release_id,
+                last_published_release_id=baseline_release_overrides.get(
+                    inn, parent_release_id
+                ),
             )
         )
     runs = {
@@ -169,11 +182,6 @@ def _configure_build(
     monkeypatch.setattr(runner, "accepted_cohort", lambda: (manifest, "c" * 64))
     monkeypatch.setattr(runner, "cohort_companies", lambda *_args: companies)
     monkeypatch.setattr(runner, "publishable_runs", lambda *_args: runs)
-    monkeypatch.setattr(
-        runner,
-        "fetch_live_cohort",
-        lambda *_args, **_kwargs: (parent_release_id, live),
-    )
     monkeypatch.setattr(runner, "current_main_sha", lambda: SHA)
     monkeypatch.setattr(runner, "database_url_for_psycopg", lambda: "postgresql://test")
     monkeypatch.setattr(runner.psycopg, "connect", lambda *_args, **_kwargs: _ReadOnlyConnection())
@@ -182,11 +190,43 @@ def _configure_build(
         "build_projection",
         lambda _cursor, inn, _publication: target[inn],
     )
-    return _BuildSession(states)
+    requested_inns: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ready":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ready",
+                    "release_id": parent_release_id,
+                    "record_count": (
+                        len(live)
+                        if ready_record_count is None
+                        else ready_record_count
+                    ),
+                },
+            )
+        prefix = "/api/company/"
+        assert request.url.path.startswith(prefix)
+        inn = request.url.path.removeprefix(prefix)
+        requested_inns.append(inn)
+        if inn not in live or inn in missing_endpoint_inns:
+            return httpx.Response(404)
+        payload = parent_payload_overrides.get(
+            inn,
+            live[inn].model_dump(mode="json"),
+        )
+        return httpx.Response(200, json=payload)
+
+    client = httpx.Client(
+        base_url="https://public.test",
+        transport=httpx.MockTransport(handler),
+    )
+    return _BuildSession(states), client, requested_inns
 
 
 def _build(monkeypatch, tmp_path: Path, *, live, target, **kwargs):
-    session = _configure_build(
+    session, client, requested_inns = _configure_build(
         monkeypatch,
         parent_release_id=kwargs.pop("parent_release_id", PARENT_40),
         live_records=live,
@@ -194,11 +234,13 @@ def _build(monkeypatch, tmp_path: Path, *, live, target, **kwargs):
         **kwargs,
     )
     request = _Request()
+    request.parent_requested_inns = requested_inns
     bundle, manifest = runner.build_candidate(
         session,
         request,
         now=NOW,
         output_root=tmp_path,
+        client=client,
     )
     assert bundle is not None and manifest is not None
     return request, bundle, manifest
@@ -214,6 +256,13 @@ def test_incident_withdrawal_builds_39_without_stale_alan(monkeypatch, tmp_path)
         live=parent,
         target=target,
         drift_inns={ALAN_INN},
+        parent_payload_overrides={
+            ALAN_INN: {
+                "legacy_company": {"inn": ALAN_INN},
+                "legacy_release": PARENT_40,
+                "secret": "must-never-be-read-or-copied",
+            }
+        },
     )
     loaded_manifest, projections, _manifest_hash = load_bundle(bundle)
 
@@ -222,7 +271,12 @@ def test_incident_withdrawal_builds_39_without_stale_alan(monkeypatch, tmp_path)
     assert manifest.record_count == 39
     assert manifest.withdrawn_count == 1
     assert [item.inn for item in manifest.withdrawn_companies] == [ALAN_INN]
+    assert manifest.withdrawn_companies[0].previous_hash == "f" * 64
     assert ALAN_INN not in {item.company.inn for item in projections}
+    assert ALAN_INN not in request.parent_requested_inns
+    assert set(request.parent_requested_inns) == {
+        item.company.inn for item in target
+    }
     assert request.changed_company_inns == [ALAN_INN]
     assert request.change_summary[0]["transition"] == "WITHDRAWN"
     assert manifest.artifact_hashes["companies.jsonl.gz"]
@@ -254,6 +308,42 @@ def test_live_parent_membership_uses_ready_count_and_404_not_manifest_size():
 
     assert release_id == PARENT_40
     assert list(live) == [retained.company.inn]
+
+
+def test_default_live_cohort_reader_remains_strict_with_safe_schema_evidence():
+    retained = _forty_with_alan(PARENT_40)[0]
+    manifest = _manifest([retained.company.inn])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ready":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ready",
+                    "release_id": PARENT_40,
+                    "record_count": 1,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "legacy_company": {"inn": retained.company.inn},
+                "secret": "strict-reader-must-not-log-payload",
+            },
+        )
+
+    with httpx.Client(
+        base_url="https://public.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(service.PublicVpsUnavailable) as caught:
+            service.fetch_live_cohort(manifest, client=client)
+
+    evidence = str(caught.value)
+    assert "stage=strict_live_cohort" in evidence
+    assert f"inn={retained.company.inn}" in evidence
+    assert "validation_path=" in evidence
+    assert "validation_type=missing" in evidence
+    assert "strict-reader-must-not-log-payload" not in evidence
 
 
 def test_candidate_build_has_no_ingestion_or_external_process_side_effects(
@@ -297,7 +387,18 @@ def test_withdrawn_company_can_be_readded_only_from_current_projection(
     monkeypatch, tmp_path
 ):
     original = _forty_with_alan(PARENT_40)
-    parent_39 = [item for item in original if item.company.inn != ALAN_INN]
+    parent_39_release = "public-v1-parent-39"
+    parent_39 = [
+        item.model_copy(
+            update={
+                "publication": item.publication.model_copy(
+                    update={"release_id": parent_39_release}
+                )
+            }
+        )
+        for item in original
+        if item.company.inn != ALAN_INN
+    ]
     fresh_alan = next(item for item in original if item.company.inn == ALAN_INN)
     fresh_alan = fresh_alan.model_copy(
         update={
@@ -313,7 +414,7 @@ def test_withdrawn_company_can_be_readded_only_from_current_projection(
         tmp_path,
         live=parent_39,
         target=target_40,
-        parent_release_id="public-v1-parent-39",
+        parent_release_id=parent_39_release,
         inactive_inns={ALAN_INN},
     )
     _loaded, projections, _hash = load_bundle(bundle)
@@ -390,12 +491,99 @@ def test_schema_version_upgrade_is_explicit_update(monkeypatch, tmp_path):
     assert [item.inn for item in manifest.updated_companies] == [legacy_inn]
 
 
+def test_retained_legacy_invalid_payload_fails_closed_with_safe_evidence(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    retained_inn = parent[0].company.inn
+    session, client, _requested_inns = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=parent,
+        parent_payload_overrides={
+            retained_inn: {
+                "legacy_company": {"inn": retained_inn},
+                "secret": "do-not-persist-this-payload",
+            }
+        },
+    )
+
+    with pytest.raises(service.PublicVpsUnavailable) as caught:
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            client=client,
+        )
+
+    evidence = str(caught.value)
+    assert "stage=transition_parent_retained" in evidence
+    assert f"inn={retained_inn}" in evidence
+    assert "validation_path=" in evidence
+    assert "validation_type=missing" in evidence
+    assert "do-not-persist-this-payload" not in evidence
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_evidence"),
+    [
+        ("missing", "error_type=http_404"),
+        ("wrong_inn", "validation_type=identity_mismatch"),
+        ("wrong_release", "validation_type=release_mismatch"),
+    ],
+)
+def test_retained_card_identity_and_release_requirements_fail_closed(
+    monkeypatch, tmp_path, failure, expected_evidence
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    retained_inn = parent[0].company.inn
+    missing_endpoint_inns: set[str] = set()
+    payload_overrides: dict[str, object] = {}
+    if failure == "missing":
+        missing_endpoint_inns.add(retained_inn)
+    elif failure == "wrong_inn":
+        payload_overrides[retained_inn] = parent[1].model_dump(mode="json")
+    else:
+        wrong_release = parent[0].model_copy(
+            update={
+                "publication": parent[0].publication.model_copy(
+                    update={"release_id": "public-v1-wrong-parent"}
+                )
+            }
+        )
+        payload_overrides[retained_inn] = wrong_release.model_dump(mode="json")
+    session, client, _requested_inns = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=parent,
+        parent_payload_overrides=payload_overrides,
+        missing_endpoint_inns=missing_endpoint_inns,
+    )
+
+    with pytest.raises(service.PublicVpsUnavailable) as caught:
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            client=client,
+        )
+
+    evidence = str(caught.value)
+    assert "stage=transition_parent_retained" in evidence
+    assert f"inn={retained_inn}" in evidence
+    assert expected_evidence in evidence
+
+
 def test_unexpected_hash_drift_for_current_ready_record_still_fails_closed(
     monkeypatch, tmp_path
 ):
     parent = _forty_with_alan(PARENT_40)[:2]
     drift_inn = parent[0].company.inn
-    session = _configure_build(
+    session, client, _requested_inns = _configure_build(
         monkeypatch,
         parent_release_id=PARENT_40,
         live_records=parent,
@@ -412,7 +600,90 @@ def test_unexpected_hash_drift_for_current_ready_record_still_fails_closed(
             _Request(),
             now=NOW,
             output_root=tmp_path,
+            client=client,
         )
+
+
+def test_withdrawn_without_exact_persisted_parent_baseline_fails_closed(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    session, client, requested_inns = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=target,
+        missing_state_inns={ALAN_INN},
+    )
+
+    with pytest.raises(
+        service.PublicBuildError,
+        match=r"parent publication baseline count mismatch: ready=40 baseline=39",
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            client=client,
+        )
+
+    assert requested_inns == []
+
+
+def test_parent_ready_count_must_match_authoritative_baseline(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    session, client, requested_inns = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=target,
+        ready_record_count=39,
+    )
+
+    with pytest.raises(
+        service.PublicBuildError,
+        match=r"parent publication baseline count mismatch: ready=39 baseline=40",
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            client=client,
+        )
+
+    assert requested_inns == []
+
+
+def test_published_parent_baseline_release_mismatch_fails_closed(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    session, client, requested_inns = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=target,
+        baseline_release_overrides={ALAN_INN: "public-v1-not-active-parent"},
+    )
+
+    with pytest.raises(
+        service.PublicBuildError,
+        match=rf"published parent baseline release mismatch: {ALAN_INN}",
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            client=client,
+        )
+
+    assert requested_inns == []
 
 
 def test_withdrawn_route_must_be_404_during_external_verification(

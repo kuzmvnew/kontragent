@@ -11,11 +11,12 @@ import json
 import os
 import re
 import subprocess
-from typing import Any
+from typing import Any, Mapping
 from uuid import UUID
 
 import httpx
 import psycopg
+from pydantic import ValidationError
 from psycopg.rows import dict_row
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -68,6 +69,20 @@ class PublicationQueueNormalization:
     replacement_request_id: UUID | None = None
     dirty_count: int = 0
     no_public_change: bool = False
+
+
+@dataclass(frozen=True)
+class TransitionParentCohort:
+    """Exact parent membership plus strictly validated retained projections."""
+
+    release_id: str
+    record_count: int
+    parent_inns: tuple[str, ...]
+    retained_inns: tuple[str, ...]
+    added_inns: tuple[str, ...]
+    withdrawn_inns: tuple[str, ...]
+    retained_projections: Mapping[str, PublicProjection]
+    previous_hashes: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -311,7 +326,16 @@ def fetch_live_cohort(
                 raise PublicVpsUnavailable(
                     f"public card {entity.inn} returned HTTP {response.status_code}"
                 )
-            projection = PublicProjection.model_validate(response.json())
+            try:
+                projection = PublicProjection.model_validate(response.json())
+            except ValidationError as error:
+                raise PublicVpsUnavailable(
+                    _projection_validation_diagnostic(
+                        stage="strict_live_cohort",
+                        inn=entity.inn,
+                        error=error,
+                    )
+                ) from error
             if projection.company.inn != entity.inn:
                 raise PublicVpsUnavailable(f"public card identity mismatch for {entity.inn}")
             if projection.publication.release_id != release_id:
@@ -326,6 +350,168 @@ def fetch_live_cohort(
         if isinstance(error, PublicVpsUnavailable):
             raise
         raise PublicVpsUnavailable(type(error).__name__) from error
+    finally:
+        if owns_client:
+            http.close()
+
+
+def _projection_validation_diagnostic(
+    *,
+    stage: str,
+    inn: str,
+    error: ValidationError,
+) -> str:
+    """Return bounded schema evidence without including rejected input."""
+
+    details = error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    )
+    first = details[0] if details else {}
+    location = first.get("loc") or ("$",)
+    path = ".".join(str(part)[:60] for part in location)[:240]
+    category = str(first.get("type") or "validation_error")[:100]
+    return (
+        f"stage={stage} inn={inn} validation_path={path} "
+        f"validation_type={category}"
+    )
+
+
+def fetch_transition_parent_cohort(
+    manifest: CanonicalManifest,
+    *,
+    target_inns: list[str] | tuple[str, ...],
+    publication_states: Mapping[str, Any],
+    client: httpx.Client | None = None,
+) -> TransitionParentCohort:
+    """Read a release parent without parsing payloads for proven withdrawals.
+
+    The ready endpoint identifies the exact active release and its count. Persisted
+    publication rows for that release are the authoritative membership inventory.
+    Only retained members are then fetched and validated against the current public
+    projection contract.
+    """
+
+    owns_client = client is None
+    http = _public_client(client)
+    try:
+        release_id, expected_record_count = _validated_ready_release(http)
+        accepted_inns = {entity.inn for entity in manifest.entities}
+        normalized_target = tuple(sorted(target_inns))
+        if len(normalized_target) != len(set(normalized_target)):
+            raise PublicBuildError("current target membership contains duplicate INNs")
+        if not set(normalized_target).issubset(accepted_inns):
+            raise PublicBuildError(
+                "current target membership is outside the accepted eligibility universe"
+            )
+
+        mismatched_releases = sorted(
+            inn
+            for inn, state in publication_states.items()
+            if state.is_published
+            and state.last_published_release_id != release_id
+        )
+        if mismatched_releases:
+            raise PublicBuildError(
+                "published parent baseline release mismatch: "
+                + ", ".join(mismatched_releases)
+            )
+
+        parent_inns = tuple(
+            sorted(
+                inn
+                for inn, state in publication_states.items()
+                if state.is_published
+                and state.last_published_release_id == release_id
+            )
+        )
+        if not set(parent_inns).issubset(accepted_inns):
+            raise PublicBuildError(
+                "parent publication baseline is outside the accepted eligibility universe"
+            )
+        if len(parent_inns) != expected_record_count:
+            raise PublicBuildError(
+                "parent publication baseline count mismatch: "
+                f"ready={expected_record_count} baseline={len(parent_inns)}"
+            )
+
+        parent_set = set(parent_inns)
+        target_set = set(normalized_target)
+        retained_inns = tuple(sorted(parent_set & target_set))
+        added_inns = tuple(sorted(target_set - parent_set))
+        withdrawn_inns = tuple(sorted(parent_set - target_set))
+
+        previous_hashes: dict[str, str] = {}
+        for inn in parent_inns:
+            state = publication_states.get(inn)
+            previous_hash = str(getattr(state, "last_published_hash", "") or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", previous_hash):
+                raise PublicBuildError(
+                    f"parent publication baseline hash is missing or invalid: {inn}"
+                )
+            previous_hashes[inn] = previous_hash
+
+        retained_projections: dict[str, PublicProjection] = {}
+        for inn in retained_inns:
+            response = http.get(f"/api/company/{inn}")
+            if response.status_code != 200:
+                raise PublicVpsUnavailable(
+                    "stage=transition_parent_retained "
+                    f"inn={inn} error_type=http_{response.status_code}"
+                )
+            try:
+                payload = response.json()
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                raise PublicVpsUnavailable(
+                    "stage=transition_parent_retained "
+                    f"inn={inn} validation_path=$ "
+                    f"validation_type={type(error).__name__}"
+                ) from error
+            try:
+                projection = PublicProjection.model_validate(payload)
+            except ValidationError as error:
+                raise PublicVpsUnavailable(
+                    _projection_validation_diagnostic(
+                        stage="transition_parent_retained",
+                        inn=inn,
+                        error=error,
+                    )
+                ) from error
+            if projection.company.inn != inn:
+                raise PublicVpsUnavailable(
+                    "stage=transition_parent_retained "
+                    f"inn={inn} validation_path=company.inn "
+                    "validation_type=identity_mismatch"
+                )
+            if projection.publication.release_id != release_id:
+                raise PublicVpsUnavailable(
+                    "stage=transition_parent_retained "
+                    f"inn={inn} validation_path=publication.release_id "
+                    "validation_type=release_mismatch"
+                )
+            if semantic_projection_sha256(projection) != previous_hashes[inn]:
+                raise PublicBuildError(
+                    f"live projection hash is not the recorded last-good hash: {inn}"
+                )
+            retained_projections[inn] = projection
+
+        return TransitionParentCohort(
+            release_id=release_id,
+            record_count=expected_record_count,
+            parent_inns=parent_inns,
+            retained_inns=retained_inns,
+            added_inns=added_inns,
+            withdrawn_inns=withdrawn_inns,
+            retained_projections=retained_projections,
+            previous_hashes=previous_hashes,
+        )
+    except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
+        if isinstance(error, PublicVpsUnavailable):
+            raise
+        raise PublicVpsUnavailable(
+            f"stage=transition_parent_read error_type={type(error).__name__}"
+        ) from error
     finally:
         if owns_client:
             http.close()
