@@ -12,8 +12,8 @@ from sqlalchemy.engine import make_url
 
 from scripts.schema_fingerprint import (
     EXPECTED_POSTGRESQL_VERSION,
+    compare_fingerprints,
     fingerprint_connection,
-    require_fingerprint_match,
 )
 from scripts.staging_acceptance import false_head_probe
 
@@ -101,7 +101,8 @@ def test_postgresql_18_6_backup_restore_preserves_fingerprint(variable, tmp_path
         )
         with psycopg.connect(restore_url) as connection:
             observed = fingerprint_connection(connection)
-        assert require_fingerprint_match(expected, observed)["compatible"]
+        comparison = compare_fingerprints(expected, observed)
+        assert comparison["compatible"], comparison["differences"]
     finally:
         with psycopg.connect(admin_url, autocommit=True) as connection:
             connection.execute(
