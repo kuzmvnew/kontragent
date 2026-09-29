@@ -93,6 +93,19 @@ nginx -t && systemctl reload nginx
 
 ## 5. Atomic application deploy
 
+For releases accepted by the production-parity staging gate, source checkout
+deployment below is superseded by the immutable flow in
+`docs/STAGING_PARITY.md`. Production must stage the exact archive SHA from
+`accepted-artifact.json`, run
+`deploy/scripts/run_release_migrations.sh RELEASE_DIR public`, and activate
+that same archive with `deploy/scripts/install_runtime_artifact.sh ... --activate`.
+Rebuilding the accepted SHA or running `uv sync` during promotion invalidates
+the staging acceptance.
+
+The source checkout procedure below remains documented only for releases that
+predate the staging-parity artifact contract; it must not be used for a gated
+release.
+
 Upload a clean Git checkout at the approved SHA to a staging directory, then run:
 
 ```bash

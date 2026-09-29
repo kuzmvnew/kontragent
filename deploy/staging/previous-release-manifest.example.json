@@ -1,0 +1,23 @@
+{
+  "contract_version": 1,
+  "accepted_artifact": {
+    "path": "/var/lib/nextcompany-staging/artifacts/previous.tar.gz",
+    "sha256": "REPLACE_WITH_64_HEX"
+  },
+  "operational_backup": {
+    "path": "/var/lib/nextcompany-staging/inputs/previous-operational.dump",
+    "sha256": "REPLACE_WITH_64_HEX"
+  },
+  "public_backup": {
+    "path": "/var/lib/nextcompany-staging/inputs/previous-public.dump",
+    "sha256": "REPLACE_WITH_64_HEX"
+  },
+  "operational_allowed_extra_schemas": [
+    "legacy_v3_archive"
+  ],
+  "public_allowed_extra_schemas": [],
+  "rollback": {
+    "db_downgrade_supported": false,
+    "forward_recovery": "Reactivate the accepted candidate artifact and complete the documented forward repair; never downgrade this database."
+  }
+}

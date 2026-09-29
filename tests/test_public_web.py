@@ -151,3 +151,15 @@ def test_api_security_headers_and_no_cors():
     assert "access-control-allow-origin" not in response.headers
     health = web.get("/api/health").json()
     assert health == {"status": "ok"}
+
+
+def test_staging_force_noindex_is_global_and_sitemap_is_empty(monkeypatch):
+    monkeypatch.setenv("PUBLIC_FORCE_NOINDEX", "1")
+    web = TestClient(create_app(FakeRepository()))
+
+    for path in ("/", "/companies/0274101890", "/api/company/0274101890", "/sitemap.xml"):
+        response = web.get(path)
+        assert response.headers["x-robots-tag"] == "noindex, nofollow, nosnippet"
+        assert response.headers["cache-control"] == "no-store"
+    assert web.get("/robots.txt").text == "User-agent: *\nDisallow: /\n"
+    assert "/companies/" not in web.get("/sitemap.xml").text
