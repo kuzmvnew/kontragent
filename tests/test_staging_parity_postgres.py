@@ -13,6 +13,8 @@ from scripts.staging_acceptance import false_head_probe
 
 
 def _url(variable: str) -> str:
+    if os.getenv("STAGING_PARITY_POSTGRES") != "1":
+        pytest.skip("live staging parity probes require explicit opt-in")
     value = os.getenv(variable)
     if not value:
         pytest.skip(f"{variable} is not configured")
