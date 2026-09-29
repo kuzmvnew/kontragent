@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -102,6 +104,11 @@ def test_postgresql_18_6_backup_restore_preserves_fingerprint(variable, tmp_path
         with psycopg.connect(restore_url) as connection:
             observed = fingerprint_connection(connection)
         comparison = compare_fingerprints(expected, observed)
+        if not comparison["compatible"]:
+            print(
+                json.dumps(comparison["differences"], indent=2, sort_keys=True),
+                file=sys.stderr,
+            )
         assert comparison["compatible"], comparison["differences"]
     finally:
         with psycopg.connect(admin_url, autocommit=True) as connection:
