@@ -114,4 +114,4 @@ API endpoint:
 - [ ] Добавить UI/API результат с датой проверки и источником.
 - [ ] Добавить unit/integration tests без обращения к live API в CI.
 - [ ] Выполнить локальный live smoke-test на реальном ИНН и зафиксировать результат.
-- [ ] Обновить PROJECT_STATUS.md и сохранить в GitHub.
+- [ ] Обновить `project_status.yaml`, сгенерировать `PROJECT_STATUS.md` и сохранить в GitHub.
