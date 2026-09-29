@@ -271,7 +271,7 @@ At the time of this checkpoint, the next executable stage was:
 
 **Intermediate Stage 1.5 — READY TO START.**
 
-This checkpoint is retained as history. Stage 1.5 and Auto-update / Data Readiness were subsequently accepted. Current status and order are authoritative in `PROJECT_STATUS.md` and `WAVE_IMPLEMENTATION_PLAN.md`; the current approved next stage is Risk Engine, not started by this documentation cleanup.
+This checkpoint is retained as history. Stage 1.5 and Auto-update / Data Readiness were subsequently accepted. Current status is authoritative in `project_status.yaml` (`PROJECT_STATUS.md` is generated); current order is authoritative in `WAVE_IMPLEMENTATION_PLAN.md`. The next-stage sentence in this historical checkpoint is not current status.
 
 Development handoff: `STAGE_1_5_HANDOFF.md`.
 

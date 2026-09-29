@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nextcompany.pro/schemas/project-status/1-0-0.json",
+  "title": "Kontragent canonical project status",
+  "description": "Versioned schema for project_status.yaml. Layer states are explicit and independent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "main_sha",
+    "code",
+    "qa",
+    "production",
+    "user_visible",
+    "active_task",
+    "next_gate",
+    "incidents",
+    "services",
+    "data_state"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "generated_at": {"$ref": "#/$defs/timestamp"},
+    "main_sha": {"$ref": "#/$defs/sha"},
+    "code": {"$ref": "#/$defs/code"},
+    "qa": {"$ref": "#/$defs/qa"},
+    "production": {"$ref": "#/$defs/production"},
+    "user_visible": {"$ref": "#/$defs/userVisible"},
+    "active_task": {"$ref": "#/$defs/activeTask"},
+    "next_gate": {"$ref": "#/$defs/nextGate"},
+    "incidents": {"$ref": "#/$defs/incidents"},
+    "services": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/service"}
+    },
+    "data_state": {"$ref": "#/$defs/dataState"}
+  },
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "shaOrUnknown": {
+      "oneOf": [
+        {"$ref": "#/$defs/sha"},
+        {"const": "UNKNOWN"}
+      ]
+    },
+    "timestamp": {"type": "string", "format": "date-time"},
+    "timestampOrUnknown": {
+      "anyOf": [
+        {"$ref": "#/$defs/timestamp"},
+        {"const": "UNKNOWN"}
+      ]
+    },
+    "stringOrUnknown": {"$ref": "#/$defs/nonEmptyString"},
+    "countOrUnknown": {
+      "oneOf": [
+        {"type": "integer", "minimum": 0},
+        {"const": "UNKNOWN"}
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "kind", "reference", "observed_at"],
+      "properties": {
+        "status": {"enum": ["VERIFIED", "NOT_VERIFIED"]},
+        "kind": {
+          "enum": [
+            "git",
+            "qa_task",
+            "production_handoff",
+            "release_manifest",
+            "runtime_observation",
+            "repository_file",
+            "task"
+          ]
+        },
+        "reference": {"$ref": "#/$defs/nonEmptyString"},
+        "observed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "evidenceList": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/evidence"}
+    },
+    "codeCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "status", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "name": {"$ref": "#/$defs/nonEmptyString"},
+        "status": {"enum": ["MERGED", "NOT_MERGED", "UNKNOWN"]},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "qaCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "status": {"enum": ["ACCEPTED", "NOT_ACCEPTED", "STALE", "UNKNOWN"]},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "productionCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "status": {"enum": ["DEPLOYED", "NOT_DEPLOYED", "UNKNOWN"]},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "visibleCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "status": {"enum": ["VISIBLE", "NOT_VISIBLE", "UNKNOWN"]},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "code": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "main_sha",
+        "latest_relevant_merged_pr",
+        "migration_heads",
+        "release_capable_artifact",
+        "capabilities"
+      ],
+      "properties": {
+        "state": {"enum": ["VERIFIED", "NOT_VERIFIED"]},
+        "main_sha": {"$ref": "#/$defs/sha"},
+        "latest_relevant_merged_pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["number", "url", "merge_sha", "merged_at", "evidence"],
+          "properties": {
+            "number": {
+              "oneOf": [
+                {"type": "integer", "minimum": 1},
+                {"const": "UNKNOWN"}
+              ]
+            },
+            "url": {"$ref": "#/$defs/stringOrUnknown"},
+            "merge_sha": {"$ref": "#/$defs/shaOrUnknown"},
+            "merged_at": {"$ref": "#/$defs/timestampOrUnknown"},
+            "evidence": {"$ref": "#/$defs/evidenceList"}
+          }
+        },
+        "migration_heads": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operational", "public", "evidence"],
+          "properties": {
+            "operational": {"$ref": "#/$defs/nonEmptyString"},
+            "public": {"$ref": "#/$defs/nonEmptyString"},
+            "evidence": {"$ref": "#/$defs/evidenceList"}
+          }
+        },
+        "release_capable_artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "artifact_id", "path", "sha256", "evidence"],
+          "properties": {
+            "state": {"enum": ["PRESENT", "ABSENT", "UNKNOWN"]},
+            "artifact_id": {"$ref": "#/$defs/nonEmptyString"},
+            "path": {"$ref": "#/$defs/nonEmptyString"},
+            "sha256": {
+              "type": "string",
+              "pattern": "^(UNKNOWN|[0-9a-f]{64})$"
+            },
+            "evidence": {"$ref": "#/$defs/evidenceList"}
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/codeCapability"}
+        }
+      }
+    },
+    "qa": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "accepted_head_sha",
+        "qa_task_id",
+        "verdict",
+        "evidence_reference",
+        "merge_allowed",
+        "tested_at",
+        "evidence",
+        "capabilities"
+      ],
+      "properties": {
+        "state": {"enum": ["ACCEPTED", "NOT_ACCEPTED", "STALE", "UNKNOWN"]},
+        "accepted_head_sha": {"$ref": "#/$defs/shaOrUnknown"},
+        "qa_task_id": {"$ref": "#/$defs/nonEmptyString"},
+        "verdict": {"enum": ["PASS", "FAIL", "NOT_ACCEPTED", "STALE", "UNKNOWN"]},
+        "evidence_reference": {"$ref": "#/$defs/nonEmptyString"},
+        "merge_allowed": {"type": "boolean"},
+        "tested_at": {"$ref": "#/$defs/timestampOrUnknown"},
+        "evidence": {"$ref": "#/$defs/evidenceList"},
+        "capabilities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/qaCapability"}
+        }
+      }
+    },
+    "production": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "runtime_sha",
+        "operational_db_revision",
+        "public_db_revision",
+        "active_release_id",
+        "active_release_record_count",
+        "active_release_cohort",
+        "semantic_ready_count",
+        "public_ready_count",
+        "service_state",
+        "last_production_acceptance_task",
+        "deployed_at",
+        "evidence",
+        "capabilities"
+      ],
+      "properties": {
+        "state": {"enum": ["VERIFIED", "PARTIALLY_VERIFIED", "NOT_VERIFIED"]},
+        "runtime_sha": {"$ref": "#/$defs/shaOrUnknown"},
+        "operational_db_revision": {"$ref": "#/$defs/nonEmptyString"},
+        "public_db_revision": {"$ref": "#/$defs/nonEmptyString"},
+        "active_release_id": {"$ref": "#/$defs/nonEmptyString"},
+        "active_release_record_count": {"$ref": "#/$defs/countOrUnknown"},
+        "active_release_cohort": {"$ref": "#/$defs/nonEmptyString"},
+        "semantic_ready_count": {"$ref": "#/$defs/countOrUnknown"},
+        "public_ready_count": {"$ref": "#/$defs/countOrUnknown"},
+        "service_state": {"enum": ["HEALTHY", "DEGRADED", "DOWN", "PARTIALLY_VERIFIED", "NOT_VERIFIED"]},
+        "last_production_acceptance_task": {"$ref": "#/$defs/nonEmptyString"},
+        "deployed_at": {"$ref": "#/$defs/timestampOrUnknown"},
+        "evidence": {"$ref": "#/$defs/evidenceList"},
+        "capabilities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/productionCapability"}
+        }
+      }
+    },
+    "userVisible": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "public_site_state",
+        "external_api_state",
+        "ssr_state",
+        "active_release_id",
+        "external_verified_at",
+        "known_withheld_or_depublished",
+        "evidence",
+        "capabilities"
+      ],
+      "properties": {
+        "state": {"enum": ["VERIFIED", "PARTIALLY_VERIFIED", "NOT_VERIFIED"]},
+        "public_site_state": {"enum": ["LIVE", "DOWN", "WITHHELD", "NOT_VERIFIED"]},
+        "external_api_state": {"enum": ["LIVE", "DOWN", "WITHHELD", "NOT_VERIFIED"]},
+        "ssr_state": {"enum": ["VERIFIED", "FAILED", "NOT_VERIFIED"]},
+        "active_release_id": {"$ref": "#/$defs/nonEmptyString"},
+        "external_verified_at": {"$ref": "#/$defs/timestampOrUnknown"},
+        "known_withheld_or_depublished": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "companies", "issues"],
+          "properties": {
+            "state": {"enum": ["VERIFIED", "PARTIALLY_VERIFIED", "NOT_VERIFIED"]},
+            "companies": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["identifier", "state", "reason", "evidence"],
+                "properties": {
+                  "identifier": {"$ref": "#/$defs/nonEmptyString"},
+                  "state": {"enum": ["WITHHELD", "DEPUBLISHED"]},
+                  "reason": {"$ref": "#/$defs/nonEmptyString"},
+                  "evidence": {"$ref": "#/$defs/evidenceList"}
+                }
+              }
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "description", "evidence"],
+                "properties": {
+                  "id": {"$ref": "#/$defs/nonEmptyString"},
+                  "description": {"$ref": "#/$defs/nonEmptyString"},
+                  "evidence": {"$ref": "#/$defs/evidenceList"}
+                }
+              }
+            }
+          }
+        },
+        "evidence": {"$ref": "#/$defs/evidenceList"},
+        "capabilities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/visibleCapability"}
+        }
+      }
+    },
+    "activeTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "state", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "title": {"$ref": "#/$defs/nonEmptyString"},
+        "state": {"enum": ["ACTIVE", "COMPLETE", "BLOCKED", "UNKNOWN"]},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "nextGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "state", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "description": {"$ref": "#/$defs/nonEmptyString"},
+        "state": {"enum": ["PENDING", "READY", "BLOCKED", "UNKNOWN"]},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "incidents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "active", "evidence"],
+      "properties": {
+        "state": {"enum": ["CLEAR", "ACTIVE", "NOT_VERIFIED"]},
+        "active": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "severity", "status", "summary", "evidence"],
+            "properties": {
+              "id": {"$ref": "#/$defs/nonEmptyString"},
+              "severity": {"enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]},
+              "status": {"enum": ["OPEN", "MITIGATING", "MONITORING"]},
+              "summary": {"$ref": "#/$defs/nonEmptyString"},
+              "evidence": {"$ref": "#/$defs/evidenceList"}
+            }
+          }
+        },
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "environment", "state", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "environment": {"$ref": "#/$defs/nonEmptyString"},
+        "state": {"enum": ["HEALTHY", "DEGRADED", "DOWN", "NOT_VERIFIED"]},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    },
+    "dataState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operational_db_revision",
+        "public_db_revision",
+        "active_release_id",
+        "active_release_record_count",
+        "active_release_cohort",
+        "semantic_ready_count",
+        "public_ready_count",
+        "evidence"
+      ],
+      "properties": {
+        "operational_db_revision": {"$ref": "#/$defs/nonEmptyString"},
+        "public_db_revision": {"$ref": "#/$defs/nonEmptyString"},
+        "active_release_id": {"$ref": "#/$defs/nonEmptyString"},
+        "active_release_record_count": {"$ref": "#/$defs/countOrUnknown"},
+        "active_release_cohort": {"$ref": "#/$defs/nonEmptyString"},
+        "semantic_ready_count": {"$ref": "#/$defs/countOrUnknown"},
+        "public_ready_count": {"$ref": "#/$defs/countOrUnknown"},
+        "evidence": {"$ref": "#/$defs/evidenceList"}
+      }
+    }
+  }
+}

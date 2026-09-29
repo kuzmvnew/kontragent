@@ -6,7 +6,7 @@ Status: APPROVED
 
 Date: 2026-09-17
 
-Historical document notice: this start package records the original Phase 4 starting point. Its `Immediate Next Step` sequence below is preserved as historical context and was superseded after Stage 1.5 and Auto-update / Data Readiness were accepted. For current status and execution order use `PROJECT_STATUS.md` and `WAVE_IMPLEMENTATION_PLAN.md`. The current approved next stage is Risk Engine; it is not started by this documentation update.
+Historical document notice: this start package records the original Phase 4 starting point. Its `Immediate Next Step` sequence below is preserved as historical context and was superseded after Stage 1.5 and Auto-update / Data Readiness were accepted. For current status use `project_status.yaml` (or generated `PROJECT_STATUS.md`); for execution order use `WAVE_IMPLEMENTATION_PLAN.md`. The next-stage sentence in this historical package is not current status.
 
 ---
 

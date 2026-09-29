@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kuzmvnew/kontragent/blob/main/.github/qa-attestation.schema.v1.json",
+  "title": "Kontragent QA attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "repository",
+    "pr_number",
+    "base_sha",
+    "head_sha",
+    "qa_verdict",
+    "tested_at",
+    "tests",
+    "evidence",
+    "merge_allowed",
+    "deploy_allowed",
+    "issuer",
+    "reviewer"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "base_sha": {
+      "$ref": "#/$defs/git_sha"
+    },
+    "head_sha": {
+      "$ref": "#/$defs/git_sha"
+    },
+    "qa_verdict": {
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "tested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/test_result"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "merge_allowed": {
+      "type": "boolean"
+    },
+    "deploy_allowed": {
+      "type": "boolean"
+    },
+    "issuer": {
+      "$ref": "#/$defs/issuer"
+    },
+    "reviewer": {
+      "$ref": "#/$defs/reviewer"
+    }
+  },
+  "$defs": {
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "test_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "command",
+        "result",
+        "counts"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "result": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "passed",
+            "failed",
+            "skipped",
+            "total"
+          ],
+          "properties": {
+            "passed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "ARTIFACT",
+            "HASH",
+            "LOG",
+            "REPORT",
+            "RUN",
+            "URL",
+            "OTHER"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2000
+        }
+      }
+    },
+    "repository_role": {
+      "enum": [
+        "OWNER",
+        "MEMBER",
+        "COLLABORATOR",
+        "EXTERNAL",
+        "UNKNOWN"
+      ]
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "login",
+        "identity_source",
+        "repository_role"
+      ],
+      "properties": {
+        "login": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "identity_source": {
+          "const": "GITHUB_COMMENT_AUTHOR"
+        },
+        "repository_role": {
+          "$ref": "#/$defs/repository_role"
+        }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "login",
+        "repository_role",
+        "independence"
+      ],
+      "properties": {
+        "login": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "repository_role": {
+          "$ref": "#/$defs/repository_role"
+        },
+        "independence": {
+          "enum": [
+            "INDEPENDENT_REVIEWER_ESTABLISHED",
+            "INDEPENDENT_REVIEWER_NOT_ESTABLISHED"
+          ]
+        }
+      }
+    }
+  }
+}
