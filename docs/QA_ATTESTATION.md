@@ -1,20 +1,21 @@
 # SHA-bound QA attestation
 
 `qa-acceptance` is a merge check, not a deployment authorization. It accepts a
-QA decision only for the exact current pull-request HEAD and only when a trusted
-issuer posts a valid structured attestation.
+QA decision only for the exact current pull-request number, base SHA, and head
+SHA, and only when a trusted issuer posts a valid structured attestation.
 
 ## Decision flow
 
 1. Codex implements a change on a pull-request branch.
-2. QA checks out and tests the exact PR HEAD SHA, recording the base SHA used by
-   the test run.
+2. QA checks out and tests the exact PR HEAD SHA against the exact current base
+   SHA.
 3. An allowed issuer posts one v1 QA attestation as a PR issue comment.
 4. The trusted default-branch workflow reads current PR metadata and comments
    through the GitHub API. It does not check out or execute the PR tree.
 5. The workflow publishes a `qa-acceptance` check run on the current PR HEAD.
-6. The check is green only for `qa_verdict=PASS`, `merge_allowed=true`, and an
-   exact current HEAD binding. Branch protection may then permit merge.
+6. The check is green only for `qa_verdict=PASS`, `merge_allowed=true`, and
+   exact current PR, base SHA, and head SHA bindings. Branch protection may
+   then permit merge.
 7. Production remains blocked until a separate production-acceptance mechanism
    authorizes deployment. `qa-acceptance` never supplies that authorization.
 
@@ -51,8 +52,8 @@ Replace every example value with facts from the actual QA run.
 ````markdown
 ## QA attestation
 
-QA passed for the exact pull-request HEAD shown below. This is not production
-approval. The JSON block is authoritative.
+QA passed for the exact pull-request base and head SHAs shown below. This is not
+production approval. The JSON block is authoritative.
 
 <!-- QA-ATTESTATION:BEGIN v1 -->
 ```json
@@ -116,25 +117,21 @@ The published check has four machine states:
 
 | State | Meaning | Check conclusion |
 | --- | --- | --- |
-| `PASS` | One valid trusted attestation matches repository, PR, and current HEAD; QA passed and merge is allowed. | success |
+| `PASS` | One valid trusted attestation matches repository, PR, current base, and current HEAD; QA passed and merge is allowed. | success |
 | `FAIL` | The current decision rejects merge, or trusted input is malformed, foreign, duplicate, or conflicting. | failure |
 | `MISSING` | No trusted attestation exists for the PR. | failure |
-| `STALE` | Trusted attestation history exists, but none matches the required current SHA binding. | failure |
+| `STALE` | Trusted attestation history exists, but none matches both required current base and head SHA bindings. | failure |
 
 On `synchronize`, HEAD A's successful check remains attached to A. The trusted
 workflow evaluates HEAD B and creates a non-successful check on B until a valid
-attestation for B exists. A different PR number, repository, or SHA cannot
-reuse an acceptance.
+attestation for B exists. A different PR number, repository, base SHA, or head
+SHA cannot reuse an acceptance.
 
-Every attestation retains its tested `base_sha`. The policy setting
-`require_current_base_sha` controls base drift:
-
-- `false` (repository default): a matching HEAD may pass after base drift, but
-  the check output preserves both SHAs and reports
-  `TESTED_BASE_DIFFERS_FROM_CURRENT_BASE`.
-- `true`: current base SHA must also match; drift produces `STALE`. A push to
-  `main` re-evaluates every open PR, so an old green check cannot silently
-  survive strict base drift.
+Every attestation retains its tested `base_sha`, and the canonical repository
+policy requires it to equal the current PR base SHA. Base drift always produces
+`STALE` and requires a fresh QA attestation, even when the PR HEAD is unchanged.
+A push to `main` re-evaluates every open PR, so an old green check cannot
+silently survive base drift.
 
 ## Identity and reviewer independence
 
@@ -211,8 +208,8 @@ ruleset targeting the default branch `main`:
    source. Never select **any source** or generic **GitHub Actions**.
 4. Keep the ruleset active and do not add `production-acceptance` as an alias
    for this check.
-5. If `require_current_base_sha=true`, also require branches to be up to date
-   before merging.
+5. Require branches to be up to date before merging so branch freshness and
+   mandatory exact-base QA binding remain aligned.
 6. Enable the equivalent of **Do not allow bypassing** for administrators and
    repository roles unless the repository has a separately documented
    emergency process.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,9 @@ BASE_A = "a" * 40
 BASE_B = "b" * 40
 HEAD_A = "c" * 40
 HEAD_B = "d" * 40
+CANONICAL_POLICY_PATH = (
+    Path(__file__).resolve().parents[1] / ".github" / "qa-attestation-policy.json"
+)
 
 
 def policy(**overrides: object) -> dict[str, object]:
@@ -26,7 +30,7 @@ def policy(**overrides: object) -> dict[str, object]:
         "policy_version": "1.0",
         "allowed_issuer_logins": ["kuzmvnew"],
         "repository_owner_logins": ["kuzmvnew"],
-        "require_current_base_sha": False,
+        "require_current_base_sha": True,
         "require_independent_reviewer": False,
     }
     value.update(overrides)
@@ -211,24 +215,22 @@ def test_conflicting_current_attestations_fail_closed() -> None:
     assert result["reason"] == "DUPLICATE_CURRENT_ATTESTATIONS"
 
 
-def test_base_sha_is_preserved_and_can_be_strictly_bound() -> None:
+def test_base_change_invalidates_old_pass() -> None:
     tested_against_old_base = comment(attestation(base_sha=BASE_A))
 
-    advisory = evaluate_attestations(
+    result = evaluate_attestations(
         snapshot([tested_against_old_base], base_sha=BASE_B),
-        policy(require_current_base_sha=False),
-    )
-    strict = evaluate_attestations(
-        snapshot([tested_against_old_base], base_sha=BASE_B),
-        policy(require_current_base_sha=True),
+        policy(),
     )
 
-    assert advisory["state"] == "PASS"
-    assert advisory["attested_base_sha"] == BASE_A
-    assert advisory["current_base_sha"] == BASE_B
-    assert advisory["warnings"] == ["TESTED_BASE_DIFFERS_FROM_CURRENT_BASE"]
-    assert strict["state"] == "STALE"
-    assert strict["reason"] == "BASE_SHA_MISMATCH"
+    assert result["state"] == "STALE"
+    assert result["reason"] == "BASE_SHA_MISMATCH"
+
+
+def test_canonical_policy_requires_exact_current_base() -> None:
+    checked_in_policy = json.loads(CANONICAL_POLICY_PATH.read_text(encoding="utf-8"))
+
+    assert checked_in_policy["require_current_base_sha"] is True
 
 
 def test_same_owner_cannot_claim_independent_review() -> None:

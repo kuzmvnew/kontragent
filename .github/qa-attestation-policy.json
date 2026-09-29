@@ -6,6 +6,6 @@
   "repository_owner_logins": [
     "kuzmvnew"
   ],
-  "require_current_base_sha": false,
+  "require_current_base_sha": true,
   "require_independent_reviewer": false
 }
