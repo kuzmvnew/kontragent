@@ -23,7 +23,9 @@ from scripts.render_staging_units import (
     render_units,
 )
 from scripts.schema_fingerprint import (
+    CONTRACT_VERSION as FINGERPRINT_CONTRACT_VERSION,
     FingerprintMismatch,
+    _canonical_sql,
     compare_fingerprints,
     payload_sha256,
     require_fingerprint_match,
@@ -44,7 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _fingerprint() -> dict:
     payload = {
-        "contract_version": 1,
+        "contract_version": FINGERPRINT_CONTRACT_VERSION,
         "postgresql_version": "18.6",
         "schemas": [{"schema": "public"}],
         "relations": [
@@ -128,6 +130,31 @@ def test_fingerprint_is_deterministic_and_declared_extra_schema_is_bounded():
     assert compare_fingerprints(
         expected, observed, allowed_extra_schemas=["legacy_v3_archive"]
     )["compatible"]
+
+
+def test_fingerprint_normalizes_postgres_dump_restore_varchar_array_casts():
+    migrated = (
+        "CHECK (status::text = ANY "
+        "(ARRAY['staged'::character varying, 'active'::character varying]::text[]))"
+    )
+    restored = (
+        "CHECK (status::text = ANY "
+        "(ARRAY['staged'::character varying::text, "
+        "'active'::character varying::text]))"
+    )
+    assert _canonical_sql(migrated) == _canonical_sql(restored)
+
+    migrated_predicate = (
+        "WHERE ((status)::text <> ALL "
+        "((ARRAY['RESOLVED'::character varying, "
+        "'CANCELLED'::character varying])::text[]))"
+    )
+    restored_predicate = (
+        "WHERE ((status)::text <> ALL "
+        "(ARRAY[('RESOLVED'::character varying)::text, "
+        "('CANCELLED'::character varying)::text]))"
+    )
+    assert _canonical_sql(migrated_predicate) == _canonical_sql(restored_predicate)
 
 
 def test_staging_units_are_generated_from_production_and_detect_drift(tmp_path):

@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -19,7 +20,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 EXPECTED_POSTGRESQL_VERSION = "18.6"
 CATEGORIES = (
     "schemas",
@@ -56,6 +57,45 @@ def _rows(connection: psycopg.Connection, query: str) -> list[dict[str, Any]]:
     with connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(query)
         return [dict(row) for row in cursor.fetchall()]
+
+
+_STRING_LITERAL = r"'(?:''|[^'])*'"
+
+
+def _canonical_sql(value: str) -> str:
+    """Normalize equivalent PostgreSQL deparser output after dump/restore.
+
+    PostgreSQL 18 can re-express varchar literal arrays by moving their
+    ``::text`` cast from the array to each element. The parse trees are
+    equivalent, but the raw output of pg_get_* is not byte-identical.
+    Normalize only that narrow, semantics-preserving form; object names,
+    operators, values and all other casts remain part of the contract.
+    """
+    value = re.sub(
+        rf"\(({_STRING_LITERAL})::character varying\)::text",
+        r"\1",
+        value,
+    )
+    value = re.sub(
+        rf"({_STRING_LITERAL})::character varying::text",
+        r"\1",
+        value,
+    )
+    value = re.sub(
+        rf"({_STRING_LITERAL})::character varying",
+        r"\1",
+        value,
+    )
+    value = re.sub(
+        r"\((ARRAY\[[^\]]*\])\)::text\[\]",
+        r"\1",
+        value,
+    )
+    return re.sub(
+        r"(ARRAY\[[^\]]*\])::text\[\]",
+        r"\1",
+        value,
+    )
 
 
 def fingerprint_connection(connection: psycopg.Connection) -> dict[str, Any]:
@@ -187,6 +227,19 @@ def fingerprint_connection(connection: psycopg.Connection) -> dict[str, Any]:
         )
     for category, query in queries.items():
         payload[category] = _rows(connection, query)
+    for category in (
+        "relations",
+        "columns",
+        "indexes",
+        "unique_constraints",
+        "foreign_keys",
+        "check_constraints",
+        "triggers",
+    ):
+        for row in payload[category]:
+            for field in ("default", "definition", "predicate"):
+                if isinstance(row.get(field), str):
+                    row[field] = _canonical_sql(row[field])
     for routine in payload["routines"]:
         definition = routine.pop("definition")
         routine["definition_sha256"] = hashlib.sha256(
