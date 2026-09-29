@@ -32,6 +32,7 @@ jobs:
       PUBLIC_IMPORT_DATABASE_URL: postgresql+psycopg://staging:staging@127.0.0.1:5432/staging_public_fresh
       DADATA_API_KEY: staging-disabled
       STAGING_PARITY_POSTGRES: "1"
+      POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
 
     steps:
       - name: Checkout candidate

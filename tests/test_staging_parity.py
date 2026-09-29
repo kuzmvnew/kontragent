@@ -33,6 +33,7 @@ from scripts.staging_acceptance import (
     _access_contract,
     _redact,
     migration_command,
+    rollback_mode,
     validate_previous_manifest,
     validate_shape_manifest,
 )
@@ -300,3 +301,21 @@ def test_promotion_installs_exact_accepted_artifact_without_resolving_dependenci
     assert "pip install" not in script
     assert 'releases_root="$app_root/releases"' in script
     assert '"$activation" == "--activate"' in script
+
+
+def test_rollback_policy_fails_closed_or_requires_forward_recovery():
+    assert rollback_mode(True, {"db_downgrade_supported": True}) == "previous_runtime"
+    with pytest.raises(AcceptanceError, match="despite declared rollback support"):
+        rollback_mode(False, {"db_downgrade_supported": True})
+    with pytest.raises(AcceptanceError, match="forward-recovery"):
+        rollback_mode(False, {"db_downgrade_supported": False})
+    assert (
+        rollback_mode(
+            False,
+            {
+                "db_downgrade_supported": False,
+                "forward_recovery": "reactivate accepted candidate",
+            },
+        )
+        == "forward_recovery"
+    )

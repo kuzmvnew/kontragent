@@ -663,6 +663,21 @@ def _active_release(database_url: str) -> str | None:
         return row[0] if row else None
 
 
+def rollback_mode(
+    previous_runtime_healthy: bool,
+    rollback_contract: dict[str, Any],
+) -> str:
+    if previous_runtime_healthy:
+        return "previous_runtime"
+    if rollback_contract.get("db_downgrade_supported"):
+        raise AcceptanceError(
+            "previous runtime is incompatible despite declared rollback support"
+        )
+    if not str(rollback_contract.get("forward_recovery", "")).strip():
+        raise AcceptanceError("forward-recovery rule is required")
+    return "forward_recovery"
+
+
 def _runtime_accept(
     release: Path,
     operational_url: str,
@@ -961,7 +976,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
             previous_artifact = verify_artifact(
                 previous["_artifact_path"], extract_to=previous_extract
             )
-            rollback_mode = "previous_runtime"
+            selected_rollback_mode = "previous_runtime"
             try:
                 previous_runtime = _runtime_accept(
                     previous_extract / "release",
@@ -971,10 +986,13 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                     "rollback-previous",
                     require_ready=bool(shape.get("require_public_ready", True)),
                 )
+                selected_rollback_mode = rollback_mode(
+                    True, previous["rollback"]
+                )
             except AcceptanceError as error:
-                if previous["rollback"]["db_downgrade_supported"]:
-                    raise
-                rollback_mode = "forward_recovery"
+                selected_rollback_mode = rollback_mode(
+                    False, previous["rollback"]
+                )
                 previous_runtime = {
                     "status": "INCOMPATIBLE",
                     "error": str(error),
@@ -993,7 +1011,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                 raise AcceptanceError("rollback changed the public release pointer")
             result["rollback"] = {
                 "status": "PASS",
-                "mode": rollback_mode,
+                "mode": selected_rollback_mode,
                 "previous_artifact_sha256": previous_artifact["artifact_sha256"],
                 "runtime": previous_runtime,
                 "public_release_pointer": active_after,
