@@ -1,0 +1,215 @@
+name: QA acceptance
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+  issue_comment:
+    types: [created, edited, deleted]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to re-evaluate
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  discover-pull-requests:
+    name: Resolve pull requests
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      pr_numbers: ${{ steps.resolve.outputs.pr_numbers }}
+    steps:
+      - name: Resolve affected pull requests
+        id: resolve
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            let numbers;
+            if (process.env.EVENT_NAME === "push") {
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: "open",
+                base: process.env.DEFAULT_BRANCH,
+                per_page: 100,
+              });
+              numbers = pulls.map((pull) => pull.number);
+            } else {
+              const number = Number(process.env.EVENT_PR_NUMBER);
+              if (!Number.isSafeInteger(number) || number < 1) {
+                core.setFailed("A positive pull request number is required");
+                return;
+              }
+              numbers = [number];
+            }
+            core.setOutput("pr_numbers", JSON.stringify(numbers));
+
+  evaluate:
+    name: Evaluate and publish trusted decision
+    needs: discover-pull-requests
+    if: needs.discover-pull-requests.outputs.pr_numbers != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: qa-attestation-publisher
+    strategy:
+      fail-fast: false
+      matrix:
+        pr_number: ${{ fromJSON(needs.discover-pull-requests.outputs.pr_numbers) }}
+    steps:
+      # pull_request_target is safe here because only the default branch is checked out.
+      # The PR's tree, scripts, artifacts, and workflow changes are never executed.
+      - name: Checkout trusted validator from default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Create dedicated check-publisher token
+        id: publisher
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.QA_ATTESTATION_APP_ID }}
+          private-key: ${{ secrets.QA_ATTESTATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-checks: write
+
+      - name: Collect authenticated PR state and comments
+        id: collect
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          PR_NUMBER: ${{ matrix.pr_number }}
+          SNAPSHOT_PATH: ${{ runner.temp }}/qa-attestation-input.json
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const pull_number = Number(process.env.PR_NUMBER);
+            const pull = await github.rest.pulls.get({ owner, repo, pull_number });
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            const snapshot = {
+              repository: `${owner}/${repo}`,
+              pr_number: pull_number,
+              current_base_sha: pull.data.base.sha,
+              current_head_sha: pull.data.head.sha,
+              comments: comments.map((comment) => ({
+                id: comment.id,
+                body: comment.body,
+                author_login: comment.user?.login,
+                author_association: comment.author_association,
+                html_url: comment.html_url,
+              })),
+            };
+            fs.writeFileSync(process.env.SNAPSHOT_PATH, JSON.stringify(snapshot), {
+              encoding: "utf8",
+              mode: 0o600,
+            });
+            core.setOutput("head_sha", pull.data.head.sha);
+
+      - name: Evaluate SHA-bound attestation
+        id: validator
+        env:
+          SNAPSHOT_PATH: ${{ runner.temp }}/qa-attestation-input.json
+          RESULT_PATH: ${{ runner.temp }}/qa-attestation-result.json
+        run: >-
+          python3 scripts/qa_attestation.py evaluate
+          --input "$SNAPSHOT_PATH"
+          --policy .github/qa-attestation-policy.json
+          --output "$RESULT_PATH"
+
+      - name: Publish qa-acceptance check on current PR HEAD
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          PR_NUMBER: ${{ matrix.pr_number }}
+          COLLECTED_HEAD_SHA: ${{ steps.collect.outputs.head_sha }}
+          RESULT_PATH: ${{ runner.temp }}/qa-attestation-result.json
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ steps.publisher.outputs.token }}
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const pull_number = Number(process.env.PR_NUMBER);
+            let result;
+            try {
+              result = JSON.parse(fs.readFileSync(process.env.RESULT_PATH, "utf8"));
+            } catch (error) {
+              result = {
+                state: "FAIL",
+                reason: "VALIDATOR_DID_NOT_PRODUCE_A_RESULT",
+                diagnostics: [String(error)],
+              };
+            }
+            const allowedStates = new Set(["PASS", "FAIL", "MISSING", "STALE"]);
+            if (!allowedStates.has(result.state)) {
+              result = {
+                state: "FAIL",
+                reason: "VALIDATOR_RETURNED_UNKNOWN_STATE",
+                diagnostics: [JSON.stringify(result)],
+              };
+            }
+
+            let head_sha = process.env.COLLECTED_HEAD_SHA;
+            if (!/^[0-9a-f]{40}$/.test(head_sha || "")) {
+              const pull = await github.rest.pulls.get({ owner, repo, pull_number });
+              head_sha = pull.data.head.sha;
+            }
+            const lines = [
+              `State: ${result.state}`,
+              `Reason: ${result.reason || "UNKNOWN"}`,
+              `PR: ${owner}/${repo}#${pull_number}`,
+              `Current HEAD: ${head_sha}`,
+            ];
+            if (result.attested_head_sha) {
+              lines.push(`Attested HEAD: ${result.attested_head_sha}`);
+            }
+            if (result.attested_base_sha) {
+              lines.push(`Attested base: ${result.attested_base_sha}`);
+            }
+            if (result.deploy_allowed !== null && result.deploy_allowed !== undefined) {
+              lines.push(`Deploy allowed (informational only): ${result.deploy_allowed}`);
+            }
+            for (const warning of result.warnings || []) {
+              lines.push(`Warning: ${warning}`);
+            }
+            for (const diagnostic of (result.diagnostics || []).slice(0, 10)) {
+              lines.push(`Diagnostic: ${diagnostic}`);
+            }
+
+            await github.rest.checks.create({
+              owner,
+              repo,
+              name: "qa-acceptance",
+              head_sha,
+              status: "completed",
+              conclusion: result.state === "PASS" ? "success" : "failure",
+              details_url: process.env.DETAILS_URL,
+              external_id: `${context.runId}:${context.runAttempt}:${pull_number}`,
+              output: {
+                title: `qa-acceptance: ${result.state}`,
+                summary: lines.join("\n"),
+              },
+            });
