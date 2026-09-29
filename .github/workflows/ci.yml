@@ -54,5 +54,8 @@ jobs:
       - name: Verify schema completeness
         run: uv run python scripts/check_schema_completeness.py
 
+      - name: Validate canonical project status snapshot
+        run: uv run python scripts/project_status.py check --freshness repository
+
       - name: Run test suite
         run: uv run python -m pytest -q

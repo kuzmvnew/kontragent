@@ -1,0 +1,207 @@
+schema_version: 1.0.0
+generated_at: '2026-09-29T09:46:56Z'
+main_sha: 9ca2ab22b6597ea0e4c846de33e34946c325d59e
+code:
+  state: VERIFIED
+  main_sha: 9ca2ab22b6597ea0e4c846de33e34946c325d59e
+  latest_relevant_merged_pr:
+    number: 109
+    url: https://github.com/kuzmvnew/kontragent/pull/109
+    merge_sha: 9ca2ab22b6597ea0e4c846de33e34946c325d59e
+    merged_at: '2026-09-29T07:05:45Z'
+    evidence:
+      - status: VERIFIED
+        kind: git
+        reference: git log --first-parent --merges -1 origin/main
+        observed_at: '2026-09-29T09:24:27Z'
+  migration_heads:
+    operational: b9e2c4d6f8a0
+    public: public_0002
+    evidence:
+      - status: VERIFIED
+        kind: repository_file
+        reference: Static Alembic graphs in migrations/versions and public_migrations/versions
+        observed_at: '2026-09-29T09:24:27Z'
+  release_capable_artifact:
+    state: PRESENT
+    artifact_id: nextcompany-canonical-operational-cohort-40
+    path: docs/releases/public-v1-cohort-40.json
+    sha256: 8f44d69ad716b3481f92287e32df1c51f41aeecca5bd449265520d7656f40752
+    evidence:
+      - status: VERIFIED
+        kind: release_manifest
+        reference: sha256(docs/releases/public-v1-cohort-40.json)
+        observed_at: '2026-09-29T09:24:27Z'
+  capabilities:
+    - id: transition-aware-public-releases
+      name: Transition-aware public cohort updates and withdrawals
+      status: MERGED
+      evidence:
+        - status: VERIFIED
+          kind: git
+          reference: 'PR #109 / merge 9ca2ab22b6597ea0e4c846de33e34946c325d59e'
+          observed_at: '2026-09-29T09:24:27Z'
+    - id: public-card-binding
+      name: Public company card binding
+      status: MERGED
+      evidence:
+        - status: VERIFIED
+          kind: git
+          reference: 'PR #108 / merge bd9ee511d1180f36d388b042216def8207aeda94'
+          observed_at: '2026-09-29T09:24:27Z'
+    - id: post-migration-factory-recovery
+      name: Data-scale post-migration factory recovery
+      status: MERGED
+      evidence:
+        - status: VERIFIED
+          kind: git
+          reference: 'PR #107 / merge 0ac7607dbb6b33c1cbdf1cc1604a28aee8a86882'
+          observed_at: '2026-09-29T09:24:27Z'
+qa:
+  state: NOT_ACCEPTED
+  accepted_head_sha: UNKNOWN
+  qa_task_id: UNKNOWN
+  verdict: NOT_ACCEPTED
+  evidence_reference: No accepted QA task for current main SHA was supplied or found in repository evidence
+  merge_allowed: false
+  tested_at: UNKNOWN
+  evidence:
+    - status: NOT_VERIFIED
+      kind: qa_task
+      reference: Current main SHA has no canonical accepted QA task in this status snapshot
+      observed_at: '2026-09-29T09:24:27Z'
+  capabilities: []
+production:
+  state: PARTIALLY_VERIFIED
+  runtime_sha: UNKNOWN
+  operational_db_revision: UNKNOWN
+  public_db_revision: UNKNOWN
+  active_release_id: public-v1-20260927T040214Z-32334077-8f44d69a
+  active_release_record_count: 40
+  active_release_cohort: UNKNOWN
+  semantic_ready_count: UNKNOWN
+  public_ready_count: UNKNOWN
+  service_state: PARTIALLY_VERIFIED
+  last_production_acceptance_task: UNKNOWN
+  deployed_at: UNKNOWN
+  evidence:
+    - status: VERIFIED
+      kind: runtime_observation
+      reference: https://nextcompany.pro/api/ready returned ready with release_id and record_count=40
+      observed_at: '2026-09-29T09:24:19Z'
+    - status: VERIFIED
+      kind: runtime_observation
+      reference: https://nextcompany.pro/api/health returned status=ok
+      observed_at: '2026-09-29T09:24:19Z'
+    - status: NOT_VERIFIED
+      kind: production_handoff
+      reference: Runtime SHA, DB revisions, deployment time, readiness counters, and production acceptance task are not exposed by the observed public endpoints
+      observed_at: '2026-09-29T09:24:27Z'
+  capabilities: []
+user_visible:
+  state: PARTIALLY_VERIFIED
+  public_site_state: LIVE
+  external_api_state: LIVE
+  ssr_state: VERIFIED
+  active_release_id: public-v1-20260927T040214Z-32334077-8f44d69a
+  external_verified_at: '2026-09-29T09:24:19Z'
+  known_withheld_or_depublished:
+    state: PARTIALLY_VERIFIED
+    companies:
+      - identifier: '0100000614'
+        state: WITHHELD
+        reason: External SSR response was HTTP 200 but carried noindex; indexing eligibility for the other active records was not exhaustively checked
+        evidence:
+          - status: VERIFIED
+            kind: runtime_observation
+            reference: https://nextcompany.pro/companies/0100000614 returned X-Robots-Tag noindex,follow
+            observed_at: '2026-09-29T09:24:19Z'
+    issues:
+      - id: EMPTY_PUBLIC_SITEMAP
+        description: The public sitemap returned an empty urlset at external verification time
+        evidence:
+          - status: VERIFIED
+            kind: runtime_observation
+            reference: https://nextcompany.pro/sitemap.xml
+            observed_at: '2026-09-29T09:24:19Z'
+  evidence:
+    - status: VERIFIED
+      kind: runtime_observation
+      reference: Public landing, API ready/health, sample company API, and sample SSR card returned HTTP 200; www redirected to apex
+      observed_at: '2026-09-29T09:24:19Z'
+  capabilities:
+    - id: public-company-card
+      status: VISIBLE
+      evidence:
+        - status: VERIFIED
+          kind: runtime_observation
+          reference: SSR and JSON API for company 0100000614 returned HTTP 200 with canonical and structured data
+          observed_at: '2026-09-29T09:24:19Z'
+active_task:
+  id: PROJECT-STATUS-CANONICALIZATION-01
+  title: CANONICAL MACHINE-READABLE PROJECT STATUS
+  state: COMPLETE
+  evidence:
+    - status: VERIFIED
+      kind: task
+      reference: Direct task from 00 — Управление проектом
+      observed_at: '2026-09-29T09:46:56Z'
+next_gate:
+  id: HANDOFF-00
+  description: Return implementation, validation evidence, and unmerged PR to 00 — Управление проектом
+  state: READY
+  evidence:
+    - status: VERIFIED
+      kind: task
+      reference: PROJECT-STATUS-CANONICALIZATION-01 required handoff
+      observed_at: '2026-09-29T09:46:56Z'
+incidents:
+  state: NOT_VERIFIED
+  active: []
+  evidence:
+    - status: NOT_VERIFIED
+      kind: runtime_observation
+      reference: Public health endpoints do not expose an incident register; an empty list is not a CLEAR assertion
+      observed_at: '2026-09-29T09:24:27Z'
+services:
+  - id: public-web
+    environment: production
+    state: HEALTHY
+    evidence:
+      - status: VERIFIED
+        kind: runtime_observation
+        reference: https://nextcompany.pro/ and sample SSR company card returned HTTP 200
+        observed_at: '2026-09-29T09:24:19Z'
+  - id: public-api
+    environment: production
+    state: HEALTHY
+    evidence:
+      - status: VERIFIED
+        kind: runtime_observation
+        reference: /api/health, /api/ready, and sample company API returned HTTP 200
+        observed_at: '2026-09-29T09:24:19Z'
+  - id: operational-worker
+    environment: production
+    state: NOT_VERIFIED
+    evidence:
+      - status: NOT_VERIFIED
+        kind: production_handoff
+        reference: Internal operational worker state was not supplied and is not exposed publicly
+        observed_at: '2026-09-29T09:24:27Z'
+data_state:
+  operational_db_revision: UNKNOWN
+  public_db_revision: UNKNOWN
+  active_release_id: public-v1-20260927T040214Z-32334077-8f44d69a
+  active_release_record_count: 40
+  active_release_cohort: UNKNOWN
+  semantic_ready_count: UNKNOWN
+  public_ready_count: UNKNOWN
+  evidence:
+    - status: VERIFIED
+      kind: runtime_observation
+      reference: /api/ready exposed active release_id and record_count=40
+      observed_at: '2026-09-29T09:24:19Z'
+    - status: NOT_VERIFIED
+      kind: production_handoff
+      reference: DB revisions, exact active cohort identity, and readiness counters were not supplied by the runtime observation
+      observed_at: '2026-09-29T09:24:27Z'

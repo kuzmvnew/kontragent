@@ -14,7 +14,7 @@ W1-004 — ACCEPTED / SIX GATES PASS на Mac 16.09.2026; scope A–D, PostgreSQ
 
 ## Перед изменениями
 Выполни git status --short, git branch --show-current, git remote -v, git log -10 --oneline и git fetch origin. Сопоставь HEAD и origin/main. Не делай reset --hard, stash, clean, rebase или force-push автоматически. При грязном дереве, расхождении веток или падающих baseline-тестах остановись, покажи факты и не исправляй посторонние проблемы.
-Прочитай WAVE1_STATUS.md, PROJECT_STATUS.md, ROADMAP.md, ROADMAP_DETAILED.md, ROADMAP_CHANGES_AFTER_AUDIT.md, PHASE_4_START_PACKAGE.md, README (если есть), docs/WAVE1_HANDOFF_2026-09-16.md и acceptance-документы W1-001—W1-004.
+Прочитай project_status.yaml, сгенерированный PROJECT_STATUS.md, WAVE1_STATUS.md, ROADMAP.md, ROADMAP_DETAILED.md, ROADMAP_CHANGES_AFTER_AUDIT.md, PHASE_4_START_PACKAGE.md, README (если есть), docs/WAVE1_HANDOFF_2026-09-16.md и acceptance-документы W1-001—W1-004.
 Изучи релевантные provider/ingestion/models/services/aggregator/templates/tests/acceptance scripts предыдущих источников, не переписывая их. Выполни uv run python -m pytest tests -q ДО изменений, запиши число passed/failed и SHA baseline. Проверь uv run alembic current (ожидаемый ранее подтверждённый head f7b2d8a4c1e3); не применяй миграции без обоснования.
 W1-001—W1-004 приняты на Mac. Не повторяй их массовые импорты/acceptance без доказанной необходимости. Следующая разработка — W1-005 Роскомнадзор, но только по отдельной команде Михаила.
 
@@ -43,6 +43,6 @@ W1-005 Роскомнадзор — NEXT / NOT STARTED. Не начинать б
 
 ## Завершение задачи
 Запусти профильные и полный набор тестов; проверь регрессии W1-001—W1-003 без повторных массовых импортов; выполни PostgreSQL, browser и coverage acceptance. Проверь git diff --check, git diff --stat, git diff и git status. Изменения только текущей задачи и необходимых документов.
-После изменения фактического состояния обнови WAVE1_STATUS.md, PROJECT_STATUS.md, ROADMAP.md, ROADMAP_DETAILED.md, актуальный handoff и acceptance-документ. Порядок roadmap не менять, обновлять только статусы. Секреты/.env/полные datasets/лишние персональные поля в Git не включать.
+После изменения фактического состояния обнови WAVE1_STATUS.md, project_status.yaml, сгенерируй PROJECT_STATUS.md, затем синхронизируй ROADMAP.md, ROADMAP_DETAILED.md, актуальный handoff и acceptance-документ. Порядок roadmap не менять, обновлять только статусы. Секреты/.env/полные datasets/лишние персональные поля в Git не включать.
 Если есть архитектурный конфликт — остановись, покажи конфликт, варианты и последствия, жди решения.
 НЕ делай commit, push или merge без отдельного подтверждения Михаила. Сначала отчёт: требования; реализация; созданные/изменённые файлы; новые тесты; baseline/final SHA и passed/failed; шесть критериев; PostgreSQL, браузер, количества/даты/покрытие; git diff/status; результаты регрессий (не абсолютная гарантия отсутствия всех ошибок); обновлённые документы; ограничения; предложенный commit message. Затем жди подтверждения.

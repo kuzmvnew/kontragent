@@ -7,7 +7,7 @@ Status: STAGE 1.5 CLOSED / NEXT TRANSITION APPROVED
 
 This addendum updates the current transition state without rewriting the full long-form `ROADMAP.md` / `ROADMAP_DETAILED.md` structure.
 
-Where older roadmap paragraphs still describe Wave 1 as open or W1-006 as not started, this addendum plus `WAVE1_CLOSURE_DECISION.md`, `WAVE1_STATUS.md`, `PROJECT_STATUS.md` and `WAVE_IMPLEMENTATION_PLAN.md` are the authoritative current status.
+Where older roadmap paragraphs still describe Wave 1 as open or W1-006 as not started, this addendum, `WAVE1_CLOSURE_DECISION.md`, and `WAVE1_STATUS.md` remain historical evidence. Current status is authoritative only in `project_status.yaml` (`PROJECT_STATUS.md` is generated), while execution order remains in `WAVE_IMPLEMENTATION_PLAN.md`.
 
 ## Current position
 
