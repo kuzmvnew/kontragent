@@ -45,6 +45,7 @@ from app.services.publication_service import (
     fail_request,
     fetch_live_cohort,
     fetch_live_release_id,
+    fetch_transition_parent_cohort,
     normalize_after_successful_publication,
     normalize_publication_queue,
     publishable_runs,
@@ -276,29 +277,22 @@ def build_candidate(
             )
         )
     }
-    previous_release_id, live = fetch_live_cohort(accepted, client=client)
     by_inn = {company.inn: company for company in companies}
     runs = publishable_runs(session, companies)
     target_companies = [company for company in companies if company.id in runs]
     target_inns = [company.inn for company in target_companies]
-    for inn, live_projection in live.items():
-        company = by_inn[inn]
-        state = states.get(company.id)
-        if state is None or not state.is_published:
-            raise PublicBuildError(
-                f"live projection is missing from the publication baseline: {inn}"
-            )
-        if state.last_published_release_id != previous_release_id:
-            raise PublicBuildError(f"live release is not the recorded baseline: {inn}")
-        if company.id in runs and (
-            state.projection_version == PROJECTION_VERSION
-            and state.hash_algorithm_version == HASH_ALGORITHM_VERSION
-            and semantic_projection_sha256(live_projection)
-            != state.last_published_hash
-        ):
-            raise PublicBuildError(
-                f"live projection hash is not the recorded last-good hash: {inn}"
-            )
+    state_by_inn = {
+        company.inn: states[company.id]
+        for company in companies
+        if company.id in states
+    }
+    parent = fetch_transition_parent_cohort(
+        accepted,
+        target_inns=target_inns,
+        publication_states=state_by_inn,
+        client=client,
+    )
+    previous_release_id = parent.release_id
 
     source_sha = current_main_sha()
     if request.created_main_sha != source_sha:
@@ -343,35 +337,11 @@ def build_candidate(
         current_hashes[company.inn] = semantic_projection_sha256(projection)
         projections.append(projection)
 
-    live_hashes = {
-        inn: semantic_projection_sha256(projection)
-        for inn, projection in live.items()
-    }
-    parent_inns = set(live)
-    target_inn_set = set(target_inns)
     unchanged: list[ReleaseTransitionSummary] = []
     updated: list[ReleaseTransitionSummary] = []
     added: list[ReleaseTransitionSummary] = []
     withdrawn: list[ReleaseTransitionSummary] = []
-    for inn in sorted(parent_inns | target_inn_set):
-        if inn not in target_inn_set:
-            withdrawn.append(
-                ReleaseTransitionSummary(
-                    inn=inn,
-                    transition="WITHDRAWN",
-                    previous_hash=live_hashes[inn],
-                )
-            )
-            continue
-        if inn not in parent_inns:
-            added.append(
-                ReleaseTransitionSummary(
-                    inn=inn,
-                    transition="ADDED",
-                    current_hash=current_hashes[inn],
-                )
-            )
-            continue
+    for inn in parent.retained_inns:
         company = by_inn[inn]
         state = states.get(company.id)
         versions_match = bool(
@@ -383,14 +353,31 @@ def build_candidate(
             inn=inn,
             transition=(
                 "UNCHANGED"
-                if versions_match and live_hashes[inn] == current_hashes[inn]
+                if versions_match
+                and parent.previous_hashes[inn] == current_hashes[inn]
                 else "UPDATED"
             ),
-            previous_hash=live_hashes[inn],
+            previous_hash=parent.previous_hashes[inn],
             current_hash=current_hashes[inn],
         )
         (unchanged if transition.transition == "UNCHANGED" else updated).append(
             transition
+        )
+    for inn in parent.added_inns:
+        added.append(
+            ReleaseTransitionSummary(
+                inn=inn,
+                transition="ADDED",
+                current_hash=current_hashes[inn],
+            )
+        )
+    for inn in parent.withdrawn_inns:
+        withdrawn.append(
+            ReleaseTransitionSummary(
+                inn=inn,
+                transition="WITHDRAWN",
+                previous_hash=parent.previous_hashes[inn],
+            )
         )
 
     release_changes = [*updated, *added, *withdrawn]
@@ -436,7 +423,7 @@ def build_candidate(
         companies_file="companies.jsonl.gz",
         changed_company_count=len(changes),
         changed_companies=tuple(changes),
-        parent_record_count=len(parent_inns),
+        parent_record_count=parent.record_count,
         unchanged_count=len(unchanged),
         unchanged_companies=tuple(unchanged),
         updated_count=len(updated),
