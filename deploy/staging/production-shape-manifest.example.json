@@ -1,0 +1,31 @@
+{
+  "contract_version": 1,
+  "sanitized": true,
+  "contains_sensitive_content": false,
+  "mass_ingestion": false,
+  "operational_backup": {
+    "path": "/var/lib/nextcompany-staging/inputs/shape-operational.dump",
+    "sha256": "REPLACE_WITH_64_HEX"
+  },
+  "public_backup": {
+    "path": "/var/lib/nextcompany-staging/inputs/shape-public.dump",
+    "sha256": "REPLACE_WITH_64_HEX"
+  },
+  "operational_allowed_extra_schemas": [
+    "legacy_v3_archive"
+  ],
+  "public_allowed_extra_schemas": [],
+  "minimum_rows": {
+    "operational": {
+      "public.companies": 500,
+      "public.data_sets": 1
+    },
+    "public": {
+      "public.public_releases": 1,
+      "public.public_company_projections": 40
+    }
+  },
+  "semantic_release_checks": [],
+  "semantic_release_check_waiver": "No candidate semantic backfill is declared for this release; runtime and active public release readiness remain mandatory.",
+  "require_public_ready": true
+}

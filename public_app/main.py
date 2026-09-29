@@ -104,6 +104,12 @@ def _card_json_ld(projection: PublicProjection) -> dict:
 
 
 def create_app(repository=None) -> FastAPI:
+    force_noindex = os.getenv("PUBLIC_FORCE_NOINDEX", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     app = FastAPI(
         title="NEXT Company Public",
         docs_url=None,
@@ -111,6 +117,7 @@ def create_app(repository=None) -> FastAPI:
         openapi_url=None,
     )
     app.state.repository = repository or PublicRepository()
+    app.state.force_noindex = force_noindex
     allowed_hosts = [
         host.strip()
         for host in os.getenv(
@@ -157,7 +164,10 @@ def create_app(repository=None) -> FastAPI:
                 "Cross-Origin-Opener-Policy": "same-origin",
             }
         )
-        if request.url.path.startswith("/api/"):
+        if force_noindex:
+            response.headers["X-Robots-Tag"] = "noindex, nofollow, nosnippet"
+            response.headers["Cache-Control"] = "no-store"
+        elif request.url.path.startswith("/api/"):
             response.headers["X-Robots-Tag"] = "noindex, nofollow, nosnippet"
             response.headers["Cache-Control"] = "no-store"
         elif response.status_code >= 400:
@@ -215,7 +225,15 @@ def create_app(repository=None) -> FastAPI:
         projection = _repo(request).get_company(inn)
         if projection is None:
             raise StarletteHTTPException(status_code=404)
-        robots = "index, follow" if projection.publication.index_eligible else "noindex, follow"
+        robots = (
+            "noindex, nofollow"
+            if force_noindex
+            else (
+                "index, follow"
+                if projection.publication.index_eligible
+                else "noindex, follow"
+            )
+        )
         return templates.TemplateResponse(
             request=request,
             name="company.html",
@@ -244,6 +262,8 @@ def create_app(repository=None) -> FastAPI:
 
     @app.get("/robots.txt")
     def robots():
+        if force_noindex:
+            return PlainTextResponse("User-agent: *\nDisallow: /\n")
         body = "\n".join(
             (
                 "User-agent: *",
@@ -261,7 +281,7 @@ def create_app(repository=None) -> FastAPI:
 
     @app.get("/sitemap.xml")
     def sitemap(request: Request):
-        rows = _repo(request).sitemap_rows()
+        rows = [] if force_noindex else _repo(request).sitemap_rows()
         return templates.TemplateResponse(
             request=request,
             name="sitemap.xml",
