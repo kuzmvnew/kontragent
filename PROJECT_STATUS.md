@@ -4,8 +4,8 @@
 > Regenerate with `uv run python scripts/project_status.py update`.
 
 - Schema version: `1.0.0`
-- Generated at: `2026-09-29T09:46:56Z`
-- Canonical main SHA: `9ca2ab22b6597ea0e4c846de33e34946c325d59e`
+- Generated at: `2026-09-29T12:07:45Z`
+- Canonical main SHA: `474e5d0fc967c84e7ec367b39a0f6898f3927d75`
 
 Layer states are independent. A merge is not deployment, QA acceptance is
 not deployment, and production deployment is not user-visible verification.
@@ -15,10 +15,10 @@ not deployment, and production deployment is not user-visible verification.
 | Field | Value |
 |---|---|
 | State | VERIFIED |
-| Main SHA | 9ca2ab22b6597ea0e4c846de33e34946c325d59e |
-| Latest relevant merged PR | #109 — https://github.com/kuzmvnew/kontragent/pull/109 |
-| Merge SHA | 9ca2ab22b6597ea0e4c846de33e34946c325d59e |
-| Merged at | 2026-09-29T07:05:45Z |
+| Main SHA | 474e5d0fc967c84e7ec367b39a0f6898f3927d75 |
+| Latest relevant merged PR | #110 — https://github.com/kuzmvnew/kontragent/pull/110 |
+| Merge SHA | 474e5d0fc967c84e7ec367b39a0f6898f3927d75 |
+| Merged at | 2026-09-29T11:16:30Z |
 | Operational migration head in code | b9e2c4d6f8a0 |
 | Public migration head in code | public_0002 |
 | Release-capable artifact state | PRESENT |
@@ -117,12 +117,12 @@ No capability assertions recorded.
 
 | Field | Value |
 |---|---|
-| Active task | PROJECT-STATUS-CANONICALIZATION-01 |
+| Active task | PROJECT-STATUS-CANONICALIZATION-01-BASE-SYNC |
 | Active task state | COMPLETE |
-| Active task title | CANONICAL MACHINE-READABLE PROJECT STATUS |
-| Next gate | HANDOFF-00 |
+| Active task title | SYNC PR #111 TO CURRENT QA-PROTECTED MAIN |
+| Next gate | PROJECT-STATUS-CANONICALIZATION-01-QA |
 | Next gate state | READY |
-| Next gate description | Return implementation, validation evidence, and unmerged PR to 00 — Управление проектом |
+| Next gate description | Independent QA for exact PR #111 base and head SHA binding |
 
 ## Incidents
 
