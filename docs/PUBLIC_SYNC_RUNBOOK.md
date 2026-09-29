@@ -14,11 +14,19 @@ the public VPS. The VPS never connects back to HOME.
 - The semantic hash excludes release ID and publication time, but includes all
   visible identity, fact, freshness, Risk, Summary, limitation, result-date and
   index-eligibility fields.
-- Every candidate contains the full accepted cohort. A non-ready company is
-  carried only from the exact live last-good projection and its recorded hash
-  must still match.
-- Build or schema failure never invokes the VPS importer. Import is atomic. A
-  failed post-import HTTPS check invokes the canonical exact-parent rollback.
+- The checked-in cohort is the eligibility universe. Target release membership
+  is the current legitimate `public_ready` subset; it is not required to have
+  the same size as the parent release.
+- Every parent/target member is classified deterministically as `UNCHANGED`,
+  `UPDATED`, `ADDED`, or `WITHDRAWN`. A withdrawn company is omitted instead of
+  being copied from stale last-good content.
+- Projection and semantic-hash versions are stored with the durable baseline.
+  An explicit version upgrade is published as `UPDATED`; current-version hash
+  drift for a retained company still fails closed.
+- Build or schema failure never invokes the VPS importer. The VPS stages and
+  accepts the candidate while the exact parent remains active, promotes only
+  after acceptance, and persists HOME last-good state only after promoted HTTPS
+  verification. A failed post-promotion check invokes exact-parent rollback.
 
 ## HOME installation
 
@@ -65,6 +73,6 @@ FROM public_publication_requests
 WHERE status IN ('PENDING','RETRY_SCHEDULED');
 ```
 
-The first service cycle bootstraps last-good hashes from the exact live cohort.
-If all current ready projections are identical it records
+The first service cycle bootstraps last-good hashes and membership from the
+exact live parent release. If membership and all current-ready projections are identical it records
 `NO_PUBLIC_CHANGE` and performs no upload or import.

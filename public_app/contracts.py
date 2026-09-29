@@ -23,6 +23,8 @@ from public_app.semantic import (
 )
 
 SCHEMA_VERSION = "public-projection-v1"
+PROJECTION_VERSION = "public-projection-v1.company-view-v1"
+HASH_ALGORITHM_VERSION = "sha256-canonical-json-v2"
 REQUIRED_SOURCE_CODES = ("REVEXP", "PAYTAX", "DEBTAM", "TAXOFFENCE")
 FORBIDDEN_KEY_PARTS = {
     "raw",
@@ -634,8 +636,43 @@ class ChangedCompanySummary(PublicModel):
         return value
 
 
+class ReleaseTransitionSummary(PublicModel):
+    inn: str
+    transition: Literal["UNCHANGED", "UPDATED", "ADDED", "WITHDRAWN"]
+    previous_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    current_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("inn")
+    @classmethod
+    def legal_inn_only(cls, value: str) -> str:
+        if not valid_legal_inn(value):
+            raise ValueError("transition company must have a valid legal-entity INN")
+        return value
+
+    @model_validator(mode="after")
+    def hashes_match_transition(self) -> "ReleaseTransitionSummary":
+        if self.transition == "ADDED" and (
+            self.previous_hash is not None or self.current_hash is None
+        ):
+            raise ValueError("ADDED transition requires only current_hash")
+        if self.transition == "WITHDRAWN" and (
+            self.previous_hash is None or self.current_hash is not None
+        ):
+            raise ValueError("WITHDRAWN transition requires only previous_hash")
+        if self.transition in {"UNCHANGED", "UPDATED"} and (
+            self.previous_hash is None or self.current_hash is None
+        ):
+            raise ValueError(f"{self.transition} transition requires both hashes")
+        if self.transition == "UNCHANGED" and self.previous_hash != self.current_hash:
+            raise ValueError("UNCHANGED transition hashes must match")
+        return self
+
+
 class ReleaseManifest(PublicModel):
     schema_version: str = Field(pattern=r"^public-projection-v1$")
+    projection_version: str = PROJECTION_VERSION
+    hash_algorithm_version: str = HASH_ALGORITHM_VERSION
+    transition_model_version: Literal["release-transition-v1"] | None = None
     release_id: str = Field(min_length=8, max_length=120, pattern=r"^[a-zA-Z0-9._-]+$")
     source_main_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     cohort_manifest_path: str = Field(pattern=r"^docs/releases/[a-zA-Z0-9._-]+\.json$")
@@ -649,6 +686,16 @@ class ReleaseManifest(PublicModel):
     companies_file: str = Field(pattern=r"^companies\.jsonl\.gz$")
     changed_company_count: int = Field(default=0, ge=0, le=10_000)
     changed_companies: tuple[ChangedCompanySummary, ...] = ()
+    parent_record_count: int | None = Field(default=None, ge=0, le=10_000)
+    unchanged_count: int = Field(default=0, ge=0, le=10_000)
+    unchanged_companies: tuple[ReleaseTransitionSummary, ...] = ()
+    updated_count: int = Field(default=0, ge=0, le=10_000)
+    updated_companies: tuple[ReleaseTransitionSummary, ...] = ()
+    added_count: int = Field(default=0, ge=0, le=10_000)
+    added_companies: tuple[ReleaseTransitionSummary, ...] = ()
+    withdrawn_count: int = Field(default=0, ge=0, le=10_000)
+    withdrawn_companies: tuple[ReleaseTransitionSummary, ...] = ()
+    artifact_hashes: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("created_at", "content_updated_at")
     @classmethod
@@ -663,4 +710,45 @@ class ReleaseManifest(PublicModel):
             raise ValueError("changed company summary count mismatch")
         if len({item.inn for item in self.changed_companies}) != len(self.changed_companies):
             raise ValueError("changed company summary contains duplicate INNs")
+        if self.transition_model_version is None:
+            return self
+        groups = (
+            ("UNCHANGED", self.unchanged_count, self.unchanged_companies),
+            ("UPDATED", self.updated_count, self.updated_companies),
+            ("ADDED", self.added_count, self.added_companies),
+            ("WITHDRAWN", self.withdrawn_count, self.withdrawn_companies),
+        )
+        transition_inns: list[str] = []
+        for expected, count, items in groups:
+            if count != len(items):
+                raise ValueError(f"{expected.lower()} company summary count mismatch")
+            if any(item.transition != expected for item in items):
+                raise ValueError(f"{expected.lower()} company summary state mismatch")
+            if tuple(item.inn for item in items) != tuple(
+                sorted(item.inn for item in items)
+            ):
+                raise ValueError(f"{expected.lower()} company summary must be sorted")
+            transition_inns.extend(item.inn for item in items)
+        if len(transition_inns) != len(set(transition_inns)):
+            raise ValueError("release transition summaries contain duplicate INNs")
+        if self.parent_record_count != (
+            self.unchanged_count + self.updated_count + self.withdrawn_count
+        ):
+            raise ValueError("parent record count does not match transitions")
+        if self.record_count != (
+            self.unchanged_count + self.updated_count + self.added_count
+        ):
+            raise ValueError("target record count does not match transitions")
+        if self.changed_company_count != self.updated_count + self.added_count:
+            raise ValueError("changed company count does not match target changes")
+        target_changed = tuple(item.inn for item in self.updated_companies) + tuple(
+            item.inn for item in self.added_companies
+        )
+        if tuple(item.inn for item in self.changed_companies) != target_changed:
+            raise ValueError("changed company summaries do not match transitions")
+        for name, digest in self.artifact_hashes.items():
+            if name not in {"companies.jsonl.gz"} or not re.fullmatch(
+                r"[0-9a-f]{64}", digest
+            ):
+                raise ValueError("invalid release artifact hash")
         return self

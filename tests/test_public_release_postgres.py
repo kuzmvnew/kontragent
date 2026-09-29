@@ -9,7 +9,12 @@ import psycopg
 import pytest
 
 from public_app.contracts import ReleaseManifest
-from scripts.import_public_release import import_release
+from scripts.import_public_release import (
+    accept_staged_release,
+    import_release,
+    promote_release,
+    stage_release,
+)
 from scripts.public_release_common import canonical_json, write_checksums
 from scripts.rollback_public_release import rollback_release
 from tests.public_test_support import forty_projections
@@ -19,10 +24,16 @@ WEB_TEST_URL = os.getenv("PUBLIC_TEST_WEB_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not TEST_URL, reason="PUBLIC_TEST_DATABASE_URL is not configured")
 
 
-def bundle(tmp_path: Path, release_id: str, previous: str | None = None) -> Path:
+def bundle(
+    tmp_path: Path,
+    release_id: str,
+    previous: str | None = None,
+    *,
+    count: int = 40,
+) -> Path:
     path = tmp_path / release_id
     path.mkdir()
-    projections = forty_projections(release_id)
+    projections = forty_projections(release_id)[:count]
     with gzip.open(path / "companies.jsonl.gz", "wt", encoding="utf-8", newline="\n") as stream:
         for item in projections:
             stream.write(canonical_json(item.model_dump(mode="json")).decode() + "\n")
@@ -34,7 +45,7 @@ def bundle(tmp_path: Path, release_id: str, previous: str | None = None) -> Path
         cohort_manifest_sha256="1" * 64,
         cohort_source_main_sha="6dc86fdd2911d3e681a085fdd10e5665b0bcf855",
         previous_release_id=previous, created_at=now, result_date=now.date(),
-        content_updated_at=now, record_count=40, companies_file="companies.jsonl.gz",
+        content_updated_at=now, record_count=count, companies_file="companies.jsonl.gz",
     )
     (path / "manifest.json").write_bytes(canonical_json(manifest.model_dump(mode="json")) + b"\n")
     write_checksums(path)
@@ -120,6 +131,55 @@ def test_second_atomic_switch_and_exact_rollback(tmp_path):
         result = rollback_release(connection, "public-v1-test-a")
     assert result["active_release_id"] == "public-v1-test-a"
     assert active_release() == "public-v1-test-a"
+
+
+def test_stage_accept_promote_keeps_parent_active_until_promotion(tmp_path):
+    first = bundle(tmp_path, "public-v1-test-a")
+    second = bundle(tmp_path, "public-v1-test-b", previous="public-v1-test-a")
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+    with psycopg.connect(TEST_URL) as connection:
+        staged = stage_release(connection, second, "public-v1-test-b")
+    assert staged["staged"] is True
+    assert staged["active"] is False
+    assert active_release() == "public-v1-test-a"
+
+    with psycopg.connect(TEST_URL) as connection:
+        accepted = accept_staged_release(connection, second, "public-v1-test-b")
+    assert accepted["accepted"] is True
+    assert accepted["active"] is False
+    assert active_release() == "public-v1-test-a"
+
+    with psycopg.connect(TEST_URL) as connection:
+        promoted = promote_release(
+            connection,
+            "public-v1-test-b",
+            expected_previous_release_id="public-v1-test-a",
+        )
+    assert promoted["active"] is True
+    assert active_release() == "public-v1-test-b"
+
+
+def test_public_schema_and_import_support_40_to_39(tmp_path):
+    first = bundle(tmp_path, "public-v1-test-a")
+    second = bundle(
+        tmp_path,
+        "public-v1-test-b",
+        previous="public-v1-test-a",
+        count=39,
+    )
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+    with psycopg.connect(TEST_URL) as connection:
+        result = import_release(connection, second)
+
+    assert result["record_count"] == 39
+    assert active_release() == "public-v1-test-b"
+    with psycopg.connect(TEST_URL) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM public_company_projections WHERE release_id=%s",
+            ("public-v1-test-b",),
+        ).fetchone()[0] == 39
 
 
 def test_public_web_role_is_read_only(tmp_path):

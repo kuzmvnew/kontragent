@@ -1,0 +1,662 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+
+import httpx
+import pytest
+
+from app.models.publication import PublicPublicationRequest
+from app.services import publication_service as service
+from public_app.contracts import (
+    HASH_ALGORITHM_VERSION,
+    PROJECTION_VERSION,
+    CanonicalManifest,
+    ManifestEntity,
+)
+from scripts import run_public_sync as runner
+from scripts.public_release_common import load_bundle, semantic_projection_sha256
+from tests.public_test_support import forty_projections, projection
+
+
+NOW = datetime(2026, 9, 29, 8, tzinfo=UTC)
+SHA = "d" * 40
+PARENT_40 = "public-v1-20260927T040214Z-32334077-8f44d69a"
+ALAN_INN = "0100000614"
+
+
+class _Cursor:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+
+class _ReadOnlyConnection:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def execute(self, statement):
+        assert statement == "SET TRANSACTION READ ONLY"
+
+    def cursor(self):
+        return _Cursor()
+
+
+class _BuildSession:
+    def __init__(self, states):
+        self.states = states
+
+    def scalars(self, _query):
+        return list(self.states)
+
+
+class _Request(SimpleNamespace):
+    def __init__(self):
+        super().__init__(
+            created_main_sha=SHA,
+            status="BUILDING",
+            candidate_release_id=None,
+            previous_release_id=None,
+            projection_generation=None,
+            projection_hash=None,
+            changed_company_count=0,
+            changed_company_ids=[],
+            changed_company_inns=[],
+            change_summary=[],
+            ready_at=None,
+            last_error=None,
+            completed_at=None,
+            updated_at=NOW,
+        )
+
+
+def _manifest(inns: list[str]) -> CanonicalManifest:
+    return CanonicalManifest(
+        schema_version="canonical-public-cohort-v1",
+        manifest_version=2,
+        release_name="transition-test",
+        created_at=NOW,
+        source_main_sha="b" * 40,
+        source_database="nextcompany_operational",
+        production_eligibility="VERIFIED_OPERATIONAL",
+        selection_policy={"version": "transition-test", "risk_outcome_used": False},
+        entities=tuple(
+            ManifestEntity(
+                inn=inn,
+                entity_type="legal",
+                master_dataset="fns_egrul",
+                source="fns",
+            )
+            for inn in sorted(inns)
+        ),
+    )
+
+
+def _forty_with_alan(release_id: str):
+    records = forty_projections(release_id)
+    alan = projection(sequence=910_000_000, release_id=release_id)
+    alan = alan.model_copy(
+        update={
+            "company": alan.company.model_copy(
+                update={
+                    "inn": ALAN_INN,
+                    "name": "ООО «АЛАН»",
+                    "full_name": "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ «АЛАН»",
+                }
+            )
+        }
+    )
+    records[-1] = alan
+    return sorted(records, key=lambda item: item.company.inn)
+
+
+def _configure_build(
+    monkeypatch,
+    *,
+    parent_release_id: str,
+    live_records,
+    target_records,
+    legacy_inns: set[str] | None = None,
+    inactive_inns: set[str] | None = None,
+    drift_inns: set[str] | None = None,
+):
+    legacy_inns = legacy_inns or set()
+    inactive_inns = inactive_inns or set()
+    drift_inns = drift_inns or set()
+    universe = {item.company.inn: item for item in (*live_records, *target_records)}
+    companies = [
+        SimpleNamespace(id=index + 1, inn=inn)
+        for index, inn in enumerate(sorted(universe))
+    ]
+    company_by_inn = {item.inn: item for item in companies}
+    live = {item.company.inn: item for item in live_records}
+    target = {item.company.inn: item for item in target_records}
+    states = []
+    for inn, item in universe.items():
+        if inn not in live and inn not in inactive_inns:
+            continue
+        states.append(
+            SimpleNamespace(
+                company_id=company_by_inn[inn].id,
+                last_published_hash=(
+                    "f" * 64 if inn in drift_inns else semantic_projection_sha256(item)
+                ),
+                projection_version=(
+                    "public-projection-v1.legacy"
+                    if inn in legacy_inns
+                    else PROJECTION_VERSION
+                ),
+                hash_algorithm_version=(
+                    "sha256-canonical-json-v1"
+                    if inn in legacy_inns
+                    else HASH_ALGORITHM_VERSION
+                ),
+                is_published=inn not in inactive_inns,
+                last_published_release_id=parent_release_id,
+            )
+        )
+    runs = {
+        company_by_inn[inn].id: SimpleNamespace(id=uuid4()) for inn in target
+    }
+    manifest = _manifest(list(universe))
+    monkeypatch.setattr(runner, "accepted_cohort", lambda: (manifest, "c" * 64))
+    monkeypatch.setattr(runner, "cohort_companies", lambda *_args: companies)
+    monkeypatch.setattr(runner, "publishable_runs", lambda *_args: runs)
+    monkeypatch.setattr(
+        runner,
+        "fetch_live_cohort",
+        lambda *_args, **_kwargs: (parent_release_id, live),
+    )
+    monkeypatch.setattr(runner, "current_main_sha", lambda: SHA)
+    monkeypatch.setattr(runner, "database_url_for_psycopg", lambda: "postgresql://test")
+    monkeypatch.setattr(runner.psycopg, "connect", lambda *_args, **_kwargs: _ReadOnlyConnection())
+    monkeypatch.setattr(
+        runner,
+        "build_projection",
+        lambda _cursor, inn, _publication: target[inn],
+    )
+    return _BuildSession(states)
+
+
+def _build(monkeypatch, tmp_path: Path, *, live, target, **kwargs):
+    session = _configure_build(
+        monkeypatch,
+        parent_release_id=kwargs.pop("parent_release_id", PARENT_40),
+        live_records=live,
+        target_records=target,
+        **kwargs,
+    )
+    request = _Request()
+    bundle, manifest = runner.build_candidate(
+        session,
+        request,
+        now=NOW,
+        output_root=tmp_path,
+    )
+    assert bundle is not None and manifest is not None
+    return request, bundle, manifest
+
+
+def test_incident_withdrawal_builds_39_without_stale_alan(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+
+    request, bundle, manifest = _build(
+        monkeypatch,
+        tmp_path,
+        live=parent,
+        target=target,
+        drift_inns={ALAN_INN},
+    )
+    loaded_manifest, projections, _manifest_hash = load_bundle(bundle)
+
+    assert manifest == loaded_manifest
+    assert manifest.parent_record_count == 40
+    assert manifest.record_count == 39
+    assert manifest.withdrawn_count == 1
+    assert [item.inn for item in manifest.withdrawn_companies] == [ALAN_INN]
+    assert ALAN_INN not in {item.company.inn for item in projections}
+    assert request.changed_company_inns == [ALAN_INN]
+    assert request.change_summary[0]["transition"] == "WITHDRAWN"
+    assert manifest.artifact_hashes["companies.jsonl.gz"]
+
+
+def test_live_parent_membership_uses_ready_count_and_404_not_manifest_size():
+    records = _forty_with_alan(PARENT_40)[:2]
+    manifest = _manifest([item.company.inn for item in records])
+    retained = records[0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ready":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ready",
+                    "release_id": PARENT_40,
+                    "record_count": 1,
+                },
+            )
+        if request.url.path == f"/api/company/{retained.company.inn}":
+            return httpx.Response(200, json=retained.model_dump(mode="json"))
+        return httpx.Response(404)
+
+    with httpx.Client(
+        base_url="https://public.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        release_id, live = service.fetch_live_cohort(manifest, client=client)
+
+    assert release_id == PARENT_40
+    assert list(live) == [retained.company.inn]
+
+
+def test_candidate_build_has_no_ingestion_or_external_process_side_effects(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    monkeypatch.setattr(
+        runner.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("candidate build started a process"),
+    )
+
+    _request, _bundle, manifest = _build(
+        monkeypatch, tmp_path, live=parent, target=target
+    )
+
+    assert manifest.record_count == 39
+
+
+def test_identical_transition_build_is_byte_deterministic(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    _request1, first, manifest1 = _build(
+        monkeypatch, first_root, live=parent, target=target
+    )
+    _request2, second, manifest2 = _build(
+        monkeypatch, second_root, live=parent, target=target
+    )
+
+    assert manifest1 == manifest2
+    for name in ("manifest.json", "companies.jsonl.gz", "checksums.sha256"):
+        assert (first / name).read_bytes() == (second / name).read_bytes()
+
+
+def test_withdrawn_company_can_be_readded_only_from_current_projection(
+    monkeypatch, tmp_path
+):
+    original = _forty_with_alan(PARENT_40)
+    parent_39 = [item for item in original if item.company.inn != ALAN_INN]
+    fresh_alan = next(item for item in original if item.company.inn == ALAN_INN)
+    fresh_alan = fresh_alan.model_copy(
+        update={
+            "company": fresh_alan.company.model_copy(
+                update={"name": "ООО «АЛАН» — АКТУАЛЬНО"}
+            )
+        }
+    )
+    target_40 = sorted([*parent_39, fresh_alan], key=lambda item: item.company.inn)
+
+    _request, bundle, manifest = _build(
+        monkeypatch,
+        tmp_path,
+        live=parent_39,
+        target=target_40,
+        parent_release_id="public-v1-parent-39",
+        inactive_inns={ALAN_INN},
+    )
+    _loaded, projections, _hash = load_bundle(bundle)
+    alan = next(item for item in projections if item.company.inn == ALAN_INN)
+
+    assert manifest.parent_record_count == 39
+    assert manifest.record_count == 40
+    assert [item.inn for item in manifest.added_companies] == [ALAN_INN]
+    assert alan.company.name == "ООО «АЛАН» — АКТУАЛЬНО"
+
+
+def test_withdrawal_baseline_is_promoted_only_as_absent(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    request, bundle, manifest = _build(
+        monkeypatch, tmp_path, live=parent, target=target
+    )
+    accepted, _digest = runner.accepted_cohort()
+    companies = runner.cohort_companies(None, accepted)
+    company_by_inn = {item.inn: item for item in companies}
+    states = [
+        SimpleNamespace(
+            company_id=company_by_inn[item.company.inn].id,
+            last_published_hash=semantic_projection_sha256(item),
+            projection_version=PROJECTION_VERSION,
+            hash_algorithm_version=HASH_ALGORITHM_VERSION,
+            is_published=True,
+            last_published_release_id=PARENT_40,
+            last_enrichment_run_id=None,
+            published_at=NOW,
+            updated_at=NOW,
+        )
+        for item in parent
+    ]
+
+    class Session:
+        def scalars(self, _query):
+            return states
+
+        def get(self, *_args):
+            return None
+
+        def add(self, _item):
+            pytest.fail("existing 40-row baseline unexpectedly inserted a state")
+
+    runner._persist_published_hashes(
+        Session(), request, bundle, now=NOW
+    )
+    alan_state = next(
+        item
+        for item in states
+        if item.company_id == company_by_inn[ALAN_INN].id
+    )
+
+    assert alan_state.is_published is False
+    assert alan_state.last_published_release_id == manifest.release_id
+    assert request.status == "PUBLISHED"
+
+
+def test_schema_version_upgrade_is_explicit_update(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    legacy_inn = parent[0].company.inn
+
+    _request, _bundle, manifest = _build(
+        monkeypatch,
+        tmp_path,
+        live=parent,
+        target=parent,
+        legacy_inns={legacy_inn},
+    )
+
+    assert manifest.projection_version == PROJECTION_VERSION
+    assert manifest.hash_algorithm_version == HASH_ALGORITHM_VERSION
+    assert [item.inn for item in manifest.updated_companies] == [legacy_inn]
+
+
+def test_unexpected_hash_drift_for_current_ready_record_still_fails_closed(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    drift_inn = parent[0].company.inn
+    session = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=parent,
+        drift_inns={drift_inn},
+    )
+
+    with pytest.raises(
+        service.PublicBuildError,
+        match=f"live projection hash is not the recorded last-good hash: {drift_inn}",
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+        )
+
+
+def test_withdrawn_route_must_be_404_during_external_verification(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    _request, bundle, manifest = _build(
+        monkeypatch, tmp_path, live=parent, target=target
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ready":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ready",
+                    "release_id": manifest.release_id,
+                    "record_count": 39,
+                },
+            )
+        if request.url.path in {
+            f"/companies/{ALAN_INN}",
+            f"/api/company/{ALAN_INN}",
+        }:
+            return httpx.Response(404)
+        raise AssertionError(request.url.path)
+
+    with httpx.Client(
+        base_url="https://public.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        runner.verify_https_release(bundle, manifest, client=client)
+
+
+class _PublishSession:
+    def __init__(self, request):
+        self.request = request
+
+    def commit(self):
+        return None
+
+    def rollback(self):
+        return None
+
+    def get(self, _model, _identifier):
+        return self.request
+
+
+def _publication_request(release_id: str) -> PublicPublicationRequest:
+    return PublicPublicationRequest(
+        id=uuid4(),
+        trigger_type="PUBLIC_COHORT_TRANSITION",
+        status="READY",
+        candidate_release_id=release_id,
+        previous_release_id=PARENT_40,
+        changed_company_count=1,
+        changed_company_ids=[],
+        changed_company_inns=[ALAN_INN],
+        change_summary=[],
+        created_main_sha=SHA,
+        created_at=NOW,
+        updated_at=NOW,
+        attempt_count=1,
+    )
+
+
+def test_failed_external_acceptance_keeps_parent_active(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    _build_request, bundle, manifest = _build(
+        monkeypatch, tmp_path, live=parent, target=target
+    )
+    request = _publication_request(manifest.release_id)
+    events = []
+
+    class Transport:
+        def upload(self, *_args):
+            events.append("upload")
+
+        def import_release(self, *_args):
+            events.append("stage")
+
+        def accept_release(self, *_args):
+            events.append("accept")
+            raise runner.PublicTransportError(
+                "acceptance", "staged acceptance failed", transient=False
+            )
+
+        def promote_release(self, *_args):
+            events.append("promote")
+
+        def rollback(self, *_args):
+            events.append("rollback")
+
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: PARENT_40,
+    )
+    monkeypatch.setattr(runner, "_active_release_id", lambda *_args: PARENT_40)
+    monkeypatch.setattr(runner, "_public_incident", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "_persist_published_hashes",
+        lambda *_args, **_kwargs: pytest.fail("baseline changed before promotion"),
+    )
+
+    outcome = runner.publish_claimed_request(
+        _PublishSession(request),
+        request,
+        output_root=tmp_path,
+        transport=Transport(),
+    )
+
+    assert outcome == "FAILED"
+    assert events == ["upload", "stage", "accept"]
+    assert request.published_release_id is None
+
+
+def test_successful_stage_accept_promote_updates_baseline_once(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    _build_request, _bundle, manifest = _build(
+        monkeypatch, tmp_path, live=parent, target=target
+    )
+    request = _publication_request(manifest.release_id)
+    events = []
+
+    class Transport:
+        def upload(self, *_args):
+            events.append("upload")
+
+        def import_release(self, *_args):
+            events.append("stage")
+
+        def accept_release(self, *_args):
+            events.append("accept")
+
+        def promote_release(self, *_args):
+            events.append("promote")
+
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: PARENT_40,
+    )
+    monkeypatch.setattr(
+        runner,
+        "verify_https_release",
+        lambda *_args, **_kwargs: events.append("verify"),
+    )
+
+    def persist(_session, persisted_request, _bundle, *, now):
+        events.append("persist")
+        persisted_request.status = "PUBLISHED"
+        persisted_request.published_release_id = manifest.release_id
+
+    monkeypatch.setattr(runner, "_persist_published_hashes", persist)
+    monkeypatch.setattr(runner, "_resolve_public_incidents", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "normalize_after_successful_publication",
+        lambda *_args, **_kwargs: None,
+    )
+
+    outcome = runner.publish_claimed_request(
+        _PublishSession(request),
+        request,
+        output_root=tmp_path,
+        transport=Transport(),
+    )
+
+    assert outcome == "PUBLISHED"
+    assert events == ["upload", "stage", "accept", "promote", "verify", "persist"]
+    assert events.count("persist") == 1
+
+
+def test_post_promotion_failure_rolls_back_when_live_readback_is_unavailable(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    _build_request, _bundle, manifest = _build(
+        monkeypatch, tmp_path, live=parent, target=target
+    )
+    request = _publication_request(manifest.release_id)
+    events = []
+
+    class Transport:
+        def upload(self, *_args):
+            events.append("upload")
+
+        def import_release(self, *_args):
+            events.append("stage")
+
+        def accept_release(self, *_args):
+            events.append("accept")
+
+        def promote_release(self, *_args):
+            events.append("promote")
+
+        def rollback(self, previous_release_id):
+            events.append(("rollback", previous_release_id))
+
+    monkeypatch.setattr(
+        runner,
+        "_validated_candidate_parent",
+        lambda *_args, **_kwargs: PARENT_40,
+    )
+    monkeypatch.setattr(runner, "_active_release_id", lambda *_args: None)
+    monkeypatch.setattr(
+        runner,
+        "verify_https_release",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            service.PublicVpsUnavailable("candidate readback failed")
+        ),
+    )
+    monkeypatch.setattr(runner, "_public_incident", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "accepted_cohort",
+        lambda: (_manifest([item.company.inn for item in parent]), "c" * 64),
+    )
+    monkeypatch.setattr(
+        runner,
+        "fetch_live_cohort",
+        lambda *_args, **_kwargs: (PARENT_40, {}),
+    )
+
+    outcome = runner.publish_claimed_request(
+        _PublishSession(request),
+        request,
+        output_root=tmp_path,
+        transport=Transport(),
+    )
+
+    assert outcome == "FAILED"
+    assert events == [
+        "upload",
+        "stage",
+        "accept",
+        "promote",
+        ("rollback", PARENT_40),
+    ]
+    assert request.rollback_completed_at is not None

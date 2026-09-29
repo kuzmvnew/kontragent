@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -51,6 +52,22 @@ class PublicProjectionPublication(Base):
         primary_key=True,
     )
     last_published_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection_version: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+        default="public-projection-v1.company-view-v1",
+    )
+    hash_algorithm_version: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        default="sha256-canonical-json-v2",
+    )
+    is_published: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
     last_published_release_id: Mapped[str] = mapped_column(
         String(120), nullable=False, index=True
     )
