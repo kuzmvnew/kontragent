@@ -7,7 +7,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from public_app.contracts import PublicProjection, ReleaseManifest, scan_forbidden
+from public_app.contracts import (
+    HASH_ALGORITHM_VERSION,
+    PublicProjection,
+    ReleaseManifest,
+    scan_forbidden,
+)
 
 
 EXPECTED_FILES = {"manifest.json", "companies.jsonl.gz"}
@@ -47,7 +52,13 @@ def semantic_projection_payload(projection: PublicProjection) -> dict:
     return payload
 
 
-def semantic_projection_sha256(projection: PublicProjection) -> str:
+def semantic_projection_sha256(
+    projection: PublicProjection,
+    *,
+    hash_algorithm_version: str = HASH_ALGORITHM_VERSION,
+) -> str:
+    if hash_algorithm_version != HASH_ALGORITHM_VERSION:
+        raise ValueError(f"unsupported semantic hash version: {hash_algorithm_version}")
     return hashlib.sha256(canonical_json(semantic_projection_payload(projection))).hexdigest()
 
 
@@ -94,12 +105,33 @@ def load_bundle(bundle_dir: Path) -> tuple[ReleaseManifest, list[PublicProjectio
             projections.append(PublicProjection.model_validate(raw))
     if len(projections) != manifest.record_count:
         raise ValueError("bundle record count does not match manifest")
+    expected_companies_hash = manifest.artifact_hashes.get("companies.jsonl.gz")
+    if manifest.transition_model_version is not None and not expected_companies_hash:
+        raise ValueError("transition-aware bundle is missing companies artifact hash")
+    if expected_companies_hash and sha256_file(
+        bundle_dir / manifest.companies_file
+    ) != expected_companies_hash:
+        raise ValueError("companies artifact hash does not match manifest")
     inns = [projection.company.inn for projection in projections]
     if len(set(inns)) != len(inns):
         raise ValueError("bundle contains duplicate INNs")
     changed_inns = {item.inn for item in manifest.changed_companies}
     if not changed_inns.issubset(inns):
         raise ValueError("changed company summary is outside the release cohort")
+    if manifest.transition_model_version is not None:
+        target_inns = {
+            item.inn
+            for item in (
+                *manifest.unchanged_companies,
+                *manifest.updated_companies,
+                *manifest.added_companies,
+            )
+        }
+        withdrawn_inns = {item.inn for item in manifest.withdrawn_companies}
+        if target_inns != set(inns):
+            raise ValueError("release transitions do not match target membership")
+        if withdrawn_inns.intersection(inns):
+            raise ValueError("withdrawn company is present in target release")
     if any(projection.publication.release_id != manifest.release_id for projection in projections):
         raise ValueError("projection release_id mismatch")
     if any(projection.publication.schema_version != manifest.schema_version for projection in projections):

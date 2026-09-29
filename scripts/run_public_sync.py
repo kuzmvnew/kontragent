@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import gzip
+import hashlib
 import io
 import json
 import logging
@@ -54,10 +55,13 @@ from app.services.publication_service import (
     utc_now,
 )
 from public_app.contracts import (
+    HASH_ALGORITHM_VERSION,
+    PROJECTION_VERSION,
     ChangedCompanySummary,
     PublicationInfo,
     PublicProjection,
     ReleaseManifest,
+    ReleaseTransitionSummary,
     scan_forbidden,
 )
 from scripts.export_public_release import build_projection, release_id_for
@@ -65,6 +69,7 @@ from scripts.public_release_common import (
     canonical_json,
     load_bundle,
     semantic_projection_sha256,
+    sha256_file,
     write_checksums,
 )
 
@@ -156,24 +161,41 @@ class SshPublicTransport:
         except PublicTransportError as error:
             raise PublicTransportError("upload", str(error), transient=error.transient) from error
 
-    def import_release(self, release_id: str) -> dict[str, Any]:
+    def _remote_release_command(self, release_id: str, mode: str) -> dict[str, Any]:
         remote = f"/var/lib/nextcompany/incoming/{release_id}"
+        if mode not in {"--stage-only", "--accept-staged", "--promote"}:
+            raise PublicBuildError("unsafe public release command mode")
         command = (
             "sudo -u nextcompany-importer /bin/bash -lc "
             + shlex.quote(
                 "set -a; source /etc/nextcompany/importer.env; set +a; "
                 f"/opt/nextcompany/current/.venv/bin/python "
                 f"/opt/nextcompany/current/scripts/import_public_release.py "
-                f"{shlex.quote(remote)} --expected-release-id {shlex.quote(release_id)}"
+                f"{shlex.quote(remote)} --expected-release-id {shlex.quote(release_id)} "
+                f"{mode}"
             )
         )
         try:
             output = _run([*self.ssh_argv, self.target, command])
             return json.loads(output.strip().splitlines()[-1])
         except PublicTransportError as error:
-            raise PublicTransportError("import", str(error), transient=error.transient) from error
+            stage = {
+                "--stage-only": "import",
+                "--accept-staged": "acceptance",
+                "--promote": "promotion",
+            }[mode]
+            raise PublicTransportError(stage, str(error), transient=error.transient) from error
         except (ValueError, IndexError) as error:
             raise PublicTransportError("import", "invalid importer response", transient=False) from error
+
+    def import_release(self, release_id: str) -> dict[str, Any]:
+        return self._remote_release_command(release_id, "--stage-only")
+
+    def accept_release(self, release_id: str) -> dict[str, Any]:
+        return self._remote_release_command(release_id, "--accept-staged")
+
+    def promote_release(self, release_id: str) -> dict[str, Any]:
+        return self._remote_release_command(release_id, "--promote")
 
     def rollback(self, previous_release_id: str) -> dict[str, Any]:
         if not SAFE_RELEASE.fullmatch(previous_release_id):
@@ -210,21 +232,28 @@ def _write_bundle(
     bundle_dir: Path,
     manifest: ReleaseManifest,
     projections: list[PublicProjection],
-) -> None:
+) -> ReleaseManifest:
     bundle_dir.mkdir(parents=True, exist_ok=False)
-    with gzip.open(
-        bundle_dir / "companies.jsonl.gz", "wt", encoding="utf-8", newline="\n"
-    ) as stream:
-        for projection in projections:
-            stream.write(
-                canonical_json(projection.model_dump(mode="json")).decode("utf-8")
-                + "\n"
-            )
+    companies_path = bundle_dir / "companies.jsonl.gz"
+    with companies_path.open("wb") as output:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0) as compressed:
+            for projection in projections:
+                compressed.write(
+                    canonical_json(projection.model_dump(mode="json")) + b"\n"
+                )
+    manifest = manifest.model_copy(
+        update={
+            "artifact_hashes": {
+                "companies.jsonl.gz": sha256_file(companies_path),
+            }
+        }
+    )
     (bundle_dir / "manifest.json").write_bytes(
         canonical_json(manifest.model_dump(mode="json")) + b"\n"
     )
     write_checksums(bundle_dir)
     load_bundle(bundle_dir)
+    return manifest
 
 
 def build_candidate(
@@ -235,7 +264,7 @@ def build_candidate(
     output_root: Path,
     client: httpx.Client | None = None,
 ) -> tuple[Path | None, ReleaseManifest | None]:
-    """Build one immutable full cohort, carrying only last-good non-ready cards."""
+    """Build one immutable release from current-ready target membership."""
 
     accepted, cohort_hash = accepted_cohort()
     companies = cohort_companies(session, accepted)
@@ -247,19 +276,44 @@ def build_candidate(
             )
         )
     }
-    if len(states) != len(companies):
-        raise PublicBuildError("published projection baseline is incomplete")
     previous_release_id, live = fetch_live_cohort(accepted, client=client)
-    for company in companies:
-        if semantic_projection_sha256(live[company.inn]) != states[company.id].last_published_hash:
+    by_inn = {company.inn: company for company in companies}
+    runs = publishable_runs(session, companies)
+    target_companies = [company for company in companies if company.id in runs]
+    target_inns = [company.inn for company in target_companies]
+    for inn, live_projection in live.items():
+        company = by_inn[inn]
+        state = states.get(company.id)
+        if state is None or not state.is_published:
             raise PublicBuildError(
-                f"live projection hash is not the recorded last-good hash: {company.inn}"
+                f"live projection is missing from the publication baseline: {inn}"
+            )
+        if state.last_published_release_id != previous_release_id:
+            raise PublicBuildError(f"live release is not the recorded baseline: {inn}")
+        if company.id in runs and (
+            state.projection_version == PROJECTION_VERSION
+            and state.hash_algorithm_version == HASH_ALGORITHM_VERSION
+            and semantic_projection_sha256(live_projection)
+            != state.last_published_hash
+        ):
+            raise PublicBuildError(
+                f"live projection hash is not the recorded last-good hash: {inn}"
             )
 
     source_sha = current_main_sha()
     if request.created_main_sha != source_sha:
         request.created_main_sha = source_sha
-    release_id = release_id_for(now, source_sha, cohort_hash)
+    target_identity_hash = hashlib.sha256(
+        canonical_json(
+            {
+                "parent_release_id": previous_release_id,
+                "projection_version": PROJECTION_VERSION,
+                "hash_algorithm_version": HASH_ALGORITHM_VERSION,
+                "target_inns": target_inns,
+            }
+        )
+    ).hexdigest()
+    release_id = release_id_for(now, source_sha, target_identity_hash)
     if not SAFE_RELEASE.fullmatch(release_id):
         raise PublicBuildError("generated release ID is invalid")
     base_publication = PublicationInfo(
@@ -270,40 +324,77 @@ def build_candidate(
         content_updated_at=now,
         index_eligible=False,
     )
-    runs = publishable_runs(session, companies)
     current: dict[int, PublicProjection] = {}
     with psycopg.connect(database_url_for_psycopg(), row_factory=dict_row) as connection:
         connection.execute("SET TRANSACTION READ ONLY")
         with connection.cursor() as cursor:
-            for company in companies:
-                if company.id in runs:
-                    current[company.id] = build_projection(
-                        cursor, company.inn, base_publication
-                    )
+            for company in target_companies:
+                current[company.id] = build_projection(
+                    cursor, company.inn, base_publication
+                )
 
     projections: list[PublicProjection] = []
-    changes: list[ChangedCompanySummary] = []
-    for company in companies:
-        source = current.get(company.id, live[company.inn])
-        projection = _release_projection(source, release_id=release_id, published_at=now)
+    current_hashes: dict[str, str] = {}
+    for company in target_companies:
+        projection = _release_projection(
+            current[company.id], release_id=release_id, published_at=now
+        )
         scan_forbidden(projection.model_dump(mode="json"))
-        current_hash = semantic_projection_sha256(projection)
-        previous_hash = states[company.id].last_published_hash
-        if current_hash != previous_hash:
-            if company.id not in runs:
-                raise PublicBuildError(
-                    f"non-ready company changed outside canonical readiness: {company.inn}"
-                )
-            changes.append(
-                ChangedCompanySummary(
-                    inn=company.inn,
-                    previous_hash=previous_hash,
-                    current_hash=current_hash,
-                )
-            )
+        current_hashes[company.inn] = semantic_projection_sha256(projection)
         projections.append(projection)
 
-    if not changes:
+    live_hashes = {
+        inn: semantic_projection_sha256(projection)
+        for inn, projection in live.items()
+    }
+    parent_inns = set(live)
+    target_inn_set = set(target_inns)
+    unchanged: list[ReleaseTransitionSummary] = []
+    updated: list[ReleaseTransitionSummary] = []
+    added: list[ReleaseTransitionSummary] = []
+    withdrawn: list[ReleaseTransitionSummary] = []
+    for inn in sorted(parent_inns | target_inn_set):
+        if inn not in target_inn_set:
+            withdrawn.append(
+                ReleaseTransitionSummary(
+                    inn=inn,
+                    transition="WITHDRAWN",
+                    previous_hash=live_hashes[inn],
+                )
+            )
+            continue
+        if inn not in parent_inns:
+            added.append(
+                ReleaseTransitionSummary(
+                    inn=inn,
+                    transition="ADDED",
+                    current_hash=current_hashes[inn],
+                )
+            )
+            continue
+        company = by_inn[inn]
+        state = states.get(company.id)
+        versions_match = bool(
+            state
+            and state.projection_version == PROJECTION_VERSION
+            and state.hash_algorithm_version == HASH_ALGORITHM_VERSION
+        )
+        transition = ReleaseTransitionSummary(
+            inn=inn,
+            transition=(
+                "UNCHANGED"
+                if versions_match and live_hashes[inn] == current_hashes[inn]
+                else "UPDATED"
+            ),
+            previous_hash=live_hashes[inn],
+            current_hash=current_hashes[inn],
+        )
+        (unchanged if transition.transition == "UNCHANGED" else updated).append(
+            transition
+        )
+
+    release_changes = [*updated, *added, *withdrawn]
+    if not release_changes:
         request.status = "SUPERSEDED"
         request.changed_company_count = 0
         request.changed_company_ids = []
@@ -315,12 +406,23 @@ def build_candidate(
         return None, None
 
     inns = [projection.company.inn for projection in projections]
-    expected_inns = [entity.inn for entity in accepted.entities]
-    if inns != expected_inns or len(set(inns)) != len(inns):
-        raise PublicBuildError("candidate is not the exact accepted cohort")
+    if inns != target_inns or len(set(inns)) != len(inns):
+        raise PublicBuildError("candidate is not the exact current-ready target cohort")
     content_updated_at = max(item.publication.content_updated_at for item in projections)
+    target_changes = [*updated, *added]
+    changes = [
+        ChangedCompanySummary(
+            inn=item.inn,
+            previous_hash=item.previous_hash,
+            current_hash=item.current_hash,
+        )
+        for item in target_changes
+    ]
     release_manifest = ReleaseManifest(
         schema_version="public-projection-v1",
+        projection_version=PROJECTION_VERSION,
+        hash_algorithm_version=HASH_ALGORITHM_VERSION,
+        transition_model_version="release-transition-v1",
         release_id=release_id,
         source_main_sha=source_sha,
         cohort_manifest_path="docs/releases/public-v1-cohort-40.json",
@@ -334,31 +436,42 @@ def build_candidate(
         companies_file="companies.jsonl.gz",
         changed_company_count=len(changes),
         changed_companies=tuple(changes),
+        parent_record_count=len(parent_inns),
+        unchanged_count=len(unchanged),
+        unchanged_companies=tuple(unchanged),
+        updated_count=len(updated),
+        updated_companies=tuple(updated),
+        added_count=len(added),
+        added_companies=tuple(added),
+        withdrawn_count=len(withdrawn),
+        withdrawn_companies=tuple(withdrawn),
     )
     bundle_dir = output_root / release_id
-    _write_bundle(bundle_dir, release_manifest, projections)
+    release_manifest = _write_bundle(bundle_dir, release_manifest, projections)
     request.candidate_release_id = release_id
     request.previous_release_id = previous_release_id
     request.projection_generation = release_id
-    request.projection_hash = __import__("hashlib").sha256(
-        canonical_json([(item.inn, item.current_hash) for item in changes])
+    request.projection_hash = hashlib.sha256(
+        canonical_json([item.model_dump(mode="json") for item in release_changes])
     ).hexdigest()
-    by_inn = {company.inn: company.id for company in companies}
-    request.changed_company_count = len(changes)
-    request.changed_company_inns = [item.inn for item in changes]
-    request.changed_company_ids = [by_inn[item.inn] for item in changes]
+    company_id_by_inn = {company.inn: company.id for company in companies}
+    request.changed_company_count = len(release_changes)
+    request.changed_company_inns = [item.inn for item in release_changes]
+    request.changed_company_ids = [
+        company_id_by_inn[item.inn] for item in release_changes
+    ]
     run_by_inn = {
         company.inn: runs[company.id]
         for company in companies
         if company.id in runs
     }
-    request.change_summary = [
-        {
-            **item.model_dump(mode="json"),
-            "enrichment_run_id": str(run_by_inn[item.inn].id),
-        }
-        for item in changes
-    ]
+    request.change_summary = []
+    for item in release_changes:
+        summary = item.model_dump(mode="json")
+        run = run_by_inn.get(item.inn)
+        if run is not None:
+            summary["enrichment_run_id"] = str(run.id)
+        request.change_summary.append(summary)
     request.status = "READY"
     request.ready_at = now
     request.last_error = None
@@ -402,6 +515,13 @@ def verify_https_release(
             observed = PublicProjection.model_validate(api.json())
             if semantic_projection_sha256(observed) != semantic_projection_sha256(by_inn[inn]):
                 raise PublicVpsUnavailable(f"changed public card hash mismatch: {inn}")
+        for transition in manifest.withdrawn_companies:
+            html = http.get(f"/companies/{transition.inn}")
+            api = http.get(f"/api/company/{transition.inn}")
+            if html.status_code != 404 or api.status_code != 404:
+                raise PublicVpsUnavailable(
+                    f"withdrawn public card is still served: {transition.inn}"
+                )
     except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
         if isinstance(error, PublicVpsUnavailable):
             raise
@@ -492,6 +612,16 @@ def _persist_published_hashes(
     accepted, _ = accepted_cohort()
     companies = cohort_companies(session, accepted)
     by_inn = {company.inn: company for company in companies}
+    states = {
+        row.company_id: row
+        for row in session.scalars(
+            select(PublicProjectionPublication).where(
+                PublicProjectionPublication.company_id.in_(
+                    [company.id for company in companies]
+                )
+            )
+        )
+    }
     published_run_ids = {
         item["inn"]: UUID(str(item["enrichment_run_id"]))
         for item in (request.change_summary or [])
@@ -499,18 +629,44 @@ def _persist_published_hashes(
     }
     for projection in projections:
         company = by_inn[projection.company.inn]
-        state = session.get(PublicProjectionPublication, company.id)
+        state = states.get(company.id)
         if state is None:
-            raise PublicBuildError("published projection baseline disappeared")
+            state = PublicProjectionPublication(
+                company_id=company.id,
+                last_published_hash=semantic_projection_sha256(projection),
+                projection_version=manifest.projection_version,
+                hash_algorithm_version=manifest.hash_algorithm_version,
+                is_published=True,
+                last_published_release_id=manifest.release_id,
+                published_at=now,
+                updated_at=now,
+            )
+            session.add(state)
+            states[company.id] = state
         published_run_id = published_run_ids.get(company.inn)
         if published_run_id is not None:
             published_run = session.get(CompanyEnrichmentRun, published_run_id)
             if published_run is None or published_run.company_id != company.id:
                 raise PublicBuildError("published enrichment run evidence is invalid")
         state.last_published_hash = semantic_projection_sha256(projection)
+        state.projection_version = manifest.projection_version
+        state.hash_algorithm_version = manifest.hash_algorithm_version
+        state.is_published = True
         state.last_published_release_id = manifest.release_id
         if published_run_id is not None:
             state.last_enrichment_run_id = published_run_id
+        state.published_at = now
+        state.updated_at = now
+    for transition in manifest.withdrawn_companies:
+        company = by_inn[transition.inn]
+        state = states.get(company.id)
+        if state is None:
+            raise PublicBuildError("withdrawn projection baseline disappeared")
+        state.last_published_hash = transition.previous_hash or state.last_published_hash
+        state.projection_version = manifest.projection_version
+        state.hash_algorithm_version = manifest.hash_algorithm_version
+        state.is_published = False
+        state.last_published_release_id = manifest.release_id
         state.published_at = now
         state.updated_at = now
     request.status = "PUBLISHED"
@@ -580,6 +736,7 @@ def publish_claimed_request(
     client: httpx.Client | None = None,
 ) -> str:
     now = utc_now()
+    promotion_attempted = False
     try:
         if request.candidate_release_id:
             bundle_dir = output_root / request.candidate_release_id
@@ -602,11 +759,25 @@ def publish_claimed_request(
         request.status = "IMPORTING"
         request.updated_at = request.uploaded_at
         session.commit()
+        staged_protocol = hasattr(transport, "accept_release") and hasattr(
+            transport, "promote_release"
+        )
+        if not staged_protocol:
+            # Legacy transports perform the pointer switch inside import_release.
+            promotion_attempted = True
         transport.import_release(manifest.release_id)
         request.imported_at = utc_now()
         request.status = "VERIFYING"
         request.updated_at = request.imported_at
         session.commit()
+        if staged_protocol:
+            transport.accept_release(manifest.release_id)
+        _validated_candidate_parent(request, manifest, client=client)
+        if staged_protocol:
+            # If the remote command completes but its response is lost, rollback is
+            # still the safe recovery whenever live state cannot be read back.
+            promotion_attempted = True
+            transport.promote_release(manifest.release_id)
         verify_https_release(bundle_dir, manifest, client=client)
         completed = utc_now()
         try:
@@ -644,7 +815,8 @@ def publish_claimed_request(
         if (
             request
             and request.candidate_release_id
-            and (request.imported_at is not None or active == request.candidate_release_id)
+            and promotion_attempted
+            and active in {None, request.candidate_release_id}
         ):
             try:
                 transport.rollback(request.previous_release_id or "")
@@ -672,7 +844,11 @@ def publish_claimed_request(
             fail_request(request, error)
             _public_incident(
                 session,
-                category="PUBLIC_IMPORT_ERROR" if error.stage == "import" else "PUBLIC_UPLOAD_ERROR",
+                category=(
+                    "PUBLIC_IMPORT_ERROR"
+                    if error.stage in {"import", "acceptance", "promotion", "rollback"}
+                    else "PUBLIC_UPLOAD_ERROR"
+                ),
                 message=error,
                 owner="OUR_CODE",
             )
@@ -685,7 +861,8 @@ def publish_claimed_request(
         if (
             request
             and request.candidate_release_id
-            and (request.imported_at is not None or active == request.candidate_release_id)
+            and promotion_attempted
+            and active in {None, request.candidate_release_id}
         ):
             try:
                 transport.rollback(request.previous_release_id or "")

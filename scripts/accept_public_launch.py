@@ -47,7 +47,8 @@ def main() -> int:
         ready = client.get(base + "/api/ready")
         require(ready.status_code == 200, "ready is not 200")
         ready_json = ready.json()
-        require(ready_json.get("record_count") == 40, "active release is not 40 records")
+        record_count = int(ready_json.get("record_count") or 0)
+        require(record_count > 0, "active release is empty")
         release_id = ready_json.get("release_id")
         robots = client.get(base + "/robots.txt")
         require(robots.status_code == 200 and "Disallow: /api/" in robots.text, "robots invalid")
@@ -71,11 +72,12 @@ def main() -> int:
     if args.bundle:
         manifest, projections, _ = load_bundle(args.bundle)
         require(manifest.release_id == release_id, "active release differs from bundle")
+        require(manifest.record_count == record_count, "active release count differs from bundle")
         require({item.company.inn for item in projections} >= set(inns), "samples absent from manifest")
     report = {
         "status": "PASS",
         "release_id": release_id,
-        "record_count": 40,
+        "record_count": record_count,
         "sample_inns": inns,
         "worker_offline": "PASS" if args.worker_offline_proof else "NOT_PROVEN",
     }

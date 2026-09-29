@@ -723,7 +723,7 @@ def test_ssh_transport_uses_explicit_pinned_host_key_and_identity(
     ]
 
 
-def test_non_ready_accepted_and_ready_outside_cohort_do_not_enqueue(monkeypatch):
+def test_non_ready_accepted_enqueues_withdrawal_and_ready_outside_is_ignored(monkeypatch):
     with Session(engine) as session:
         accepted_company, accepted_projection = _company_and_projection(session, 630_000_000)
         outsider, _outsider_projection = _company_and_projection(session, 630_000_001)
@@ -747,9 +747,20 @@ def test_non_ready_accepted_and_ready_outside_cohort_do_not_enqueue(monkeypatch)
         )
         monkeypatch.setattr(service, "current_main_sha", lambda: SHA)
         result = service.scan_public_ready_changes(session, now=NOW)
-        assert result["changed"] == 0
+        request = session.scalar(select(PublicPublicationRequest))
+        assert result["changed"] == 1
         assert result["public_ready"] == 0
-        assert session.scalar(select(PublicPublicationRequest)) is None
+        assert request.trigger_type == "PUBLIC_COHORT_TRANSITION"
+        assert request.changed_company_inns == [accepted_company.inn]
+        assert request.change_summary == [
+            {
+                "inn": accepted_company.inn,
+                "transition": "WITHDRAWN",
+                "previous_hash": semantic_projection_sha256(accepted_projection),
+                "current_hash": None,
+            }
+        ]
+        assert outsider.inn not in request.changed_company_inns
         session.rollback()
 
 

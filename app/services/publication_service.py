@@ -29,10 +29,13 @@ from app.models.publication import (
 from app.models.risk_v3 import CompanyRiskAssessmentV3, CompanySummaryV3
 from app.services.replay_readiness_service import has_unresolved_replay
 from public_app.contracts import (
+    HASH_ALGORITHM_VERSION,
+    PROJECTION_VERSION,
     CanonicalManifest,
     ChangedCompanySummary,
     PublicationInfo,
     PublicProjection,
+    ReleaseTransitionSummary,
 )
 from scripts.export_public_release import build_projection
 from scripts.public_release_common import semantic_projection_sha256
@@ -247,11 +250,9 @@ def _public_client(client: httpx.Client | None = None) -> httpx.Client:
     )
 
 
-def _validated_ready_release_id(
+def _validated_ready_release(
     http: httpx.Client,
-    *,
-    expected_record_count: int,
-) -> str:
+) -> tuple[str, int]:
     ready = http.get("/api/ready")
     if ready.status_code != 200:
         raise PublicVpsUnavailable(f"public ready returned HTTP {ready.status_code}")
@@ -259,11 +260,16 @@ def _validated_ready_release_id(
     release_id = str(payload.get("release_id") or "")
     if (
         payload.get("status") != "ready"
-        or int(payload.get("record_count") or 0) != expected_record_count
         or not release_id
     ):
-        raise PublicVpsUnavailable("public ready response does not match accepted cohort")
-    return release_id
+        raise PublicVpsUnavailable("public ready response is invalid")
+    try:
+        record_count = int(payload.get("record_count"))
+    except (TypeError, ValueError) as error:
+        raise PublicVpsUnavailable("public ready record count is invalid") from error
+    if record_count < 0:
+        raise PublicVpsUnavailable("public ready record count is invalid")
+    return release_id, record_count
 
 
 def fetch_live_release_id(
@@ -276,10 +282,8 @@ def fetch_live_release_id(
     owns_client = client is None
     http = _public_client(client)
     try:
-        return _validated_ready_release_id(
-            http,
-            expected_record_count=len(manifest.entities),
-        )
+        release_id, _record_count = _validated_ready_release(http)
+        return release_id
     except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
         if isinstance(error, PublicVpsUnavailable):
             raise
@@ -297,13 +301,12 @@ def fetch_live_cohort(
     owns_client = client is None
     http = _public_client(client)
     try:
-        release_id = _validated_ready_release_id(
-            http,
-            expected_record_count=len(manifest.entities),
-        )
+        release_id, expected_record_count = _validated_ready_release(http)
         projections: dict[str, PublicProjection] = {}
         for entity in manifest.entities:
             response = http.get(f"/api/company/{entity.inn}")
+            if response.status_code == 404:
+                continue
             if response.status_code != 200:
                 raise PublicVpsUnavailable(
                     f"public card {entity.inn} returned HTTP {response.status_code}"
@@ -314,6 +317,10 @@ def fetch_live_cohort(
             if projection.publication.release_id != release_id:
                 raise PublicVpsUnavailable(f"public card release mismatch for {entity.inn}")
             projections[entity.inn] = projection
+        if len(projections) != expected_record_count:
+            raise PublicVpsUnavailable(
+                "public release membership is outside the accepted eligibility universe"
+            )
         return release_id, projections
     except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
         if isinstance(error, PublicVpsUnavailable):
@@ -348,12 +355,15 @@ def bootstrap_publication_state(
     release_id, live = fetch_live_cohort(manifest, client=client)
     created = 0
     for company in companies:
-        if company.id in states:
+        if company.id in states or company.inn not in live:
             continue
         session.add(
             PublicProjectionPublication(
                 company_id=company.id,
                 last_published_hash=semantic_projection_sha256(live[company.inn]),
+                projection_version=PROJECTION_VERSION,
+                hash_algorithm_version=HASH_ALGORITHM_VERSION,
+                is_published=True,
                 last_published_release_id=release_id,
                 published_at=now,
                 updated_at=now,
@@ -409,6 +419,13 @@ def scan_public_ready_changes(
         )
     ) if run_ids else set()
     created_sha = source_sha or current_main_sha()
+    existing_generations = set(
+        session.scalars(
+            select(PublicPublicationRequest.projection_generation).where(
+                PublicPublicationRequest.projection_generation.is_not(None)
+            )
+        )
+    )
     changed = unchanged = 0
     url = database_url_for_psycopg(database_url)
     with psycopg.connect(url, row_factory=dict_row) as connection:
@@ -416,14 +433,64 @@ def scan_public_ready_changes(
         with connection.cursor() as cursor:
             for company in companies:
                 run = runs.get(company.id)
-                if run is None or run.id in existing:
+                state = states.get(company.id)
+                if run is None:
+                    if state is None or not state.is_published:
+                        continue
+                    generation = f"withdrawal:{active_release}:{company.inn}"
+                    if generation in existing_generations:
+                        continue
+                    previous_hash = state.last_published_hash
+                    summary = ReleaseTransitionSummary(
+                        inn=company.inn,
+                        transition="WITHDRAWN",
+                        previous_hash=previous_hash,
+                    )
+                    request = PublicPublicationRequest(
+                        trigger_type="PUBLIC_COHORT_TRANSITION",
+                        trigger_company_id=company.id,
+                        status="PENDING",
+                        projection_generation=generation,
+                        projection_hash=hashlib.sha256(
+                            json.dumps(
+                                summary.model_dump(mode="json"),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                        previous_release_id=active_release,
+                        changed_company_count=1,
+                        changed_company_ids=[company.id],
+                        changed_company_inns=[company.inn],
+                        change_summary=[summary.model_dump(mode="json")],
+                        created_main_sha=created_sha,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(request)
+                    existing_generations.add(generation)
+                    changed += 1
+                    continue
+                if run.id in existing:
                     continue
                 projection = build_projection(
                     cursor, company.inn, _projection_publication(now)
                 )
                 current_hash = semantic_projection_sha256(projection)
-                previous_hash = states[company.id].last_published_hash
-                is_changed = current_hash != previous_hash
+                previous_hash = state.last_published_hash if state else None
+                transition = (
+                    "ADDED"
+                    if state is None or not state.is_published
+                    else "UPDATED"
+                    if (
+                        current_hash != previous_hash
+                        or state.projection_version != PROJECTION_VERSION
+                        or state.hash_algorithm_version != HASH_ALGORITHM_VERSION
+                    )
+                    else "UNCHANGED"
+                )
+                is_changed = transition != "UNCHANGED"
                 request = PublicPublicationRequest(
                     trigger_type="ENRICHMENT_READY_SCAN",
                     trigger_company_id=company.id,
@@ -437,6 +504,7 @@ def scan_public_ready_changes(
                     change_summary=[
                         {
                             "inn": company.inn,
+                            "transition": transition,
                             "previous_hash": previous_hash,
                             "current_hash": current_hash,
                         }
@@ -469,11 +537,11 @@ def _current_semantic_changes(
     baseline_hashes: dict[str, str],
     now: datetime,
     database_url: str | None = None,
-) -> list[ChangedCompanySummary]:
+) -> list[ChangedCompanySummary | ReleaseTransitionSummary]:
     """Derive dirty companies from current canonical truth, never request metadata."""
 
     runs = publishable_runs(session, companies)
-    changes: list[ChangedCompanySummary] = []
+    changes: list[ChangedCompanySummary | ReleaseTransitionSummary] = []
     url = database_url_for_psycopg(database_url)
     with psycopg.connect(url, row_factory=dict_row) as connection:
         connection.execute("SET TRANSACTION READ ONLY")
@@ -481,15 +549,32 @@ def _current_semantic_changes(
             for company in companies:
                 run = runs.get(company.id)
                 if run is None:
+                    previous_hash = baseline_hashes.get(company.inn)
+                    if previous_hash is not None:
+                        changes.append(
+                            ReleaseTransitionSummary(
+                                inn=company.inn,
+                                transition="WITHDRAWN",
+                                previous_hash=previous_hash,
+                            )
+                        )
                     continue
-                previous_hash = baseline_hashes[company.inn]
+                previous_hash = baseline_hashes.get(company.inn)
                 projection = build_projection(
                     cursor,
                     company.inn,
                     _projection_publication(now),
                 )
                 current_hash = semantic_projection_sha256(projection)
-                if current_hash != previous_hash:
+                if previous_hash is None:
+                    changes.append(
+                        ReleaseTransitionSummary(
+                            inn=company.inn,
+                            transition="ADDED",
+                            current_hash=current_hash,
+                        )
+                    )
+                elif current_hash != previous_hash:
                     changes.append(
                         ChangedCompanySummary(
                             inn=company.inn,
@@ -504,7 +589,7 @@ def _new_replacement_request(
     session: Session,
     *,
     companies: list[Company],
-    changes: list[ChangedCompanySummary],
+    changes: list[ChangedCompanySummary | ReleaseTransitionSummary],
     previous_release_id: str,
     now: datetime,
     status: str,
@@ -519,8 +604,9 @@ def _new_replacement_request(
         projection_generation=f"rebase:{previous_release_id}:{now.isoformat()}",
         projection_hash=hashlib.sha256(
             json.dumps(
-                [(item.inn, item.current_hash) for item in changes],
+                [item.model_dump(mode="json") for item in changes],
                 ensure_ascii=False,
+                sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest(),
@@ -790,8 +876,6 @@ def normalize_after_successful_publication(
             )
         )
     }
-    if len(states) != len(companies):
-        raise PublicBuildError("published projection baseline is incomplete")
     changes = _current_semantic_changes(
         session,
         manifest=manifest,
@@ -799,6 +883,7 @@ def normalize_after_successful_publication(
         baseline_hashes={
             company.inn: states[company.id].last_published_hash
             for company in companies
+            if company.id in states and states[company.id].is_published
         },
         now=now,
         database_url=database_url,
@@ -1024,11 +1109,7 @@ def publication_dashboard(
     try:
         response = http.get("/api/ready")
         body = response.json() if response.status_code == 200 else {}
-        site_ready = (
-            response.status_code == 200
-            and body.get("status") == "ready"
-            and int(body.get("record_count") or 0) == len(companies)
-        )
+        site_ready = response.status_code == 200 and body.get("status") == "ready"
         release_id = body.get("release_id")
         record_count = int(body.get("record_count") or 0)
         if not site_ready:
