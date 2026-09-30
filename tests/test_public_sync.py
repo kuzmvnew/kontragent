@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import gzip
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -29,6 +30,7 @@ from scripts.public_release_common import (
     semantic_projection_sha256,
     write_checksums,
 )
+from scripts.read_public_release import read_active_release_projections
 from tests.public_test_support import forty_projections, legal_inn, projection
 
 
@@ -721,6 +723,120 @@ def test_ssh_transport_uses_explicit_pinned_host_key_and_identity(
         "-i",
         str(identity),
     ]
+
+
+def test_ssh_transport_reads_full_projection_through_trusted_release_command(
+    monkeypatch,
+):
+    release_id = "public-v1-trusted-parent"
+    item = projection(sequence=630_000_000, release_id=release_id)
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        return json.dumps(
+            {
+                "release_id": release_id,
+                "record_count": 1,
+                "member_inns": [item.company.inn],
+                "projections": [
+                    {
+                        "inn": item.company.inn,
+                        "payload": item.model_dump(mode="json"),
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(runner, "_run", run)
+    transport = runner.SshPublicTransport("mikhail@195.24.64.231")
+
+    batch = transport.read_active_projections(release_id, (item.company.inn,))
+
+    assert batch.release_id == release_id
+    assert batch.record_count == 1
+    assert batch.member_inns == (item.company.inn,)
+    assert batch.projections[item.company.inn]["publication"]["schema_version"] == (
+        "public-projection-v1"
+    )
+    command = calls[0][-1]
+    assert "scripts/read_public_release.py" in command
+    assert "--expected-release-id" in command
+    assert item.company.inn in command
+    assert "/api/company/" not in command
+
+
+def test_ssh_transport_rejects_malformed_trusted_reader_response(monkeypatch):
+    monkeypatch.setattr(runner, "_run", lambda *_args, **_kwargs: "not-json\n")
+    transport = runner.SshPublicTransport("mikhail@195.24.64.231")
+
+    with pytest.raises(
+        service.PublicVpsUnavailable,
+        match="stage=transition_parent_storage error_type=invalid_response",
+    ):
+        transport.read_active_projections(
+            "public-v1-trusted-parent",
+            ("0274101890",),
+        )
+
+
+def test_trusted_release_reader_uses_read_only_exact_active_release():
+    release_id = "public-v1-trusted-parent"
+    item = projection(sequence=630_000_000, release_id=release_id)
+    withdrawn_inn = "0100000614"
+    member_inns = tuple(sorted((item.company.inn, withdrawn_inn)))
+    statements = []
+    fetchall_calls = 0
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, statement, params=None):
+            statements.append((" ".join(statement.split()), params))
+
+        def fetchone(self):
+            return {
+                "release_id": release_id,
+                "record_count": 2,
+                "status": "active",
+                "actual_record_count": 2,
+            }
+
+        def fetchall(self):
+            nonlocal fetchall_calls
+            fetchall_calls += 1
+            if fetchall_calls == 1:
+                return [{"inn": inn} for inn in member_inns]
+            return [
+                {
+                    "inn": item.company.inn,
+                    "payload": item.model_dump(mode="json"),
+                }
+            ]
+
+    class Connection:
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    result = read_active_release_projections(
+        Connection(),
+        expected_release_id=release_id,
+        inns=(item.company.inn,),
+    )
+
+    assert statements[0] == ("SET TRANSACTION READ ONLY", None)
+    assert result["release_id"] == release_id
+    assert result["member_inns"] == member_inns
+    assert [row["inn"] for row in result["projections"]] == [item.company.inn]
+    assert statements[-1][1] == (release_id, [item.company.inn])
+    assert result["projections"][0]["payload"]["publication"]["schema_version"] == (
+        "public-projection-v1"
+    )
 
 
 def test_non_ready_accepted_enqueues_withdrawal_and_ready_outside_is_ignored(monkeypatch):
