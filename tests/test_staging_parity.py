@@ -1,26 +1,36 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+import tarfile
 
 import pytest
 
 from scripts.release_artifact import (
     ArtifactError,
+    BUILDER_VERSION,
     MANIFEST_NAME,
     _normalized_tar,
+    _normalize_tree_modes,
     canonical_json,
+    extract_artifact,
     sha256_file,
     systemd_hashes,
     tree_sha256,
     verify_artifact,
+    verify_release_tree,
 )
 from scripts.render_staging_units import (
+    TEXT_REPLACEMENTS,
     UnitParityError,
     check_units,
+    production_units,
+    render_text,
     render_units,
+    staging_name,
 )
 from scripts.schema_fingerprint import (
     CONTRACT_VERSION as FINGERPRINT_CONTRACT_VERSION,
@@ -33,6 +43,7 @@ from scripts.schema_fingerprint import (
 from scripts.staging_acceptance import (
     AcceptanceError,
     _access_contract,
+    _header_value,
     _redact,
     migration_command,
     rollback_mode,
@@ -167,11 +178,58 @@ def test_staging_units_are_generated_from_production_and_detect_drift(tmp_path):
     assert "Environment=PUBLIC_FORCE_NOINDEX=1" in text
     assert "/opt/nextcompany-staging/current" in text
     assert "--port 18000" in text
+    assert all(
+        record["staging_unit"] == staging_name(record["production_unit"])
+        for record in manifest["units"]
+    )
+    assert {record["production_unit"] for record in manifest["units"]} == {
+        path.name for path in production_units()
+    }
+    assert all(
+        "staging-staging" not in path.read_text(encoding="utf-8")
+        for path in output.iterdir()
+        if path.suffix in {".service", ".timer"}
+    )
     assert check_units(output)["status"] == "PASS"
+
+    second_output = tmp_path / "units-second"
+    assert render_units(second_output) == manifest
+    assert (second_output / "unit-parity.json").read_bytes() == (
+        output / "unit-parity.json"
+    ).read_bytes()
 
     public.write_text(text + "\n# drift\n", encoding="utf-8")
     with pytest.raises(UnitParityError, match="content drift"):
         check_units(output)
+
+
+@pytest.mark.parametrize(("production", "staging"), TEXT_REPLACEMENTS)
+def test_each_production_token_is_rendered_once_and_idempotently(
+    production,
+    staging,
+):
+    source = (
+        "[Unit]\n"
+        "Description=NEXT Company fixture\n"
+        "After=nextcompany-public.service\n"
+        "[Service]\n"
+        f"ExecStart={production}\n"
+    )
+
+    rendered = render_text(source)
+
+    assert staging in rendered
+    assert "nextcompany-staging-public.service" in rendered
+    assert "nextcompany-staging-staging" not in rendered
+    assert render_text(rendered) == rendered
+
+
+@pytest.mark.parametrize("path", production_units(), ids=lambda path: path.name)
+def test_every_production_unit_name_gets_one_staging_suffix(path):
+    assert staging_name(path.name) == path.name.replace(
+        "nextcompany-", "nextcompany-staging-", 1
+    )
+    assert staging_name(staging_name(path.name)) == staging_name(path.name)
 
 
 def _fake_release(root: Path) -> tuple[Path, dict]:
@@ -186,9 +244,11 @@ def _fake_release(root: Path) -> tuple[Path, dict]:
         encoding="utf-8",
     )
     python.chmod(0o755)
+    (release / ".venv/bin/python3").symlink_to("python")
     (release / "deploy/systemd/nextcompany-public.service").write_text(
         "[Service]\nExecStart=/bin/true\n", encoding="utf-8"
     )
+    _normalize_tree_modes(release)
     runtime_hash = tree_sha256(release)
     source_hash = tree_sha256(release, excluded_prefixes=(".venv",))
     version = ".".join(map(str, os.sys.version_info[:3]))
@@ -231,6 +291,116 @@ def test_immutable_artifact_verifies_outer_and_runtime_hash(tmp_path):
         stream.write(b"tamper")
     with pytest.raises(ArtifactError, match="SHA-256 mismatch"):
         verify_artifact(artifact)
+
+
+@pytest.mark.skipif(
+    os.sys.version_info[:2] != (3, 14),
+    reason="runtime artifact contract is pinned to Python 3.14",
+)
+@pytest.mark.parametrize("umask", (0o022, 0o077))
+def test_artifact_extract_restores_declared_modes_and_tree_hash(tmp_path, umask):
+    release, manifest = _fake_release(tmp_path / "source")
+    (release / ".venv").chmod(0o750)
+    (release / "deploy").chmod(0o750)
+    manifest["source_tree_sha256"] = tree_sha256(
+        release,
+        excluded={MANIFEST_NAME},
+        excluded_prefixes=(".runtime", ".venv"),
+    )
+    manifest["runtime_tree_sha256"] = tree_sha256(
+        release,
+        excluded={MANIFEST_NAME},
+    )
+    (release / MANIFEST_NAME).write_bytes(canonical_json(manifest) + b"\n")
+    artifact = tmp_path / f"candidate-{umask:o}.tar.gz"
+    _normalized_tar(release, artifact, 1)
+    digest = sha256_file(artifact)
+    artifact.with_name(artifact.name + ".sha256").write_text(
+        f"{digest}  {artifact.name}\n", encoding="utf-8"
+    )
+
+    previous_umask = os.umask(umask)
+    try:
+        result = verify_artifact(artifact, extract_to=tmp_path / f"extract-{umask:o}")
+    finally:
+        os.umask(previous_umask)
+
+    extracted = tmp_path / f"extract-{umask:o}" / "release"
+    assert result["runtime_tree_sha256"] == manifest["runtime_tree_sha256"]
+    assert tree_sha256(extracted, excluded={MANIFEST_NAME}) == manifest[
+        "runtime_tree_sha256"
+    ]
+    assert (extracted / ".venv").stat().st_mode & 0o777 == 0o750
+    assert (extracted / "deploy").stat().st_mode & 0o777 == 0o750
+    assert (extracted / ".venv/bin/python").stat().st_mode & 0o777 == 0o755
+
+
+def test_artifact_extract_rejects_unsafe_declared_modes(tmp_path):
+    artifact = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(artifact, "w:gz") as archive:
+        root = tarfile.TarInfo("release")
+        root.type = tarfile.DIRTYPE
+        root.mode = 0o755
+        archive.addfile(root)
+        unsafe = tarfile.TarInfo("release/unsafe")
+        unsafe.mode = 0o4755
+        payload = b"unsafe\n"
+        unsafe.size = len(payload)
+        archive.addfile(unsafe, io.BytesIO(payload))
+
+    with pytest.raises(ArtifactError, match="unsafe archive mode"):
+        extract_artifact(artifact, tmp_path / "extracted")
+
+
+def test_artifact_mode_normalization_is_safe_and_preserves_executability(tmp_path):
+    root = tmp_path / "release"
+    root.mkdir(mode=0o700)
+    plain = root / "plain.txt"
+    plain.write_text("plain\n", encoding="utf-8")
+    plain.chmod(0o600)
+    executable = root / "run"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    link = root / "run-link"
+    link.symlink_to("run")
+
+    _normalize_tree_modes(root)
+
+    assert root.stat().st_mode & 0o777 == 0o755
+    assert plain.stat().st_mode & 0o777 == 0o644
+    assert executable.stat().st_mode & 0o777 == 0o755
+    assert link.lstat().st_mode & 0o777 == 0o777
+
+
+@pytest.mark.skipif(
+    os.sys.version_info[:2] != (3, 14),
+    reason="runtime artifact contract is pinned to Python 3.14",
+)
+def test_historical_reacceptance_records_distinct_builder_provenance(tmp_path):
+    release, manifest = _fake_release(tmp_path)
+    manifest.update(
+        {
+            "contract_version": 2,
+            "builder": {
+                "git_sha": "b" * 40,
+                "script_sha256": "c" * 64,
+                "version": BUILDER_VERSION,
+            },
+            "build_kind": "historical_reacceptance",
+        }
+    )
+    (release / MANIFEST_NAME).write_bytes(canonical_json(manifest) + b"\n")
+
+    verified = verify_release_tree(release)
+
+    assert verified["source_git_sha"] == "a" * 40
+    assert verified["builder"]["git_sha"] == "b" * 40
+    assert verified["build_kind"] == "historical_reacceptance"
+
+    manifest["build_kind"] = "source_builder_same_commit"
+    (release / MANIFEST_NAME).write_bytes(canonical_json(manifest) + b"\n")
+    with pytest.raises(ArtifactError, match="provenance relationship"):
+        verify_release_tree(release)
 
 
 def _write_checked(path: Path, value: bytes = b"fixture") -> dict:
@@ -307,6 +477,19 @@ def test_access_boundary_is_loopback_authenticated_and_noindex():
     }
 
 
+def test_noindex_header_name_is_case_insensitive_and_value_remains_exact():
+    required = "noindex, nofollow, nosnippet"
+
+    assert _header_value({"x-RoBoTs-TaG": required}, "X-Robots-Tag") == required
+    assert _header_value(
+        {"x-robots-tag": "noindex, nofollow"}, "X-Robots-Tag"
+    ) != required
+    assert _header_value(
+        {"X-Robots-Tag": required, "x-robots-tag": required},
+        "X-Robots-Tag",
+    ) is None
+
+
 def test_acceptance_evidence_redacts_database_passwords():
     value = (
         "postgresql+psycopg://staging:very-secret@127.0.0.1:5432/db "
@@ -328,6 +511,17 @@ def test_promotion_installs_exact_accepted_artifact_without_resolving_dependenci
     assert "pip install" not in script
     assert 'releases_root="$app_root/releases"' in script
     assert '"$activation" == "--activate"' in script
+
+
+def test_canonical_builder_can_reaccept_a_distinct_historical_source_tree():
+    script = (ROOT / "deploy/scripts/build_runtime_artifact.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'builder_root="$(cd --' in script
+    assert '--project "$builder_root"' in script
+    assert '"$builder_root/scripts/release_artifact.py" build' in script
+    assert '--source "$source_repository"' in script
 
 
 def test_rollback_policy_fails_closed_or_requires_forward_recovery():

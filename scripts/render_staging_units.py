@@ -29,6 +29,19 @@ TEXT_REPLACEMENTS = (
     ("--port 8000", "--port 18000"),
     ("--port 8081", "--port 18081"),
 )
+_TEXT_REPLACEMENT_PATTERN = re.compile(
+    "(?:"
+    + "|".join(
+        re.escape(source)
+        for source, _destination in sorted(
+            TEXT_REPLACEMENTS,
+            key=lambda replacement: len(replacement[0]),
+            reverse=True,
+        )
+    )
+    + r")(?![A-Za-z0-9_-])"
+)
+_TEXT_REPLACEMENT_MAP = dict(TEXT_REPLACEMENTS)
 
 
 class UnitParityError(RuntimeError):
@@ -48,33 +61,46 @@ def production_units(source_dir: Path = SOURCE_DIR) -> list[Path]:
 
 
 def staging_name(name: str) -> str:
+    if name.startswith("nextcompany-staging-"):
+        return name
     if not name.startswith("nextcompany-"):
         raise UnitParityError(f"unexpected production unit name: {name}")
     return name.replace("nextcompany-", "nextcompany-staging-", 1)
 
 
 def render_text(source: str) -> str:
-    rendered = source
-    for old, new in TEXT_REPLACEMENTS:
-        rendered = rendered.replace(old, new)
+    # Transform only tokens found in the input.  Sequential str.replace calls
+    # can match a freshly rendered staging path again (for example
+    # /opt/nextcompany-staging still starts with /opt/nextcompany).
+    rendered = _TEXT_REPLACEMENT_PATTERN.sub(
+        lambda match: _TEXT_REPLACEMENT_MAP[match.group(0)],
+        source,
+    )
     rendered = re.sub(
-        r"(?<![a-z0-9_-])nextcompany-([a-z0-9-]+\.(?:service|timer))",
+        r"(?<![a-z0-9_-])nextcompany-(?!staging-)([a-z0-9-]+\.(?:service|timer))",
         r"nextcompany-staging-\1",
         rendered,
     )
-    rendered = rendered.replace(
-        "Description=NEXT Company ",
+    rendered = re.sub(
+        r"Description=NEXT Company (?!staging )",
         "Description=NEXT Company staging ",
+        rendered,
     )
     if "[Service]" in rendered:
         marker = "[Service]\n"
-        rendered = rendered.replace(
-            marker,
-            marker
-            + "Environment=NEXTCOMPANY_ENVIRONMENT=staging\n"
-            + "Environment=PUBLIC_FORCE_NOINDEX=1\n",
-            1,
+        required_environment = (
+            "Environment=NEXTCOMPANY_ENVIRONMENT=staging\n",
+            "Environment=PUBLIC_FORCE_NOINDEX=1\n",
         )
+        missing_environment = "".join(
+            setting for setting in required_environment if setting not in rendered
+        )
+        if missing_environment:
+            rendered = rendered.replace(
+                marker,
+                marker + missing_environment,
+                1,
+            )
     return rendered
 
 

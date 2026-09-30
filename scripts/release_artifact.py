@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import posixpath
+import re
 import shutil
 import stat
 import subprocess
@@ -26,7 +27,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_NAME = "release-manifest.json"
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
+LEGACY_CONTRACT_VERSION = 1
+BUILDER_VERSION = "release-artifact-v2"
 EXPECTED_PYTHON_MINOR = "3.14"
 EXPECTED_POSTGRESQL_VERSION = "18.6"
 
@@ -106,13 +109,39 @@ def systemd_hashes(root: Path) -> dict[str, str]:
 
 def _safe_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
     members = archive.getmembers()
+    normalized_names: set[str] = set()
+    symlink_names: set[str] = set()
     for member in members:
         path = PurePosixPath(member.name)
         if path.is_absolute() or ".." in path.parts:
             raise ArtifactError(f"unsafe archive path: {member.name}")
         if not path.parts or path.parts[0] != "release":
             raise ArtifactError("artifact must contain one release/ root")
+        normalized_name = path.as_posix()
+        if normalized_name in normalized_names:
+            raise ArtifactError(f"duplicate archive path: {member.name}")
+        normalized_names.add(normalized_name)
         if member.isdev() or member.isfifo():
+            raise ArtifactError(f"unsupported archive member: {member.name}")
+        declared_mode = stat.S_IMODE(member.mode)
+        if member.issym():
+            # POSIX symlink permissions cannot be restored portably.  Canonical
+            # artifacts always declare the platform value used by lstat().
+            if declared_mode != 0o777:
+                raise ArtifactError(
+                    f"unsupported symlink mode {declared_mode:#o}: {member.name}"
+                )
+            symlink_names.add(normalized_name)
+        elif member.islnk():
+            # Canonical builds do not emit hard links.  Rejecting them avoids
+            # aliasing one archive member's mode changes onto another.
+            raise ArtifactError(f"unsupported archive hard link: {member.name}")
+        elif member.isdir() or member.isreg():
+            if declared_mode & ~0o755:
+                raise ArtifactError(
+                    f"unsafe archive mode {declared_mode:#o}: {member.name}"
+                )
+        else:
             raise ArtifactError(f"unsupported archive member: {member.name}")
         if member.issym():
             target = PurePosixPath(member.linkname)
@@ -125,23 +154,84 @@ def _safe_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
                 or resolved.parts[0] != "release"
             ):
                 raise ArtifactError(f"unsafe archive link: {member.name}")
-        if member.islnk():
-            target = PurePosixPath(member.linkname)
-            if (
-                target.is_absolute()
-                or ".." in target.parts
-                or not target.parts
-                or target.parts[0] != "release"
-            ):
-                raise ArtifactError(f"unsafe archive link: {member.name}")
+    for name in normalized_names:
+        path = PurePosixPath(name)
+        if any(parent.as_posix() in symlink_names for parent in path.parents):
+            raise ArtifactError(f"archive member descends through a symlink: {name}")
     return members
+
+
+def _artifact_member_filter(
+    member: tarfile.TarInfo,
+    destination: str,
+) -> tarfile.TarInfo:
+    """Apply tarfile's data safety checks while retaining declared safe modes."""
+
+    filtered = tarfile.data_filter(member, destination)
+    if member.isdir() or member.isreg():
+        return filtered.replace(mode=stat.S_IMODE(member.mode), deep=False)
+    return filtered
+
+
+def _restore_declared_modes(
+    destination: Path,
+    members: list[tarfile.TarInfo],
+) -> None:
+    """Restore safe artifact modes after extraction, independent of umask."""
+
+    destination_real = destination.resolve()
+    files = [member for member in members if member.isreg()]
+    directories = sorted(
+        (member for member in members if member.isdir()),
+        key=lambda member: len(PurePosixPath(member.name).parts),
+        reverse=True,
+    )
+    for member in [*files, *directories]:
+        target = destination / PurePosixPath(member.name)
+        parent_real = target.parent.resolve(strict=True)
+        if os.path.commonpath((str(parent_real), str(destination_real))) != str(
+            destination_real
+        ):
+            raise ArtifactError(f"unsafe extracted path: {member.name}")
+        metadata = target.lstat()
+        if member.isdir() and not stat.S_ISDIR(metadata.st_mode):
+            raise ArtifactError(f"extracted entry type mismatch: {member.name}")
+        if member.isreg() and not stat.S_ISREG(metadata.st_mode):
+            raise ArtifactError(f"extracted entry type mismatch: {member.name}")
+        os.chmod(target, stat.S_IMODE(member.mode), follow_symlinks=False)
+    for member in (item for item in members if item.issym()):
+        target = destination / PurePosixPath(member.name)
+        metadata = target.lstat()
+        if not stat.S_ISLNK(metadata.st_mode):
+            raise ArtifactError(f"extracted entry type mismatch: {member.name}")
+        if stat.S_IMODE(metadata.st_mode) != stat.S_IMODE(member.mode):
+            try:
+                os.chmod(
+                    target,
+                    stat.S_IMODE(member.mode),
+                    follow_symlinks=False,
+                )
+            except (NotImplementedError, OSError) as error:
+                raise ArtifactError(
+                    f"cannot restore extracted symlink mode: {member.name}"
+                ) from error
+            if stat.S_IMODE(target.lstat().st_mode) != stat.S_IMODE(member.mode):
+                raise ArtifactError(f"extracted symlink mode mismatch: {member.name}")
 
 
 def extract_artifact(artifact: Path, destination: Path) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(artifact, "r:gz") as archive:
         members = _safe_members(archive)
-        archive.extractall(destination, members=members, filter="data")
+        try:
+            archive.extractall(
+                destination,
+                members=members,
+                filter=_artifact_member_filter,
+            )
+        except tarfile.TarError as error:
+            raise ArtifactError(f"unsafe archive extraction: {error}") from error
+    _restore_declared_modes(destination, members)
     release = destination / "release"
     if not release.is_dir():
         raise ArtifactError("release root is missing")
@@ -183,8 +273,33 @@ def verify_release_tree(release: Path) -> dict[str, Any]:
     missing = sorted(required - set(manifest))
     if missing:
         raise ArtifactError(f"release manifest fields missing: {', '.join(missing)}")
-    if manifest["contract_version"] != CONTRACT_VERSION:
+    if manifest["contract_version"] not in {
+        LEGACY_CONTRACT_VERSION,
+        CONTRACT_VERSION,
+    }:
         raise ArtifactError("unsupported release artifact contract")
+    if manifest["contract_version"] == CONTRACT_VERSION:
+        builder = manifest.get("builder")
+        if not isinstance(builder, dict) or set(builder) != {
+            "git_sha",
+            "script_sha256",
+            "version",
+        }:
+            raise ArtifactError("builder provenance is missing or invalid")
+        if (
+            not re.fullmatch(r"[0-9a-f]{40}", str(builder["git_sha"]))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(builder["script_sha256"]))
+            or builder["version"] != BUILDER_VERSION
+        ):
+            raise ArtifactError("builder provenance is missing or invalid")
+        build_kind = manifest.get("build_kind")
+        expected_kind = (
+            "source_builder_same_commit"
+            if manifest["source_git_sha"] == builder["git_sha"]
+            else "historical_reacceptance"
+        )
+        if build_kind != expected_kind:
+            raise ArtifactError("builder/source provenance relationship is invalid")
     if manifest["python_minor"] != EXPECTED_PYTHON_MINOR:
         raise ArtifactError(
             f"Python divergence: expected {EXPECTED_PYTHON_MINOR}, "
@@ -303,6 +418,51 @@ def _copy_git_tree(source: Path, release: Path) -> None:
         archive.extractall(release, filter="data")
 
 
+def _remove_generated_bytecode(root: Path) -> None:
+    """Remove path/time-bearing caches from the runtime copied into a release."""
+
+    if not root.exists():
+        return
+    cache_directories = sorted(
+        (
+            path
+            for path in root.rglob("__pycache__")
+            if path.is_dir() and not path.is_symlink()
+        ),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for path in cache_directories:
+        shutil.rmtree(path)
+    for suffix in ("*.pyc", "*.pyo"):
+        for path in root.rglob(suffix):
+            if path.is_file() and not path.is_symlink():
+                path.unlink()
+
+
+def _normalize_tree_modes(root: Path) -> None:
+    """Apply deterministic safe modes while retaining executable semantics."""
+
+    for path in [root, *sorted(root.rglob("*"))]:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            if stat.S_IMODE(metadata.st_mode) != 0o777:
+                try:
+                    os.chmod(path, 0o777, follow_symlinks=False)
+                except (NotImplementedError, OSError) as error:
+                    raise ArtifactError(
+                        f"cannot canonicalize symlink mode: {path}"
+                    ) from error
+            continue
+        if stat.S_ISDIR(metadata.st_mode):
+            mode = 0o755
+        elif stat.S_ISREG(metadata.st_mode):
+            mode = 0o755 if stat.S_IMODE(metadata.st_mode) & 0o111 else 0o644
+        else:
+            raise ArtifactError(f"unsupported artifact entry: {path}")
+        os.chmod(path, mode, follow_symlinks=False)
+
+
 def _normalized_tar(source: Path, output: Path, epoch: int) -> None:
     temporary_tar = output.with_suffix("")
     with tarfile.open(temporary_tar, "w", dereference=False) as archive:
@@ -375,6 +535,7 @@ def _embed_runtime(release: Path, venv_python: Path) -> dict[str, str]:
         "#!/bin/sh\n"
         'release_root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"\n'
         'export PYTHONHOME="$release_root/.runtime/python"\n'
+        "export PYTHONDONTWRITEBYTECODE=1\n"
         f'exec "$release_root/.runtime/python/{executable_relative.as_posix()}" "$@"\n',
         encoding="utf-8",
     )
@@ -409,7 +570,15 @@ def build_artifact(
     source = source.resolve()
     if _git(source, "status", "--porcelain"):
         raise ArtifactError("refusing to build from a dirty Git tree")
+    if _git(ROOT, "status", "--porcelain"):
+        raise ArtifactError("refusing to build with a dirty artifact builder")
     source_sha = _git(source, "rev-parse", "HEAD")
+    builder_sha = _git(ROOT, "rev-parse", "HEAD")
+    builder = {
+        "git_sha": builder_sha,
+        "script_sha256": sha256_file(Path(__file__).resolve()),
+        "version": BUILDER_VERSION,
+    }
     commit_epoch = int(_git(source, "show", "-s", "--format=%ct", "HEAD"))
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="nextcompany-build-") as directory:
@@ -417,6 +586,7 @@ def build_artifact(
         release = work / "release"
         release.mkdir()
         _copy_git_tree(source, release)
+        _normalize_tree_modes(release)
         source_tree_hash = tree_sha256(release)
         environment = {
             **os.environ,
@@ -435,6 +605,9 @@ def build_artifact(
         )
         python = release / ".venv" / "bin" / "python"
         runtime_identity = _embed_runtime(release, python)
+        _remove_generated_bytecode(release / ".runtime")
+        _remove_generated_bytecode(release / ".venv")
+        _normalize_tree_modes(release)
         python_version = runtime_identity["python_version"]
         if ".".join(python_version.split(".")[:2]) != python_minor:
             raise ArtifactError(
@@ -443,6 +616,12 @@ def build_artifact(
         manifest = {
             "contract_version": CONTRACT_VERSION,
             "source_git_sha": source_sha,
+            "builder": builder,
+            "build_kind": (
+                "source_builder_same_commit"
+                if source_sha == builder_sha
+                else "historical_reacceptance"
+            ),
             "source_tree_sha256": source_tree_hash,
             "runtime_tree_sha256": tree_sha256(release),
             "lock_sha256": sha256_file(release / "uv.lock"),
@@ -454,7 +633,9 @@ def build_artifact(
             "postgresql_version": postgresql_version,
             "systemd_units": systemd_hashes(release),
         }
-        (release / MANIFEST_NAME).write_bytes(canonical_json(manifest) + b"\n")
+        manifest_path = release / MANIFEST_NAME
+        manifest_path.write_bytes(canonical_json(manifest) + b"\n")
+        manifest_path.chmod(0o644)
         artifact = output_dir / f"nextcompany-{source_sha}.tar.gz"
         _normalized_tar(release, artifact, commit_epoch)
     artifact_sha = sha256_file(artifact)

@@ -649,6 +649,17 @@ def _http_text(url: str) -> tuple[int, dict[str, str], str]:
         return response.status, dict(response.headers.items()), response.read().decode()
 
 
+def _header_value(headers: dict[str, str], name: str) -> str | None:
+    """Return one HTTP header value using case-insensitive field-name rules."""
+
+    values = [
+        value
+        for key, value in headers.items()
+        if key.casefold() == name.casefold()
+    ]
+    return values[0] if len(values) == 1 else None
+
+
 def _active_release(database_url: str) -> str | None:
     with psycopg.connect(_libpq_url(database_url)) as connection:
         exists = connection.execute(
@@ -703,7 +714,8 @@ def _runtime_accept(
         _, _, robots = _http_text(runtime["public_origin"] + "/robots.txt")
         if (
             status != 200
-            or headers.get("X-Robots-Tag") != "noindex, nofollow, nosnippet"
+            or _header_value(headers, "X-Robots-Tag")
+            != "noindex, nofollow, nosnippet"
             or robots != "User-agent: *\nDisallow: /\n"
         ):
             raise AcceptanceError("staging noindex runtime contract failed")
