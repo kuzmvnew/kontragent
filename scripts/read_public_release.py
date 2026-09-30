@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,17 @@ from psycopg.rows import dict_row
 
 SAFE_RELEASE = re.compile(r"^[a-zA-Z0-9._-]{8,120}$")
 LEGAL_INN = re.compile(r"^[0-9]{10}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _payload_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def read_active_release_projections(
@@ -77,7 +89,7 @@ def read_active_release_projections(
         if requested:
             cursor.execute(
                 """
-                SELECT inn, payload
+                SELECT inn, payload, payload_sha256
                   FROM public_company_projections
                  WHERE release_id = %s AND inn = ANY(%s)
                  ORDER BY inn
@@ -88,13 +100,24 @@ def read_active_release_projections(
         observed = tuple(row["inn"] for row in rows)
         if observed != requested:
             raise ValueError("trusted active release projection membership mismatch")
+        for row in rows:
+            stored_sha256 = str(row["payload_sha256"])
+            if (
+                not SHA256.fullmatch(stored_sha256)
+                or _payload_sha256(row["payload"]) != stored_sha256
+            ):
+                raise ValueError("trusted active release payload integrity mismatch")
 
     return {
         "release_id": expected_release_id,
         "record_count": record_count,
         "member_inns": member_inns,
         "projections": [
-            {"inn": row["inn"], "payload": row["payload"]}
+            {
+                "inn": row["inn"],
+                "payload": row["payload"],
+                "payload_sha256": row["payload_sha256"],
+            }
             for row in rows
         ],
     }

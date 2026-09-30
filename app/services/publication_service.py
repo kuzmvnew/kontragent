@@ -11,7 +11,7 @@ import json
 import os
 import re
 import subprocess
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping
 from uuid import UUID
 
 import httpx
@@ -39,7 +39,7 @@ from public_app.contracts import (
     ReleaseTransitionSummary,
 )
 from scripts.export_public_release import build_projection
-from scripts.public_release_common import semantic_projection_sha256
+from scripts.public_release_common import payload_sha256, semantic_projection_sha256
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +59,8 @@ ACTIVE_REQUEST_EXISTS = "ACTIVE_REQUEST_EXISTS"
 NO_FAILED_PUBLICATION = "NO_FAILED_PUBLICATION"
 ALREADY_RECOVERED = "ALREADY_RECOVERED"
 NO_RECOVERY_BOUNDARY = "NO_RECOVERY_BOUNDARY"
+LEGACY_PROJECTION_VERSION = "public-projection-v1.legacy"
+LEGACY_HASH_ALGORITHM_VERSION = "sha256-canonical-json-v1"
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,7 @@ class TransitionParentCohort:
     withdrawn_inns: tuple[str, ...]
     retained_projections: Mapping[str, PublicProjection]
     previous_hashes: Mapping[str, str]
+    baseline_kind: Literal["current", "legacy"]
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,7 @@ class TrustedReleaseProjectionBatch:
     record_count: int
     member_inns: tuple[str, ...]
     projections: Mapping[str, Any]
+    payload_sha256s: Mapping[str, str]
 
 
 TrustedProjectionReader = Callable[
@@ -453,6 +457,28 @@ def fetch_transition_parent_cohort(
                 f"ready={expected_record_count} baseline={len(parent_inns)}"
             )
 
+        version_pairs = {
+            (
+                str(publication_states[inn].projection_version),
+                str(publication_states[inn].hash_algorithm_version),
+            )
+            for inn in parent_inns
+        }
+        current_pair = (PROJECTION_VERSION, HASH_ALGORITHM_VERSION)
+        legacy_pair = (LEGACY_PROJECTION_VERSION, LEGACY_HASH_ALGORITHM_VERSION)
+        if version_pairs == {current_pair}:
+            baseline_kind: Literal["current", "legacy"] = "current"
+        elif version_pairs == {legacy_pair}:
+            baseline_kind = "legacy"
+        elif len(version_pairs) > 1:
+            raise PublicBuildError(
+                "parent publication baseline has mixed version metadata"
+            )
+        else:
+            raise PublicBuildError(
+                "parent publication baseline version pair is unsupported"
+            )
+
         parent_set = set(parent_inns)
         target_set = set(normalized_target)
         retained_inns = tuple(sorted(parent_set & target_set))
@@ -479,8 +505,10 @@ def fetch_transition_parent_cohort(
                 "stage=transition_parent_storage "
                 f"error_type={type(error).__name__}"
             ) from error
-        if not isinstance(trusted, TrustedReleaseProjectionBatch) or not isinstance(
-            trusted.projections, Mapping
+        if (
+            not isinstance(trusted, TrustedReleaseProjectionBatch)
+            or not isinstance(trusted.projections, Mapping)
+            or not isinstance(trusted.payload_sha256s, Mapping)
         ):
             raise PublicVpsUnavailable(
                 "stage=transition_parent_storage error_type=invalid_response"
@@ -514,6 +542,11 @@ def fetch_transition_parent_cohort(
                 "stage=transition_parent_storage validation_path=projections "
                 "validation_type=membership_mismatch"
             )
+        if set(trusted.payload_sha256s) != retained_set:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage validation_path=payload_sha256s "
+                "validation_type=membership_mismatch"
+            )
 
         for inn in retained_inns:
             payload = trusted.projections[inn]
@@ -539,7 +572,20 @@ def fetch_transition_parent_cohort(
                     f"inn={inn} validation_path=publication.release_id "
                     "validation_type=release_mismatch"
                 )
-            if semantic_projection_sha256(projection) != previous_hashes[inn]:
+            stored_payload_sha256 = str(trusted.payload_sha256s[inn])
+            if (
+                not re.fullmatch(r"[0-9a-f]{64}", stored_payload_sha256)
+                or payload_sha256(projection) != stored_payload_sha256
+            ):
+                raise PublicVpsUnavailable(
+                    "stage=transition_parent_storage "
+                    f"inn={inn} validation_path=payload_sha256 "
+                    "validation_type=integrity_mismatch"
+                )
+            if (
+                baseline_kind == "current"
+                and semantic_projection_sha256(projection) != previous_hashes[inn]
+            ):
                 raise PublicBuildError(
                     f"live projection hash is not the recorded last-good hash: {inn}"
                 )
@@ -554,6 +600,7 @@ def fetch_transition_parent_cohort(
             withdrawn_inns=withdrawn_inns,
             retained_projections=retained_projections,
             previous_hashes=previous_hashes,
+            baseline_kind=baseline_kind,
         )
     except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
         if isinstance(error, PublicVpsUnavailable):
