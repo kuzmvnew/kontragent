@@ -180,6 +180,17 @@ def _failed_request(
     )
 
 
+def _transition_context(companies, release_id: str):
+    return SimpleNamespace(
+        companies=tuple(companies),
+        parent=SimpleNamespace(release_id=release_id),
+    )
+
+
+def _unused_trusted_reader(*_args, **_kwargs):
+    pytest.fail("trusted reader unexpectedly bypassed the patched transition boundary")
+
+
 def test_semantic_hash_ignores_release_churn_but_detects_public_content():
     first = projection(release_id="public-v1-a")
     second = first.model_copy(
@@ -271,22 +282,18 @@ def test_failed_recovery_creates_one_fresh_request_and_preserves_history(
         monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
         monkeypatch.setattr(
             service,
-            "fetch_live_cohort",
+            "_current_transition_changes",
             lambda *_args, **_kwargs: (
-                "public-v1-actual-live",
-                {company.inn: live_projection},
+                _transition_context([company], "public-v1-actual-live"),
+                current_changes,
             ),
-        )
-        monkeypatch.setattr(
-            service,
-            "_current_semantic_changes",
-            lambda *_args, **_kwargs: current_changes,
         )
 
         result = service.recover_failed_publication_if_eligible(
             session,
             now=NOW,
             source_sha=current_sha,
+            trusted_projection_reader=_unused_trusted_reader,
         )
         replacement = session.get(
             PublicPublicationRequest, result.replacement_request_id
@@ -313,6 +320,7 @@ def test_failed_recovery_creates_one_fresh_request_and_preserves_history(
             session,
             now=NOW + timedelta(seconds=30),
             source_sha=current_sha,
+            trusted_projection_reader=_unused_trusted_reader,
         )
         replacements = list(
             session.scalars(
@@ -331,6 +339,7 @@ def test_failed_recovery_creates_one_fresh_request_and_preserves_history(
             session,
             now=NOW + timedelta(minutes=2),
             source_sha=current_sha,
+            trusted_projection_reader=_unused_trusted_reader,
         )
         assert same_generation.status == service.NO_RECOVERY_BOUNDARY
         assert same_generation.failed_request_id == replacement.id
@@ -360,20 +369,18 @@ def test_failed_recovery_skips_when_current_truth_matches_live(monkeypatch):
         monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
         monkeypatch.setattr(
             service,
-            "fetch_live_cohort",
+            "_current_transition_changes",
             lambda *_args, **_kwargs: (
-                "public-v1-actual-live",
-                {company.inn: live_projection},
+                _transition_context([company], "public-v1-actual-live"),
+                [],
             ),
-        )
-        monkeypatch.setattr(
-            service, "_current_semantic_changes", lambda *_args, **_kwargs: []
         )
 
         result = service.recover_failed_publication_if_eligible(
             session,
             now=NOW,
             source_sha="d" * 40,
+            trusted_projection_reader=_unused_trusted_reader,
         )
 
         assert result.status == service.NO_PUBLIC_CHANGE
@@ -639,14 +646,17 @@ def test_normalization_live_lookup_timeout_does_not_mutate_request(
         )
         monkeypatch.setattr(
             service,
-            "fetch_live_cohort",
+            "_current_transition_changes",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 service.PublicVpsUnavailable("SSL timeout")
             ),
         )
 
     with pytest.raises(service.PublicVpsUnavailable):
-        service.normalize_publication_queue(_ActiveRowsSession([request]))
+        service.normalize_publication_queue(
+            _ActiveRowsSession([request]),
+            trusted_projection_reader=_unused_trusted_reader,
+        )
 
     assert (
         request.status,
@@ -1184,6 +1194,9 @@ def test_post_import_https_failure_rolls_back_exact_previous_release(tmp_path, m
             rolled_back.append(previous)
             return {"active_release_id": previous}
 
+        def read_active_projections(self, *_args):
+            pytest.fail("trusted rollback verification was not intercepted")
+
     monkeypatch.setattr(
         runner,
         "verify_https_release",
@@ -1197,11 +1210,10 @@ def test_post_import_https_failure_rolls_back_exact_previous_release(tmp_path, m
         lambda *_args, **_kwargs: "public-v1-last-good",
     )
     monkeypatch.setattr(runner, "_active_release_id", lambda _client=None: release_id)
-    monkeypatch.setattr(runner, "accepted_cohort", lambda: (_manifest(["0274101890"]), "c" * 64))
     monkeypatch.setattr(
         runner,
-        "fetch_live_cohort",
-        lambda *_args, **_kwargs: ("public-v1-last-good", {}),
+        "_verify_rollback_parent",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(runner, "_public_incident", lambda *args, **kwargs: None)
     result = runner.publish_claimed_request(
@@ -1313,6 +1325,9 @@ def test_stale_candidate_is_rebased_before_upload(tmp_path, monkeypatch):
         def upload(self, *_args):
             uploads.append(True)
 
+        def read_active_projections(self, *_args):
+            pytest.fail("stale rebase test unexpectedly read trusted storage")
+
     def normalize(_session, **_kwargs):
         request.status = "SUPERSEDED"
         request.last_error = service.STALE_PARENT_RELEASE
@@ -1367,19 +1382,18 @@ def test_three_retry_candidates_normalize_to_current_truth_not_metadata(monkeypa
         )
         monkeypatch.setattr(
             service,
-            "fetch_live_cohort",
-            lambda *_args, **_kwargs: ("public-v1-live", live),
-        )
-        monkeypatch.setattr(
-            service,
-            "_current_semantic_changes",
-            lambda *_args, **_kwargs: expected_changes,
+            "_current_transition_changes",
+            lambda *_args, **_kwargs: (
+                _transition_context(companies, "public-v1-live"),
+                expected_changes,
+            ),
         )
 
         result = service.normalize_publication_queue(
             session,
             now=NOW,
             source_sha=SHA,
+            trusted_projection_reader=_unused_trusted_reader,
         )
         replacement = session.get(
             PublicPublicationRequest, result.replacement_request_id
@@ -1418,16 +1432,19 @@ def test_single_stale_retry_creates_one_fresh_live_parent_request(monkeypatch):
         )
         monkeypatch.setattr(
             service,
-            "fetch_live_cohort",
-            lambda *_args, **_kwargs: ("public-v1-live", live),
-        )
-        monkeypatch.setattr(
-            service,
-            "_current_semantic_changes",
-            lambda *_args, **_kwargs: changes,
+            "_current_transition_changes",
+            lambda *_args, **_kwargs: (
+                _transition_context(companies, "public-v1-live"),
+                changes,
+            ),
         )
 
-        result = service.normalize_publication_queue(session, now=NOW, source_sha=SHA)
+        result = service.normalize_publication_queue(
+            session,
+            now=NOW,
+            source_sha=SHA,
+            trusted_projection_reader=_unused_trusted_reader,
+        )
         replacement = session.get(PublicPublicationRequest, result.replacement_request_id)
         assert stale.status == "SUPERSEDED"
         assert stale.last_error == service.STALE_PARENT_RELEASE
@@ -1458,16 +1475,19 @@ def test_restarted_service_revalidates_stale_ready_candidate(monkeypatch):
         )
         monkeypatch.setattr(
             service,
-            "fetch_live_cohort",
-            lambda *_args, **_kwargs: ("public-v1-live", live),
-        )
-        monkeypatch.setattr(
-            service,
-            "_current_semantic_changes",
-            lambda *_args, **_kwargs: _changes_for(companies),
+            "_current_transition_changes",
+            lambda *_args, **_kwargs: (
+                _transition_context(companies, "public-v1-live"),
+                _changes_for(companies),
+            ),
         )
 
-        result = service.normalize_publication_queue(session, now=NOW, source_sha=SHA)
+        result = service.normalize_publication_queue(
+            session,
+            now=NOW,
+            source_sha=SHA,
+            trusted_projection_reader=_unused_trusted_reader,
+        )
 
         assert result.replacement_request_id is not None
         assert stale.status == "SUPERSEDED"
@@ -1493,16 +1513,19 @@ def test_stale_queue_with_current_truth_equal_live_is_no_public_change(monkeypat
         )
         monkeypatch.setattr(
             service,
-            "fetch_live_cohort",
-            lambda *_args, **_kwargs: ("public-v1-live", live),
-        )
-        monkeypatch.setattr(
-            service,
-            "_current_semantic_changes",
-            lambda *_args, **_kwargs: [],
+            "_current_transition_changes",
+            lambda *_args, **_kwargs: (
+                _transition_context(companies, "public-v1-live"),
+                [],
+            ),
         )
 
-        result = service.normalize_publication_queue(session, now=NOW, source_sha=SHA)
+        result = service.normalize_publication_queue(
+            session,
+            now=NOW,
+            source_sha=SHA,
+            trusted_projection_reader=_unused_trusted_reader,
+        )
         assert result.no_public_change is True
         assert result.replacement_request_id is None
         assert stale.status == "SUPERSEDED"
@@ -1521,6 +1544,9 @@ def test_live_parent_race_after_upload_prevents_import_and_rebases(tmp_path, mon
 
         def import_release(self, *_args):
             calls["import"] += 1
+
+        def read_active_projections(self, *_args):
+            pytest.fail("stale race test unexpectedly read trusted storage")
 
     def validate(*_args, **_kwargs):
         calls["parent"] += 1

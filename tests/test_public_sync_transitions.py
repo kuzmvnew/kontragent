@@ -19,6 +19,7 @@ from public_app.contracts import (
     ManifestEntity,
     PublicProjection,
 )
+from scripts import accept_public_launch as launch
 from scripts import run_public_sync as runner
 from scripts.public_release_common import (
     canonical_json,
@@ -72,6 +73,89 @@ class _BuildSession:
 
     def add(self, _item):
         pytest.fail("test baseline unexpectedly inserted a publication state")
+
+
+class _BoundarySession(_BuildSession):
+    def __init__(self, states, runs, requests):
+        super().__init__(states, runs)
+        self.requests = list(requests)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def _active_requests(self):
+        return [
+            row
+            for row in self.requests
+            if row.status in service.ACTIVE_REQUEST_STATUSES
+        ]
+
+    def scalar(self, query):
+        statement = str(query)
+        if "public_publication_requests" not in statement:
+            return None
+        predicate = statement.split("WHERE", 1)[-1]
+        if "recovered_from_request_id =" in predicate:
+            failed_id = next(
+                (
+                    row.id
+                    for row in self.requests
+                    if row.status == "FAILED"
+                ),
+                None,
+            )
+            return next(
+                (
+                    row
+                    for row in reversed(self.requests)
+                    if row.recovered_from_request_id == failed_id
+                ),
+                None,
+            )
+        if "status IN" in predicate:
+            return next(iter(self._active_requests()), None)
+        return next(
+            (
+                row
+                for row in reversed(self.requests)
+                if row.status == "FAILED"
+            ),
+            None,
+        )
+
+    def scalars(self, query):
+        statement = str(query)
+        if "public_publication_requests" in statement:
+            return list(self._active_requests())
+        return list(self.states)
+
+    def add(self, item):
+        if isinstance(item, PublicPublicationRequest):
+            if item.id is None:
+                item.id = uuid4()
+            self.requests.append(item)
+            return
+        pytest.fail("test unexpectedly inserted a publication state")
+
+    def flush(self):
+        return None
+
+    def commit(self):
+        return None
+
+    def rollback(self):
+        return None
+
+    def get(self, model, identifier):
+        if model is PublicPublicationRequest:
+            return next(
+                (row for row in self.requests if row.id == identifier),
+                None,
+            )
+        return super().get(model, identifier)
 
 
 class _Request(SimpleNamespace):
@@ -220,13 +304,23 @@ def _configure_build(
     }
     manifest = _manifest(list(universe))
     monkeypatch.setattr(runner, "accepted_cohort", lambda: (manifest, "c" * 64))
+    monkeypatch.setattr(service, "accepted_cohort", lambda: (manifest, "c" * 64))
     monkeypatch.setattr(runner, "cohort_companies", lambda *_args: companies)
     monkeypatch.setattr(runner, "publishable_runs", lambda *_args: runs)
+    monkeypatch.setattr(service, "cohort_companies", lambda *_args: companies)
+    monkeypatch.setattr(service, "publishable_runs", lambda *_args: runs)
     monkeypatch.setattr(runner, "current_main_sha", lambda: SHA)
     monkeypatch.setattr(runner, "database_url_for_psycopg", lambda: "postgresql://test")
     monkeypatch.setattr(runner.psycopg, "connect", lambda *_args, **_kwargs: _ReadOnlyConnection())
+    monkeypatch.setattr(service, "database_url_for_psycopg", lambda *_args: "postgresql://test")
+    monkeypatch.setattr(service.psycopg, "connect", lambda *_args, **_kwargs: _ReadOnlyConnection())
     monkeypatch.setattr(
         runner,
+        "build_projection",
+        lambda _cursor, inn, _publication: target[inn],
+    )
+    monkeypatch.setattr(
+        service,
         "build_projection",
         lambda _cursor, inn, _publication: target[inn],
     )
@@ -389,70 +483,6 @@ def test_incident_withdrawal_builds_39_without_stale_alan(monkeypatch, tmp_path)
     assert request.changed_company_inns == [ALAN_INN]
     assert request.change_summary[0]["transition"] == "WITHDRAWN"
     assert manifest.artifact_hashes["companies.jsonl.gz"]
-
-
-def test_live_parent_membership_uses_ready_count_and_404_not_manifest_size():
-    records = _forty_with_alan(PARENT_40)[:2]
-    manifest = _manifest([item.company.inn for item in records])
-    retained = records[0]
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/ready":
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ready",
-                    "release_id": PARENT_40,
-                    "record_count": 1,
-                },
-            )
-        if request.url.path == f"/api/company/{retained.company.inn}":
-            return httpx.Response(200, json=retained.model_dump(mode="json"))
-        return httpx.Response(404)
-
-    with httpx.Client(
-        base_url="https://public.test", transport=httpx.MockTransport(handler)
-    ) as client:
-        release_id, live = service.fetch_live_cohort(manifest, client=client)
-
-    assert release_id == PARENT_40
-    assert list(live) == [retained.company.inn]
-
-
-def test_default_live_cohort_reader_remains_strict_with_safe_schema_evidence():
-    retained = _forty_with_alan(PARENT_40)[0]
-    manifest = _manifest([retained.company.inn])
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/ready":
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ready",
-                    "release_id": PARENT_40,
-                    "record_count": 1,
-                },
-            )
-        return httpx.Response(
-            200,
-            json={
-                "legacy_company": {"inn": retained.company.inn},
-                "secret": "strict-reader-must-not-log-payload",
-            },
-        )
-
-    with httpx.Client(
-        base_url="https://public.test", transport=httpx.MockTransport(handler)
-    ) as client:
-        with pytest.raises(service.PublicVpsUnavailable) as caught:
-            service.fetch_live_cohort(manifest, client=client)
-
-    evidence = str(caught.value)
-    assert "stage=strict_live_cohort" in evidence
-    assert f"inn={retained.company.inn}" in evidence
-    assert "validation_path=" in evidence
-    assert "validation_type=missing" in evidence
-    assert "strict-reader-must-not-log-payload" not in evidence
 
 
 def test_candidate_build_has_no_ingestion_or_external_process_side_effects(
@@ -764,6 +794,293 @@ def test_production_shape_legacy_parent_promotes_once_without_reconciliation(
     assert second_manifest is None
     assert second_request.status == "SUPERSEDED"
     assert second_request.changed_company_count == 0
+
+
+def test_run_once_recovers_legacy_40_to_39_without_browser_projection_reads(
+    monkeypatch,
+    tmp_path,
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    legacy_inns = {item.company.inn for item in parent}
+    legacy_payloads = {
+        item.company.inn: item.model_dump(mode="json")
+        for item in target
+    }
+    for payload in legacy_payloads.values():
+        del payload["company"]["director_position"]
+
+    (
+        build_session,
+        client,
+        trusted_reader,
+        public_requested,
+        _trusted_requested,
+    ) = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=target,
+        legacy_inns=legacy_inns,
+        drift_inns=legacy_inns,
+        trusted_payload_overrides=legacy_payloads,
+    )
+    failed = PublicPublicationRequest(
+        id=uuid4(),
+        trigger_type="ENRICHMENT_READY_SCAN",
+        status="FAILED",
+        candidate_release_id="public-v1-failed-generation",
+        previous_release_id=PARENT_40,
+        changed_company_count=40,
+        changed_company_ids=[],
+        changed_company_inns=[item.company.inn for item in parent],
+        change_summary=[],
+        last_error="legacy browser payload parse failure",
+        created_main_sha="c" * 40,
+        created_at=NOW,
+        updated_at=NOW,
+        completed_at=NOW,
+    )
+    session = _BoundarySession(
+        build_session.states,
+        build_session.runs.values(),
+        [failed],
+    )
+    trusted_batches: list[tuple[str, ...]] = []
+
+    class Transport:
+        def read_active_projections(self, release_id, inns):
+            assert ALAN_INN not in inns
+            trusted_batches.append(inns)
+            return trusted_reader(release_id, inns)
+
+    class LockConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def exec_driver_sql(self, statement, _parameters):
+            return SimpleNamespace(
+                scalar=lambda: statement.startswith("SELECT pg_try_advisory_lock")
+            )
+
+    class LockEngine:
+        def connect(self):
+            return LockConnection()
+
+    candidate = {}
+    recover_actual = runner.recover_failed_publication_if_eligible
+
+    def recover(*args, **kwargs):
+        recovered = recover_actual(*args, **kwargs)
+        candidate["recovery"] = recovered
+        return recovered
+
+    def claim(_session, **_kwargs):
+        replacements = [
+            row
+            for row in session.requests
+            if row.recovered_from_request_id == failed.id
+        ]
+        assert replacements, {
+            "requests": [
+                (row.status, row.id, row.recovered_from_request_id)
+                for row in session.requests
+            ],
+            "recovery": candidate.get("recovery"),
+        }
+        replacement = replacements[0]
+        replacement.status = "BUILDING"
+        return replacement
+
+    def build_only(
+        build_session_arg,
+        request,
+        *,
+        output_root,
+        transport,
+        client,
+    ):
+        bundle, manifest = runner.build_candidate(
+            build_session_arg,
+            request,
+            now=NOW,
+            output_root=output_root,
+            trusted_projection_reader=transport.read_active_projections,
+            client=client,
+        )
+        candidate.update(bundle=bundle, manifest=manifest, request=request)
+        return "BUILT"
+
+    monkeypatch.setattr(runner, "engine", LockEngine())
+    monkeypatch.setattr(runner, "SessionLocal", lambda: session)
+    monkeypatch.setattr(runner, "recover_interrupted_requests", lambda *_args: 0)
+    monkeypatch.setattr(runner, "recover_failed_publication_if_eligible", recover)
+    monkeypatch.setattr(
+        runner,
+        "scan_public_ready_changes",
+        lambda *_args: {"changed": 40, "public_ready": 39},
+    )
+    monkeypatch.setattr(runner, "claim_next_request", claim)
+    monkeypatch.setattr(runner, "publish_claimed_request", build_only)
+    monkeypatch.setattr(runner, "_resolve_public_incidents", lambda *_args, **_kwargs: None)
+
+    result = runner.run_once(
+        output_root=tmp_path,
+        transport=Transport(),
+        client=client,
+    )
+
+    replacement = candidate["request"]
+    manifest = candidate["manifest"]
+    assert result["status"] == "BUILT"
+    assert replacement.recovered_from_request_id == failed.id
+    assert replacement.trigger_type == service.PUBLICATION_FAILURE_RECOVERY
+    assert replacement.status == "READY"
+    assert manifest.record_count == 39
+    assert manifest.updated_count == 39
+    assert manifest.withdrawn_count == 1
+    assert manifest.added_count == 0
+    assert [item.inn for item in manifest.withdrawn_companies] == [ALAN_INN]
+    assert public_requested == []
+    assert all(ALAN_INN not in batch for batch in trusted_batches)
+    assert len({inn for batch in trusted_batches for inn in batch}) == 39
+
+
+@pytest.mark.parametrize("entrypoint", ["normalize", "stale_rebase"])
+def test_queue_rebase_uses_trusted_legacy_parent_without_browser_reads(
+    monkeypatch,
+    entrypoint,
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    (
+        build_session,
+        client,
+        trusted_reader,
+        public_requested,
+        trusted_requested,
+    ) = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=target,
+        legacy_inns={item.company.inn for item in parent},
+        drift_inns={item.company.inn for item in parent},
+    )
+    stale = PublicPublicationRequest(
+        id=uuid4(),
+        trigger_type="ENRICHMENT_READY_SCAN",
+        status="RETRY_SCHEDULED",
+        candidate_release_id="public-v1-stale-candidate",
+        previous_release_id="public-v1-stale-parent",
+        changed_company_count=1,
+        changed_company_ids=[],
+        changed_company_inns=[ALAN_INN],
+        change_summary=[],
+        created_main_sha=SHA,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    session = _BoundarySession(
+        build_session.states,
+        build_session.runs.values(),
+        [stale],
+    )
+
+    if entrypoint == "normalize":
+        result = service.normalize_publication_queue(
+            session,
+            now=NOW,
+            source_sha=SHA,
+            force=True,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
+        assert result.dirty_count == 40
+        replacement = session.get(
+            PublicPublicationRequest,
+            result.replacement_request_id,
+        )
+    else:
+        assert runner._rebase_stale_candidate(
+            session,
+            client=client,
+            trusted_projection_reader=trusted_reader,
+        ) == "REBASED"
+        replacement = next(
+            row for row in session.requests if row.id != stale.id
+        )
+
+    assert stale.status == "SUPERSEDED"
+    assert replacement.previous_release_id == PARENT_40
+    assert replacement.changed_company_count == 40
+    assert public_requested == []
+    assert ALAN_INN not in trusted_requested
+    assert len(set(trusted_requested)) == 39
+
+
+def test_rollback_verification_uses_ready_and_trusted_inventory_only(monkeypatch):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    (
+        session,
+        client,
+        trusted_reader,
+        public_requested,
+        trusted_requested,
+    ) = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=target,
+        legacy_inns={item.company.inn for item in parent},
+        drift_inns={item.company.inn for item in parent},
+    )
+
+    runner._verify_rollback_parent(
+        session,
+        expected_release_id=PARENT_40,
+        trusted_projection_reader=trusted_reader,
+        client=client,
+    )
+
+    assert public_requested == []
+    assert ALAN_INN not in trusted_requested
+    assert len(set(trusted_requested)) == 39
+
+
+def test_incomplete_bootstrap_fails_closed_without_browser_reconstruction():
+    manifest = _manifest([RETAINED_CONTROL_INN])
+    company = SimpleNamespace(id=1, inn=RETAINED_CONTROL_INN)
+
+    class Session:
+        def scalars(self, _query):
+            return []
+
+        def add(self, _item):
+            pytest.fail("ambiguous bootstrap unexpectedly inserted state")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail(f"bootstrap unexpectedly called {request.url.path}")
+
+    with httpx.Client(
+        base_url="https://public.test",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(
+            service.PublicBuildError,
+            match="publication baseline bootstrap required",
+        ):
+            service.bootstrap_publication_state(
+                Session(),
+                manifest,
+                [company],
+                now=NOW,
+                client=client,
+            )
 
 
 def test_mixed_current_and_legacy_parent_metadata_fails_closed(
@@ -1254,6 +1571,73 @@ def test_withdrawn_route_must_be_404_during_external_verification(
         runner.verify_https_release(bundle, manifest, client=client)
 
 
+def test_external_verification_compares_browser_safe_payload_without_internal_parse(
+    monkeypatch,
+    tmp_path,
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    changed = parent[0].model_copy(
+        update={
+            "company": parent[0].company.model_copy(
+                update={"name": "ООО ИЗМЕНЁННАЯ КАРТОЧКА"}
+            )
+        }
+    )
+    target = [changed, parent[1]]
+    _request, bundle, manifest = _build(
+        monkeypatch,
+        tmp_path,
+        live=parent,
+        target=target,
+        legacy_inns={item.company.inn for item in parent},
+    )
+    _loaded, candidate_projections, _digest = load_bundle(bundle)
+    by_inn = {item.company.inn: item for item in candidate_projections}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ready":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ready",
+                    "release_id": manifest.release_id,
+                    "record_count": 2,
+                },
+            )
+        if request.url.path.startswith("/companies/"):
+            return httpx.Response(200, text="ok")
+        inn = request.url.path.removeprefix("/api/company/")
+        payload = by_inn[inn].public_payload()
+        assert "schema_version" not in payload["publication"]
+        return httpx.Response(200, json=payload)
+
+    with httpx.Client(
+        base_url="https://public.test",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        runner.verify_https_release(bundle, manifest, client=client)
+
+
+def test_public_launch_acceptance_validates_browser_contract_not_internal_model():
+    item = projection(sequence=920_000_000, release_id=PARENT_40)
+    payload = item.public_payload()
+
+    launch.validate_browser_payload(payload, item.company.inn)
+
+    invalid = {
+        **payload,
+        "publication": {
+            **payload["publication"],
+            "schema_version": "public-projection-v1",
+        },
+    }
+    with pytest.raises(
+        AssertionError,
+        match="browser-safe publication metadata is invalid",
+    ):
+        launch.validate_browser_payload(invalid, item.company.inn)
+
+
 class _PublishSession:
     def __init__(self, request):
         self.request = request
@@ -1426,6 +1810,9 @@ def test_post_promotion_failure_rolls_back_when_live_readback_is_unavailable(
         def rollback(self, previous_release_id):
             events.append(("rollback", previous_release_id))
 
+        def read_active_projections(self, *_args):
+            pytest.fail("trusted rollback verification was not intercepted")
+
     monkeypatch.setattr(
         runner,
         "_validated_candidate_parent",
@@ -1442,13 +1829,10 @@ def test_post_promotion_failure_rolls_back_when_live_readback_is_unavailable(
     monkeypatch.setattr(runner, "_public_incident", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         runner,
-        "accepted_cohort",
-        lambda: (_manifest([item.company.inn for item in parent]), "c" * 64),
-    )
-    monkeypatch.setattr(
-        runner,
-        "fetch_live_cohort",
-        lambda *_args, **_kwargs: (PARENT_40, {}),
+        "_verify_rollback_parent",
+        lambda *_args, **kwargs: events.append(
+            ("trusted-verify", kwargs["expected_release_id"])
+        ),
     )
 
     outcome = runner.publish_claimed_request(
@@ -1465,5 +1849,6 @@ def test_post_promotion_failure_rolls_back_when_live_readback_is_unavailable(
         "accept",
         "promote",
         ("rollback", PARENT_40),
+        ("trusted-verify", PARENT_40),
     ]
     assert request.rollback_completed_at is not None
