@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from app.models.publication import PublicPublicationRequest
 from app.services import publication_service as service
@@ -15,6 +16,7 @@ from public_app.contracts import (
     PROJECTION_VERSION,
     CanonicalManifest,
     ManifestEntity,
+    PublicProjection,
 )
 from scripts import run_public_sync as runner
 from scripts.public_release_common import load_bundle, semantic_projection_sha256
@@ -25,6 +27,7 @@ NOW = datetime(2026, 9, 29, 8, tzinfo=UTC)
 SHA = "d" * 40
 PARENT_40 = "public-v1-20260927T040214Z-32334077-8f44d69a"
 ALAN_INN = "0100000614"
+RETAINED_CONTROL_INN = "0100000639"
 
 
 class _Cursor:
@@ -113,6 +116,21 @@ def _forty_with_alan(release_id: str):
             )
         }
     )
+    retained_control = projection(sequence=910_000_001, release_id=release_id)
+    retained_control = retained_control.model_copy(
+        update={
+            "company": retained_control.company.model_copy(
+                update={
+                    "inn": RETAINED_CONTROL_INN,
+                    "name": "ООО «КОНТРОЛЬ»",
+                    "full_name": (
+                        "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ «КОНТРОЛЬ»"
+                    ),
+                }
+            )
+        }
+    )
+    records[-2] = retained_control
     records[-1] = alan
     return sorted(records, key=lambda item: item.company.inn)
 
@@ -128,8 +146,11 @@ def _configure_build(
     drift_inns: set[str] | None = None,
     missing_state_inns: set[str] | None = None,
     baseline_release_overrides: dict[str, str] | None = None,
-    parent_payload_overrides: dict[str, object] | None = None,
-    missing_endpoint_inns: set[str] | None = None,
+    trusted_payload_overrides: dict[str, object] | None = None,
+    missing_trusted_inns: set[str] | None = None,
+    trusted_release_id: str | None = None,
+    trusted_record_count: int | None = None,
+    trusted_member_inns: tuple[str, ...] | None = None,
     ready_record_count: int | None = None,
 ):
     legacy_inns = legacy_inns or set()
@@ -137,8 +158,8 @@ def _configure_build(
     drift_inns = drift_inns or set()
     missing_state_inns = missing_state_inns or set()
     baseline_release_overrides = baseline_release_overrides or {}
-    parent_payload_overrides = parent_payload_overrides or {}
-    missing_endpoint_inns = missing_endpoint_inns or set()
+    trusted_payload_overrides = trusted_payload_overrides or {}
+    missing_trusted_inns = missing_trusted_inns or set()
     universe = {item.company.inn: item for item in (*live_records, *target_records)}
     companies = [
         SimpleNamespace(id=index + 1, inn=inn)
@@ -190,7 +211,8 @@ def _configure_build(
         "build_projection",
         lambda _cursor, inn, _publication: target[inn],
     )
-    requested_inns: list[str] = []
+    public_requested_inns: list[str] = []
+    trusted_requested_inns: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/ready":
@@ -209,24 +231,54 @@ def _configure_build(
         prefix = "/api/company/"
         assert request.url.path.startswith(prefix)
         inn = request.url.path.removeprefix(prefix)
-        requested_inns.append(inn)
-        if inn not in live or inn in missing_endpoint_inns:
+        public_requested_inns.append(inn)
+        if inn not in live:
             return httpx.Response(404)
-        payload = parent_payload_overrides.get(
-            inn,
-            live[inn].model_dump(mode="json"),
+        return httpx.Response(200, json=live[inn].public_payload())
+
+    def trusted_reader(release_id: str, inns: tuple[str, ...]):
+        trusted_requested_inns.extend(inns)
+        return service.TrustedReleaseProjectionBatch(
+            release_id=trusted_release_id or release_id,
+            record_count=(
+                len(live) if trusted_record_count is None else trusted_record_count
+            ),
+            member_inns=(
+                tuple(sorted(live))
+                if trusted_member_inns is None
+                else trusted_member_inns
+            ),
+            projections={
+                inn: trusted_payload_overrides.get(
+                    inn,
+                    live[inn].model_dump(mode="json"),
+                )
+                for inn in inns
+                if inn in live and inn not in missing_trusted_inns
+            },
         )
-        return httpx.Response(200, json=payload)
 
     client = httpx.Client(
         base_url="https://public.test",
         transport=httpx.MockTransport(handler),
     )
-    return _BuildSession(states), client, requested_inns
+    return (
+        _BuildSession(states),
+        client,
+        trusted_reader,
+        public_requested_inns,
+        trusted_requested_inns,
+    )
 
 
 def _build(monkeypatch, tmp_path: Path, *, live, target, **kwargs):
-    session, client, requested_inns = _configure_build(
+    (
+        session,
+        client,
+        trusted_reader,
+        public_requested_inns,
+        trusted_requested_inns,
+    ) = _configure_build(
         monkeypatch,
         parent_release_id=kwargs.pop("parent_release_id", PARENT_40),
         live_records=live,
@@ -234,21 +286,31 @@ def _build(monkeypatch, tmp_path: Path, *, live, target, **kwargs):
         **kwargs,
     )
     request = _Request()
-    request.parent_requested_inns = requested_inns
     bundle, manifest = runner.build_candidate(
         session,
         request,
         now=NOW,
         output_root=tmp_path,
+        trusted_projection_reader=trusted_reader,
         client=client,
     )
     assert bundle is not None and manifest is not None
+    request.public_parent_requested_inns = public_requested_inns
+    request.trusted_parent_requested_inns = trusted_requested_inns
     return request, bundle, manifest
 
 
 def test_incident_withdrawal_builds_39_without_stale_alan(monkeypatch, tmp_path):
     parent = _forty_with_alan(PARENT_40)
     target = [item for item in parent if item.company.inn != ALAN_INN]
+    retained_control = next(
+        item for item in parent if item.company.inn == RETAINED_CONTROL_INN
+    )
+
+    public_view = target[0].public_payload()
+    assert "schema_version" not in public_view["publication"]
+    with pytest.raises(ValidationError):
+        PublicProjection.model_validate(public_view)
 
     request, bundle, manifest = _build(
         monkeypatch,
@@ -256,7 +318,7 @@ def test_incident_withdrawal_builds_39_without_stale_alan(monkeypatch, tmp_path)
         live=parent,
         target=target,
         drift_inns={ALAN_INN},
-        parent_payload_overrides={
+        trusted_payload_overrides={
             ALAN_INN: {
                 "legacy_company": {"inn": ALAN_INN},
                 "legacy_release": PARENT_40,
@@ -273,10 +335,30 @@ def test_incident_withdrawal_builds_39_without_stale_alan(monkeypatch, tmp_path)
     assert [item.inn for item in manifest.withdrawn_companies] == [ALAN_INN]
     assert manifest.withdrawn_companies[0].previous_hash == "f" * 64
     assert ALAN_INN not in {item.company.inn for item in projections}
-    assert ALAN_INN not in request.parent_requested_inns
-    assert set(request.parent_requested_inns) == {
+    assert request.public_parent_requested_inns == []
+    assert ALAN_INN not in request.trusted_parent_requested_inns
+    assert RETAINED_CONTROL_INN in request.trusted_parent_requested_inns
+    assert set(request.trusted_parent_requested_inns) == {
         item.company.inn for item in target
     }
+    validated_control = PublicProjection.model_validate(
+        retained_control.model_dump(mode="json")
+    )
+    assert validated_control.company.inn == RETAINED_CONTROL_INN
+    assert validated_control.publication.schema_version == "public-projection-v1"
+    assert validated_control.publication.release_id == PARENT_40
+    retained_hash = semantic_projection_sha256(validated_control)
+    control_transition = next(
+        item
+        for item in manifest.unchanged_companies
+        if item.inn == RETAINED_CONTROL_INN
+    )
+    assert control_transition.previous_hash == retained_hash
+    assert control_transition.current_hash == retained_hash
+    candidate_control = next(
+        item for item in projections if item.company.inn == RETAINED_CONTROL_INN
+    )
+    assert candidate_control.company.inn == RETAINED_CONTROL_INN
     assert request.changed_company_inns == [ALAN_INN]
     assert request.change_summary[0]["transition"] == "WITHDRAWN"
     assert manifest.artifact_hashes["companies.jsonl.gz"]
@@ -491,17 +573,17 @@ def test_schema_version_upgrade_is_explicit_update(monkeypatch, tmp_path):
     assert [item.inn for item in manifest.updated_companies] == [legacy_inn]
 
 
-def test_retained_legacy_invalid_payload_fails_closed_with_safe_evidence(
+def test_retained_invalid_trusted_payload_fails_closed_with_safe_evidence(
     monkeypatch, tmp_path
 ):
     parent = _forty_with_alan(PARENT_40)[:2]
     retained_inn = parent[0].company.inn
-    session, client, _requested_inns = _configure_build(
+    session, client, trusted_reader, _public_requested, _trusted_requested = _configure_build(
         monkeypatch,
         parent_release_id=PARENT_40,
         live_records=parent,
         target_records=parent,
-        parent_payload_overrides={
+        trusted_payload_overrides={
             retained_inn: {
                 "legacy_company": {"inn": retained_inn},
                 "secret": "do-not-persist-this-payload",
@@ -515,6 +597,7 @@ def test_retained_legacy_invalid_payload_fails_closed_with_safe_evidence(
             _Request(),
             now=NOW,
             output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
             client=client,
         )
 
@@ -529,20 +612,20 @@ def test_retained_legacy_invalid_payload_fails_closed_with_safe_evidence(
 @pytest.mark.parametrize(
     ("failure", "expected_evidence"),
     [
-        ("missing", "error_type=http_404"),
+        ("missing", "validation_type=missing"),
         ("wrong_inn", "validation_type=identity_mismatch"),
         ("wrong_release", "validation_type=release_mismatch"),
     ],
 )
-def test_retained_card_identity_and_release_requirements_fail_closed(
+def test_retained_trusted_identity_and_release_requirements_fail_closed(
     monkeypatch, tmp_path, failure, expected_evidence
 ):
     parent = _forty_with_alan(PARENT_40)[:2]
     retained_inn = parent[0].company.inn
-    missing_endpoint_inns: set[str] = set()
+    missing_trusted_inns: set[str] = set()
     payload_overrides: dict[str, object] = {}
     if failure == "missing":
-        missing_endpoint_inns.add(retained_inn)
+        missing_trusted_inns.add(retained_inn)
     elif failure == "wrong_inn":
         payload_overrides[retained_inn] = parent[1].model_dump(mode="json")
     else:
@@ -554,13 +637,13 @@ def test_retained_card_identity_and_release_requirements_fail_closed(
             }
         )
         payload_overrides[retained_inn] = wrong_release.model_dump(mode="json")
-    session, client, _requested_inns = _configure_build(
+    session, client, trusted_reader, _public_requested, _trusted_requested = _configure_build(
         monkeypatch,
         parent_release_id=PARENT_40,
         live_records=parent,
         target_records=parent,
-        parent_payload_overrides=payload_overrides,
-        missing_endpoint_inns=missing_endpoint_inns,
+        trusted_payload_overrides=payload_overrides,
+        missing_trusted_inns=missing_trusted_inns,
     )
 
     with pytest.raises(service.PublicVpsUnavailable) as caught:
@@ -569,6 +652,7 @@ def test_retained_card_identity_and_release_requirements_fail_closed(
             _Request(),
             now=NOW,
             output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
             client=client,
         )
 
@@ -578,12 +662,97 @@ def test_retained_card_identity_and_release_requirements_fail_closed(
     assert expected_evidence in evidence
 
 
+@pytest.mark.parametrize(
+    ("reader_kwargs", "validation_path", "validation_type"),
+    [
+        (
+            {"trusted_release_id": "public-v1-wrong-parent"},
+            "release_id",
+            "release_mismatch",
+        ),
+        (
+            {"trusted_record_count": 1},
+            "record_count",
+            "count_mismatch",
+        ),
+    ],
+)
+def test_trusted_release_identity_must_match_https_ready_identity(
+    monkeypatch,
+    tmp_path,
+    reader_kwargs,
+    validation_path,
+    validation_type,
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    session, client, trusted_reader, public_requested, _trusted_requested = (
+        _configure_build(
+            monkeypatch,
+            parent_release_id=PARENT_40,
+            live_records=parent,
+            target_records=parent,
+            **reader_kwargs,
+        )
+    )
+
+    with pytest.raises(service.PublicVpsUnavailable) as caught:
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
+
+    evidence = str(caught.value)
+    assert "stage=transition_parent_storage" in evidence
+    assert f"validation_path={validation_path}" in evidence
+    assert f"validation_type={validation_type}" in evidence
+    assert public_requested == []
+
+
+def test_trusted_release_membership_must_match_persisted_parent_baseline(
+    monkeypatch,
+    tmp_path,
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    wrong_members = tuple(sorted((parent[0].company.inn, "9999999999")))
+    session, client, trusted_reader, public_requested, _trusted_requested = (
+        _configure_build(
+            monkeypatch,
+            parent_release_id=PARENT_40,
+            live_records=parent,
+            target_records=parent,
+            trusted_member_inns=wrong_members,
+        )
+    )
+
+    with pytest.raises(
+        service.PublicVpsUnavailable,
+        match=(
+            "stage=transition_parent_storage validation_path=member_inns "
+            "validation_type=membership_mismatch"
+        ),
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
+
+    assert public_requested == []
+
+
 def test_unexpected_hash_drift_for_current_ready_record_still_fails_closed(
     monkeypatch, tmp_path
 ):
     parent = _forty_with_alan(PARENT_40)[:2]
     drift_inn = parent[0].company.inn
-    session, client, _requested_inns = _configure_build(
+    session, client, trusted_reader, _public_requested, _trusted_requested = _configure_build(
         monkeypatch,
         parent_release_id=PARENT_40,
         live_records=parent,
@@ -600,6 +769,7 @@ def test_unexpected_hash_drift_for_current_ready_record_still_fails_closed(
             _Request(),
             now=NOW,
             output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
             client=client,
         )
 
@@ -609,7 +779,7 @@ def test_withdrawn_without_exact_persisted_parent_baseline_fails_closed(
 ):
     parent = _forty_with_alan(PARENT_40)
     target = [item for item in parent if item.company.inn != ALAN_INN]
-    session, client, requested_inns = _configure_build(
+    session, client, trusted_reader, public_requested, trusted_requested = _configure_build(
         monkeypatch,
         parent_release_id=PARENT_40,
         live_records=parent,
@@ -626,16 +796,18 @@ def test_withdrawn_without_exact_persisted_parent_baseline_fails_closed(
             _Request(),
             now=NOW,
             output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
             client=client,
         )
 
-    assert requested_inns == []
+    assert public_requested == []
+    assert trusted_requested == []
 
 
 def test_parent_ready_count_must_match_authoritative_baseline(monkeypatch, tmp_path):
     parent = _forty_with_alan(PARENT_40)
     target = [item for item in parent if item.company.inn != ALAN_INN]
-    session, client, requested_inns = _configure_build(
+    session, client, trusted_reader, public_requested, trusted_requested = _configure_build(
         monkeypatch,
         parent_release_id=PARENT_40,
         live_records=parent,
@@ -652,10 +824,12 @@ def test_parent_ready_count_must_match_authoritative_baseline(monkeypatch, tmp_p
             _Request(),
             now=NOW,
             output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
             client=client,
         )
 
-    assert requested_inns == []
+    assert public_requested == []
+    assert trusted_requested == []
 
 
 def test_published_parent_baseline_release_mismatch_fails_closed(
@@ -663,7 +837,7 @@ def test_published_parent_baseline_release_mismatch_fails_closed(
 ):
     parent = _forty_with_alan(PARENT_40)
     target = [item for item in parent if item.company.inn != ALAN_INN]
-    session, client, requested_inns = _configure_build(
+    session, client, trusted_reader, public_requested, trusted_requested = _configure_build(
         monkeypatch,
         parent_release_id=PARENT_40,
         live_records=parent,
@@ -680,10 +854,12 @@ def test_published_parent_baseline_release_mismatch_fails_closed(
             _Request(),
             now=NOW,
             output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
             client=client,
         )
 
-    assert requested_inns == []
+    assert public_requested == []
+    assert trusted_requested == []
 
 
 def test_withdrawn_route_must_be_404_during_external_verification(

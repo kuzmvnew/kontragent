@@ -17,6 +17,12 @@ the public VPS. The VPS never connects back to HOME.
 - The checked-in cohort is the eligibility universe. Target release membership
   is the current legitimate `public_ready` subset; it is not required to have
   the same size as the parent release.
+- Public HTTPS supplies only the active `release_id` and `record_count` identity.
+  Retained parent rows are read as full `PublicProjection` payloads from the
+  exact active public PostgreSQL release through the existing host-key-pinned
+  SSH/importer boundary, with an explicitly read-only transaction. The ordinary
+  `/api/company/{inn}` response remains a browser-safe public view and is not
+  used as the retained-parent projection source.
 - Every parent/target member is classified deterministically as `UNCHANGED`,
   `UPDATED`, `ADDED`, or `WITHDRAWN`. A withdrawn company is omitted instead of
   being copied from stale last-good content.
@@ -51,6 +57,12 @@ systemctl --user enable --now nextcompany-public-sync.service
 The HOME SSH identity must be readable only by `mikhail`; the VPS host key must
 already be pinned in `/home/mikhail/.ssh/known_hosts`. Never use
 `StrictHostKeyChecking=no` or copy operational database credentials to the VPS.
+The authorized VPS command boundary must permit the synchronizer's invocation
+of `scripts/read_public_release.py` as `nextcompany-importer`. That reader accepts
+only a safe exact release ID and sorted legal-entity INNs, verifies that the
+release is still active and internally complete, and returns only the requested
+stored projections over SSH. It does not create an HTTP route or write to the
+public database.
 
 ## Acceptance
 

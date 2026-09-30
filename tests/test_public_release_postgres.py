@@ -16,6 +16,7 @@ from scripts.import_public_release import (
     stage_release,
 )
 from scripts.public_release_common import canonical_json, write_checksums
+from scripts.read_public_release import read_active_release_projections
 from scripts.rollback_public_release import rollback_release
 from tests.public_test_support import forty_projections
 
@@ -180,6 +181,58 @@ def test_public_schema_and_import_support_40_to_39(tmp_path):
             "SELECT count(*) FROM public_company_projections WHERE release_id=%s",
             ("public-v1-test-b",),
         ).fetchone()[0] == 39
+
+
+def test_trusted_reader_returns_full_payload_for_exact_active_release(tmp_path):
+    release_id = "public-v1-test-trusted-reader"
+    first = bundle(tmp_path, release_id)
+    expected = forty_projections(release_id)[0]
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+    with psycopg.connect(TEST_URL) as connection:
+        result = read_active_release_projections(
+            connection,
+            expected_release_id=release_id,
+            inns=(expected.company.inn,),
+        )
+
+    assert result["release_id"] == release_id
+    assert result["record_count"] == 40
+    assert result["member_inns"] == tuple(
+        sorted(item.company.inn for item in forty_projections(release_id))
+    )
+    assert result["projections"] == [
+        {
+            "inn": expected.company.inn,
+            "payload": expected.model_dump(mode="json"),
+        }
+    ]
+
+
+def test_trusted_reader_rejects_wrong_release_and_missing_projection(tmp_path):
+    release_id = "public-v1-test-trusted-reader-errors"
+    first = bundle(tmp_path, release_id)
+    expected = forty_projections(release_id)[0]
+    with psycopg.connect(TEST_URL) as connection:
+        import_release(connection, first)
+    with psycopg.connect(TEST_URL) as connection, pytest.raises(
+        ValueError,
+        match="does not match expected release",
+    ):
+        read_active_release_projections(
+            connection,
+            expected_release_id="public-v1-wrong-release",
+            inns=(expected.company.inn,),
+        )
+    with psycopg.connect(TEST_URL) as connection, pytest.raises(
+        ValueError,
+        match="projection membership mismatch",
+    ):
+        read_active_release_projections(
+            connection,
+            expected_release_id=release_id,
+            inns=("0100000639",),
+        )
 
 
 def test_public_web_role_is_read_only(tmp_path):

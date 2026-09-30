@@ -37,6 +37,8 @@ from app.services.publication_service import (
     STALE_PARENT_RELEASE,
     PublicBuildError,
     PublicVpsUnavailable,
+    TrustedReleaseProjectionBatch,
+    TrustedProjectionReader,
     accepted_cohort,
     claim_next_request,
     cohort_companies,
@@ -162,6 +164,79 @@ class SshPublicTransport:
         except PublicTransportError as error:
             raise PublicTransportError("upload", str(error), transient=error.transient) from error
 
+    def read_active_projections(
+        self,
+        release_id: str,
+        inns: tuple[str, ...],
+    ) -> TrustedReleaseProjectionBatch:
+        """Read full stored projections without exposing them through public HTTP."""
+
+        if not SAFE_RELEASE.fullmatch(release_id):
+            raise PublicBuildError("unsafe public release ID")
+        if (
+            tuple(sorted(inns)) != inns
+            or len(inns) != len(set(inns))
+            or any(not re.fullmatch(r"[0-9]{10}", inn) for inn in inns)
+        ):
+            raise PublicBuildError("unsafe trusted projection request")
+        arguments = " ".join(
+            f"--inn {shlex.quote(inn)}" for inn in inns
+        )
+        command = (
+            "sudo -u nextcompany-importer /bin/bash -lc "
+            + shlex.quote(
+                "set -a; source /etc/nextcompany/importer.env; set +a; "
+                "/opt/nextcompany/current/.venv/bin/python "
+                "/opt/nextcompany/current/scripts/read_public_release.py "
+                f"--expected-release-id {shlex.quote(release_id)}"
+                + (f" {arguments}" if arguments else "")
+            )
+        )
+        try:
+            output = _run([*self.ssh_argv, self.target, command])
+        except PublicTransportError as error:
+            category = "network" if error.transient else "remote"
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage "
+                f"error_type=transport_{category}"
+            ) from error
+        try:
+            raw = json.loads(output.strip().splitlines()[-1])
+            returned_release_id = str(raw["release_id"])
+            record_count = int(raw["record_count"])
+            raw_member_inns = raw["member_inns"]
+            if not isinstance(raw_member_inns, list):
+                raise TypeError("member_inns must be a list")
+            member_inns = tuple(str(inn) for inn in raw_member_inns)
+            if (
+                tuple(sorted(member_inns)) != member_inns
+                or len(member_inns) != len(set(member_inns))
+                or any(not re.fullmatch(r"[0-9]{10}", inn) for inn in member_inns)
+                or len(member_inns) != record_count
+            ):
+                raise ValueError("invalid member inventory")
+            rows = raw["projections"]
+            if not isinstance(rows, list):
+                raise TypeError("projections must be a list")
+            projections: dict[str, Any] = {}
+            for row in rows:
+                if not isinstance(row, dict) or set(row) != {"inn", "payload"}:
+                    raise TypeError("invalid projection envelope")
+                inn = str(row["inn"])
+                if inn in projections:
+                    raise ValueError("duplicate projection")
+                projections[inn] = row["payload"]
+        except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage error_type=invalid_response"
+            ) from error
+        return TrustedReleaseProjectionBatch(
+            release_id=returned_release_id,
+            record_count=record_count,
+            member_inns=member_inns,
+            projections=projections,
+        )
+
     def _remote_release_command(self, release_id: str, mode: str) -> dict[str, Any]:
         remote = f"/var/lib/nextcompany/incoming/{release_id}"
         if mode not in {"--stage-only", "--accept-staged", "--promote"}:
@@ -263,6 +338,7 @@ def build_candidate(
     *,
     now: datetime,
     output_root: Path,
+    trusted_projection_reader: TrustedProjectionReader,
     client: httpx.Client | None = None,
 ) -> tuple[Path | None, ReleaseManifest | None]:
     """Build one immutable release from current-ready target membership."""
@@ -290,6 +366,7 @@ def build_candidate(
         accepted,
         target_inns=target_inns,
         publication_states=state_by_inn,
+        trusted_projection_reader=trusted_projection_reader,
         client=client,
     )
     previous_release_id = parent.release_id
@@ -730,7 +807,12 @@ def publish_claimed_request(
             manifest, _projections, _sha = load_bundle(bundle_dir)
         else:
             bundle_dir, manifest = build_candidate(
-                session, request, now=now, output_root=output_root, client=client
+                session,
+                request,
+                now=now,
+                output_root=output_root,
+                trusted_projection_reader=transport.read_active_projections,
+                client=client,
             )
             session.commit()
             if bundle_dir is None or manifest is None:

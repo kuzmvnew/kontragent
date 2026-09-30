@@ -11,7 +11,7 @@ import json
 import os
 import re
 import subprocess
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import UUID
 
 import httpx
@@ -83,6 +83,21 @@ class TransitionParentCohort:
     withdrawn_inns: tuple[str, ...]
     retained_projections: Mapping[str, PublicProjection]
     previous_hashes: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class TrustedReleaseProjectionBatch:
+    """Full internal projections read through an authorized release boundary."""
+
+    release_id: str
+    record_count: int
+    member_inns: tuple[str, ...]
+    projections: Mapping[str, Any]
+
+
+TrustedProjectionReader = Callable[
+    [str, tuple[str, ...]], TrustedReleaseProjectionBatch
+]
 
 
 @dataclass(frozen=True)
@@ -383,14 +398,16 @@ def fetch_transition_parent_cohort(
     *,
     target_inns: list[str] | tuple[str, ...],
     publication_states: Mapping[str, Any],
+    trusted_projection_reader: TrustedProjectionReader,
     client: httpx.Client | None = None,
 ) -> TransitionParentCohort:
     """Read a release parent without parsing payloads for proven withdrawals.
 
     The ready endpoint identifies the exact active release and its count. Persisted
     publication rows for that release are the authoritative membership inventory.
-    Only retained members are then fetched and validated against the current public
-    projection contract.
+    Only retained members are then read as full internal projections through an
+    authorized release-storage boundary. The ordinary-user API is deliberately not
+    accepted as an internal publication object.
     """
 
     owns_client = client is None
@@ -453,21 +470,53 @@ def fetch_transition_parent_cohort(
             previous_hashes[inn] = previous_hash
 
         retained_projections: dict[str, PublicProjection] = {}
+        try:
+            trusted = trusted_projection_reader(release_id, retained_inns)
+        except (PublicBuildError, PublicVpsUnavailable):
+            raise
+        except Exception as error:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage "
+                f"error_type={type(error).__name__}"
+            ) from error
+        if not isinstance(trusted, TrustedReleaseProjectionBatch) or not isinstance(
+            trusted.projections, Mapping
+        ):
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage error_type=invalid_response"
+            )
+        if trusted.release_id != release_id:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage validation_path=release_id "
+                "validation_type=release_mismatch"
+            )
+        if trusted.record_count != expected_record_count:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage validation_path=record_count "
+                "validation_type=count_mismatch"
+            )
+        if trusted.member_inns != parent_inns:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage validation_path=member_inns "
+                "validation_type=membership_mismatch"
+            )
+        trusted_inns = set(trusted.projections)
+        retained_set = set(retained_inns)
+        missing_trusted = sorted(retained_set - trusted_inns)
+        if missing_trusted:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_retained "
+                f"inn={missing_trusted[0]} validation_path=$ "
+                "validation_type=missing"
+            )
+        if trusted_inns != retained_set:
+            raise PublicVpsUnavailable(
+                "stage=transition_parent_storage validation_path=projections "
+                "validation_type=membership_mismatch"
+            )
+
         for inn in retained_inns:
-            response = http.get(f"/api/company/{inn}")
-            if response.status_code != 200:
-                raise PublicVpsUnavailable(
-                    "stage=transition_parent_retained "
-                    f"inn={inn} error_type=http_{response.status_code}"
-                )
-            try:
-                payload = response.json()
-            except (ValueError, TypeError, json.JSONDecodeError) as error:
-                raise PublicVpsUnavailable(
-                    "stage=transition_parent_retained "
-                    f"inn={inn} validation_path=$ "
-                    f"validation_type={type(error).__name__}"
-                ) from error
+            payload = trusted.projections[inn]
             try:
                 projection = PublicProjection.model_validate(payload)
             except ValidationError as error:
