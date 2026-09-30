@@ -22,13 +22,19 @@ the public VPS. The VPS never connects back to HOME.
   exact active public PostgreSQL release through the existing host-key-pinned
   SSH/importer boundary, with an explicitly read-only transaction. The ordinary
   `/api/company/{inn}` response remains a browser-safe public view and is not
-  used as the retained-parent projection source.
+  used as the retained-parent projection source. Each retained payload is also
+  checked against its immutable `public_company_projections.payload_sha256`
+  evidence before it can be used.
 - Every parent/target member is classified deterministically as `UNCHANGED`,
   `UPDATED`, `ADDED`, or `WITHDRAWN`. A withdrawn company is omitted instead of
   being copied from stale last-good content.
 - Projection and semantic-hash versions are stored with the durable baseline.
-  An explicit version upgrade is published as `UPDATED`; current-version hash
-  drift for a retained company still fails closed.
+  A parent must be uniformly current, or uniformly use the one migration-known
+  legacy pair `public-projection-v1.legacy` + `sha256-canonical-json-v1`.
+  Current parents retain strict semantic-hash validation. For the exact legacy
+  pair, the old hash is preserved only as historical baseline identity and every
+  retained company is published as `UPDATED`; it is never reinterpreted as a
+  current semantic hash. Mixed or unknown version metadata fails closed.
 - Build or schema failure never invokes the VPS importer. The VPS stages and
   accepts the candidate while the exact parent remains active, promotes only
   after acceptance, and persists HOME last-good state only after promoted HTTPS
@@ -89,8 +95,8 @@ The first service cycle bootstraps last-good hashes and membership from the
 exact live parent release. If membership and all current-ready projections are identical it records
 `NO_PUBLIC_CHANGE` and performs no upload or import.
 
-For the one-time controlled repair of a proven stale operational hash baseline,
-use [PUBLICATION_BASELINE_RECONCILIATION.md](PUBLICATION_BASELINE_RECONCILIATION.md).
-That procedure preserves the ordinary fail-closed parent hash validation; it is
-not part of the automatic synchronizer and must not be substituted for a normal
-publication transition.
+The migration-created exact legacy baseline is handled by a normal publication
+transition and must not be rewritten by the separate baseline reconciliation
+utility before promotion. Successful promotion persists current projection and
+hash metadata from the newly accepted release, so the following scan is a
+current-baseline no-op when business content is unchanged.

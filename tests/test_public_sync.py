@@ -27,6 +27,7 @@ from public_app.contracts import (
 from scripts import run_public_sync as runner
 from scripts.public_release_common import (
     canonical_json,
+    payload_sha256,
     semantic_projection_sha256,
     write_checksums,
 )
@@ -743,6 +744,7 @@ def test_ssh_transport_reads_full_projection_through_trusted_release_command(
                     {
                         "inn": item.company.inn,
                         "payload": item.model_dump(mode="json"),
+                        "payload_sha256": payload_sha256(item),
                     }
                 ],
             },
@@ -760,6 +762,7 @@ def test_ssh_transport_reads_full_projection_through_trusted_release_command(
     assert batch.projections[item.company.inn]["publication"]["schema_version"] == (
         "public-projection-v1"
     )
+    assert batch.payload_sha256s[item.company.inn] == payload_sha256(item)
     command = calls[0][-1]
     assert "scripts/read_public_release.py" in command
     assert "--expected-release-id" in command
@@ -816,6 +819,7 @@ def test_trusted_release_reader_uses_read_only_exact_active_release():
                 {
                     "inn": item.company.inn,
                     "payload": item.model_dump(mode="json"),
+                    "payload_sha256": payload_sha256(item),
                 }
             ]
 
@@ -837,6 +841,58 @@ def test_trusted_release_reader_uses_read_only_exact_active_release():
     assert result["projections"][0]["payload"]["publication"]["schema_version"] == (
         "public-projection-v1"
     )
+    assert result["projections"][0]["payload_sha256"] == payload_sha256(item)
+
+
+def test_trusted_release_reader_rejects_stored_payload_integrity_mismatch():
+    release_id = "public-v1-trusted-parent"
+    item = projection(sequence=630_000_000, release_id=release_id)
+    fetchall_calls = 0
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _statement, _params=None):
+            return None
+
+        def fetchone(self):
+            return {
+                "release_id": release_id,
+                "record_count": 1,
+                "status": "active",
+                "actual_record_count": 1,
+            }
+
+        def fetchall(self):
+            nonlocal fetchall_calls
+            fetchall_calls += 1
+            if fetchall_calls == 1:
+                return [{"inn": item.company.inn}]
+            return [
+                {
+                    "inn": item.company.inn,
+                    "payload": item.model_dump(mode="json"),
+                    "payload_sha256": "0" * 64,
+                }
+            ]
+
+    class Connection:
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    with pytest.raises(
+        ValueError,
+        match="trusted active release payload integrity mismatch",
+    ):
+        read_active_release_projections(
+            Connection(),
+            expected_release_id=release_id,
+            inns=(item.company.inn,),
+        )
 
 
 def test_non_ready_accepted_enqueues_withdrawal_and_ready_outside_is_ignored(monkeypatch):

@@ -15,7 +15,7 @@ from scripts.import_public_release import (
     promote_release,
     stage_release,
 )
-from scripts.public_release_common import canonical_json, write_checksums
+from scripts.public_release_common import canonical_json, payload_sha256, write_checksums
 from scripts.read_public_release import read_active_release_projections
 from scripts.rollback_public_release import rollback_release
 from tests.public_test_support import forty_projections
@@ -205,6 +205,7 @@ def test_trusted_reader_returns_full_payload_for_exact_active_release(tmp_path):
         {
             "inn": expected.company.inn,
             "payload": expected.model_dump(mode="json"),
+            "payload_sha256": payload_sha256(expected),
         }
     ]
 

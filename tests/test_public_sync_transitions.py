@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -19,7 +20,11 @@ from public_app.contracts import (
     PublicProjection,
 )
 from scripts import run_public_sync as runner
-from scripts.public_release_common import load_bundle, semantic_projection_sha256
+from scripts.public_release_common import (
+    canonical_json,
+    load_bundle,
+    semantic_projection_sha256,
+)
 from tests.public_test_support import forty_projections, projection
 
 
@@ -53,11 +58,18 @@ class _ReadOnlyConnection:
 
 
 class _BuildSession:
-    def __init__(self, states):
+    def __init__(self, states, runs=None):
         self.states = states
+        self.runs = {run.id: run for run in (runs or [])}
 
     def scalars(self, _query):
         return list(self.states)
+
+    def get(self, _model, identifier):
+        return self.runs.get(identifier)
+
+    def add(self, _item):
+        pytest.fail("test baseline unexpectedly inserted a publication state")
 
 
 class _Request(SimpleNamespace):
@@ -147,6 +159,7 @@ def _configure_build(
     missing_state_inns: set[str] | None = None,
     baseline_release_overrides: dict[str, str] | None = None,
     trusted_payload_overrides: dict[str, object] | None = None,
+    trusted_payload_sha256_overrides: dict[str, str] | None = None,
     missing_trusted_inns: set[str] | None = None,
     trusted_release_id: str | None = None,
     trusted_record_count: int | None = None,
@@ -159,6 +172,7 @@ def _configure_build(
     missing_state_inns = missing_state_inns or set()
     baseline_release_overrides = baseline_release_overrides or {}
     trusted_payload_overrides = trusted_payload_overrides or {}
+    trusted_payload_sha256_overrides = trusted_payload_sha256_overrides or {}
     missing_trusted_inns = missing_trusted_inns or set()
     universe = {item.company.inn: item for item in (*live_records, *target_records)}
     companies = [
@@ -197,7 +211,10 @@ def _configure_build(
             )
         )
     runs = {
-        company_by_inn[inn].id: SimpleNamespace(id=uuid4()) for inn in target
+        company_by_inn[inn].id: SimpleNamespace(
+            id=uuid4(), company_id=company_by_inn[inn].id
+        )
+        for inn in target
     }
     manifest = _manifest(list(universe))
     monkeypatch.setattr(runner, "accepted_cohort", lambda: (manifest, "c" * 64))
@@ -238,6 +255,14 @@ def _configure_build(
 
     def trusted_reader(release_id: str, inns: tuple[str, ...]):
         trusted_requested_inns.extend(inns)
+        projections = {
+            inn: trusted_payload_overrides.get(
+                inn,
+                live[inn].model_dump(mode="json"),
+            )
+            for inn in inns
+            if inn in live and inn not in missing_trusted_inns
+        }
         return service.TrustedReleaseProjectionBatch(
             release_id=trusted_release_id or release_id,
             record_count=(
@@ -248,13 +273,13 @@ def _configure_build(
                 if trusted_member_inns is None
                 else trusted_member_inns
             ),
-            projections={
-                inn: trusted_payload_overrides.get(
+            projections=projections,
+            payload_sha256s={
+                inn: trusted_payload_sha256_overrides.get(
                     inn,
-                    live[inn].model_dump(mode="json"),
+                    hashlib.sha256(canonical_json(payload)).hexdigest(),
                 )
-                for inn in inns
-                if inn in live and inn not in missing_trusted_inns
+                for inn, payload in projections.items()
             },
         )
 
@@ -263,7 +288,7 @@ def _configure_build(
         transport=httpx.MockTransport(handler),
     )
     return (
-        _BuildSession(states),
+        _BuildSession(states, runs.values()),
         client,
         trusted_reader,
         public_requested_inns,
@@ -556,21 +581,232 @@ def test_withdrawal_baseline_is_promoted_only_as_absent(monkeypatch, tmp_path):
     assert request.status == "PUBLISHED"
 
 
-def test_schema_version_upgrade_is_explicit_update(monkeypatch, tmp_path):
+def test_exact_legacy_version_upgrade_is_explicit_update(monkeypatch, tmp_path):
     parent = _forty_with_alan(PARENT_40)[:2]
-    legacy_inn = parent[0].company.inn
+    legacy_inns = {item.company.inn for item in parent}
 
     _request, _bundle, manifest = _build(
         monkeypatch,
         tmp_path,
         live=parent,
         target=parent,
-        legacy_inns={legacy_inn},
+        legacy_inns=legacy_inns,
     )
 
     assert manifest.projection_version == PROJECTION_VERSION
     assert manifest.hash_algorithm_version == HASH_ALGORITHM_VERSION
-    assert [item.inn for item in manifest.updated_companies] == [legacy_inn]
+    assert {item.inn for item in manifest.updated_companies} == legacy_inns
+
+
+def test_production_shape_legacy_parent_promotes_once_without_reconciliation(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)
+    target = [item for item in parent if item.company.inn != ALAN_INN]
+    legacy_inns = {item.company.inn for item in parent}
+    (
+        session,
+        client,
+        trusted_reader,
+        public_requested,
+        trusted_requested,
+    ) = _configure_build(
+        monkeypatch,
+        parent_release_id=PARENT_40,
+        live_records=parent,
+        target_records=target,
+        legacy_inns=legacy_inns,
+        drift_inns=legacy_inns,
+    )
+    before = [state.__dict__.copy() for state in session.states]
+    request = _Request()
+
+    bundle, manifest = runner.build_candidate(
+        session,
+        request,
+        now=NOW,
+        output_root=tmp_path,
+        trusted_projection_reader=trusted_reader,
+        client=client,
+    )
+
+    assert bundle is not None and manifest is not None
+    assert [state.__dict__ for state in session.states] == before
+    assert manifest.parent_record_count == 40
+    assert manifest.record_count == 39
+    assert manifest.updated_count == 39
+    assert manifest.unchanged_count == 0
+    assert {item.inn for item in manifest.updated_companies} == {
+        item.company.inn for item in target
+    }
+    assert all(item.previous_hash == "f" * 64 for item in manifest.updated_companies)
+    assert [item.inn for item in manifest.withdrawn_companies] == [ALAN_INN]
+    assert manifest.withdrawn_companies[0].previous_hash == "f" * 64
+    assert public_requested == []
+    assert ALAN_INN not in trusted_requested
+    assert len(trusted_requested) == 39
+
+    runner._persist_published_hashes(session, request, bundle, now=NOW)
+    _loaded, accepted_projections, _digest = load_bundle(bundle)
+    accepted_by_inn = {item.company.inn: item for item in accepted_projections}
+    companies = runner.cohort_companies(None, runner.accepted_cohort()[0])
+    inn_by_id = {company.id: company.inn for company in companies}
+    retained_states = [
+        state for state in session.states if inn_by_id[state.company_id] != ALAN_INN
+    ]
+    alan_state = next(
+        state for state in session.states if inn_by_id[state.company_id] == ALAN_INN
+    )
+    assert len(retained_states) == 39
+    assert all(state.projection_version == PROJECTION_VERSION for state in retained_states)
+    assert all(
+        state.hash_algorithm_version == HASH_ALGORITHM_VERSION
+        for state in retained_states
+    )
+    assert all(
+        state.last_published_hash
+        == semantic_projection_sha256(accepted_by_inn[inn_by_id[state.company_id]])
+        for state in retained_states
+    )
+    assert alan_state.is_published is False
+    assert alan_state.last_published_hash == "f" * 64
+
+    def second_handler(http_request: httpx.Request) -> httpx.Response:
+        assert http_request.url.path == "/api/ready"
+        return httpx.Response(
+            200,
+            json={
+                "status": "ready",
+                "release_id": manifest.release_id,
+                "record_count": 39,
+            },
+        )
+
+    def second_reader(release_id: str, inns: tuple[str, ...]):
+        assert release_id == manifest.release_id
+        payloads = {
+            inn: accepted_by_inn[inn].model_dump(mode="json") for inn in inns
+        }
+        return service.TrustedReleaseProjectionBatch(
+            release_id=release_id,
+            record_count=39,
+            member_inns=tuple(sorted(accepted_by_inn)),
+            projections=payloads,
+            payload_sha256s={
+                inn: hashlib.sha256(canonical_json(payload)).hexdigest()
+                for inn, payload in payloads.items()
+            },
+        )
+
+    second_request = _Request()
+    with httpx.Client(
+        base_url="https://public.test",
+        transport=httpx.MockTransport(second_handler),
+    ) as second_client:
+        second_bundle, second_manifest = runner.build_candidate(
+            session,
+            second_request,
+            now=NOW,
+            output_root=tmp_path / "second",
+            trusted_projection_reader=second_reader,
+            client=second_client,
+        )
+
+    assert second_bundle is None
+    assert second_manifest is None
+    assert second_request.status == "SUPERSEDED"
+    assert second_request.changed_company_count == 0
+
+
+def test_mixed_current_and_legacy_parent_metadata_fails_closed(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    legacy_inn = parent[0].company.inn
+    session, client, trusted_reader, _public_requested, trusted_requested = (
+        _configure_build(
+            monkeypatch,
+            parent_release_id=PARENT_40,
+            live_records=parent,
+            target_records=parent,
+            legacy_inns={legacy_inn},
+        )
+    )
+
+    with pytest.raises(
+        service.PublicBuildError,
+        match="parent publication baseline has mixed version metadata",
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
+
+    assert trusted_requested == []
+
+
+def test_unknown_parent_version_pair_fails_closed(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    session, client, trusted_reader, _public_requested, trusted_requested = (
+        _configure_build(
+            monkeypatch,
+            parent_release_id=PARENT_40,
+            live_records=parent,
+            target_records=parent,
+        )
+    )
+    for state in session.states:
+        state.hash_algorithm_version = "sha256-unknown"
+
+    with pytest.raises(
+        service.PublicBuildError,
+        match="parent publication baseline version pair is unsupported",
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
+
+    assert trusted_requested == []
+
+
+def test_trusted_payload_integrity_mismatch_fails_closed(monkeypatch, tmp_path):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    retained_inn = parent[0].company.inn
+    session, client, trusted_reader, _public_requested, _trusted_requested = (
+        _configure_build(
+            monkeypatch,
+            parent_release_id=PARENT_40,
+            live_records=parent,
+            target_records=parent,
+            legacy_inns={item.company.inn for item in parent},
+            trusted_payload_sha256_overrides={retained_inn: "0" * 64},
+        )
+    )
+
+    with pytest.raises(
+        service.PublicVpsUnavailable,
+        match=(
+            rf"stage=transition_parent_storage inn={retained_inn} "
+            r"validation_path=payload_sha256 validation_type=integrity_mismatch"
+        ),
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
 
 
 def test_retained_invalid_trusted_payload_fails_closed_with_safe_evidence(

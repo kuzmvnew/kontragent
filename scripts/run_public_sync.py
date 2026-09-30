@@ -219,13 +219,22 @@ class SshPublicTransport:
             if not isinstance(rows, list):
                 raise TypeError("projections must be a list")
             projections: dict[str, Any] = {}
+            payload_sha256s: dict[str, str] = {}
             for row in rows:
-                if not isinstance(row, dict) or set(row) != {"inn", "payload"}:
+                if not isinstance(row, dict) or set(row) != {
+                    "inn",
+                    "payload",
+                    "payload_sha256",
+                }:
                     raise TypeError("invalid projection envelope")
                 inn = str(row["inn"])
                 if inn in projections:
                     raise ValueError("duplicate projection")
                 projections[inn] = row["payload"]
+                stored_payload_sha256 = str(row["payload_sha256"])
+                if not re.fullmatch(r"[0-9a-f]{64}", stored_payload_sha256):
+                    raise ValueError("invalid payload checksum")
+                payload_sha256s[inn] = stored_payload_sha256
         except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise PublicVpsUnavailable(
                 "stage=transition_parent_storage error_type=invalid_response"
@@ -235,6 +244,7 @@ class SshPublicTransport:
             record_count=record_count,
             member_inns=member_inns,
             projections=projections,
+            payload_sha256s=payload_sha256s,
         )
 
     def _remote_release_command(self, release_id: str, mode: str) -> dict[str, Any]:
