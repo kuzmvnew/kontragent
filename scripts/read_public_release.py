@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import sys
 from typing import Any, Iterable
@@ -14,20 +14,15 @@ from typing import Any, Iterable
 import psycopg
 from psycopg.rows import dict_row
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.public_release_common import raw_payload_sha256
+
 
 SAFE_RELEASE = re.compile(r"^[a-zA-Z0-9._-]{8,120}$")
 LEGAL_INN = re.compile(r"^[0-9]{10}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-
-
-def _payload_sha256(payload: Any) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def read_active_release_projections(
@@ -104,7 +99,7 @@ def read_active_release_projections(
             stored_sha256 = str(row["payload_sha256"])
             if (
                 not SHA256.fullmatch(stored_sha256)
-                or _payload_sha256(row["payload"]) != stored_sha256
+                or raw_payload_sha256(row["payload"]) != stored_sha256
             ):
                 raise ValueError("trusted active release payload integrity mismatch")
 

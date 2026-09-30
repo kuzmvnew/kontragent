@@ -23,6 +23,8 @@ from scripts import run_public_sync as runner
 from scripts.public_release_common import (
     canonical_json,
     load_bundle,
+    payload_sha256,
+    raw_payload_sha256,
     semantic_projection_sha256,
 )
 from tests.public_test_support import forty_projections, projection
@@ -598,12 +600,57 @@ def test_exact_legacy_version_upgrade_is_explicit_update(monkeypatch, tmp_path):
     assert {item.inn for item in manifest.updated_companies} == legacy_inns
 
 
+def test_legacy_raw_integrity_is_independent_of_model_normalization(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    retained = parent[0]
+    retained_inn = retained.company.inn
+    legacy_raw = retained.model_dump(mode="json")
+    del legacy_raw["company"]["full_name"]
+    parsed = PublicProjection.model_validate(legacy_raw)
+
+    assert parsed.company.full_name is None
+    assert "full_name" in parsed.model_dump(mode="json")["company"]
+    assert raw_payload_sha256(legacy_raw) != payload_sha256(parsed)
+
+    _request, _bundle, manifest = _build(
+        monkeypatch,
+        tmp_path,
+        live=parent,
+        target=parent,
+        legacy_inns={item.company.inn for item in parent},
+        trusted_payload_overrides={retained_inn: legacy_raw},
+    )
+
+    assert {item.inn for item in manifest.updated_companies} == {
+        item.company.inn for item in parent
+    }
+
+
 def test_production_shape_legacy_parent_promotes_once_without_reconciliation(
     monkeypatch, tmp_path
 ):
     parent = _forty_with_alan(PARENT_40)
     target = [item for item in parent if item.company.inn != ALAN_INN]
     legacy_inns = {item.company.inn for item in parent}
+    legacy_raw_payloads = {}
+    for item in target:
+        raw_payload = item.model_dump(mode="json")
+        del raw_payload["company"]["director_position"]
+        legacy_raw_payloads[item.company.inn] = raw_payload
+    parsed_legacy = [
+        PublicProjection.model_validate(payload)
+        for payload in legacy_raw_payloads.values()
+    ]
+    assert len(parsed_legacy) == 39
+    assert all(
+        raw_payload_sha256(raw_payload)
+        != payload_sha256(parsed_projection)
+        for raw_payload, parsed_projection in zip(
+            legacy_raw_payloads.values(), parsed_legacy, strict=True
+        )
+    )
     (
         session,
         client,
@@ -617,6 +664,7 @@ def test_production_shape_legacy_parent_promotes_once_without_reconciliation(
         target_records=target,
         legacy_inns=legacy_inns,
         drift_inns=legacy_inns,
+        trusted_payload_overrides=legacy_raw_payloads,
     )
     before = [state.__dict__.copy() for state in session.states]
     request = _Request()
@@ -778,7 +826,7 @@ def test_unknown_parent_version_pair_fails_closed(monkeypatch, tmp_path):
     assert trusted_requested == []
 
 
-def test_trusted_payload_integrity_mismatch_fails_closed(monkeypatch, tmp_path):
+def test_modified_stored_payload_sha_fails_closed(monkeypatch, tmp_path):
     parent = _forty_with_alan(PARENT_40)[:2]
     retained_inn = parent[0].company.inn
     session, client, trusted_reader, _public_requested, _trusted_requested = (
@@ -788,6 +836,82 @@ def test_trusted_payload_integrity_mismatch_fails_closed(monkeypatch, tmp_path):
             live_records=parent,
             target_records=parent,
             legacy_inns={item.company.inn for item in parent},
+            trusted_payload_sha256_overrides={retained_inn: "0" * 64},
+        )
+    )
+
+    with pytest.raises(
+        service.PublicVpsUnavailable,
+        match=(
+            rf"stage=transition_parent_storage inn={retained_inn} "
+            r"validation_path=payload_sha256 validation_type=integrity_mismatch"
+        ),
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
+
+
+def test_modified_raw_payload_with_unchanged_stored_sha_fails_closed(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    retained = parent[0]
+    retained_inn = retained.company.inn
+    original_raw = retained.model_dump(mode="json")
+    modified_raw = retained.model_dump(mode="json")
+    modified_raw["company"]["name"] = "ООО «ИЗМЕНЕНО»"
+    session, client, trusted_reader, _public_requested, _trusted_requested = (
+        _configure_build(
+            monkeypatch,
+            parent_release_id=PARENT_40,
+            live_records=parent,
+            target_records=parent,
+            legacy_inns={item.company.inn for item in parent},
+            trusted_payload_overrides={retained_inn: modified_raw},
+            trusted_payload_sha256_overrides={
+                retained_inn: raw_payload_sha256(original_raw)
+            },
+        )
+    )
+
+    with pytest.raises(
+        service.PublicVpsUnavailable,
+        match=(
+            rf"stage=transition_parent_storage inn={retained_inn} "
+            r"validation_path=payload_sha256 validation_type=integrity_mismatch"
+        ),
+    ):
+        runner.build_candidate(
+            session,
+            _Request(),
+            now=NOW,
+            output_root=tmp_path,
+            trusted_projection_reader=trusted_reader,
+            client=client,
+        )
+
+
+def test_raw_integrity_failure_precedes_strict_model_validation(
+    monkeypatch, tmp_path
+):
+    parent = _forty_with_alan(PARENT_40)[:2]
+    retained_inn = parent[0].company.inn
+    session, client, trusted_reader, _public_requested, _trusted_requested = (
+        _configure_build(
+            monkeypatch,
+            parent_release_id=PARENT_40,
+            live_records=parent,
+            target_records=parent,
+            legacy_inns={item.company.inn for item in parent},
+            trusted_payload_overrides={
+                retained_inn: {"not": "a PublicProjection"}
+            },
             trusted_payload_sha256_overrides={retained_inn: "0" * 64},
         )
     )

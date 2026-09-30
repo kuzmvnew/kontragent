@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 from public_app.contracts import (
     HASH_ALGORITHM_VERSION,
@@ -18,13 +19,19 @@ from public_app.contracts import (
 EXPECTED_FILES = {"manifest.json", "companies.jsonl.gz"}
 
 
-def canonical_json(value) -> bytes:
+def canonical_json(value: Any) -> bytes:
     return json.dumps(
         value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def raw_payload_sha256(payload: Any) -> str:
+    """Hash the exact JSON-compatible payload without model normalization."""
+
+    return hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
@@ -36,9 +43,7 @@ def sha256_file(path: Path) -> str:
 
 
 def payload_sha256(projection: PublicProjection) -> str:
-    return hashlib.sha256(
-        canonical_json(projection.model_dump(mode="json"))
-    ).hexdigest()
+    return raw_payload_sha256(projection.model_dump(mode="json"))
 
 
 def semantic_projection_payload(projection: PublicProjection) -> dict:
