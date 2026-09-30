@@ -39,7 +39,7 @@ from public_app.contracts import (
     ReleaseTransitionSummary,
 )
 from scripts.export_public_release import build_projection
-from scripts.public_release_common import payload_sha256, semantic_projection_sha256
+from scripts.public_release_common import raw_payload_sha256, semantic_projection_sha256
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -550,6 +550,18 @@ def fetch_transition_parent_cohort(
 
         for inn in retained_inns:
             payload = trusted.projections[inn]
+            stored_payload_sha256 = str(trusted.payload_sha256s[inn])
+            # This checksum covers the stored JSONB representation. Model parsing
+            # is a separate integrity domain because it restores legacy defaults.
+            if (
+                not re.fullmatch(r"[0-9a-f]{64}", stored_payload_sha256)
+                or raw_payload_sha256(payload) != stored_payload_sha256
+            ):
+                raise PublicVpsUnavailable(
+                    "stage=transition_parent_storage "
+                    f"inn={inn} validation_path=payload_sha256 "
+                    "validation_type=integrity_mismatch"
+                )
             try:
                 projection = PublicProjection.model_validate(payload)
             except ValidationError as error:
@@ -571,16 +583,6 @@ def fetch_transition_parent_cohort(
                     "stage=transition_parent_retained "
                     f"inn={inn} validation_path=publication.release_id "
                     "validation_type=release_mismatch"
-                )
-            stored_payload_sha256 = str(trusted.payload_sha256s[inn])
-            if (
-                not re.fullmatch(r"[0-9a-f]{64}", stored_payload_sha256)
-                or payload_sha256(projection) != stored_payload_sha256
-            ):
-                raise PublicVpsUnavailable(
-                    "stage=transition_parent_storage "
-                    f"inn={inn} validation_path=payload_sha256 "
-                    "validation_type=integrity_mismatch"
                 )
             if (
                 baseline_kind == "current"
