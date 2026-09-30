@@ -88,3 +88,9 @@ WHERE status IN ('PENDING','RETRY_SCHEDULED');
 The first service cycle bootstraps last-good hashes and membership from the
 exact live parent release. If membership and all current-ready projections are identical it records
 `NO_PUBLIC_CHANGE` and performs no upload or import.
+
+For the one-time controlled repair of a proven stale operational hash baseline,
+use [PUBLICATION_BASELINE_RECONCILIATION.md](PUBLICATION_BASELINE_RECONCILIATION.md).
+That procedure preserves the ordinary fail-closed parent hash validation; it is
+not part of the automatic synchronizer and must not be substituted for a normal
+publication transition.
