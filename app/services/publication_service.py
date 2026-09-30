@@ -89,6 +89,17 @@ class TransitionParentCohort:
 
 
 @dataclass(frozen=True)
+class TransitionParentContext:
+    """Operational target state bound to one validated active parent."""
+
+    companies: tuple[Company, ...]
+    publication_states: Mapping[int, PublicProjectionPublication]
+    publishable_runs: Mapping[int, CompanyEnrichmentRun]
+    target_companies: tuple[Company, ...]
+    parent: TransitionParentCohort
+
+
+@dataclass(frozen=True)
 class TrustedReleaseProjectionBatch:
     """Full internal projections read through an authorized release boundary."""
 
@@ -318,53 +329,6 @@ def fetch_live_release_id(
     try:
         release_id, _record_count = _validated_ready_release(http)
         return release_id
-    except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
-        if isinstance(error, PublicVpsUnavailable):
-            raise
-        raise PublicVpsUnavailable(type(error).__name__) from error
-    finally:
-        if owns_client:
-            http.close()
-
-
-def fetch_live_cohort(
-    manifest: CanonicalManifest,
-    *,
-    client: httpx.Client | None = None,
-) -> tuple[str, dict[str, PublicProjection]]:
-    owns_client = client is None
-    http = _public_client(client)
-    try:
-        release_id, expected_record_count = _validated_ready_release(http)
-        projections: dict[str, PublicProjection] = {}
-        for entity in manifest.entities:
-            response = http.get(f"/api/company/{entity.inn}")
-            if response.status_code == 404:
-                continue
-            if response.status_code != 200:
-                raise PublicVpsUnavailable(
-                    f"public card {entity.inn} returned HTTP {response.status_code}"
-                )
-            try:
-                projection = PublicProjection.model_validate(response.json())
-            except ValidationError as error:
-                raise PublicVpsUnavailable(
-                    _projection_validation_diagnostic(
-                        stage="strict_live_cohort",
-                        inn=entity.inn,
-                        error=error,
-                    )
-                ) from error
-            if projection.company.inn != entity.inn:
-                raise PublicVpsUnavailable(f"public card identity mismatch for {entity.inn}")
-            if projection.publication.release_id != release_id:
-                raise PublicVpsUnavailable(f"public card release mismatch for {entity.inn}")
-            projections[entity.inn] = projection
-        if len(projections) != expected_record_count:
-            raise PublicVpsUnavailable(
-                "public release membership is outside the accepted eligibility universe"
-            )
-        return release_id, projections
     except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as error:
         if isinstance(error, PublicVpsUnavailable):
             raise
@@ -615,6 +579,51 @@ def fetch_transition_parent_cohort(
             http.close()
 
 
+def derive_transition_parent_context(
+    session: Session,
+    manifest: CanonicalManifest,
+    *,
+    trusted_projection_reader: TrustedProjectionReader,
+    client: httpx.Client | None = None,
+) -> TransitionParentContext:
+    """Bind the current publishable target to the exact trusted active parent."""
+
+    companies = tuple(cohort_companies(session, manifest))
+    publication_states = {
+        row.company_id: row
+        for row in session.scalars(
+            select(PublicProjectionPublication).where(
+                PublicProjectionPublication.company_id.in_(
+                    [company.id for company in companies]
+                )
+            )
+        )
+    }
+    runs = publishable_runs(session, list(companies))
+    target_companies = tuple(
+        company for company in companies if company.id in runs
+    )
+    state_by_inn = {
+        company.inn: publication_states[company.id]
+        for company in companies
+        if company.id in publication_states
+    }
+    parent = fetch_transition_parent_cohort(
+        manifest,
+        target_inns=tuple(company.inn for company in target_companies),
+        publication_states=state_by_inn,
+        trusted_projection_reader=trusted_projection_reader,
+        client=client,
+    )
+    return TransitionParentContext(
+        companies=companies,
+        publication_states=publication_states,
+        publishable_runs=runs,
+        target_companies=target_companies,
+        parent=parent,
+    )
+
+
 def bootstrap_publication_state(
     session: Session,
     manifest: CanonicalManifest,
@@ -623,7 +632,7 @@ def bootstrap_publication_state(
     now: datetime,
     client: httpx.Client | None = None,
 ) -> tuple[str, int]:
-    """Seed semantic hashes only from the actual active public cohort."""
+    """Require an explicit, provenance-preserving publication baseline."""
 
     states = {
         row.company_id: row
@@ -636,26 +645,11 @@ def bootstrap_publication_state(
     if len(states) == len(companies):
         release_ids = {row.last_published_release_id for row in states.values()}
         return (next(iter(release_ids)) if len(release_ids) == 1 else "mixed"), 0
-    release_id, live = fetch_live_cohort(manifest, client=client)
-    created = 0
-    for company in companies:
-        if company.id in states or company.inn not in live:
-            continue
-        session.add(
-            PublicProjectionPublication(
-                company_id=company.id,
-                last_published_hash=semantic_projection_sha256(live[company.inn]),
-                projection_version=PROJECTION_VERSION,
-                hash_algorithm_version=HASH_ALGORITHM_VERSION,
-                is_published=True,
-                last_published_release_id=release_id,
-                published_at=now,
-                updated_at=now,
-            )
-        )
-        created += 1
-    session.flush()
-    return release_id, created
+    raise PublicBuildError(
+        "publication baseline bootstrap required: "
+        f"expected={len(companies)} recorded={len(states)}; "
+        "browser-safe company payloads cannot reconstruct internal provenance"
+    )
 
 
 def _projection_publication(now: datetime) -> PublicationInfo:
@@ -821,6 +815,7 @@ def _current_semantic_changes(
     baseline_hashes: dict[str, str],
     now: datetime,
     database_url: str | None = None,
+    force_updated_inns: frozenset[str] = frozenset(),
 ) -> list[ChangedCompanySummary | ReleaseTransitionSummary]:
     """Derive dirty companies from current canonical truth, never request metadata."""
 
@@ -858,7 +853,10 @@ def _current_semantic_changes(
                             current_hash=current_hash,
                         )
                     )
-                elif current_hash != previous_hash:
+                elif (
+                    company.inn in force_updated_inns
+                    or current_hash != previous_hash
+                ):
                     changes.append(
                         ChangedCompanySummary(
                             inn=company.inn,
@@ -867,6 +865,40 @@ def _current_semantic_changes(
                         )
                     )
     return changes
+
+
+def _current_transition_changes(
+    session: Session,
+    *,
+    manifest: CanonicalManifest,
+    trusted_projection_reader: TrustedProjectionReader,
+    now: datetime,
+    database_url: str | None = None,
+    client: httpx.Client | None = None,
+) -> tuple[TransitionParentContext, list[ChangedCompanySummary | ReleaseTransitionSummary]]:
+    """Derive queue changes from the same parent semantics as candidate builds."""
+
+    context = derive_transition_parent_context(
+        session,
+        manifest,
+        trusted_projection_reader=trusted_projection_reader,
+        client=client,
+    )
+    force_updated_inns = (
+        frozenset(context.parent.retained_inns)
+        if context.parent.baseline_kind == "legacy"
+        else frozenset()
+    )
+    changes = _current_semantic_changes(
+        session,
+        manifest=manifest,
+        companies=list(context.companies),
+        baseline_hashes=dict(context.parent.previous_hashes),
+        now=now,
+        database_url=database_url,
+        force_updated_inns=force_updated_inns,
+    )
+    return context, changes
 
 
 def _new_replacement_request(
@@ -918,6 +950,7 @@ def recover_failed_publication_if_eligible(
     database_url: str | None = None,
     client: httpx.Client | None = None,
     source_sha: str | None = None,
+    trusted_projection_reader: TrustedProjectionReader | None = None,
 ) -> FailedPublicationRecovery:
     """Create one fresh request after a failed publication and a new code generation."""
 
@@ -971,20 +1004,19 @@ def recover_failed_publication_if_eligible(
             failed_request_id=failed.id,
         )
 
+    if trusted_projection_reader is None:
+        raise PublicBuildError("trusted projection reader is required for recovery")
     manifest, _cohort_hash = accepted_cohort()
-    live_release_id, live = fetch_live_cohort(manifest, client=client)
-    companies = cohort_companies(session, manifest)
-    changes = _current_semantic_changes(
+    context, changes = _current_transition_changes(
         session,
         manifest=manifest,
-        companies=companies,
-        baseline_hashes={
-            inn: semantic_projection_sha256(projection)
-            for inn, projection in live.items()
-        },
+        trusted_projection_reader=trusted_projection_reader,
         now=now,
         database_url=database_url,
+        client=client,
     )
+    live_release_id = context.parent.release_id
+    companies = list(context.companies)
     if not changes:
         return FailedPublicationRecovery(
             status=NO_PUBLIC_CHANGE,
@@ -1038,6 +1070,7 @@ def normalize_publication_queue(
     source_sha: str | None = None,
     force: bool = False,
     reason_override: str | None = None,
+    trusted_projection_reader: TrustedProjectionReader | None = None,
 ) -> PublicationQueueNormalization:
     """Collapse obsolete active work into one candidate based on live/current truth."""
 
@@ -1073,19 +1106,20 @@ def normalize_publication_queue(
             active_count=len(active),
         )
 
-    observed_release_id, live = fetch_live_cohort(manifest, client=client)
-    companies = cohort_companies(session, manifest)
-    changes = _current_semantic_changes(
+    if trusted_projection_reader is None:
+        raise PublicBuildError(
+            "trusted projection reader is required for queue normalization"
+        )
+    context, changes = _current_transition_changes(
         session,
         manifest=manifest,
-        companies=companies,
-        baseline_hashes={
-            inn: semantic_projection_sha256(projection)
-            for inn, projection in live.items()
-        },
+        trusted_projection_reader=trusted_projection_reader,
         now=now,
         database_url=database_url,
+        client=client,
     )
+    observed_release_id = context.parent.release_id
+    companies = list(context.companies)
     replacement = None
     if changes:
         replacement = _new_replacement_request(

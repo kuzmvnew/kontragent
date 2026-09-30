@@ -14,7 +14,6 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from public_app.contracts import PublicProjection  # noqa: E402
 from scripts.public_release_common import load_bundle  # noqa: E402
 
 
@@ -24,6 +23,41 @@ DEFAULT_INNS = ("0274101890", "7720831611", "9102309919")
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def validate_browser_payload(payload: object, inn: str) -> None:
+    """Validate the ordinary-user shape without treating it as internal state."""
+
+    require(isinstance(payload, dict), "browser-safe API payload is invalid")
+    publication = payload.get("publication")
+    company = payload.get("company")
+    assessment = payload.get("assessment")
+    summary = payload.get("summary")
+    sources = payload.get("sources")
+    require(
+        isinstance(publication, dict)
+        and "schema_version" not in publication
+        and publication.get("published_at"),
+        "browser-safe publication metadata is invalid",
+    )
+    require(
+        isinstance(company, dict) and company.get("inn") == inn,
+        "browser-safe company identity mismatch",
+    )
+    require(
+        isinstance(assessment, dict)
+        and assessment.get("title")
+        and assessment.get("explanation"),
+        "browser-safe assessment is missing",
+    )
+    require(
+        isinstance(summary, dict) and summary.get("short_conclusion"),
+        "browser-safe summary is missing",
+    )
+    require(
+        isinstance(sources, list) and len(sources) == 4,
+        "browser-safe source blocks are missing",
+    )
 
 
 def main() -> int:
@@ -65,10 +99,8 @@ def main() -> int:
             require('application/ld+json' in card.text and "Дата данных источника" in card.text and "Дата результата" in card.text, "SEO or dates missing")
             api = client.get(f"{base}/api/company/{inn}")
             require(api.status_code == 200, f"API failed for {inn}")
-            projection = PublicProjection.model_validate(api.json())
-            require(projection.publication.release_id == release_id, "API revision mismatch")
-            require(projection.risk.title and projection.summary.short_conclusion, "Risk/Summary missing")
-            require(len(projection.sources) == 4, "source blocks missing")
+            payload = api.json()
+            validate_browser_payload(payload, inn)
     if args.bundle:
         manifest, projections, _ = load_bundle(args.bundle)
         require(manifest.release_id == release_id, "active release differs from bundle")

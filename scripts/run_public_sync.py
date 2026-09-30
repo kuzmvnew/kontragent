@@ -44,10 +44,9 @@ from app.services.publication_service import (
     cohort_companies,
     current_main_sha,
     database_url_for_psycopg,
+    derive_transition_parent_context,
     fail_request,
-    fetch_live_cohort,
     fetch_live_release_id,
-    fetch_transition_parent_cohort,
     normalize_after_successful_publication,
     normalize_publication_queue,
     publishable_runs,
@@ -354,31 +353,19 @@ def build_candidate(
     """Build one immutable release from current-ready target membership."""
 
     accepted, cohort_hash = accepted_cohort()
-    companies = cohort_companies(session, accepted)
-    states = {
-        row.company_id: row
-        for row in session.scalars(
-            select(PublicProjectionPublication).where(
-                PublicProjectionPublication.company_id.in_([item.id for item in companies])
-            )
-        )
-    }
-    by_inn = {company.inn: company for company in companies}
-    runs = publishable_runs(session, companies)
-    target_companies = [company for company in companies if company.id in runs]
-    target_inns = [company.inn for company in target_companies]
-    state_by_inn = {
-        company.inn: states[company.id]
-        for company in companies
-        if company.id in states
-    }
-    parent = fetch_transition_parent_cohort(
+    context = derive_transition_parent_context(
+        session,
         accepted,
-        target_inns=target_inns,
-        publication_states=state_by_inn,
         trusted_projection_reader=trusted_projection_reader,
         client=client,
     )
+    companies = list(context.companies)
+    states = dict(context.publication_states)
+    by_inn = {company.inn: company for company in companies}
+    runs = dict(context.publishable_runs)
+    target_companies = list(context.target_companies)
+    target_inns = [company.inn for company in target_companies]
+    parent = context.parent
     previous_release_id = parent.release_id
 
     source_sha = current_main_sha()
@@ -586,9 +573,11 @@ def verify_https_release(
             api = http.get(f"/api/company/{inn}")
             if html.status_code != 200 or api.status_code != 200:
                 raise PublicVpsUnavailable(f"changed public card failed HTTPS verification: {inn}")
-            observed = PublicProjection.model_validate(api.json())
-            if semantic_projection_sha256(observed) != semantic_projection_sha256(by_inn[inn]):
-                raise PublicVpsUnavailable(f"changed public card hash mismatch: {inn}")
+            observed = api.json()
+            if not isinstance(observed, dict) or observed != by_inn[inn].public_payload():
+                raise PublicVpsUnavailable(
+                    f"changed browser-safe public card mismatch: {inn}"
+                )
         for transition in manifest.withdrawn_companies:
             html = http.get(f"/companies/{transition.inn}")
             api = http.get(f"/api/company/{transition.inn}")
@@ -790,15 +779,39 @@ def _rebase_stale_candidate(
     session,
     *,
     client: httpx.Client | None,
+    trusted_projection_reader: TrustedProjectionReader,
 ) -> str:
     result = normalize_publication_queue(
         session,
         client=client,
         force=True,
         reason_override=STALE_PARENT_RELEASE,
+        trusted_projection_reader=trusted_projection_reader,
     )
     session.commit()
     return "NO_PUBLIC_CHANGE" if result.no_public_change else "REBASED"
+
+
+def _verify_rollback_parent(
+    session,
+    *,
+    expected_release_id: str,
+    trusted_projection_reader: TrustedProjectionReader,
+    client: httpx.Client | None,
+) -> None:
+    """Verify rollback identity and inventory through trusted active storage."""
+
+    accepted, _ = accepted_cohort()
+    context = derive_transition_parent_context(
+        session,
+        accepted,
+        trusted_projection_reader=trusted_projection_reader,
+        client=client,
+    )
+    if context.parent.release_id != expected_release_id:
+        raise PublicVpsUnavailable(
+            "rollback trusted verification returned wrong release"
+        )
 
 
 def publish_claimed_request(
@@ -886,7 +899,11 @@ def publish_claimed_request(
         return "PUBLISHED"
     except StaleCandidateParent:
         session.rollback()
-        return _rebase_stale_candidate(session, client=client)
+        return _rebase_stale_candidate(
+            session,
+            client=client,
+            trusted_projection_reader=transport.read_active_projections,
+        )
     except PublicTransportError as error:
         session.rollback()
         request = session.get(PublicPublicationRequest, request.id)
@@ -946,10 +963,12 @@ def publish_claimed_request(
             try:
                 transport.rollback(request.previous_release_id or "")
                 request.rollback_completed_at = utc_now()
-                accepted, _ = accepted_cohort()
-                restored, _cards = fetch_live_cohort(accepted, client=client)
-                if restored != request.previous_release_id:
-                    raise PublicVpsUnavailable("rollback HTTPS verification returned wrong release")
+                _verify_rollback_parent(
+                    session,
+                    expected_release_id=request.previous_release_id or "",
+                    trusted_projection_reader=transport.read_active_projections,
+                    client=client,
+                )
             except Exception as rollback_error:
                 error = PublicVpsUnavailable(f"{error}; rollback failed: {rollback_error}")
             fail_request(request, error)
@@ -980,6 +999,20 @@ def run_once(
         os.getenv("PUBLIC_RELEASE_OUTPUT_ROOT", "/var/lib/nextcompany/public-sync")
     )
     output_root.mkdir(parents=True, exist_ok=True)
+    active_transport = transport
+
+    def get_transport() -> SshPublicTransport:
+        nonlocal active_transport
+        if active_transport is None:
+            active_transport = SshPublicTransport()
+        return active_transport
+
+    def read_active_projections(
+        release_id: str,
+        inns: tuple[str, ...],
+    ) -> TrustedReleaseProjectionBatch:
+        return get_transport().read_active_projections(release_id, inns)
+
     # Keep the advisory-lock connection checked out for the entire cycle.
     # Publication state commits must not accidentally return the lock-owning
     # connection to the pool while network/import verification is still active.
@@ -1030,10 +1063,12 @@ def run_once(
                     recover_failed_publication_if_eligible(
                         session,
                         client=client,
+                        trusted_projection_reader=read_active_projections,
                     )
                     normalization = normalize_publication_queue(
                         session,
                         client=client,
+                        trusted_projection_reader=read_active_projections,
                     )
                 except PublicVpsUnavailable as error:
                     session.rollback()
@@ -1128,7 +1163,7 @@ def run_once(
                     session,
                     session.get(PublicPublicationRequest, request.id),
                     output_root=output_root,
-                    transport=transport or SshPublicTransport(),
+                    transport=get_transport(),
                     client=client,
                 )
                 return {
