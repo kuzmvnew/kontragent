@@ -63,12 +63,35 @@ systemctl --user enable --now nextcompany-public-sync.service
 The HOME SSH identity must be readable only by `mikhail`; the VPS host key must
 already be pinned in `/home/mikhail/.ssh/known_hosts`. Never use
 `StrictHostKeyChecking=no` or copy operational database credentials to the VPS.
-The authorized VPS command boundary must permit the synchronizer's invocation
-of `scripts/read_public_release.py` as `nextcompany-importer`. That reader accepts
-only a safe exact release ID and sorted legal-entity INNs, verifies that the
-release is still active and internally complete, and returns only the requested
-stored projections over SSH. It does not create an HTTP route or write to the
-public database.
+Install the repository-managed forced-command wrapper on the VPS from the exact
+accepted release:
+
+```bash
+sudo deploy/scripts/install_public_sync_ssh_wrapper.sh
+sudo deploy/scripts/install_public_sync_ssh_wrapper.sh --check
+```
+
+Bind only the dedicated HOME public key to it in the VPS account's
+`authorized_keys` by prefixing that key with the exact contents of
+`deploy/ssh/nextcompany-public-sync-authorized-key-options`:
+
+```text
+restrict,command="/usr/local/sbin/nextcompany-public-sync-ssh"
+```
+
+The key material remains host configuration and is not stored in Git. The
+wrapper rejects an absent command (interactive shell), arbitrary commands and
+paths, traversal, unknown flags, extra arguments and mismatched release IDs. It
+allows only the exact synchronizer shapes for trusted active-projection reads,
+bundle upload, stage-only import, staged acceptance, promotion and exact-parent
+rollback. It never evaluates `SSH_ORIGINAL_COMMAND`; after validation it
+reconstructs fixed command arguments.
+
+The trusted reader runs as `nextcompany-importer`, accepts only a safe exact
+release ID and sorted legal-entity INNs, verifies that the release is still
+active and internally complete, and returns only the requested stored
+projections over SSH. It does not create an HTTP route or write to the public
+database.
 
 ## Acceptance
 

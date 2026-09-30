@@ -79,3 +79,11 @@ jobs:
           tests/test_staging_parity.py
           tests/test_staging_parity_postgres.py
           tests/test_public_web.py
+          tests/test_public_sync_ssh_wrapper.py
+
+      - name: Byte-identical artifact double build
+        env:
+          STAGING_ARTIFACT_DOUBLE_BUILD: "1"
+        run: >-
+          uv run --frozen python -m pytest -q
+          tests/test_release_artifact_reproducibility.py

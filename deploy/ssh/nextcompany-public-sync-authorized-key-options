@@ -1,0 +1,1 @@
+restrict,command="/usr/local/sbin/nextcompany-public-sync-ssh"

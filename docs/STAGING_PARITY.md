@@ -48,7 +48,26 @@ deploy/scripts/build_runtime_artifact.sh "$PWD" /var/lib/nextcompany-staging/art
 The builder refuses a dirty Git tree, exports exactly `HEAD`, creates a
 relocatable Python 3.14 environment with `uv sync --frozen --no-dev`, records
 the Python version, `uv.lock` hash, runtime tree hash, source SHA, systemd
-hashes and PostgreSQL 18.6 contract, then writes the archive SHA-256.
+hashes and PostgreSQL 18.6 contract, then writes the archive SHA-256. Before
+hashing, it removes generated Python bytecode (which can contain the temporary
+build path and build time) and canonicalizes directories, executable files and
+non-executable files to safe deterministic modes. The manifest separately
+records the source Git SHA and the builder Git SHA, builder script SHA-256 and
+builder contract version.
+
+The Linux CI gate builds twice into different temporary/output directories,
+once with umask `0022` and once with `0077`, and requires byte-identical
+archives, manifests and runtime-tree hashes. A build is not reproducible merely
+because its source tree matches an earlier accepted source.
+
+For an independently approved rebuild of a historical source, run the current,
+clean builder and pass the clean historical worktree through `--source`. The
+manifest then says `build_kind=historical_reacceptance`: `source_git_sha`
+identifies the historical application tree while `builder.git_sha` and
+`builder.script_sha256` identify the corrected builder. A missing historical
+artifact SHA is never reconstructed or claimed from source. Only after the new
+artifact completes independent acceptance may release evidence mark the old,
+unavailable artifact `SUPERSEDED_UNAVAILABLE`.
 
 Acceptance extracts that archive and executes its embedded Python and Alembic.
 It does not run `uv sync`, pip, apt or any dependency resolver. The accepted
@@ -199,6 +218,7 @@ mandatory gate is `PASS` and the promoted archive SHA equals
 
 `.github/workflows/staging-parity.yml` uses PostgreSQL 18.6 to exercise fresh
 operational/public migration, deterministic fingerprints and all four
-false-HEAD mutations, plus the pure contracts. The full previous-release,
-sanitized-shape, service, backup/restore and rollback gate runs on the isolated
-staging worker using the single command above. This PR does not deploy it.
+false-HEAD mutations, plus the pure contracts and the Linux byte-identical
+double build. The full previous-release, sanitized-shape, service,
+backup/restore and rollback gate runs on the isolated staging worker using the
+single command above. This PR does not deploy it.
