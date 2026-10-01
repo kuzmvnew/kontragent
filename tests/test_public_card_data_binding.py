@@ -9,6 +9,9 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.contracts.company_view_v1 import (
+    Audience,
+    CompanyViewModelV1,
+    CompanyViewSectionV1,
     DataState,
     EvidenceSourceClass,
     FactRights,
@@ -20,6 +23,7 @@ from app.services.company_view_service import (
     _connection_candidates,
     _safe_cbr_warning_value,
     _safe_inspection_value,
+    filter_company_view,
     semantic_field_policy,
     select_semantic_facts,
 )
@@ -32,6 +36,7 @@ from public_app.contracts import (
     PublicViewSection,
 )
 from public_app.main import create_app
+from scripts.export_public_release import _public_company_view
 from tests.public_test_support import projection
 
 
@@ -455,3 +460,49 @@ def test_card_copy_action_is_self_hosted_and_csp_remains_closed_to_inline_script
     script = web.get("/static/company.js")
     assert script.status_code == 200
     assert "navigator.clipboard" in script.text
+
+
+def test_public_export_preserves_limiting_section_state_with_state_item():
+    base = projection()
+    fact = select_semantic_facts(
+        (
+            _candidate(
+                section_key="courts",
+                field_key="availability",
+                value=None,
+                source_code="MOSCOW_COURTS_OFFICIAL",
+                source_class=EvidenceSourceClass.OFFICIAL_PRIMARY,
+                state=DataState.SOURCE_UNAVAILABLE,
+                freshness=Freshness.UNKNOWN,
+            ),
+        ),
+        observed_at=NOW,
+    )[0]
+    internal = CompanyViewModelV1(
+        revision="cv1:" + "e" * 64,
+        generated_at=NOW,
+        audience=Audience.INTERNAL,
+        company_id=1,
+        inn=base.company.inn,
+        sections=(
+            CompanyViewSectionV1(
+                section_key="courts",
+                state=DataState.SOURCE_UNAVAILABLE,
+                facts=(fact,),
+            ),
+        ),
+    )
+    semantic_public = filter_company_view(internal, audience=Audience.PUBLIC)
+    public_view = _public_company_view(
+        semantic_public,
+        company_id=1,
+        risk=base.risk,
+        summary=base.summary,
+        sources=base.sources,
+    )
+    courts = public_view.section("courts")
+
+    assert courts is not None
+    assert courts.state == "Источник временно недоступен"
+    assert courts.items[0].state == "Источник временно недоступен"
+    assert courts.items[0].value is None
