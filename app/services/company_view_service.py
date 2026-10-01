@@ -1402,7 +1402,6 @@ def load_semantic_candidates(
     company_id: int,
     observed_at: datetime | None = None,
 ) -> tuple[SemanticCandidate, ...]:
-    reference_date = _aware(observed_at).date()
     company = _one(cursor, "SELECT * FROM companies WHERE id=%s", (company_id,))
     if company is None:
         return ()
@@ -1645,7 +1644,7 @@ def load_semantic_candidates(
                 else Freshness.CURRENT
             ),
         )
-        if erknm_date is None:
+        if not erknm_dataset.get("enabled") or erknm_date is None:
             _append(
                 values,
                 _candidate(
@@ -1762,7 +1761,7 @@ def load_semantic_candidates(
                 else Freshness.CURRENT
             ),
         )
-        if cbr_date is None:
+        if not cbr_dataset.get("enabled") or cbr_date is None:
             _append(
                 values,
                 _candidate(
