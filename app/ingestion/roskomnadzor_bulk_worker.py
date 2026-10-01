@@ -44,6 +44,7 @@ from app.worker.registry import HandlerRegistry
 
 
 HANDLER_VERSION = "roskomnadzor-official-bulk-v2"
+NORMALIZATION_CONTRACT_VERSION = "roskomnadzor-normalized-v1"
 CHECK_INTERVAL = timedelta(days=1)
 
 
@@ -155,9 +156,65 @@ def _write_once(path: Path, content: bytes) -> None:
         stream.write(content)
 
 
-def _normalize(path: Path, parsed: dict[str, Any]) -> str:
+def _content_manifest(
+    path: Path,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Create first-acquisition metadata once and reuse it by content identity."""
+
+    encoded = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
+    except FileExistsError:
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise InvalidDataError(
+                f"immutable Roskomnadzor manifest is unreadable: {path}"
+            ) from error
+        for field in ("source_id", "sha256", "size"):
+            if existing.get(field) != manifest[field]:
+                raise InvalidDataError(
+                    f"immutable Roskomnadzor manifest differs: {path}"
+                )
+        if existing.get("immutable") is not True:
+            raise InvalidDataError(
+                f"immutable Roskomnadzor manifest is not immutable: {path}"
+            )
+        return existing
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(encoded)
+    return manifest
+
+
+def _normalization_contract(spec: RknBulkSpec) -> dict[str, str]:
+    return {
+        "version": NORMALIZATION_CONTRACT_VERSION,
+        "handler_version": HANDLER_VERSION,
+        "parser": (
+            "parse_xml_snapshot"
+            if spec.data_format == "xml"
+            else "parse_hosting_xlsx"
+        ),
+        "channel": spec.channel,
+    }
+
+
+def _normalize(
+    artifact_dir: Path,
+    parsed: dict[str, Any],
+    *,
+    spec: RknBulkSpec,
+    artifact_sha: str,
+    source_date: date,
+) -> tuple[Path, str, str, dict[str, str]]:
     digest = sha256()
-    descriptor, name = tempfile.mkstemp(prefix="rkn-normalized-", suffix=".jsonl", dir=path.parent)
+    descriptor, name = tempfile.mkstemp(
+        prefix="rkn-normalized-", suffix=".jsonl", dir=artifact_dir
+    )
     os.close(descriptor)
     temp = Path(name)
     try:
@@ -167,15 +224,40 @@ def _normalize(path: Path, parsed: dict[str, Any]) -> str:
                     line = (json.dumps({"kind": kind, **row}, ensure_ascii=False, sort_keys=True, default=str) + "\n").encode()
                     output.write(line)
                     digest.update(line)
+        normalized_sha = digest.hexdigest()
+        parser_contract = _normalization_contract(spec)
+        identity_payload = {
+            "source_id": spec.source_id,
+            "artifact_sha256": artifact_sha,
+            "source_data_date": source_date.isoformat(),
+            "parser_contract": parser_contract,
+            "normalized_sha256": normalized_sha,
+        }
+        normalized_identity = sha256(
+            json.dumps(
+                identity_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        path = artifact_dir / f"normalized-{normalized_identity}.jsonl"
         if path.exists():
-            if sha256(path.read_bytes()).hexdigest() != digest.hexdigest():
+            if sha256(path.read_bytes()).hexdigest() != normalized_sha:
                 raise InvalidDataError("immutable Roskomnadzor normalized snapshot differs")
         else:
-            os.link(temp, path)
-            path.chmod(0o444)
+            try:
+                os.link(temp, path)
+            except FileExistsError:
+                if sha256(path.read_bytes()).hexdigest() != normalized_sha:
+                    raise InvalidDataError(
+                        "immutable Roskomnadzor normalized snapshot differs"
+                    )
+            else:
+                path.chmod(0o444)
     finally:
         temp.unlink(missing_ok=True)
-    return digest.hexdigest()
+    return path, normalized_sha, normalized_identity, parser_contract
 
 
 def run_rkn_bulk_handler(context: HandlerContext) -> HandlerResult:
@@ -207,18 +289,45 @@ def run_rkn_bulk_handler(context: HandlerContext) -> HandlerResult:
         validate_complete_snapshot(parsed)
     except ValueError as error:
         raise SchemaMismatchError(str(error)) from error
-    normalized_path = artifact_dir / "normalized.jsonl"
-    normalized_sha = _normalize(normalized_path, parsed)
+    (
+        normalized_path,
+        normalized_sha,
+        normalized_identity,
+        parser_contract,
+    ) = _normalize(
+        artifact_dir,
+        parsed,
+        spec=spec,
+        artifact_sha=artifact_sha,
+        source_date=source_date,
+    )
     retrieved_at = utc_now()
-    manifest = {
+    manifest = _content_manifest(artifact_dir / "manifest.json", {
+        "manifest_version": 2,
         "source_id": spec.source_id, "source_owner": "Роскомнадзор",
-        "listing_url": spec.listing_url, "source_url": metadata["artifact_url"],
-        "source_data_date": source_date.isoformat(), "release_identity": metadata["release_identity"],
-        "sha256": artifact_sha, "size": len(content), "content_type": headers.get("content-type"),
+        "sha256": artifact_sha, "size": len(content), "immutable": True,
+        "first_acquisition": {
+            "artifact_kind": suffix,
+            "listing_url": spec.listing_url,
+            "source_url": metadata["artifact_url"],
+            "source_data_date": source_date.isoformat(),
+            "release_identity": metadata["release_identity"],
+            "content_type": headers.get("content-type"),
+            "retrieved_at": retrieved_at.isoformat(),
+        },
+    })
+    raw_refs = [RawArtifactReference(artifact_path.as_uri(), artifact_sha, {
+        "source_id": spec.source_id, "source_owner": "Роскомнадзор",
+        "artifact_kind": suffix, "listing_url": spec.listing_url,
+        "source_url": metadata["artifact_url"],
+        "source_data_date": source_date.isoformat(),
+        "release_identity": metadata["release_identity"],
+        "sha256": artifact_sha, "size": len(content),
+        "content_type": headers.get("content-type"),
         "retrieved_at": retrieved_at.isoformat(), "immutable": True,
-    }
-    _write_once(artifact_dir / "manifest.json", (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode())
-    raw_refs = [RawArtifactReference(artifact_path.as_uri(), artifact_sha, manifest)]
+        "content_manifest_reference": (artifact_dir / "manifest.json").as_uri(),
+        "content_manifest": manifest,
+    })]
     xsd_sha = None
     if metadata.get("xsd_url"):
         xsd, xsd_headers = _fetch(str(metadata["xsd_url"]))
@@ -226,13 +335,29 @@ def run_rkn_bulk_handler(context: HandlerContext) -> HandlerResult:
         xsd_dir = raw_root / spec.source_id / xsd_sha
         xsd_path = xsd_dir / "schema.xsd"
         _write_once(xsd_path, xsd)
-        xsd_manifest = {
-            "source_id": spec.source_id, "artifact_kind": "xsd", "source_url": metadata["xsd_url"],
-            "sha256": xsd_sha, "size": len(xsd), "content_type": xsd_headers.get("content-type"),
+        xsd_manifest = _content_manifest(xsd_dir / "manifest.json", {
+            "manifest_version": 2,
+            "source_id": spec.source_id, "source_owner": "Роскомнадзор",
+            "sha256": xsd_sha, "size": len(xsd), "immutable": True,
+            "first_acquisition": {
+                "artifact_kind": "xsd", "source_url": metadata["xsd_url"],
+                "source_data_date": source_date.isoformat(),
+                "release_identity": metadata["release_identity"],
+                "content_type": xsd_headers.get("content-type"),
+                "retrieved_at": retrieved_at.isoformat(),
+            },
+        })
+        raw_refs.append(RawArtifactReference(xsd_path.as_uri(), xsd_sha, {
+            "source_id": spec.source_id, "source_owner": "Роскомнадзор",
+            "artifact_kind": "xsd", "source_url": metadata["xsd_url"],
+            "source_data_date": source_date.isoformat(),
+            "release_identity": metadata["release_identity"],
+            "sha256": xsd_sha, "size": len(xsd),
+            "content_type": xsd_headers.get("content-type"),
             "retrieved_at": retrieved_at.isoformat(), "immutable": True,
-        }
-        _write_once(xsd_dir / "manifest.json", (json.dumps(xsd_manifest, ensure_ascii=False, sort_keys=True) + "\n").encode())
-        raw_refs.append(RawArtifactReference(xsd_path.as_uri(), xsd_sha, xsd_manifest))
+            "content_manifest_reference": (xsd_dir / "manifest.json").as_uri(),
+            "content_manifest": xsd_manifest,
+        }))
     counters = ExecutionCounters(
         records_seen=int(parsed["source_records"]), records_written=int(parsed["imported_records"]),
         records_rejected=int(parsed["rejected_records"]), records_duplicated=int(parsed["duplicate_records"]),
@@ -243,12 +368,21 @@ def run_rkn_bulk_handler(context: HandlerContext) -> HandlerResult:
         **{key: int(parsed[key]) for key in ("source_records", "imported_records", "duplicate_records", "rejected_records")},
         "public_records": len(parsed["public_records"]), "private_records": len(parsed["private_records"]),
         "artifact_sha256": artifact_sha, "xsd_sha256": xsd_sha,
+        "normalized_sha256": normalized_sha,
+        "normalized_identity": normalized_identity,
+        "parser_contract": parser_contract,
         "source_data_date": source_date.isoformat(), "release_identity": metadata["release_identity"],
     }
     return HandlerResult(
         raw_artifacts=tuple(raw_refs),
         staging_result=StagingResult(normalized_path.as_uri(), ValidationResult(accepted=True, metadata=validation), checksum=normalized_sha),
-        checksum_metadata={"artifact_sha256": artifact_sha, "xsd_sha256": xsd_sha, "normalized_sha256": normalized_sha},
+        checksum_metadata={
+            "artifact_sha256": artifact_sha,
+            "xsd_sha256": xsd_sha,
+            "normalized_sha256": normalized_sha,
+            "normalized_identity": normalized_identity,
+            "parser_contract": parser_contract,
+        },
         counters=counters,
     )
 
