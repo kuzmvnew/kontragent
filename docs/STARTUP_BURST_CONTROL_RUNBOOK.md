@@ -11,6 +11,8 @@ The default work budget is 20 real work units. An ordinary job costs one unit;
 jobs with explicit child collections cost their admitted child count.
 Firmoteka `items` and `catalog_pages` are counted directly. A job whose cost is
 greater than the remaining budget stays queued or retry-scheduled.
+`controlled_work_units` may raise that observed cost but can never lower it,
+and it cannot substitute for missing or malformed required batch metadata.
 
 ## Operator command
 

@@ -124,10 +124,6 @@ def job_work_units(job_type: str, schedule_metadata: dict[str, Any] | None) -> i
 
     metadata = dict(schedule_metadata or {})
     explicit = metadata.get("controlled_work_units")
-    if explicit is not None:
-        if not isinstance(explicit, int) or isinstance(explicit, bool) or explicit <= 0:
-            raise ValueError("controlled_work_units must be a positive integer")
-        return explicit
 
     def child_count(key: str) -> int | None:
         if key not in metadata:
@@ -137,41 +133,54 @@ def job_work_units(job_type: str, schedule_metadata: dict[str, Any] | None) -> i
             raise ValueError(f"{key} must be a non-empty child collection")
         return len(value)
 
+    # Validate every recognized child collection before applying an explicit
+    # override.  Otherwise a small override could conceal malformed metadata
+    # in a field that controlled execution knows represents real child work.
+    collection_counts = {
+        key: count
+        for key in WORK_UNIT_COLLECTION_KEYS
+        if (count := child_count(key)) is not None
+    }
+
     if job_type == "firmoteka_company_batch":
-        count = child_count("items")
+        count = collection_counts.get("items")
         if count is None:
             raise ValueError("Firmoteka company batch has no items")
-        return count
-    if job_type == "firmoteka_catalog_page":
-        count = child_count("catalog_pages")
+        observed = count
+    elif job_type == "firmoteka_catalog_page":
+        count = collection_counts.get("catalog_pages")
         if count is None:
             raise ValueError("Firmoteka catalog batch has no catalog_pages")
-        return count
-
+        observed = count
     # GIRBO performs an INN/year matrix inside a single WorkerJob.
-    if job_type == "girbo_accounting_check" and (
+    elif job_type == "girbo_accounting_check" and (
         "target_inns" in metadata or "years" in metadata
     ):
-        targets = child_count("target_inns")
+        targets = collection_counts.get("target_inns")
         years = child_count("years")
         if targets is None or years is None:
             raise ValueError("GIRBO work units require target_inns and years")
-        return targets * years
-
-    counts = tuple(
-        count
-        for key in WORK_UNIT_COLLECTION_KEYS
-        if (count := child_count(key)) is not None
-    )
-    if counts:
+        observed = targets * years
+    elif collection_counts:
         # Several fields can describe the same children (for example company
         # ids and enrichment-run ids), so use the largest declared set rather
         # than double-counting aliases.
-        return max(counts)
-
-    if "batch" in job_type.lower():
+        observed = max(collection_counts.values())
+    elif "batch" in job_type.lower():
         raise ValueError("batch job has no explicit child collection")
-    return 1
+    else:
+        observed = 1
+
+    if explicit is not None and (
+        not isinstance(explicit, int)
+        or isinstance(explicit, bool)
+        or explicit <= 0
+    ):
+        raise ValueError("controlled_work_units must be a positive integer")
+
+    # The explicit value is a conservative upper override only.  Objectively
+    # observable work remains the admission floor.
+    return max(observed, explicit) if explicit is not None else observed
 
 
 class RetryPolicy:

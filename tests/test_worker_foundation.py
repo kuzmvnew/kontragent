@@ -362,6 +362,14 @@ def test_controlled_work_units_count_real_children():
         "firmoteka_company_batch", {"items": [{}, {}]}
     ) == 2
     assert job_work_units(
+        "firmoteka_company_batch",
+        {"items": [{} for _ in range(10)], "controlled_work_units": 1},
+    ) == 10
+    assert job_work_units(
+        "firmoteka_company_batch",
+        {"items": [{} for _ in range(10)], "controlled_work_units": 15},
+    ) == 15
+    assert job_work_units(
         "firmoteka_catalog_page", {"catalog_pages": [{}, {}, {}]}
     ) == 3
     assert job_work_units(
@@ -374,8 +382,109 @@ def test_controlled_work_units_count_real_children():
     ) == 4
     with pytest.raises(ValueError, match="no items"):
         job_work_units("firmoteka_company_batch", {})
+    with pytest.raises(ValueError, match="no items"):
+        job_work_units(
+            "firmoteka_company_batch", {"controlled_work_units": 1}
+        )
+    with pytest.raises(ValueError, match="no catalog_pages"):
+        job_work_units(
+            "firmoteka_catalog_page", {"controlled_work_units": 1}
+        )
+    with pytest.raises(ValueError, match="require target_inns and years"):
+        job_work_units(
+            "girbo_accounting_check",
+            {"target_inns": ["1"], "controlled_work_units": 1},
+        )
+    with pytest.raises(ValueError, match="children must be a non-empty"):
+        job_work_units(
+            "ordinary_check",
+            {"children": [], "controlled_work_units": 10},
+        )
     with pytest.raises(ValueError, match="no explicit child collection"):
         job_work_units("opaque_batch", {})
+    with pytest.raises(ValueError, match="no explicit child collection"):
+        job_work_units("opaque_batch", {"controlled_work_units": 10})
+
+
+@pytest.mark.parametrize(
+    ("job_type", "schedule_metadata"),
+    (
+        (
+            "firmoteka_company_batch",
+            {
+                "items": [{"id": value} for value in range(40)],
+                "controlled_work_units": 1,
+            },
+        ),
+        (
+            "firmoteka_company_batch",
+            {"controlled_work_units": 1},
+        ),
+        (
+            "firmoteka_catalog_page",
+            {
+                "catalog_pages": [{"id": value} for value in range(40)],
+                "controlled_work_units": 1,
+            },
+        ),
+        (
+            "girbo_accounting_check",
+            {
+                "target_inns": [str(value) for value in range(10)],
+                "years": [2023, 2024, 2025],
+                "controlled_work_units": 1,
+            },
+        ),
+        (
+            "generic_child_work",
+            {
+                "children": [{"id": value} for value in range(40)],
+                "controlled_work_units": 1,
+            },
+        ),
+    ),
+)
+def test_controlled_claim_does_not_admit_override_below_observed_work(
+    worker_db, job_type, schedule_metadata
+):
+    registry = HandlerRegistry()
+    source_id = _identity("controlled-cost")
+    _register_fixture(worker_db, registry, source_id, _empty_handler)
+    job_id = _create(
+        worker_db,
+        source_id,
+        job_type=job_type,
+        schedule_metadata=schedule_metadata,
+    )
+
+    with worker_db() as session:
+        runs_before = session.scalar(
+            sa.select(sa.func.count())
+            .select_from(WorkerRun)
+            .where(WorkerRun.job_id == job_id)
+        )
+        claim = claim_next_job(
+            session,
+            registry,
+            worker_id="controlled-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+            allowed_source_ids=(source_id,),
+            max_work_units=20,
+        )
+        session.commit()
+
+    assert claim is None
+    with worker_db() as session:
+        job = session.get(WorkerJob, job_id)
+        assert job.status in {"queued", "retry_scheduled"}
+        assert job.schedule_metadata == schedule_metadata
+        assert session.scalar(
+            sa.select(sa.func.count())
+            .select_from(WorkerRun)
+            .where(WorkerRun.job_id == job_id)
+        ) == runs_before
+        assert session.get(WorkerLease, source_id) is None
 
 
 def test_controlled_claim_skips_oversized_batch_and_preserves_it(worker_db):
