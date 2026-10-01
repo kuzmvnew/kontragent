@@ -321,8 +321,8 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "FOUNDER",
         "MANAGER",
     }
-    assert founder[0]["source"]["name"] == "Firmoteka · вторичный источник"
-    assert founder[0]["source"]["source_class"] == "Публичный вторичный источник"
+    assert founder[0]["source"]["name"] == "Firmoteka · авторизованный вторичный источник"
+    assert founder[0]["source"]["source_class"] == "Авторизованный вторичный источник"
     assert founder[0]["source"]["reference"] == "https://firmoteka.ru/0100000614"
     assert founder[0]["source"]["source_data_date"]
     assert founder[0]["source"]["retrieved_at"]
@@ -333,9 +333,9 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
     net_profit_2025 = next(item for item in finances if item["field_key"] == "NET_PROFIT" and item["period"] == "YEAR:2025")
     assert revenue_2025["value"]["value"] == "9673000.00"
     assert revenue_2025["source"]["name"] == "Доходы и расходы по данным ФНС"
-    assert revenue_2025["alternative_sources"][0]["name"] == "Firmoteka · вторичный источник"
+    assert revenue_2025["alternative_sources"][0]["name"] == "Firmoteka · авторизованный вторичный источник"
     assert net_profit_2025["value"]["value"] == "26000"
-    assert net_profit_2025["source"]["name"] == "Firmoteka · вторичный источник"
+    assert net_profit_2025["source"]["name"] == "Firmoteka · авторизованный вторичный источник"
     assert {item["period"]: item["value"] for item in employees} == {
         "YEAR:2023": 16,
         "YEAR:2024": 12,
@@ -352,7 +352,7 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
     assert "Чистая прибыль" in card.text and "26 000 ₽" in card.text
     assert "10 000 ₽" in card.text
     assert "2023" in card.text and ">16<" in card.text
-    assert "Firmoteka · вторичный источник" in card.text
+    assert "Firmoteka · авторизованный вторичный источник" in card.text
     assert "data-fact-ref=" in card.text and "data-item-ref=" in card.text
     forbidden = {
         "company_id",
