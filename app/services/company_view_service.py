@@ -168,7 +168,7 @@ SEMANTIC_FIELD_POLICIES: dict[str, SemanticFieldPolicy] = {
     "restrictions.*": _policy("CBR_WARNING_LIST"),
     "inspections.*": _policy("ERKNM", not_applicable=True),
     "connections.*": _policy("MASTER_REGISTRY", bridge=True, derived=True),
-    "events.*": _policy(),
+    "events.*": _policy(bridge=True),
     "risk.*": _policy(derived=True),
     "summary.*": _policy(derived=True),
     "source_coverage.*": _policy(derived=True),
@@ -351,7 +351,11 @@ def _selection_key(candidate: SemanticCandidate) -> tuple[Any, ...]:
     retrieved = candidate.retrieved_at.timestamp()
     policy = semantic_field_policy(candidate.section_key, candidate.field_key)
     if candidate.source_code in policy.official_sources:
+        authority_rank = 1_200
+    elif candidate.source_class == EvidenceSourceClass.OFFICIAL_PRIMARY:
         authority_rank = 1_000
+    elif candidate.source_class == EvidenceSourceClass.OFFICIAL_API_OPEN_DATA:
+        authority_rank = 800
     elif candidate.source_code in policy.bridge_sources:
         authority_rank = 500
     else:
@@ -1344,7 +1348,13 @@ def _one(cursor: Any, query: str, params: tuple[Any, ...]) -> dict[str, Any] | N
     return dict(row) if row else None
 
 
-def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticCandidate, ...]:
+def load_semantic_candidates(
+    cursor: Any,
+    *,
+    company_id: int,
+    observed_at: datetime | None = None,
+) -> tuple[SemanticCandidate, ...]:
+    reference_date = _aware(observed_at).date()
     company = _one(cursor, "SELECT * FROM companies WHERE id=%s", (company_id,))
     if company is None:
         return ()
@@ -1556,7 +1566,7 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
     # Official inspection facts. Absence is scoped only to already-loaded ERKNM periods.
     erknm_dataset = _one(
         cursor,
-        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at "
+        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, official_actual_until "
         "FROM data_sets WHERE code=%s",
         ("erknm_inspections",),
     )
@@ -1565,6 +1575,8 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
             erknm_dataset.get("retrieved_at") or erknm_dataset.get("last_success_at")
         )
         erknm_date = _date(erknm_dataset.get("last_data_date"))
+        erknm_actual_until = _date(erknm_dataset.get("official_actual_until"))
+        erknm_stale = bool(erknm_actual_until and erknm_actual_until < reference_date)
         erknm_shared = dict(
             source_code="ERKNM",
             source_class=EvidenceSourceClass.OFFICIAL_API_OPEN_DATA,
@@ -1574,6 +1586,7 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
             source_data_date=erknm_date,
             rights=FactRights.PUBLIC,
             confidence=1.0,
+            freshness=Freshness.STALE if erknm_stale else Freshness.CURRENT,
         )
         if not erknm_dataset.get("enabled") or erknm_date is None:
             _append(
@@ -1584,11 +1597,10 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
                     "availability",
                     None,
                     state=DataState.SOURCE_UNAVAILABLE,
-                    freshness=Freshness.UNKNOWN,
                     limitations=(
                         "Официальный набор ЕРКНМ зарегистрирован, но актуальный опубликованный snapshot сейчас недоступен.",
                     ),
-                    **erknm_shared,
+                    **{**erknm_shared, "freshness": Freshness.UNKNOWN},
                 ),
             )
         else:
@@ -1624,7 +1636,13 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
                         "loaded_through": erknm_date,
                         "records_limited": record_count > len(inspection_rows),
                     },
-                    state=DataState.FOUND if record_count else DataState.NOT_FOUND,
+                    state=(
+                        DataState.STALE_DATA
+                        if erknm_stale
+                        else DataState.FOUND
+                        if record_count
+                        else DataState.NOT_FOUND
+                    ),
                     limitations=(
                         "Отсутствие совпадения означает только отсутствие записи в уже загруженных периодах ЕРКНМ.",
                     ),
@@ -1656,7 +1674,7 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
     # Official Bank of Russia warning-list facts. This is not a generic sanctions check.
     cbr_dataset = _one(
         cursor,
-        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at "
+        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, official_actual_until "
         "FROM data_sets WHERE code=%s",
         ("cbr_warning_list",),
     )
@@ -1665,6 +1683,8 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
             cbr_dataset.get("retrieved_at") or cbr_dataset.get("last_success_at")
         )
         cbr_date = _date(cbr_dataset.get("last_data_date"))
+        cbr_actual_until = _date(cbr_dataset.get("official_actual_until"))
+        cbr_stale = bool(cbr_actual_until and cbr_actual_until < reference_date)
         cbr_shared = dict(
             source_code="CBR_WARNING_LIST",
             source_class=EvidenceSourceClass.OFFICIAL_API_OPEN_DATA,
@@ -1674,6 +1694,7 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
             source_data_date=cbr_date,
             rights=FactRights.PUBLIC,
             confidence=1.0,
+            freshness=Freshness.STALE if cbr_stale else Freshness.CURRENT,
         )
         if not cbr_dataset.get("enabled") or cbr_date is None:
             _append(
@@ -1684,11 +1705,10 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
                     "availability",
                     None,
                     state=DataState.SOURCE_UNAVAILABLE,
-                    freshness=Freshness.UNKNOWN,
                     limitations=(
                         "Предупредительный список Банка России зарегистрирован, но актуальный snapshot сейчас недоступен.",
                     ),
-                    **cbr_shared,
+                    **{**cbr_shared, "freshness": Freshness.UNKNOWN},
                 ),
             )
         else:
@@ -1709,7 +1729,13 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
                         "warning_count": len(warning_rows),
                         "list_date": cbr_date,
                     },
-                    state=DataState.FOUND if warning_rows else DataState.NOT_FOUND,
+                    state=(
+                        DataState.STALE_DATA
+                        if cbr_stale
+                        else DataState.FOUND
+                        if warning_rows
+                        else DataState.NOT_FOUND
+                    ),
                     limitations=(
                         "Проверка относится только к официальному предупредительному списку Банка России и не является универсальной санкционной проверкой.",
                     ),
@@ -1880,7 +1906,10 @@ def build_company_view_v1(
     company = _one(cursor, "SELECT inn FROM companies WHERE id=%s", (company_id,))
     if company is None:
         raise ValueError(f"company_id {company_id} is not resolved")
-    facts = select_semantic_facts(load_semantic_candidates(cursor, company_id=company_id), observed_at=now)
+    facts = select_semantic_facts(
+        load_semantic_candidates(cursor, company_id=company_id, observed_at=now),
+        observed_at=now,
+    )
     risk_ref, summary_ref = _risk_summary_refs(cursor, company_id)
     facts_by_section: dict[str, list[SemanticFact]] = defaultdict(list)
     for fact in facts:
