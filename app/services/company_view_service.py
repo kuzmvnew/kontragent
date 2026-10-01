@@ -13,7 +13,7 @@ from uuid import UUID, uuid5
 
 import sqlalchemy as sa
 from psycopg.rows import dict_row
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -203,6 +203,15 @@ class SemanticCandidate(BaseModel):
     period_identity: str = ""
     item_identity: str = ""
     limitations: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_state_policy(self) -> "SemanticCandidate":
+        policy = semantic_field_policy(self.section_key, self.field_key)
+        if self.state == DataState.NOT_APPLICABLE and not policy.not_applicable_allowed:
+            raise ValueError(
+                f"NOT_APPLICABLE is not allowed for {self.section_key}.{self.field_key}"
+            )
+        return self
 
 
 def _aware(value: Any, fallback: datetime | None = None) -> datetime:
