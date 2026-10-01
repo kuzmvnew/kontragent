@@ -893,7 +893,16 @@ def _contact_candidates(
                 item_identity=item_identity,
                 source_data_date=source_date,
                 evidence_identity=f"{bridge['evidence_identity']}:contacts:{item_identity}",
-                **{key: value for key, value in bridge.items() if key != "evidence_identity"},
+                rights=(
+                    FactRights.PUBLIC
+                    if contact.contact_scope == ContactScope.CORPORATE
+                    else FactRights.AUTHENTICATED_ONLY
+                ),
+                **{
+                    key: value
+                    for key, value in bridge.items()
+                    if key not in {"evidence_identity", "rights"}
+                },
             ),
         )
     return tuple(result)
@@ -1970,6 +1979,30 @@ def _allowed(rights: FactRights, audience: Audience) -> bool:
     return rights == FactRights.PUBLIC
 
 
+def _public_minimized_value(section_key: str, value: Any) -> Any:
+    """Remove person identifiers/details that are unnecessary on the public card."""
+
+    if section_key not in {"management", "founders"} or not isinstance(value, dict):
+        return value
+    minimized = dict(value)
+    for key in ("identifiers", "tin", "inn", "ogrnip", "psrn"):
+        minimized.pop(key, None)
+    registration = minimized.get("individual_entrepreneur")
+    if isinstance(registration, dict):
+        safe_registration = {
+            key: registration.get(key)
+            for key in (
+                "status",
+                "registration_date",
+                "termination_date",
+                "current_status",
+            )
+            if registration.get(key) is not None
+        }
+        minimized["individual_entrepreneur"] = safe_registration or None
+    return minimized
+
+
 def filter_company_view(view: CompanyViewModelV1, *, audience: Audience) -> CompanyViewModelV1:
     sections: list[CompanyViewSectionV1] = []
     allowed_refs: set[str] = set()
@@ -1982,7 +2015,23 @@ def filter_company_view(view: CompanyViewModelV1, *, audience: Audience) -> Comp
                 evidence for evidence in fact.alternative_evidence if _allowed(evidence.rights, audience)
             )
             anchor = fact.anchor.model_copy(update={"company_id": None}) if audience == Audience.PUBLIC else fact.anchor
-            filtered = fact.model_copy(update={"anchor": anchor, "alternative_evidence": alternatives})
+            selected_evidence = fact.selected_evidence
+            if audience == Audience.PUBLIC:
+                selected_evidence = selected_evidence.model_copy(
+                    update={
+                        "value": _public_minimized_value(
+                            section.section_key,
+                            selected_evidence.value,
+                        )
+                    }
+                )
+            filtered = fact.model_copy(
+                update={
+                    "anchor": anchor,
+                    "selected_evidence": selected_evidence,
+                    "alternative_evidence": alternatives,
+                }
+            )
             facts.append(filtered)
             allowed_refs.add(filtered.fact_ref)
         state = section.state if facts else DataState.NOT_CHECKED
