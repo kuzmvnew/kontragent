@@ -45,6 +45,7 @@ from app.worker.execution import (
     complete_run_success,
     create_job,
     heartbeat_run,
+    job_work_units,
     observe_run,
     recover_stale_runs,
     register_handler,
@@ -353,6 +354,336 @@ def test_job_create_and_duplicate_prevention(worker_db):
                 WorkerJob.idempotency_key == key
             )
         ) == 1
+
+
+def test_controlled_work_units_count_real_children():
+    assert job_work_units("ordinary_check", {}) == 1
+    assert job_work_units(
+        "firmoteka_company_batch", {"items": [{}, {}]}
+    ) == 2
+    assert job_work_units(
+        "firmoteka_company_batch",
+        {"items": [{} for _ in range(10)], "controlled_work_units": 1},
+    ) == 10
+    assert job_work_units(
+        "firmoteka_company_batch",
+        {"items": [{} for _ in range(10)], "controlled_work_units": 15},
+    ) == 15
+    assert job_work_units(
+        "firmoteka_catalog_page", {"catalog_pages": [{}, {}, {}]}
+    ) == 3
+    assert job_work_units(
+        "company_enrichment_local_replay",
+        {"company_ids": [1, 2], "company_enrichment_run_ids": ["a", "b"]},
+    ) == 2
+    assert job_work_units(
+        "girbo_accounting_check",
+        {"target_inns": ["1", "2"], "years": [2024, 2025]},
+    ) == 4
+    with pytest.raises(ValueError, match="no items"):
+        job_work_units("firmoteka_company_batch", {})
+    with pytest.raises(ValueError, match="no items"):
+        job_work_units(
+            "firmoteka_company_batch", {"controlled_work_units": 1}
+        )
+    with pytest.raises(ValueError, match="no catalog_pages"):
+        job_work_units(
+            "firmoteka_catalog_page", {"controlled_work_units": 1}
+        )
+    with pytest.raises(ValueError, match="require target_inns and years"):
+        job_work_units(
+            "girbo_accounting_check",
+            {"target_inns": ["1"], "controlled_work_units": 1},
+        )
+    with pytest.raises(ValueError, match="children must be a non-empty"):
+        job_work_units(
+            "ordinary_check",
+            {"children": [], "controlled_work_units": 10},
+        )
+    with pytest.raises(ValueError, match="no explicit child collection"):
+        job_work_units("opaque_batch", {})
+    with pytest.raises(ValueError, match="no explicit child collection"):
+        job_work_units("opaque_batch", {"controlled_work_units": 10})
+
+
+@pytest.mark.parametrize(
+    ("job_type", "schedule_metadata"),
+    (
+        (
+            "firmoteka_company_batch",
+            {
+                "items": [{"id": value} for value in range(40)],
+                "controlled_work_units": 1,
+            },
+        ),
+        (
+            "firmoteka_company_batch",
+            {"controlled_work_units": 1},
+        ),
+        (
+            "firmoteka_catalog_page",
+            {
+                "catalog_pages": [{"id": value} for value in range(40)],
+                "controlled_work_units": 1,
+            },
+        ),
+        (
+            "girbo_accounting_check",
+            {
+                "target_inns": [str(value) for value in range(10)],
+                "years": [2023, 2024, 2025],
+                "controlled_work_units": 1,
+            },
+        ),
+        (
+            "generic_child_work",
+            {
+                "children": [{"id": value} for value in range(40)],
+                "controlled_work_units": 1,
+            },
+        ),
+    ),
+)
+def test_controlled_claim_does_not_admit_override_below_observed_work(
+    worker_db, job_type, schedule_metadata
+):
+    registry = HandlerRegistry()
+    source_id = _identity("controlled-cost")
+    _register_fixture(worker_db, registry, source_id, _empty_handler)
+    job_id = _create(
+        worker_db,
+        source_id,
+        job_type=job_type,
+        schedule_metadata=schedule_metadata,
+    )
+
+    with worker_db() as session:
+        runs_before = session.scalar(
+            sa.select(sa.func.count())
+            .select_from(WorkerRun)
+            .where(WorkerRun.job_id == job_id)
+        )
+        claim = claim_next_job(
+            session,
+            registry,
+            worker_id="controlled-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+            allowed_source_ids=(source_id,),
+            max_work_units=20,
+        )
+        session.commit()
+
+    assert claim is None
+    with worker_db() as session:
+        job = session.get(WorkerJob, job_id)
+        assert job.status in {"queued", "retry_scheduled"}
+        assert job.schedule_metadata == schedule_metadata
+        assert session.scalar(
+            sa.select(sa.func.count())
+            .select_from(WorkerRun)
+            .where(WorkerRun.job_id == job_id)
+        ) == runs_before
+        assert session.get(WorkerLease, source_id) is None
+
+
+def test_controlled_claim_skips_oversized_batch_and_preserves_it(worker_db):
+    registry = HandlerRegistry()
+    source_id = _identity("firmoteka")
+    _register_fixture(worker_db, registry, source_id, _empty_handler)
+    oversized = _create(
+        worker_db,
+        source_id,
+        job_type="firmoteka_company_batch",
+        schedule_metadata={"items": [{"id": value} for value in range(40)]},
+        now=NOW,
+    )
+    admitted = _create(
+        worker_db,
+        source_id,
+        job_type="firmoteka_company_batch",
+        schedule_metadata={"items": [{"id": value} for value in range(10)]},
+        now=NOW + timedelta(seconds=1),
+    )
+
+    with worker_db() as session:
+        claim = claim_next_job(
+            session,
+            registry,
+            worker_id="controlled-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=2),
+            allowed_source_ids=(source_id,),
+            max_work_units=20,
+        )
+        session.commit()
+
+    assert claim is not None
+    assert claim.job_id == admitted
+    assert claim.work_units == 10
+    with worker_db() as session:
+        assert session.get(WorkerJob, oversized).status == "queued"
+        assert session.get(WorkerJob, admitted).status == "running"
+        complete_run_success(
+            session, claim, HandlerResult(), now=NOW + timedelta(seconds=3)
+        )
+        session.commit()
+
+
+def test_controlled_claim_requires_explicit_source_and_honors_lane(worker_db):
+    registry = HandlerRegistry()
+    admitted_source = _identity("admitted")
+    denied_source = _identity("denied")
+    _register_fixture(worker_db, registry, admitted_source, _empty_handler)
+    _register_fixture(worker_db, registry, denied_source, _empty_handler)
+    admitted = _create(
+        worker_db,
+        admitted_source,
+        schedule_metadata={"factory_lane": "source_control"},
+    )
+    _create(
+        worker_db,
+        denied_source,
+        schedule_metadata={"factory_lane": "source_control"},
+        now=NOW - timedelta(seconds=1),
+    )
+
+    with worker_db() as session:
+        assert claim_next_job(
+            session,
+            registry,
+            worker_id="closed-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+            allowed_source_ids=(),
+            max_work_units=20,
+        ) is None
+        session.rollback()
+    with worker_db() as session:
+        assert claim_next_job(
+            session,
+            registry,
+            worker_id="wrong-lane-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+            allowed_source_ids=(admitted_source,),
+            allowed_lanes=("master_intake",),
+            max_work_units=20,
+        ) is None
+        session.rollback()
+    with worker_db() as session:
+        claim = claim_next_job(
+            session,
+            registry,
+            worker_id="admitted-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+            allowed_source_ids=(admitted_source,),
+            allowed_lanes=("source_control",),
+            max_work_units=20,
+        )
+        session.commit()
+
+    assert claim is not None
+    assert claim.job_id == admitted
+    with worker_db() as session:
+        complete_run_success(
+            session, claim, HandlerResult(), now=NOW + timedelta(seconds=2)
+        )
+        session.commit()
+
+
+def test_controlled_claims_stop_at_exact_twenty_work_units(worker_db):
+    registry = HandlerRegistry()
+    sources = tuple(_identity(f"source-{index}") for index in range(3))
+    for source_id in sources:
+        _register_fixture(worker_db, registry, source_id, _empty_handler)
+    jobs = (
+        _create(
+            worker_db,
+            sources[0],
+            schedule_metadata={"items": [{"id": value} for value in range(10)]},
+            now=NOW,
+        ),
+        _create(
+            worker_db,
+            sources[1],
+            schedule_metadata={"items": [{"id": value} for value in range(10)]},
+            now=NOW + timedelta(seconds=1),
+        ),
+        _create(
+            worker_db,
+            sources[2],
+            now=NOW + timedelta(seconds=2),
+        ),
+    )
+
+    remaining = 20
+    claimed_ids = []
+    for offset in range(2):
+        with worker_db() as session:
+            claim = claim_next_job(
+                session,
+                registry,
+                worker_id="twenty-unit-worker",
+                lease_ttl=timedelta(seconds=30),
+                now=NOW + timedelta(seconds=3 + offset),
+                allowed_source_ids=sources,
+                max_work_units=remaining,
+            )
+            session.commit()
+        assert claim is not None
+        claimed_ids.append(claim.job_id)
+        remaining -= claim.work_units
+        with worker_db() as session:
+            complete_run_success(
+                session,
+                claim,
+                HandlerResult(),
+                now=NOW + timedelta(seconds=4 + offset),
+            )
+            session.commit()
+
+    assert claimed_ids == [jobs[0], jobs[1]]
+    assert remaining == 0
+    with worker_db() as session:
+        assert claim_next_job(
+            session,
+            registry,
+            worker_id="twenty-unit-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=6),
+            allowed_source_ids=sources,
+            max_work_units=remaining,
+        ) is None
+        assert session.get(WorkerJob, jobs[2]).status == "queued"
+        session.rollback()
+
+
+def test_uncontrolled_claim_preserves_legacy_opaque_batch_behavior(worker_db):
+    registry = HandlerRegistry()
+    source_id = _identity("legacy-batch")
+    _register_fixture(worker_db, registry, source_id, _empty_handler)
+    job_id = _create(worker_db, source_id, job_type="legacy_opaque_batch")
+
+    with worker_db() as session:
+        claim = claim_next_job(
+            session,
+            registry,
+            worker_id="legacy-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+        )
+        session.commit()
+
+    assert claim is not None
+    assert claim.job_id == job_id
+    assert claim.work_units == 1
+    with worker_db() as session:
+        complete_run_success(
+            session, claim, HandlerResult(), now=NOW + timedelta(seconds=2)
+        )
+        session.commit()
 
 
 def test_registered_handler_run_lifecycle_and_success(worker_db):

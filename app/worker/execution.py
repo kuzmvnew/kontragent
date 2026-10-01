@@ -71,6 +71,7 @@ class ClaimedExecution:
     fencing_token: int
     attempt_no: int
     timeout_seconds: int
+    work_units: int
     schedule_metadata: dict[str, Any]
     handler: RegisteredHandler
 
@@ -85,6 +86,101 @@ class RunObservation:
     stale: bool
     errors: tuple[dict[str, Any], ...]
     counters: ExecutionCounters
+
+
+FACTORY_LANES = (
+    "master_intake",
+    "bulk_enrichment",
+    "point_enrichment",
+    "source_control",
+)
+
+# These metadata fields represent child work performed inside one durable
+# WorkerJob.  Controlled execution must account for those children rather than
+# treating the database row as one unit.  The list is intentionally explicit:
+# an arbitrary JSON array (for example parser diagnostics) is not necessarily
+# independently executed work.
+WORK_UNIT_COLLECTION_KEYS = (
+    "items",
+    "catalog_pages",
+    "company_ids",
+    "company_enrichment_run_ids",
+    "cohort_inns",
+    "target_inns",
+    "artifacts",
+    "child_items",
+    "children",
+)
+
+
+def job_work_units(job_type: str, schedule_metadata: dict[str, Any] | None) -> int:
+    """Return the conservative real-work cost of one queued job.
+
+    Existing queue rows predate controlled startup, so their cost must be
+    derived without rewriting the queue.  Known fan-out jobs are strict about
+    their child metadata; malformed/empty batch metadata is rejected instead
+    of falling back to a misleading cost of one.
+    """
+
+    metadata = dict(schedule_metadata or {})
+    explicit = metadata.get("controlled_work_units")
+
+    def child_count(key: str) -> int | None:
+        if key not in metadata:
+            return None
+        value = metadata[key]
+        if not isinstance(value, (list, tuple)) or not value:
+            raise ValueError(f"{key} must be a non-empty child collection")
+        return len(value)
+
+    # Validate every recognized child collection before applying an explicit
+    # override.  Otherwise a small override could conceal malformed metadata
+    # in a field that controlled execution knows represents real child work.
+    collection_counts = {
+        key: count
+        for key in WORK_UNIT_COLLECTION_KEYS
+        if (count := child_count(key)) is not None
+    }
+
+    if job_type == "firmoteka_company_batch":
+        count = collection_counts.get("items")
+        if count is None:
+            raise ValueError("Firmoteka company batch has no items")
+        observed = count
+    elif job_type == "firmoteka_catalog_page":
+        count = collection_counts.get("catalog_pages")
+        if count is None:
+            raise ValueError("Firmoteka catalog batch has no catalog_pages")
+        observed = count
+    # GIRBO performs an INN/year matrix inside a single WorkerJob.
+    elif job_type == "girbo_accounting_check" and (
+        "target_inns" in metadata or "years" in metadata
+    ):
+        targets = collection_counts.get("target_inns")
+        years = child_count("years")
+        if targets is None or years is None:
+            raise ValueError("GIRBO work units require target_inns and years")
+        observed = targets * years
+    elif collection_counts:
+        # Several fields can describe the same children (for example company
+        # ids and enrichment-run ids), so use the largest declared set rather
+        # than double-counting aliases.
+        observed = max(collection_counts.values())
+    elif "batch" in job_type.lower():
+        raise ValueError("batch job has no explicit child collection")
+    else:
+        observed = 1
+
+    if explicit is not None and (
+        not isinstance(explicit, int)
+        or isinstance(explicit, bool)
+        or explicit <= 0
+    ):
+        raise ValueError("controlled_work_units must be a positive integer")
+
+    # The explicit value is a conservative upper override only.  Objectively
+    # observable work remains the admission floor.
+    return max(observed, explicit) if explicit is not None else observed
 
 
 class RetryPolicy:
@@ -332,19 +428,40 @@ def claim_next_job(
     lease_ttl: timedelta,
     now: datetime | None = None,
     allowed_lanes: Sequence[str] | None = None,
+    allowed_source_ids: Sequence[str] | None = None,
+    max_work_units: int | None = None,
 ) -> ClaimedExecution | None:
-    """Claim one runnable job and source lease in the same DB transaction."""
+    """Claim one admitted runnable job and source lease atomically.
+
+    ``None`` retains the legacy unrestricted behavior.  An explicit empty
+    source allow-list admits nothing.  ``max_work_units`` is evaluated before
+    a job or lease is mutated, so an oversized batch remains queued intact.
+    """
 
     now = now or utc_now()
     requested_lanes = tuple(dict.fromkeys(allowed_lanes or ()))
-    valid_lanes = {
-        "master_intake",
-        "bulk_enrichment",
-        "point_enrichment",
-        "source_control",
-    }
+    valid_lanes = set(FACTORY_LANES)
     if requested_lanes and not set(requested_lanes) <= valid_lanes:
         raise ValueError("unknown factory lane")
+    if allowed_source_ids is None:
+        requested_sources: tuple[str, ...] | None = None
+    else:
+        requested_sources = tuple(
+            dict.fromkeys(source_id.strip() for source_id in allowed_source_ids)
+        )
+        if any(not source_id for source_id in requested_sources):
+            raise ValueError("allowed source ids must be non-empty")
+        if not requested_sources:
+            return None
+    if max_work_units is not None:
+        if (
+            not isinstance(max_work_units, int)
+            or isinstance(max_work_units, bool)
+            or max_work_units < 0
+        ):
+            raise ValueError("max_work_units must be a non-negative integer")
+        if max_work_units == 0:
+            return None
     prior_job = aliased(WorkerJob)
     last_source_run_at = (
         select(func.max(WorkerRun.started_at))
@@ -370,12 +487,18 @@ def claim_next_job(
         else_="source_control",
     )
     lane_filter = factory_lane.in_(requested_lanes) if requested_lanes else True
-    job = session.scalar(
+    source_filter = (
+        WorkerJob.source_id.in_(requested_sources)
+        if requested_sources is not None
+        else True
+    )
+    candidates = session.scalars(
         select(WorkerJob)
         .where(
             WorkerJob.status.in_(("queued", "retry_scheduled")),
             or_(WorkerJob.next_attempt_at.is_(None), WorkerJob.next_attempt_at <= now),
             lane_filter,
+            source_filter,
         )
         # Rotate runnable source families by their last execution time.  FIFO
         # remains authoritative within a source, while a large bounded queue
@@ -387,8 +510,34 @@ def claim_next_job(
             WorkerJob.id,
         )
         .with_for_update(skip_locked=True)
-        .limit(1)
-    )
+    ).yield_per(100)
+    job: WorkerJob | None = None
+    work_units = 0
+    try:
+        for candidate in candidates:
+            try:
+                candidate_work_units = job_work_units(
+                    candidate.job_type, candidate.schedule_metadata
+                )
+            except ValueError:
+                # A malformed/opaque batch is deliberately left pending.  It
+                # may be repaired by an operator, but controlled admission
+                # must never guess a lower cost.
+                if max_work_units is not None:
+                    continue
+                # Legacy/uncontrolled execution had no work-unit gate.
+                # Preserve that behavior when no gate was requested.
+                candidate_work_units = 1
+            if (
+                max_work_units is not None
+                and candidate_work_units > max_work_units
+            ):
+                continue
+            job = candidate
+            work_units = candidate_work_units
+            break
+    finally:
+        candidates.close()
     if job is None:
         return None
 
@@ -450,6 +599,7 @@ def claim_next_job(
         fencing_token=fencing_token,
         attempt_no=attempt_no,
         timeout_seconds=job.timeout_seconds,
+        work_units=work_units,
         schedule_metadata=dict(job.schedule_metadata),
         handler=handler,
     )
@@ -865,6 +1015,9 @@ def recover_stale_runs(
             fencing_token=run.fencing_token,
             attempt_no=run.attempt_no,
             timeout_seconds=job.timeout_seconds,
+            # Recovery performs no source work; it only fences the stale run
+            # and applies the existing retry policy.
+            work_units=0,
             schedule_metadata=dict(job.schedule_metadata),
             handler=RegisteredHandler(
                 source_id=job.source_id,
@@ -1192,24 +1345,8 @@ class WorkerExecutor:
             raise WorkerFoundationError("handler child returned no result")
         return outcome
 
-    def run_once(
-        self, *, allowed_lanes: Sequence[str] | None = None
-    ) -> UUID | None:
-        if self.shutdown_requested:
-            return None
-        with self.session_factory() as session:
-            claim = claim_next_job(
-                session,
-                self.registry,
-                worker_id=self.worker_id,
-                lease_ttl=self.lease_ttl,
-                now=self.clock(),
-                allowed_lanes=allowed_lanes,
-            )
-            if claim is None:
-                session.rollback()
-                return None
-            session.commit()
+    def execute_claim(self, claim: ClaimedExecution) -> UUID:
+        """Execute a claim already committed by an admission controller."""
 
         deadline_at = self.clock() + timedelta(seconds=claim.timeout_seconds)
         try:
@@ -1267,3 +1404,29 @@ class WorkerExecutor:
                 )
                 session.commit()
             raise error from raw_error
+
+    def run_once(
+        self,
+        *,
+        allowed_lanes: Sequence[str] | None = None,
+        allowed_source_ids: Sequence[str] | None = None,
+        max_work_units: int | None = None,
+    ) -> UUID | None:
+        if self.shutdown_requested:
+            return None
+        with self.session_factory() as session:
+            claim = claim_next_job(
+                session,
+                self.registry,
+                worker_id=self.worker_id,
+                lease_ttl=self.lease_ttl,
+                now=self.clock(),
+                allowed_lanes=allowed_lanes,
+                allowed_source_ids=allowed_source_ids,
+                max_work_units=max_work_units,
+            )
+            if claim is None:
+                session.rollback()
+                return None
+            session.commit()
+        return self.execute_claim(claim)
