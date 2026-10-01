@@ -1327,7 +1327,14 @@ def _controlled_live_generation(
             "S02 controlled live cohort differs from approved pilot scope"
         )
 
-    _capture_baseline_generation(session, dataset=dataset, pilot=pilot)
+    baseline = _capture_baseline_generation(session, dataset=dataset, pilot=pilot)
+    if pilot.baseline_data_date is None:
+        # The original transition path returned early when generation 0 already
+        # existed, leaving this reconstructible coordinate unset. Persist it
+        # for every future transition while refusing contradictory history.
+        pilot.baseline_data_date = baseline.last_data_date
+    elif pilot.baseline_data_date != baseline.last_data_date:
+        raise LegalBlockError("S02 pilot baseline data date contradicts generation 0")
 
     current_generation = session.scalar(
         select(FnsTaxDebtPublicationGeneration)
@@ -2140,6 +2147,43 @@ def _cohort_sha256(cohort_inns: frozenset[str]) -> str:
     ).hexdigest()
 
 
+def controlled_live_semantic_job_identity(
+    *,
+    artifact_sha256: str,
+    xsd_sha256: str,
+    release: TaxDebtOfficialRelease,
+    config: ControlledLivePilotConfig,
+) -> str:
+    """Return the stable identity of one bounded official release observation."""
+
+    payload = {
+        "artifact_sha256": artifact_sha256.lower(),
+        "artifact_url": release.artifact_url,
+        "cohort_sha256": _cohort_sha256(config.cohort_inns),
+        "data_as_of": release.data_as_of.isoformat(),
+        "dataset_code": DATASET_CODE,
+        "discovery_page_url": release.discovery_page_url,
+        "handler_version": config.handler_version,
+        "job_type": "fns_tax_debt_controlled_live",
+        "normalization_version": NORMALIZATION_VERSION,
+        "official_actual_until": release.official_actual_until.isoformat(),
+        "parser_version": PARSER_VERSION,
+        "pilot_environment": config.environment,
+        "source_as_of": release.source_as_of.isoformat(),
+        "source_contract": FNS_TAX_DEBT_SOURCE_CONTRACT.as_dict(),
+        "source_id": SOURCE_ID,
+        "xsd_sha256": xsd_sha256.lower(),
+        "xsd_url": release.xsd_url,
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"{SOURCE_ID}:controlled_live:v2:{sha256(canonical).hexdigest()}"
+
+
 def approve_fns_tax_debt_baseline_handler(
     session,
     *,
@@ -2443,15 +2487,18 @@ def enqueue_fns_tax_debt_controlled_live_job(
         config=config,
         artifact_checksum=checksum,
     )
+    semantic_identity = controlled_live_semantic_job_identity(
+        artifact_sha256=checksum,
+        xsd_sha256=xsd_checksum,
+        release=discovery.release,
+        config=config,
+    )
     return create_job(
         session,
         source_id=SOURCE_ID,
         job_type="fns_tax_debt_controlled_live",
         handler_version=config.handler_version,
-        idempotency_key=(
-            f"{SOURCE_ID}:controlled_live:{checksum}:{xsd_checksum}:"
-            f"{NORMALIZATION_VERSION}"
-        ),
+        idempotency_key=semantic_identity,
         schedule_metadata={
             "source_path": str(source_path),
             "xsd_path": str(xsd_path),
@@ -2469,6 +2516,7 @@ def enqueue_fns_tax_debt_controlled_live_job(
             "xsd_url": discovery.release.xsd_url,
             "official_actual_until": discovery.release.official_actual_until.isoformat(),
             "data_as_of": discovery.release.data_as_of.isoformat(),
+            "semantic_identity": semantic_identity,
         },
         max_attempts=max_attempts,
         timeout_seconds=timeout_seconds,

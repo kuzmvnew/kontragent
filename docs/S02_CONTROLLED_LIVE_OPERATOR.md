@@ -184,8 +184,31 @@ validated only against its captured historical run, artifact and metadata; it
 is not compared with the advanced current DataSet or active pointer. The active
 pilot generation is validated separately, with pilot fact/normalized/query
 coordinates equal to that domain generation and pilot/worker operational
-generations equal to each other. The current S02 DataSet status may be `ready`
-or `current`; failure, stale or unavailable states are not ready.
+generations equal to each other.
+
+The shared `DataSet.coverage` remains common/baseline coverage and is validated
+against generation 0 (permitting only operational additions such as
+`last_check`). It is not required to duplicate active pilot coverage.
+Generation 0 and the active generation each retain and validate their own
+immutable coverage, cohort, fact, and query-generation coordinates.
+
+For legacy transitioned rows only, a null `pilot.baseline_data_date` is derived
+read-only from generation 0's non-null `last_data_date`, after the complete
+generation-0 run/job/RAW/manifest/fact chain has passed. A conflicting non-null
+value, missing generation 0, or corrupt provenance still fails closed. Future
+transitions populate `baseline_data_date` from generation 0; preflight does not
+backfill the legacy row.
+
+The healthy S02 DataSet statuses remain only `ready` and `current`. `error` is
+not globally healthy. A transitioned DataSet may enter the explicit
+`failed_refresh_recovery` path only when its accepted active generation,
+publication pointer, rollback generation, RAW manifest, counters, and bounded
+cohort facts remain coherent, and `last_error_at` identifies a later terminal
+failed controlled-live WorkerRun that published no generation. A queued,
+running, or retry-scheduled competing job blocks this recovery path. Candidate
+checksum, official rediscovery, freshness, and package validation remain
+independent preflight gates. `stale`, `unavailable`, and ambiguous/corrupt
+active states remain blocked.
 
 Content-addressed RAW may be reused. `first_worker_run_id` remains the first
 acquisition owner and need not equal the active publication run. Both the owner
@@ -235,8 +258,13 @@ The reviewed default is 3600 seconds. Overrides are bounded to 600–7200
 seconds. Enqueue re-runs preflight, requires the exact durable approval, passes
 the manifest checksums, official discovery metadata, and normalized cohort to
 `enqueue_fns_tax_debt_controlled_live_job`, and commits separately. It does not
-execute the worker. The pipeline's checksum-based idempotency key means an
-identical request returns the existing job; it never creates a second one.
+execute the worker. The deterministic semantic job identity includes artifact
+and XSD SHA-256, source/data/official-validity dates, normalized cohort, official
+source URLs, pilot environment, handler, parser, normalization, and source
+contract. The exact same package semantics and cohort reuse one job. Identical
+bytes with corrected official dates or a different cohort create a distinct
+bounded job; different bytes also create a distinct job. Clock time and local
+file paths are not part of the identity.
 
 The checksum-addressed RAW manifest preserves the first accepted
 `retrieved_at`. A later execution of the same bytes may carry a newer check
@@ -246,8 +274,16 @@ every other source, XSD, parser and cohort coordinate must still match exactly.
 If another runnable job would precede the new/reused job, enqueue rolls back
 and returns `QUEUE_NOT_EXCLUSIVE`.
 
-If a reviewed terminal failure is corrected by a later deployment, explicitly
-requeue that same job without deleting its failed WorkerRun history:
+`retry-failed` is only for the exact failed semantic job. It compares the
+currently verified release, bytes, source dates, URLs, and cohort with the
+failed job and does not rewrite its schedule metadata or terminal run history.
+If official release semantics were corrected while ZIP/XSD bytes stayed the
+same, use normal `enqueue`: it creates a new semantic job and leaves the old
+failed attempt untouched.
+
+If a reviewed terminal failure is corrected by a later deployment without any
+package-semantic change, explicitly requeue that same job without deleting its
+failed WorkerRun history:
 
 ```text
 python -m scripts.run_s02_controlled_live retry-failed \
