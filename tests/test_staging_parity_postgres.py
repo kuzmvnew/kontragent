@@ -8,6 +8,7 @@ from pathlib import Path
 import psycopg
 import pytest
 from psycopg import sql
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 from scripts.schema_fingerprint import (
@@ -15,16 +16,48 @@ from scripts.schema_fingerprint import (
     compare_fingerprints,
     fingerprint_connection,
 )
-from scripts.staging_acceptance import false_head_probe
+from scripts.staging_acceptance import DatabaseFactory, false_head_probe
 
 
-def _url(variable: str) -> str:
+def _sqlalchemy_url(variable: str) -> str:
     if os.getenv("STAGING_PARITY_POSTGRES") != "1":
         pytest.skip("live staging parity probes require explicit opt-in")
     value = os.getenv(variable)
     if not value:
         pytest.skip(f"{variable} is not configured")
-    return value.replace("postgresql+psycopg://", "postgresql://", 1)
+    return value
+
+
+def _url(variable: str) -> str:
+    return _sqlalchemy_url(variable).replace(
+        "postgresql+psycopg://", "postgresql://", 1
+    )
+
+
+def test_database_factory_fresh_database_url_keeps_psycopg_driver():
+    source = make_url(_sqlalchemy_url("DATABASE_URL"))
+    admin_url = source.set(database="postgres").render_as_string(hide_password=False)
+    token = uuid.uuid4().hex[:10]
+    factory = DatabaseFactory(admin_url, token)
+    expected_name = f"sp01_{token}_driver"
+
+    try:
+        created_url = factory.create("driver")
+        assert created_url == source.set(database=expected_name).render_as_string(
+            hide_password=False
+        )
+        assert make_url(created_url).drivername == "postgresql+psycopg"
+        engine = create_engine(created_url)
+        try:
+            with engine.connect() as connection:
+                observed_name = connection.execute(
+                    text("SELECT current_database()")
+                ).scalar_one()
+                assert observed_name == expected_name
+        finally:
+            engine.dispose()
+    finally:
+        factory.drop_all()
 
 
 @pytest.mark.parametrize("variable", ("DATABASE_URL", "PUBLIC_IMPORT_DATABASE_URL"))
