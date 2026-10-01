@@ -65,6 +65,12 @@ SECTION_KEYS = (
     "tax",
     "enforcement",
     "licenses",
+    "courts",
+    "bankruptcy",
+    "procurement",
+    "restrictions",
+    "inspections",
+    "connections",
     "events",
     "risk",
     "summary",
@@ -87,6 +93,94 @@ _RIGHTS_RANK = {
     FactRights.AUTHENTICATED_ONLY: 2,
     FactRights.INTERNAL_ONLY: 3,
 }
+_SECTION_STATE_RANK = {
+    DataState.CONFLICTING_EVIDENCE: 100,
+    DataState.PARSING_ERROR: 95,
+    DataState.TIMEOUT: 90,
+    DataState.SOURCE_UNAVAILABLE: 85,
+    DataState.STALE_DATA: 80,
+    DataState.PARTIAL: 75,
+    DataState.UNKNOWN: 70,
+    DataState.NOT_CHECKED: 65,
+    DataState.NOT_APPLICABLE: 20,
+    DataState.FOUND: 10,
+    DataState.NOT_FOUND: 10,
+}
+
+
+class SemanticFieldPolicy(BaseModel):
+    """Field-level source authority and fail-closed public semantics."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    official_sources: tuple[str, ...] = ()
+    bridge_sources: tuple[str, ...] = ()
+    derived: bool = False
+    not_applicable_allowed: bool = False
+    conflict_state: DataState = DataState.CONFLICTING_EVIDENCE
+    stale_state: DataState = DataState.STALE_DATA
+    unknown_state: DataState = DataState.UNKNOWN
+    source_unavailable_state: DataState = DataState.SOURCE_UNAVAILABLE
+
+
+def _policy(
+    *official_sources: str,
+    bridge: bool = False,
+    derived: bool = False,
+    not_applicable: bool = False,
+) -> SemanticFieldPolicy:
+    return SemanticFieldPolicy(
+        official_sources=tuple(official_sources),
+        bridge_sources=("FIRMOTEKA_AUTHORIZED_BRIDGE",) if bridge else (),
+        derived=derived,
+        not_applicable_allowed=not_applicable,
+    )
+
+
+# Exact field entries override section wildcards.  This registry is deliberately
+# provider-agnostic at the contract boundary: it only defines which accepted
+# evidence authorities may win a semantic coordinate.
+SEMANTIC_FIELD_POLICIES: dict[str, SemanticFieldPolicy] = {
+    "identity.*": _policy("MASTER_REGISTRY", bridge=True),
+    "status.*": _policy("MASTER_REGISTRY", bridge=True),
+    "registration.*": _policy("MASTER_REGISTRY", bridge=True),
+    "address.*": _policy("MASTER_REGISTRY", bridge=True),
+    "activity.*": _policy("MASTER_REGISTRY", bridge=True),
+    "management.*": _policy("MASTER_REGISTRY", bridge=True),
+    "founders.*": _policy("MASTER_REGISTRY", bridge=True),
+    "contacts.*": _policy(bridge=True),
+    "capital.*": _policy("MASTER_REGISTRY", bridge=True),
+    "finances.REVENUE": _policy("REVEXP", bridge=True),
+    "finances.EXPENSES": _policy("REVEXP", bridge=True),
+    "finances.PROFIT_LOSS": _policy("REVEXP", bridge=True),
+    "finances.NET_PROFIT": _policy("GIRBO", bridge=True),
+    "finances.EQUITY": _policy("GIRBO", bridge=True),
+    "finances.COMPANY_VALUE": _policy(bridge=True, derived=True),
+    "employees.EMPLOYEE_COUNT": _policy("HEADCOUNT", bridge=True),
+    "tax.paid": _policy("PAYTAX", bridge=True),
+    "tax.debt": _policy("DEBTAM", bridge=True),
+    "tax.offence": _policy("TAXOFFENCE"),
+    "enforcement.*": _policy("FSSP", bridge=True),
+    "licenses.*": _policy("ROSZDRAV_LICENSES", bridge=True),
+    "courts.*": _policy("MOSCOW_COURTS_OFFICIAL"),
+    "bankruptcy.*": _policy("FEDRESURS"),
+    "procurement.*": _policy("EIS_RNP", not_applicable=True),
+    "restrictions.*": _policy("CBR_WARNING_LIST"),
+    "inspections.*": _policy("ERKNM", not_applicable=True),
+    "connections.*": _policy("MASTER_REGISTRY", bridge=True, derived=True),
+    "events.*": _policy(),
+    "risk.*": _policy(derived=True),
+    "summary.*": _policy(derived=True),
+    "source_coverage.*": _policy(derived=True),
+    "freshness.*": _policy(derived=True),
+}
+
+
+def semantic_field_policy(section_key: str, field_key: str) -> SemanticFieldPolicy:
+    return SEMANTIC_FIELD_POLICIES.get(
+        f"{section_key}.{field_key}",
+        SEMANTIC_FIELD_POLICIES.get(f"{section_key}.*", SemanticFieldPolicy()),
+    )
 
 
 class SemanticCandidate(BaseModel):
@@ -105,6 +199,7 @@ class SemanticCandidate(BaseModel):
     confidence: float = Field(ge=0, le=1)
     freshness: Freshness
     rights: FactRights
+    state: DataState = DataState.FOUND
     period_identity: str = ""
     item_identity: str = ""
     limitations: tuple[str, ...] = ()
@@ -245,8 +340,15 @@ def _evidence(candidate: SemanticCandidate) -> SemanticEvidence:
 def _selection_key(candidate: SemanticCandidate) -> tuple[Any, ...]:
     source_date = candidate.source_data_date.toordinal() if candidate.source_data_date else -1
     retrieved = candidate.retrieved_at.timestamp()
+    policy = semantic_field_policy(candidate.section_key, candidate.field_key)
+    if candidate.source_code in policy.official_sources:
+        authority_rank = 1_000
+    elif candidate.source_code in policy.bridge_sources:
+        authority_rank = 500
+    else:
+        authority_rank = _SOURCE_RANK[candidate.source_class]
     return (
-        -_SOURCE_RANK[candidate.source_class],
+        -authority_rank,
         -source_date,
         -retrieved,
         candidate.source_code,
@@ -269,8 +371,22 @@ def select_semantic_facts(
         selected = ordered[0]
         selected_evidence = _evidence(selected)
         alternatives = tuple(_evidence(item) for item in ordered[1:])
-        conflict = any(not _materially_equal(item.value, selected.value) for item in ordered[1:])
-        state = DataState.CONFLICTING_EVIDENCE if conflict else DataState.FOUND
+        comparable = tuple(
+            item
+            for item in ordered[1:]
+            if item.state in {DataState.FOUND, DataState.STALE_DATA}
+        )
+        conflict = (
+            selected.state in {DataState.FOUND, DataState.STALE_DATA}
+            and any(not _materially_equal(item.value, selected.value) for item in comparable)
+        )
+        state = (
+            DataState.CONFLICTING_EVIDENCE
+            if conflict
+            else DataState.STALE_DATA
+            if selected.state == DataState.FOUND and selected.freshness == Freshness.STALE
+            else selected.state
+        )
         facts.append(
             SemanticFact(
                 anchor=_anchor(selected),
@@ -302,9 +418,10 @@ def _candidate(
     item_identity: str = "",
     confidence: float = 1.0,
     freshness: Freshness | None = None,
+    state: DataState = DataState.FOUND,
     limitations: tuple[str, ...] = (),
 ) -> SemanticCandidate | None:
-    if value in (None, "", [], {}):
+    if state == DataState.FOUND and value in (None, "", [], {}):
         return None
     return SemanticCandidate(
         company_id=company_id,
@@ -320,6 +437,7 @@ def _candidate(
         confidence=confidence,
         freshness=freshness or (Freshness.CURRENT if source_data_date else Freshness.UNKNOWN),
         rights=rights,
+        state=state,
         period_identity=period_identity,
         item_identity=item_identity,
         limitations=limitations,
