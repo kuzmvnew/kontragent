@@ -118,6 +118,17 @@ from app.models.tax_payment import (
     CompanyTaxPaymentItem,
     CompanyTaxPaymentSnapshot,
 )
+from app.models.workspace import (
+    CustomerSession,
+    CustomerUser,
+    SavedCompany,
+    Workspace,
+    WorkspaceAuditEvent,
+    WorkspaceEntitlement,
+    WorkspaceMembership,
+    WorkspaceRole,
+    WorkspaceRoleCapability,
+)
 from app.models.worker import (
     WorkerHandlerRegistration,
     WorkerJob,
@@ -129,6 +140,15 @@ from app.models.worker import (
 
 
 __all__ = [
+    "WorkspaceRoleCapability",
+    "WorkspaceRole",
+    "WorkspaceMembership",
+    "WorkspaceEntitlement",
+    "WorkspaceAuditEvent",
+    "Workspace",
+    "SavedCompany",
+    "CustomerUser",
+    "CustomerSession",
     "AdminActionAudit",
     "ArbitrationCourtCheck",
     "CbrFinorgCheck",
