@@ -30,6 +30,7 @@ from app.ingestion.fns_tax_debt_pipeline import (
     approve_fns_tax_debt_baseline_handler,
     approve_fns_tax_debt_controlled_live_handler,
     calculate_sha256,
+    controlled_live_semantic_job_identity,
     enqueue_fns_tax_debt_baseline_job,
     enqueue_fns_tax_debt_controlled_live_job,
     get_fns_tax_debt_pilot_monitoring,
@@ -190,6 +191,7 @@ SAFE_BASELINE_CHECKS = frozenset(
         "dataset_missing",
         "dataset_code",
         "dataset_status",
+        "dataset_error_recovery",
         "dataset_source_as_of",
         "dataset_retrieved_at",
         "dataset_last_data_date",
@@ -256,6 +258,7 @@ SAFE_BASELINE_CHECKS = frozenset(
         "baseline_raw_manifest",
         "baseline_cohort",
         "baseline_facts_outside_cohort",
+        "baseline_fact_count",
         "active_generation_missing",
         "active_generation",
         "active_scope",
@@ -287,6 +290,7 @@ SAFE_BASELINE_CHECKS = frozenset(
         "active_dataset_metadata",
         "active_coverage",
         "active_facts_outside_cohort",
+        "active_fact_count",
         "pilot_state_missing",
         "pilot_dataset",
         "pilot_cohort",
@@ -959,6 +963,103 @@ def _raw_manifest_matches(
     )
 
 
+def _dataset_error_recovery_matches(
+    session: Session,
+    *,
+    dataset: DataSet,
+    active_generation: FnsTaxDebtPublicationGeneration,
+    cohort: tuple[str, ...],
+) -> bool:
+    """Prove that ``error`` belongs to a later failed, unpublished refresh."""
+
+    if not dataset.last_error or dataset.last_error_at is None:
+        return False
+    failed_attempt = session.execute(
+        select(WorkerRun, WorkerJob)
+        .join(WorkerJob, WorkerJob.id == WorkerRun.job_id)
+        .where(
+            WorkerJob.source_id == SOURCE_ID,
+            WorkerJob.job_type == "fns_tax_debt_controlled_live",
+            WorkerJob.handler_version == CONTROLLED_LIVE_HANDLER_VERSION,
+            WorkerJob.status == "failed",
+            WorkerRun.status.in_(("failed", "timed_out", "interrupted")),
+            WorkerRun.finished_at == dataset.last_error_at,
+            WorkerRun.finished_at > active_generation.published_at,
+        )
+        .order_by(WorkerRun.attempt_no.desc(), WorkerRun.id.desc())
+        .limit(1)
+    ).one_or_none()
+    if failed_attempt is None:
+        return False
+    failed_run, failed_job = failed_attempt
+    metadata = _mapping_dict(failed_job.schedule_metadata) or {}
+    semantic_fields_are_complete = (
+        metadata.get("mode") == "controlled_live"
+        and metadata.get("pilot_enabled") is True
+        and metadata.get("pilot_environment") == PILOT_ENVIRONMENT
+        and tuple(sorted(str(value) for value in metadata.get("cohort_inns") or ()))
+        == tuple(sorted(cohort))
+        and isinstance(metadata.get("expected_sha256"), str)
+        and CHECKSUM_RE.fullmatch(metadata["expected_sha256"]) is not None
+        and isinstance(metadata.get("expected_xsd_sha256"), str)
+        and CHECKSUM_RE.fullmatch(metadata["expected_xsd_sha256"]) is not None
+        and all(
+            isinstance(metadata.get(field), str) and bool(metadata[field])
+            for field in (
+                "source_as_of",
+                "data_as_of",
+                "official_actual_until",
+                "discovery_page_url",
+                "artifact_url",
+                "xsd_url",
+            )
+        )
+    )
+    if not semantic_fields_are_complete or not failed_run.errors:
+        return False
+    try:
+        failed_source_as_of = datetime.fromisoformat(
+            metadata["source_as_of"].replace("Z", "+00:00")
+        )
+        failed_data_as_of = date.fromisoformat(metadata["data_as_of"])
+        failed_actual_until = date.fromisoformat(metadata["official_actual_until"])
+    except ValueError:
+        return False
+    if failed_source_as_of.tzinfo is None:
+        return False
+    stored_semantic_identity = metadata.get("semantic_identity")
+    if stored_semantic_identity is not None:
+        expected_semantic_identity = controlled_live_semantic_job_identity(
+            artifact_sha256=metadata["expected_sha256"],
+            xsd_sha256=metadata["expected_xsd_sha256"],
+            release=TaxDebtOfficialRelease(
+                discovery_page_url=metadata["discovery_page_url"],
+                artifact_url=metadata["artifact_url"],
+                xsd_url=metadata["xsd_url"],
+                source_as_of=failed_source_as_of,
+                data_as_of=failed_data_as_of,
+                official_actual_until=failed_actual_until,
+                metadata={},
+            ),
+            config=ControlledLivePilotConfig(
+                enabled=True, cohort_inns=frozenset(cohort)
+            ),
+        )
+        if stored_semantic_identity != expected_semantic_identity:
+            return False
+    published_from_failed_run = session.scalar(
+        select(FnsTaxDebtPublicationGeneration.id)
+        .where(FnsTaxDebtPublicationGeneration.worker_run_id == failed_run.id)
+        .limit(1)
+    )
+    unsafe_queue_entry = session.scalar(
+        select(WorkerJob.id)
+        .where(WorkerJob.status.in_(("queued", "running", "retry_scheduled")))
+        .limit(1)
+    )
+    return published_from_failed_run is None and unsafe_queue_entry is None
+
+
 def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str, Any]:
     table_names = set(inspect(session.get_bind()).get_table_names())
     required_tables = {
@@ -1111,7 +1212,8 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
     if dataset is not None:
         require(dataset.code == DATASET_CODE, "dataset_code")
         require(
-            dataset.operational_status in CURRENT_DATASET_STATUSES,
+            dataset.operational_status in CURRENT_DATASET_STATUSES
+            or (transitioned and dataset.operational_status == "error"),
             "dataset_status",
         )
         require(dataset.source_as_of is not None, "dataset_source_as_of")
@@ -1192,6 +1294,8 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
             ),
             "baseline_coverage",
         )
+        require(baseline_row.last_data_date is not None, "baseline_last_data_date")
+        require(_usable_count(baseline_row.record_count), "baseline_record_count")
         require(
             baseline_row.official_actual_until
             == _coverage_actual_until(baseline_coverage),
@@ -1299,6 +1403,11 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
             or 0
         )
         require(outside_baseline == 0, "baseline_facts_outside_cohort")
+        if baseline_run is not None:
+            require(
+                fact_count == baseline_run.records_published,
+                "baseline_fact_count",
+            )
 
     current_row = active_row if transitioned else baseline_row
     current_run = active_run if transitioned else baseline_run
@@ -1438,7 +1547,10 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
                 "dataset_official_actual_until",
             )
             require(
-                _mapping_contains(dataset_coverage, _mapping_dict(active_row.coverage) or {}),
+                baseline_row is not None
+                and _mapping_contains(
+                    dataset_coverage, _mapping_dict(baseline_row.coverage) or {}
+                ),
                 "dataset_coverage",
             )
             outside_active = int(
@@ -1456,6 +1568,23 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
                 or 0
             )
             require(outside_active == 0, "active_facts_outside_cohort")
+            active_fact_count = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CompanyTaxDebtSnapshot)
+                    .where(
+                        CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                        CompanyTaxDebtSnapshot.publication_generation
+                        == active_row.generation,
+                    )
+                )
+                or 0
+            )
+            if active_run is not None:
+                require(
+                    active_fact_count == active_run.records_published,
+                    "active_fact_count",
+                )
         if active_run is not None:
             require(active_run.status == "succeeded", "active_run_status")
             require(active_run.finished_at is not None, "active_run_finished_at")
@@ -1552,9 +1681,15 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
             require(pilot.active_source_as_of == active_row.source_as_of, "pilot_source_as_of")
             require(pilot.active_retrieved_at == active_row.retrieved_at, "pilot_retrieved_at")
             require(pilot.active_data_date == active_row.last_data_date, "pilot_data_date")
+            effective_baseline_data_date = (
+                pilot.baseline_data_date
+                if pilot.baseline_data_date is not None
+                else baseline_row.last_data_date if baseline_row is not None else None
+            )
             require(
                 baseline_row is not None
-                and pilot.baseline_data_date == baseline_row.last_data_date,
+                and pilot.baseline_generation == baseline_row.generation == 0
+                and effective_baseline_data_date == baseline_row.last_data_date,
                 "pilot_baseline_data_date",
             )
         rollback_row = None
@@ -1579,6 +1714,17 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
                     pilot.rollback_normalized_generation == rollback_row.generation,
                     "rollback_normalized_generation",
                 )
+        if dataset is not None and dataset.operational_status == "error":
+            require(
+                active_row is not None
+                and _dataset_error_recovery_matches(
+                    session,
+                    dataset=dataset,
+                    active_generation=active_row,
+                    cohort=cohort,
+                ),
+                "dataset_error_recovery",
+            )
 
     if failed:
         raise OperatorError(
@@ -1595,6 +1741,14 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
         "baseline_generation": baseline_row.generation,
         "worker_generation": pointer.generation,
         "pilot_generation": pilot.generation if pilot else None,
+        "effective_baseline_data_date": (
+            baseline_row.last_data_date if baseline_row is not None else None
+        ),
+        "dataset_status_mode": (
+            "failed_refresh_recovery"
+            if dataset.operational_status == "error"
+            else "healthy"
+        ),
         "baseline_metadata_captured": True,
     }
 
@@ -2133,6 +2287,15 @@ def command_retry_failed(args: argparse.Namespace, factory) -> dict[str, Any]:
                 "data_as_of": discovery.release.data_as_of.isoformat(),
                 "source_as_of": discovery.release.source_as_of.isoformat(),
             }
+            expected_semantic_identity = controlled_live_semantic_job_identity(
+                artifact_sha256=package["artifact_sha256"],
+                xsd_sha256=package["xsd_sha256"],
+                release=discovery.release,
+                config=ControlledLivePilotConfig(
+                    enabled=True, cohort_inns=frozenset(cohort)
+                ),
+            )
+            stored_semantic_identity = metadata.get("semantic_identity")
             if (
                 job is None
                 or (
@@ -2150,6 +2313,10 @@ def command_retry_failed(args: argparse.Namespace, factory) -> dict[str, Any]:
                 or any(
                     metadata.get(key) != value
                     for key, value in expected_metadata.items()
+                )
+                or (
+                    stored_semantic_identity is not None
+                    and stored_semantic_identity != expected_semantic_identity
                 )
             ):
                 raise OperatorError(

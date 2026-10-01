@@ -894,6 +894,91 @@ def test_controlled_live_same_artifact_creates_one_job(
         assert first.created is True
         assert second.created is False
         assert second.job.id == first.job.id
+        assert first.job.idempotency_key.startswith("S02:controlled_live:v2:")
+        assert first.job.schedule_metadata["semantic_identity"] == (
+            first.job.idempotency_key
+        )
+
+
+def test_controlled_live_semantic_identity_separates_dates_cohort_and_bytes(
+    pipeline_db,
+    tmp_path,
+):
+    first_inn = _valid_inn(uuid4().int)
+    second_inn = _valid_inn(uuid4().int)
+    _ensure_dataset_and_company(pipeline_db, inn=first_inn)
+    _ensure_dataset_and_company(pipeline_db, inn=second_inn)
+    source = _zip(tmp_path / "semantic.zip", [_document(inn=first_inn)])
+    changed_source = _zip(
+        tmp_path / "semantic-changed.zip",
+        [_document(inn=first_inn, total="126.00")],
+    )
+    xsd = _controlled_xsd(tmp_path / "semantic.xsd")
+    release = _controlled_discovery(
+        artifact_date="20260825",
+        data_as_of=date(2026, 8, 1),
+        actual_until=date(2026, 9, 25),
+        discovered_at=RETRIEVED_AT,
+    )
+    corrected_dates = _controlled_discovery(
+        artifact_date="20260825",
+        data_as_of=date(2026, 9, 1),
+        actual_until=date(2026, 10, 25),
+        discovered_at=RETRIEVED_AT,
+    )
+    first_config = pipeline.ControlledLivePilotConfig(
+        enabled=True,
+        environment=PILOT_ENVIRONMENT,
+        cohort_inns=frozenset({first_inn}),
+        handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+    )
+    second_config = pipeline.ControlledLivePilotConfig(
+        enabled=True,
+        environment=PILOT_ENVIRONMENT,
+        cohort_inns=frozenset({second_inn}),
+        handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+    )
+    with pipeline_db() as session:
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session,
+            approved_by="semantic identity test",
+            approved_at=RETRIEVED_AT,
+        )
+
+        def enqueue(path, discovery, config):
+            return pipeline.enqueue_fns_tax_debt_controlled_live_job(
+                session,
+                source_path=path,
+                xsd_path=xsd,
+                artifact_store=tmp_path / "semantic-raw",
+                discovery=discovery,
+                config=config,
+                retrieved_at=RETRIEVED_AT,
+            )
+
+        first = enqueue(source, release, first_config)
+        same = enqueue(source, release, first_config)
+        different_dates = enqueue(source, corrected_dates, first_config)
+        different_bytes = enqueue(changed_source, release, first_config)
+        different_cohort_identity = pipeline.controlled_live_semantic_job_identity(
+            artifact_sha256=first.job.schedule_metadata["expected_sha256"],
+            xsd_sha256=first.job.schedule_metadata["expected_xsd_sha256"],
+            release=release.release,
+            config=second_config,
+        )
+
+        assert same.created is False
+        assert same.job.id == first.job.id
+        distinct = {
+            first.job.idempotency_key,
+            different_dates.job.idempotency_key,
+            different_cohort_identity,
+            different_bytes.job.idempotency_key,
+        }
+        assert len(distinct) == 4
+        assert different_dates.job.schedule_metadata["expected_sha256"] == (
+            first.job.schedule_metadata["expected_sha256"]
+        )
 
 
 def test_scheduled_same_release_is_check_only_and_does_not_download(

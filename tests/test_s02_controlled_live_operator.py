@@ -774,7 +774,9 @@ def _seed_transitioned_production_shape(
         dataset.retrieved_at = active.retrieved_at
         dataset.last_data_date = active.last_data_date
         dataset.record_count = active.record_count
-        dataset.coverage = active_coverage
+        # The shared DataSet retains common/baseline coverage; pilot coverage
+        # belongs to the immutable active generation.
+        dataset.coverage = dict(baseline.coverage)
         dataset.official_actual_until = active.official_actual_until
         dataset.operational_status = "current"
         pointer.active_pointer = active.staging_pointer
@@ -1017,9 +1019,15 @@ def test_transition_aware_production_shape_and_preflight_are_ready(
             session, cohort=(source_files.inn,)
         )
         active = session.get(FnsTaxDebtPublicationGeneration, seeded["active_id"])
+        baseline = session.get(
+            FnsTaxDebtPublicationGeneration, seeded["baseline_id"]
+        )
+        dataset = session.get(DataSet, seeded["dataset_id"])
         artifact = session.get(FnsTaxDebtRawArtifact, seeded["artifact_id"])
         assert artifact.first_worker_run_id == seeded["baseline_run_id"]
         assert active.worker_run_id == seeded["active_run_id"]
+        assert dataset.coverage == baseline.coverage
+        assert dataset.coverage != active.coverage
         report, _, _, _ = operator.build_preflight_report(
             session,
             source_package=source_files.manifest,
@@ -1041,6 +1049,142 @@ def test_transition_aware_production_shape_and_preflight_are_ready(
     assert report["worker_generation"] == 2
 
 
+def test_real_production_shape_allows_new_semantic_recovery_job(
+    committed_operator_db, source_files, tmp_path, monkeypatch
+):
+    seeded = _seed_transitioned_production_shape(
+        committed_operator_db, tmp_path, source_files.inn
+    )
+    package = operator.load_source_package(source_files.manifest)
+    failed_at = NOW + timedelta(seconds=2)
+    wrong_dates = {
+        "source_as_of": SOURCE_AS_OF.isoformat(),
+        "data_as_of": "2026-09-01",
+        "official_actual_until": "2026-10-25",
+    }
+    with committed_operator_db() as session:
+        dataset = session.get(DataSet, seeded["dataset_id"])
+        baseline = session.get(
+            FnsTaxDebtPublicationGeneration, seeded["baseline_id"]
+        )
+        pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        pilot.baseline_data_date = None
+        dataset.coverage = dict(baseline.coverage)
+        dataset.operational_status = "error"
+        dataset.last_error = "reviewed failed September refresh"
+        dataset.last_error_at = failed_at
+        dataset.retry_count = 1
+        old_identity = (
+            f"{SOURCE_ID}:controlled_live:{package['artifact_sha256']}:"
+            f"{package['xsd_sha256']}:{pipeline.NORMALIZATION_VERSION}"
+        )
+        old_job = create_job(
+            session,
+            source_id=SOURCE_ID,
+            job_type="fns_tax_debt_controlled_live",
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            idempotency_key=old_identity,
+            schedule_metadata={
+                "source_path": str(source_files.artifact.resolve()),
+                "xsd_path": str(source_files.xsd.resolve()),
+                "artifact_store": str((tmp_path / "old-failed-raw").resolve()),
+                "retrieved_at": failed_at.isoformat(),
+                "expected_sha256": package["artifact_sha256"],
+                "expected_xsd_sha256": package["xsd_sha256"],
+                "mode": "controlled_live",
+                "pilot_enabled": True,
+                "pilot_environment": PILOT_ENVIRONMENT,
+                "cohort_inns": [source_files.inn],
+                "discovery_page_url": OFFICIAL_SOURCE_PAGE,
+                "artifact_url": package["artifact_requested_url"],
+                "xsd_url": package["xsd_requested_url"],
+                **wrong_dates,
+            },
+            now=failed_at,
+        ).job
+        old_job.status = "failed"
+        session.add(
+            WorkerRun(
+                job_id=old_job.id,
+                attempt_no=1,
+                started_at=failed_at - timedelta(seconds=1),
+                finished_at=failed_at,
+                status="failed",
+                worker_id="failed-september-refresh",
+                fencing_token=1001,
+                handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+                current_stage="failed",
+                errors=[{"kind": "invalid_data", "message": dataset.last_error}],
+                checksum_metadata={},
+                heartbeat_at=failed_at,
+                records_seen=0,
+                records_written=0,
+                records_rejected=0,
+                records_duplicated=0,
+                records_published=0,
+                retryable=False,
+            )
+        )
+        session.commit()
+        old_job_id = old_job.id
+        old_metadata = dict(old_job.schedule_metadata)
+
+    monkeypatch.setattr(operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient())
+    monkeypatch.setattr(operator, "_utc_now", lambda: failed_at + timedelta(seconds=1))
+    monkeypatch.setattr(
+        worker_execution, "utc_now", lambda: failed_at + timedelta(seconds=1)
+    )
+    base = _preflight_args(source_files, tmp_path)
+    with committed_operator_db() as session:
+        readiness = operator.database_readiness(
+            session, cohort=(source_files.inn,)
+        )
+        pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        assert readiness["dataset_status_mode"] == "failed_refresh_recovery"
+        assert readiness["effective_baseline_data_date"] == DATA_AS_OF
+        assert pilot.baseline_data_date is None
+
+    operator.command_approve(
+        SimpleNamespace(
+            **vars(base),
+            approved_by="S02 recovery regression",
+            approved_at=failed_at.isoformat(),
+            confirm_controlled_live=operator.APPROVE_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    with pytest.raises(operator.OperatorError) as retry_blocked:
+        operator.command_retry_failed(
+            SimpleNamespace(
+                **vars(base),
+                job_id=str(old_job_id),
+                confirm_retry=operator.RETRY_TOKEN,
+            ),
+            committed_operator_db,
+        )
+    assert retry_blocked.value.code == "JOB_MISMATCH"
+
+    enqueued = operator.command_enqueue(
+        SimpleNamespace(
+            **vars(base),
+            artifact_store=tmp_path / "corrected-raw",
+            retrieved_at=(failed_at + timedelta(seconds=1)).isoformat(),
+            timeout_seconds=3600,
+            confirm_enqueue=operator.ENQUEUE_TOKEN,
+        ),
+        committed_operator_db,
+    )
+    assert enqueued["created"] is True
+    assert enqueued["job_id"] != old_job_id
+    with committed_operator_db() as session:
+        old_job = session.get(WorkerJob, old_job_id)
+        pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        assert old_job.status == "failed"
+        assert old_job.schedule_metadata == old_metadata
+        assert old_job.schedule_metadata["data_as_of"] == "2026-09-01"
+        assert pilot.baseline_data_date is None
+
+
 TRANSITION_FAILURE_CASES = (
     "baseline_run_failed",
     "baseline_job_source",
@@ -1057,6 +1201,8 @@ TRANSITION_FAILURE_CASES = (
     "active_scope",
     "active_status",
     "active_pointer",
+    "active_raw_manifest",
+    "active_facts_outside_cohort",
     "active_dataset",
     "dataset_status",
     "pilot_generation",
@@ -1064,6 +1210,7 @@ TRANSITION_FAILURE_CASES = (
     "pilot_fact_generation",
     "pilot_query_generation",
     "pilot_baseline_generation",
+    "pilot_baseline_data_date",
     "pilot_cohort",
     "pilot_checksum",
     "rollback_pointer",
@@ -1167,6 +1314,50 @@ def test_transitioned_chain_tampering_fails_closed(
             active.status = "rollback"
         elif case == "active_pointer":
             pointer.active_pointer = "file:///safe/wrong-active-pointer.json"
+        elif case == "active_raw_manifest":
+            manifest = session.scalar(
+                select(WorkerRawManifest).where(
+                    WorkerRawManifest.run_id == active_run.id
+                )
+            )
+            manifest.checksum = "6" * 64
+        elif case == "active_facts_outside_cohort":
+            outside = Company(
+                inn=_valid_inn(uuid4().int),
+                name="Outside active cohort",
+                entity_type="legal",
+                source="transition_adversary",
+            )
+            session.add(outside)
+            session.flush()
+            fact = session.scalar(
+                select(CompanyTaxDebtSnapshot).where(
+                    CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                    CompanyTaxDebtSnapshot.publication_generation
+                    == active.generation,
+                )
+            )
+            session.add(
+                CompanyTaxDebtSnapshot(
+                    company_id=outside.id,
+                    dataset_id=dataset.id,
+                    normalized_record_id=None,
+                    publication_generation=active.generation,
+                    fact_code=fact.fact_code,
+                    data_date=fact.data_date,
+                    document_date=fact.document_date,
+                    source_document_id=f"outside-active-{uuid4()}",
+                    total_arrears=fact.total_arrears,
+                    total_penalties=fact.total_penalties,
+                    total_fines=fact.total_fines,
+                    total_debt=fact.total_debt,
+                    item_count=fact.item_count,
+                    source_reference=fact.source_reference,
+                    provenance=dict(fact.provenance),
+                    limitation_states=list(fact.limitation_states),
+                    retrieved_at=fact.retrieved_at,
+                )
+            )
         elif case == "active_dataset":
             dataset.record_count += 1
         elif case == "dataset_status":
@@ -1181,6 +1372,8 @@ def test_transitioned_chain_tampering_fails_closed(
             pilot.query_generation = 0
         elif case == "pilot_baseline_generation":
             pilot.baseline_generation = 1
+        elif case == "pilot_baseline_data_date":
+            pilot.baseline_data_date += timedelta(days=1)
         elif case == "pilot_cohort":
             pilot.cohort_inns = [_valid_inn(uuid4().int)]
         elif case == "pilot_checksum":
@@ -1883,12 +2076,15 @@ def test_prepare_baseline_is_bounded_idempotent_and_supports_same_release_run_a(
     assert run["status"] == "succeeded"
 
     with committed_operator_db() as session:
+        pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
         snapshots = session.scalars(
             select(CompanyTaxDebtSnapshot)
             .where(CompanyTaxDebtSnapshot.company_id == company_ids[source_files.inn])
             .order_by(CompanyTaxDebtSnapshot.publication_generation)
         ).all()
         assert [row.publication_generation for row in snapshots] == [0, 1]
+        assert pilot.baseline_generation == 0
+        assert pilot.baseline_data_date == DATA_AS_OF
         assert snapshots[0].normalized_record_id is not None
         assert snapshots[1].normalized_record_id is None
         assert (
