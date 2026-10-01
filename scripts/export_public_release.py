@@ -743,7 +743,13 @@ def _public_company_view(
                         identity=source.code,
                     )
                 )
-        state = "Сведения найдены" if items else _PUBLIC_STATE_LABELS[section.state]
+        state = (
+            _PUBLIC_STATE_LABELS[section.state]
+            if section.facts
+            else "Сведения найдены"
+            if items
+            else _PUBLIC_STATE_LABELS[section.state]
+        )
         sections.append(
             PublicViewSection(
                 section_key=section.section_key,
