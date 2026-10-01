@@ -820,8 +820,8 @@ def test_public_related_person_identifiers_and_public_source_contacts_reach_api_
         item["value"]["related_person_ref"] == founder["value"]["person_ref"]
         for item in personal
     )
-    assert all(item["source"]["name"] == "Firmoteka · вторичный источник" for item in contacts)
-    assert all(item["source"]["source_class"] == "Публичный вторичный источник" for item in contacts)
+    assert all(item["source"]["name"] == "Firmoteka · авторизованный вторичный источник" for item in contacts)
+    assert all(item["source"]["source_class"] == "Авторизованный вторичный источник" for item in contacts)
     assert all(item["source"]["reference"] == f"https://firmoteka.ru/{base.company.inn}" for item in contacts)
     assert all(item["source"]["source_data_date"] == "2026-09-20" for item in contacts)
     assert all(
@@ -839,7 +839,7 @@ def test_public_related_person_identifiers_and_public_source_contacts_reach_api_
         "+7 900 100-20-31",
         "office@example.test",
         "owner@example.test",
-        "Публичный вторичный источник",
+        "Авторизованный вторичный источник",
     ):
         assert value in serialized and value in card.text
     for forbidden in (
