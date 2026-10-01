@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
@@ -18,6 +19,7 @@ from app.worker.contracts import (
     StagingResult,
     ValidationResult,
 )
+from app.worker.errors import InvalidDataError
 
 
 NOW = datetime(2026, 9, 25, 8, tzinfo=timezone.utc)
@@ -82,15 +84,73 @@ def test_worker_discovery_keeps_source_date_and_freshness_separate():
     assert support._worker_spec().source_id == "fns_sme_support"
 
 
+def test_unchanged_release_schedules_metadata_only_check(tmp_path, monkeypatch):
+    discovered = SimpleNamespace(
+        data_url=(
+            "https://file.nalog.ru/opendata/7707329152-rsmppp/"
+            "data-20260915-structure-20230615.zip"
+        ),
+        structure_url=(
+            "https://file.nalog.ru/opendata/7707329152-rsmppp/"
+            "structure-20230615.xsd"
+        ),
+        modified_date=date(2026, 9, 15),
+        data_date=date(2026, 10, 15),
+    )
+    release = support._discover_worker_release(
+        now=NOW,
+        provider=SimpleNamespace(discover_release=lambda: discovered),
+    )
+    state = SimpleNamespace(
+        active_pointer="file:///accepted/normalized-support.jsonl",
+        validation_metadata={
+            "checksum": "a" * 64,
+            "validation": {"release_identity": release.identity},
+        },
+    )
+    captured = {}
+
+    def fake_create_job(_session, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(created=True)
+
+    monkeypatch.setattr(
+        "app.ingestion.fns_bulk_worker.create_job",
+        fake_create_job,
+    )
+    state.approved = True
+    state.enabled = True
+    state.live_mode = False
+    session = SimpleNamespace(get=lambda *_args: state)
+
+    creation = support.schedule_fns_sme_support_check(
+        session,
+        raw_root=tmp_path,
+        now=NOW,
+        provider=SimpleNamespace(discover_release=lambda: discovered),
+    )
+
+    assert creation.created is True
+    assert captured["job_type"] == "fns_sme_support_check"
+    assert captured["schedule_metadata"]["check_only"] is True
+    assert captured["schedule_metadata"]["replay_snapshot"] is False
+    assert captured["schedule_metadata"]["replay_pointer"] is None
+    assert captured["schedule_metadata"]["replay_checksum"] is None
+
+
 def test_postgresql_publish_then_same_release_replay_for_new_master(tmp_path, monkeypatch):
     connection, transaction, factory = _factory()
     first_inn = "7800009911"
     second_inn = "7800009928"
+    third_inn = "7800009935"
+    fourth_inn = "7800009942"
     snapshot = tmp_path / "normalized-support.jsonl"
     snapshot.write_text(
         "\n".join(json.dumps(row, ensure_ascii=False) for row in (
             _row(first_inn, "SUP-1"),
             _row(second_inn, "SUP-2"),
+            _row(third_inn, "SUP-3"),
+            _row(fourth_inn, "SUP-4"),
         )) + "\n",
         encoding="utf-8",
     )
@@ -160,7 +220,7 @@ def test_postgresql_publish_then_same_release_replay_for_new_master(tmp_path, mo
                     metadata={"dataset_code": support.DATASET_CODE},
                 ),
                 checksum_metadata={"artifact_sha256": "a" * 64},
-                counters=ExecutionCounters(records_seen=2, records_written=2),
+                counters=ExecutionCounters(records_seen=4, records_written=4),
             )
             published = support.publish_fns_sme_support_worker_result(
                 session, claim, result
@@ -187,6 +247,40 @@ def test_postgresql_publish_then_same_release_replay_for_new_master(tmp_path, mo
                 FnsSmeSupportEntry
             ).where(FnsSmeSupportEntry.ingestion_run_id == ingestion_run_id)) == 1
 
+            routine_claim = SimpleNamespace(
+                run_id=uuid4(),
+                schedule_metadata={
+                    **release.as_metadata(),
+                    "check_only": True,
+                    "replay_snapshot": False,
+                },
+            )
+
+            def fail_snapshot_access(*_args, **_kwargs):
+                raise AssertionError("routine check traversed the accepted snapshot")
+
+            with monkeypatch.context() as routine_patch:
+                routine_patch.setattr(
+                    support,
+                    "_project_worker_support",
+                    fail_snapshot_access,
+                )
+                routine_patch.setattr(
+                    "app.ingestion.fns_bulk_worker._accepted_replay_path",
+                    fail_snapshot_access,
+                )
+                routine = support.publish_fns_sme_support_worker_result(
+                    session,
+                    routine_claim,
+                    HandlerResult(),
+                )
+            assert routine.counters == ExecutionCounters()
+            assert routine.change_summary is None
+            assert routine.checksum_metadata["freshness"] == "current"
+            assert state.active_pointer == snapshot.as_uri()
+            assert state.generation == 1
+            assert dataset.record_count == 1
+
             session.add(Company(
                 inn=second_inn, name="Second support", entity_type="legal"
             ))
@@ -201,6 +295,29 @@ def test_postgresql_publish_then_same_release_replay_for_new_master(tmp_path, mo
                     "replay_checksum": checksum,
                 },
             )
+            bad_checksum_claim = SimpleNamespace(
+                run_id=uuid4(),
+                schedule_metadata={
+                    **replay_claim.schedule_metadata,
+                    "replay_checksum": "f" * 64,
+                },
+            )
+            with pytest.raises(
+                InvalidDataError,
+                match="accepted normalized replay checksum changed",
+            ):
+                support.publish_fns_sme_support_worker_result(
+                    session,
+                    bad_checksum_claim,
+                    HandlerResult(),
+                )
+            assert state.active_pointer == snapshot.as_uri()
+            assert state.generation == 1
+            assert dataset.record_count == 1
+            assert session.scalar(sa.select(sa.func.count()).select_from(
+                FnsSmeSupportEntry
+            ).where(FnsSmeSupportEntry.ingestion_run_id == ingestion_run_id)) == 1
+
             replay = support.publish_fns_sme_support_worker_result(
                 session, replay_claim, HandlerResult()
             )
@@ -214,6 +331,52 @@ def test_postgresql_publish_then_same_release_replay_for_new_master(tmp_path, mo
                 FnsSmeSupportEntry
             ).where(FnsSmeSupportEntry.ingestion_run_id == ingestion_run_id)) == 2
             assert dataset.coverage["change_summary"]["replayed_facts"] == 0
+
+            third = Company(
+                inn=third_inn,
+                name="Third support",
+                entity_type="legal",
+            )
+            fourth = Company(
+                inn=fourth_inn,
+                name="Fourth support",
+                entity_type="legal",
+            )
+            session.add_all((third, fourth))
+            session.flush()
+            targeted_claim = SimpleNamespace(
+                run_id=uuid4(),
+                schedule_metadata={
+                    **replay_claim.schedule_metadata,
+                    "company_enrichment_run_ids": [str(uuid4())],
+                    "company_ids": [third.id],
+                },
+            )
+            targeted = support.publish_fns_sme_support_worker_result(
+                session,
+                targeted_claim,
+                HandlerResult(),
+            )
+            repeated_targeted = support.publish_fns_sme_support_worker_result(
+                session,
+                targeted_claim,
+                HandlerResult(),
+            )
+            assert targeted.counters.records_published == 1
+            assert targeted.change_summary.replayed_facts == 1
+            assert repeated_targeted.counters.records_published == 0
+            assert session.scalar(sa.select(sa.func.count()).select_from(
+                FnsSmeSupportEntry
+            ).where(
+                FnsSmeSupportEntry.ingestion_run_id == ingestion_run_id,
+                FnsSmeSupportEntry.recipient_inn == third_inn,
+            )) == 1
+            assert session.scalar(sa.select(sa.func.count()).select_from(
+                FnsSmeSupportEntry
+            ).where(
+                FnsSmeSupportEntry.ingestion_run_id == ingestion_run_id,
+                FnsSmeSupportEntry.recipient_inn == fourth_inn,
+            )) == 0
     finally:
         transaction.rollback()
         connection.close()

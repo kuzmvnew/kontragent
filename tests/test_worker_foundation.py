@@ -376,6 +376,32 @@ def test_controlled_work_units_count_real_children():
         "company_enrichment_local_replay",
         {"company_ids": [1, 2], "company_enrichment_run_ids": ["a", "b"]},
     ) == 2
+    with pytest.raises(
+        ValueError,
+        match="snapshot replay has no bounded work-unit contract",
+    ):
+        job_work_units(
+            "company_enrichment_local_replay",
+            {
+                "check_only": True,
+                "replay_snapshot": True,
+                "company_ids": [1, 2],
+                "company_enrichment_run_ids": ["a", "b"],
+            },
+        )
+    with pytest.raises(
+        ValueError,
+        match="snapshot replay has no bounded work-unit contract",
+    ):
+        job_work_units(
+            "fns_sme_support_check",
+            {
+                "check_only": True,
+                "replay_snapshot": True,
+                "replay_pointer": "file:///accepted/normalized-support.jsonl",
+                "controlled_work_units": 1,
+            },
+        )
     assert job_work_units(
         "girbo_accounting_check",
         {"target_inns": ["1", "2"], "years": [2024, 2025]},
@@ -485,6 +511,49 @@ def test_controlled_claim_does_not_admit_override_below_observed_work(
             .where(WorkerRun.job_id == job_id)
         ) == runs_before
         assert session.get(WorkerLease, source_id) is None
+
+
+def test_controlled_claim_leaves_legacy_sme_snapshot_replay_pending(worker_db):
+    registry = HandlerRegistry()
+    source_id = _identity("fns-sme-support")
+    _register_fixture(worker_db, registry, source_id, _empty_handler)
+    metadata = {
+        "check_only": True,
+        "replay_snapshot": True,
+        "replay_pointer": "file:///accepted/normalized-support.jsonl",
+        "replay_checksum": "a" * 64,
+    }
+    job_id = _create(
+        worker_db,
+        source_id,
+        job_type="fns_sme_support_check",
+        schedule_metadata=metadata,
+    )
+
+    with worker_db() as session:
+        claim = claim_next_job(
+            session,
+            registry,
+            worker_id="bounded-source-control-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW + timedelta(seconds=1),
+            allowed_source_ids=(source_id,),
+            allowed_lanes=("source_control",),
+            max_work_units=1,
+        )
+        session.commit()
+
+    assert claim is None
+    with worker_db() as session:
+        job = session.get(WorkerJob, job_id)
+        assert job.status == "queued"
+        assert job.schedule_metadata == metadata
+        assert session.get(WorkerLease, source_id) is None
+        assert session.scalar(
+            sa.select(sa.func.count())
+            .select_from(WorkerRun)
+            .where(WorkerRun.job_id == job_id)
+        ) == 0
 
 
 def test_controlled_claim_skips_oversized_batch_and_preserves_it(worker_db):
