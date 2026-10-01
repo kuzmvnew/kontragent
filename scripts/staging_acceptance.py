@@ -198,7 +198,8 @@ def validate_shape_manifest(path: Path) -> dict[str, Any]:
 
 class DatabaseFactory:
     def __init__(self, admin_url: str, token: str):
-        self.admin_url = _libpq_url(admin_url)
+        self.sqlalchemy_admin_url = admin_url
+        self.libpq_admin_url = _libpq_url(admin_url)
         self.token = token
         self.created: list[str] = []
         parsed = make_url(admin_url)
@@ -208,7 +209,7 @@ class DatabaseFactory:
             )
 
     def check_server(self) -> dict[str, Any]:
-        with psycopg.connect(self.admin_url) as connection:
+        with psycopg.connect(self.libpq_admin_url) as connection:
             row = connection.execute(
                 "SELECT current_database(), current_user, "
                 "current_setting('server_version'), "
@@ -238,13 +239,13 @@ class DatabaseFactory:
         name = f"{DATABASE_PREFIX}{self.token}_{safe_label}"
         if name in PROTECTED_DATABASES or not name.startswith(DATABASE_PREFIX):
             raise AcceptanceError("unsafe acceptance database name")
-        with psycopg.connect(self.admin_url, autocommit=True) as connection:
+        with psycopg.connect(self.libpq_admin_url, autocommit=True) as connection:
             connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
         self.created.append(name)
-        return _database_url(self.admin_url, name)
+        return _database_url(self.sqlalchemy_admin_url, name)
 
     def drop_all(self) -> None:
-        with psycopg.connect(self.admin_url, autocommit=True) as connection:
+        with psycopg.connect(self.libpq_admin_url, autocommit=True) as connection:
             for name in reversed(self.created):
                 if not name.startswith(DATABASE_PREFIX) or name in PROTECTED_DATABASES:
                     raise AcceptanceError(f"refusing unsafe database cleanup: {name}")

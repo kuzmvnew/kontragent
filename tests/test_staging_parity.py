@@ -42,6 +42,7 @@ from scripts.schema_fingerprint import (
 )
 from scripts.staging_acceptance import (
     AcceptanceError,
+    DatabaseFactory,
     _access_contract,
     _header_value,
     _redact,
@@ -499,6 +500,43 @@ def test_acceptance_evidence_redacts_database_passwords():
     assert "very-secret" not in redacted
     assert "second-secret" not in redacted
     assert redacted.count("***") == 2
+
+
+def test_database_factory_preserves_sqlalchemy_driver_and_uses_libpq_for_psycopg(
+    monkeypatch,
+):
+    connected = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def execute(self, statement):
+            return None
+
+    def connect(url, **kwargs):
+        connected.append((url, kwargs))
+        return Connection()
+
+    monkeypatch.setattr("scripts.staging_acceptance.psycopg.connect", connect)
+    factory = DatabaseFactory(
+        "postgresql+psycopg://user:pass@host/postgres",
+        "token",
+    )
+
+    created_url = factory.create("db")
+
+    assert factory.sqlalchemy_admin_url == (
+        "postgresql+psycopg://user:pass@host/postgres"
+    )
+    assert factory.libpq_admin_url == "postgresql://user:pass@host/postgres"
+    assert created_url == "postgresql+psycopg://user:pass@host/sp01_token_db"
+    assert connected == [
+        ("postgresql://user:pass@host/postgres", {"autocommit": True})
+    ]
 
 
 def test_promotion_installs_exact_accepted_artifact_without_resolving_dependencies():
