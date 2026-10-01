@@ -244,7 +244,9 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
     public_facts = tuple(item for item in facts if item.rights == FactRights.PUBLIC)
     restricted = tuple(item for item in facts if item.rights != FactRights.PUBLIC)
     assert public_facts
-    assert not restricted
+    assert restricted
+    assert all(item.section_key == "contacts" for item in restricted)
+    assert {item.value["contact_scope"] for item in restricted} == {"PERSONAL"}
     founder = next(item for item in public_facts if item.field_key == "founder")
     manager = next(item for item in public_facts if item.field_key == "manager")
     event = next(item for item in public_facts if item.field_key == "event")
@@ -283,15 +285,10 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
     contact_candidates = tuple(
         item for item in public_facts if item.section_key == "contacts"
     )
-    assert len(contact_candidates) == 4
+    assert len(contact_candidates) == 2
     assert {item.field_key for item in contact_candidates} == {"phone", "email"}
-    assert {item.value["contact_scope"] for item in contact_candidates} == {
-        "CORPORATE",
-        "PERSONAL",
-    }
-    personal = tuple(
-        item for item in contact_candidates if item.value["contact_scope"] == "PERSONAL"
-    )
+    assert {item.value["contact_scope"] for item in contact_candidates} == {"CORPORATE"}
+    personal = tuple(item for item in restricted if item.section_key == "contacts")
     assert {item.value["contact_type"] for item in personal} == {"PHONE", "EMAIL"}
     assert all(item.value["related_person_ref"] == founder.value["person_ref"] for item in personal)
     assert all(item.value["person_name"] == "Иванов Иван Иванович" for item in personal)
@@ -331,7 +328,11 @@ def test_firmoteka_public_domain_rights_and_privacy_whitelist():
         contact_view,
         audience=Audience.PUBLIC,
     ).sections[0].facts
-    assert len(public_contacts) == 4
+    assert len(public_contacts) == 2
+    assert {
+        item.selected_evidence.value["contact_scope"]
+        for item in public_contacts
+    } == {"CORPORATE"}
     assert all(item.anchor.company_id is None for item in public_contacts)
     assert len(filter_company_view(
         contact_view,

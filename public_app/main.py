@@ -154,7 +154,7 @@ def create_app(repository=None) -> FastAPI:
             {
                 "Content-Security-Policy": (
                     "default-src 'self'; img-src 'self' data:; style-src 'self'; "
-                    "script-src 'none'; base-uri 'self'; form-action 'self'; "
+                    "script-src 'self'; base-uri 'self'; form-action 'self'; "
                     "frame-ancestors 'none'; object-src 'none'"
                 ),
                 "Referrer-Policy": "strict-origin-when-cross-origin",

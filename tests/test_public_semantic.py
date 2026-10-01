@@ -799,29 +799,18 @@ def test_public_related_person_identifiers_and_public_source_contacts_reach_api_
     manager = sections_by_key["management"]["items"][0]
     contacts = sections_by_key["contacts"]["items"]
     assert founder["value"]["name"] == "Чундышко Гисса Арамбиевич"
-    assert founder["value"]["identifiers"] == [
-        {"identifier_type": "INN", "value": "010701178084"}
-    ]
+    assert "identifiers" not in founder["value"]
+    assert "individual_entrepreneur" not in founder["value"] or founder["value"]["individual_entrepreneur"] is None
     assert founder["value"]["person_ref"] == manager["value"]["person_ref"]
     assert {item["relation_type"] for item in founder["value"]["relations"]} == {
         "FOUNDER",
         "MANAGER",
     }
-    assert len(contacts) == 4
+    assert len(contacts) == 2
     assert {item["value"]["contact_type"] for item in contacts} == {"PHONE", "EMAIL"}
-    assert {item["value"]["contact_scope"] for item in contacts} == {
-        "CORPORATE",
-        "PERSONAL",
-    }
-    personal = [
-        item for item in contacts if item["value"]["contact_scope"] == "PERSONAL"
-    ]
-    assert all(
-        item["value"]["related_person_ref"] == founder["value"]["person_ref"]
-        for item in personal
-    )
-    assert all(item["source"]["name"] == "Firmoteka · вторичный источник" for item in contacts)
-    assert all(item["source"]["source_class"] == "Публичный вторичный источник" for item in contacts)
+    assert {item["value"]["contact_scope"] for item in contacts} == {"CORPORATE"}
+    assert all(item["source"]["name"] == "Firmoteka · авторизованный вторичный источник" for item in contacts)
+    assert all(item["source"]["source_class"] == "Авторизованный вторичный источник" for item in contacts)
     assert all(item["source"]["reference"] == f"https://firmoteka.ru/{base.company.inn}" for item in contacts)
     assert all(item["source"]["source_data_date"] == "2026-09-20" for item in contacts)
     assert all(
@@ -830,18 +819,18 @@ def test_public_related_person_identifiers_and_public_source_contacts_reach_api_
         for item in contacts
     )
     serialized = json.dumps(payload, ensure_ascii=False)
-    assert "010701178084" in serialized
-    assert "010701178084" in card.text
+    assert "010701178084" not in serialized
+    assert "010701178084" not in card.text
     assert "Чундышко Гисса Арамбиевич" in card.text
-    assert card.text.count('class="semantic-card contact-card"') == 4
+    assert card.text.count('class="semantic-card contact-card"') == 2
     for value in (
         "+7 900 100-20-30",
-        "+7 900 100-20-31",
         "office@example.test",
-        "owner@example.test",
-        "Публичный вторичный источник",
+        "Авторизованный вторичный источник",
     ):
         assert value in serialized and value in card.text
+    for value in ("+7 900 100-20-31", "owner@example.test"):
+        assert value not in serialized and value not in card.text
     for forbidden in (
         "NEVER-PUBLIC",
         "passport_number",

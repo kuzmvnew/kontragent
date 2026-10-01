@@ -86,12 +86,15 @@ _PUBLIC_SOURCE_NAMES = {
     "TAXOFFENCE": "Налоговые правонарушения по данным ФНС",
     "HEADCOUNT": "Среднесписочная численность по данным ФНС",
     "ROSZDRAV_LICENSES": "Единый реестр лицензий Росздравнадзора",
-    "FIRMOTEKA_AUTHORIZED_BRIDGE": "Firmoteka · вторичный источник",
+    "ERKNM": "Единый реестр контрольных (надзорных) мероприятий",
+    "CBR_WARNING_LIST": "Предупредительный список Банка России",
+    "MOSCOW_COURTS_OFFICIAL": "Официальный портал судов общей юрисдикции Москвы",
+    "FIRMOTEKA_AUTHORIZED_BRIDGE": "Firmoteka · авторизованный вторичный источник",
 }
 _PUBLIC_SOURCE_CLASS_NAMES = {
     "OFFICIAL_PRIMARY": "Официальный первичный источник",
     "OFFICIAL_API_OPEN_DATA": "Официальные открытые данные",
-    "AUTHORIZED_BRIDGE": "Публичный вторичный источник",
+    "AUTHORIZED_BRIDGE": "Авторизованный вторичный источник",
     "DERIVED": "Расчёт на основе опубликованных данных",
 }
 _PUBLIC_SECTION_TITLES = {
@@ -109,6 +112,12 @@ _PUBLIC_SECTION_TITLES = {
     "tax": "Налоги",
     "enforcement": "Исполнительные производства",
     "licenses": "Лицензии",
+    "courts": "Суды",
+    "bankruptcy": "Банкротство",
+    "procurement": "Закупки и РНП",
+    "restrictions": "Ограничения и предупреждения",
+    "inspections": "Проверки и контрольные мероприятия",
+    "connections": "Связи",
     "events": "События компании",
     "risk": "Аналитическая оценка",
     "summary": "Краткий вывод",
@@ -155,6 +164,11 @@ _PUBLIC_FIELD_LABELS = {
     "aggregate": "Сводные данные",
     "case": "Исполнительное производство",
     "license": "Лицензия",
+    "availability": "Состояние проверки",
+    "inspection": "Контрольное мероприятие",
+    "warning": "Предупреждение Банка России",
+    "general_court_check": "Суды общей юрисдикции",
+    "person_relation": "Связь с лицом",
     "event": "Событие",
     "legal_event": "Событие",
     "assessment": "Оценка",
@@ -729,7 +743,13 @@ def _public_company_view(
                         identity=source.code,
                     )
                 )
-        state = "Сведения найдены" if items else _PUBLIC_STATE_LABELS[section.state]
+        state = (
+            _PUBLIC_STATE_LABELS[section.state]
+            if section.facts
+            else "Сведения найдены"
+            if items
+            else _PUBLIC_STATE_LABELS[section.state]
+        )
         sections.append(
             PublicViewSection(
                 section_key=section.section_key,

@@ -13,10 +13,11 @@ from uuid import UUID, uuid5
 
 import sqlalchemy as sa
 from psycopg.rows import dict_row
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.contracts.data_readiness import OperationalStatus, is_dataset_stale
 from app.contracts.company_view_v1 import (
     Audience,
     ContactScope,
@@ -65,6 +66,12 @@ SECTION_KEYS = (
     "tax",
     "enforcement",
     "licenses",
+    "courts",
+    "bankruptcy",
+    "procurement",
+    "restrictions",
+    "inspections",
+    "connections",
     "events",
     "risk",
     "summary",
@@ -87,6 +94,94 @@ _RIGHTS_RANK = {
     FactRights.AUTHENTICATED_ONLY: 2,
     FactRights.INTERNAL_ONLY: 3,
 }
+_SECTION_STATE_RANK = {
+    DataState.CONFLICTING_EVIDENCE: 100,
+    DataState.PARSING_ERROR: 95,
+    DataState.TIMEOUT: 90,
+    DataState.SOURCE_UNAVAILABLE: 85,
+    DataState.STALE_DATA: 80,
+    DataState.PARTIAL: 75,
+    DataState.UNKNOWN: 70,
+    DataState.NOT_CHECKED: 65,
+    DataState.NOT_APPLICABLE: 20,
+    DataState.FOUND: 10,
+    DataState.NOT_FOUND: 10,
+}
+
+
+class SemanticFieldPolicy(BaseModel):
+    """Field-level source authority and fail-closed public semantics."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    official_sources: tuple[str, ...] = ()
+    bridge_sources: tuple[str, ...] = ()
+    derived: bool = False
+    not_applicable_allowed: bool = False
+    conflict_state: DataState = DataState.CONFLICTING_EVIDENCE
+    stale_state: DataState = DataState.STALE_DATA
+    unknown_state: DataState = DataState.UNKNOWN
+    source_unavailable_state: DataState = DataState.SOURCE_UNAVAILABLE
+
+
+def _policy(
+    *official_sources: str,
+    bridge: bool = False,
+    derived: bool = False,
+    not_applicable: bool = False,
+) -> SemanticFieldPolicy:
+    return SemanticFieldPolicy(
+        official_sources=tuple(official_sources),
+        bridge_sources=("FIRMOTEKA_AUTHORIZED_BRIDGE",) if bridge else (),
+        derived=derived,
+        not_applicable_allowed=not_applicable,
+    )
+
+
+# Exact field entries override section wildcards.  This registry is deliberately
+# provider-agnostic at the contract boundary: it only defines which accepted
+# evidence authorities may win a semantic coordinate.
+SEMANTIC_FIELD_POLICIES: dict[str, SemanticFieldPolicy] = {
+    "identity.*": _policy("MASTER_REGISTRY", bridge=True),
+    "status.*": _policy("MASTER_REGISTRY", bridge=True),
+    "registration.*": _policy("MASTER_REGISTRY", bridge=True),
+    "address.*": _policy("MASTER_REGISTRY", bridge=True),
+    "activity.*": _policy("MASTER_REGISTRY", bridge=True),
+    "management.*": _policy("MASTER_REGISTRY", bridge=True),
+    "founders.*": _policy("MASTER_REGISTRY", bridge=True),
+    "contacts.*": _policy(bridge=True),
+    "capital.*": _policy("MASTER_REGISTRY", bridge=True),
+    "finances.REVENUE": _policy("REVEXP", bridge=True),
+    "finances.EXPENSES": _policy("REVEXP", bridge=True),
+    "finances.PROFIT_LOSS": _policy("REVEXP", bridge=True),
+    "finances.NET_PROFIT": _policy("GIRBO", bridge=True),
+    "finances.EQUITY": _policy("GIRBO", bridge=True),
+    "finances.COMPANY_VALUE": _policy(bridge=True, derived=True),
+    "employees.EMPLOYEE_COUNT": _policy("HEADCOUNT", bridge=True),
+    "tax.paid": _policy("PAYTAX", bridge=True),
+    "tax.debt": _policy("DEBTAM", bridge=True),
+    "tax.offence": _policy("TAXOFFENCE"),
+    "enforcement.*": _policy("FSSP", bridge=True),
+    "licenses.*": _policy("ROSZDRAV_LICENSES", bridge=True),
+    "courts.*": _policy("MOSCOW_COURTS_OFFICIAL"),
+    "bankruptcy.*": _policy("FEDRESURS"),
+    "procurement.*": _policy("EIS_RNP", not_applicable=True),
+    "restrictions.*": _policy("CBR_WARNING_LIST"),
+    "inspections.*": _policy("ERKNM", not_applicable=True),
+    "connections.*": _policy("MASTER_REGISTRY", bridge=True, derived=True),
+    "events.*": _policy(bridge=True),
+    "risk.*": _policy(derived=True),
+    "summary.*": _policy(derived=True),
+    "source_coverage.*": _policy(derived=True),
+    "freshness.*": _policy(derived=True),
+}
+
+
+def semantic_field_policy(section_key: str, field_key: str) -> SemanticFieldPolicy:
+    return SEMANTIC_FIELD_POLICIES.get(
+        f"{section_key}.{field_key}",
+        SEMANTIC_FIELD_POLICIES.get(f"{section_key}.*", SemanticFieldPolicy()),
+    )
 
 
 class SemanticCandidate(BaseModel):
@@ -105,9 +200,19 @@ class SemanticCandidate(BaseModel):
     confidence: float = Field(ge=0, le=1)
     freshness: Freshness
     rights: FactRights
+    state: DataState = DataState.FOUND
     period_identity: str = ""
     item_identity: str = ""
     limitations: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_state_policy(self) -> "SemanticCandidate":
+        policy = semantic_field_policy(self.section_key, self.field_key)
+        if self.state == DataState.NOT_APPLICABLE and not policy.not_applicable_allowed:
+            raise ValueError(
+                f"NOT_APPLICABLE is not allowed for {self.section_key}.{self.field_key}"
+            )
+        return self
 
 
 def _aware(value: Any, fallback: datetime | None = None) -> datetime:
@@ -245,8 +350,19 @@ def _evidence(candidate: SemanticCandidate) -> SemanticEvidence:
 def _selection_key(candidate: SemanticCandidate) -> tuple[Any, ...]:
     source_date = candidate.source_data_date.toordinal() if candidate.source_data_date else -1
     retrieved = candidate.retrieved_at.timestamp()
+    policy = semantic_field_policy(candidate.section_key, candidate.field_key)
+    if candidate.source_code in policy.official_sources:
+        authority_rank = 1_200
+    elif candidate.source_class == EvidenceSourceClass.OFFICIAL_PRIMARY:
+        authority_rank = 1_000
+    elif candidate.source_class == EvidenceSourceClass.OFFICIAL_API_OPEN_DATA:
+        authority_rank = 800
+    elif candidate.source_code in policy.bridge_sources:
+        authority_rank = 500
+    else:
+        authority_rank = _SOURCE_RANK[candidate.source_class]
     return (
-        -_SOURCE_RANK[candidate.source_class],
+        -authority_rank,
         -source_date,
         -retrieved,
         candidate.source_code,
@@ -269,8 +385,22 @@ def select_semantic_facts(
         selected = ordered[0]
         selected_evidence = _evidence(selected)
         alternatives = tuple(_evidence(item) for item in ordered[1:])
-        conflict = any(not _materially_equal(item.value, selected.value) for item in ordered[1:])
-        state = DataState.CONFLICTING_EVIDENCE if conflict else DataState.FOUND
+        comparable = tuple(
+            item
+            for item in ordered[1:]
+            if item.state in {DataState.FOUND, DataState.STALE_DATA}
+        )
+        conflict = (
+            selected.state in {DataState.FOUND, DataState.STALE_DATA}
+            and any(not _materially_equal(item.value, selected.value) for item in comparable)
+        )
+        state = (
+            DataState.CONFLICTING_EVIDENCE
+            if conflict
+            else DataState.STALE_DATA
+            if selected.state == DataState.FOUND and selected.freshness == Freshness.STALE
+            else selected.state
+        )
         facts.append(
             SemanticFact(
                 anchor=_anchor(selected),
@@ -302,9 +432,10 @@ def _candidate(
     item_identity: str = "",
     confidence: float = 1.0,
     freshness: Freshness | None = None,
+    state: DataState = DataState.FOUND,
     limitations: tuple[str, ...] = (),
 ) -> SemanticCandidate | None:
-    if value in (None, "", [], {}):
+    if state == DataState.FOUND and value in (None, "", [], {}):
         return None
     return SemanticCandidate(
         company_id=company_id,
@@ -320,6 +451,7 @@ def _candidate(
         confidence=confidence,
         freshness=freshness or (Freshness.CURRENT if source_data_date else Freshness.UNKNOWN),
         rights=rights,
+        state=state,
         period_identity=period_identity,
         item_identity=item_identity,
         limitations=limitations,
@@ -762,7 +894,16 @@ def _contact_candidates(
                 item_identity=item_identity,
                 source_data_date=source_date,
                 evidence_identity=f"{bridge['evidence_identity']}:contacts:{item_identity}",
-                **{key: value for key, value in bridge.items() if key != "evidence_identity"},
+                rights=(
+                    FactRights.PUBLIC
+                    if contact.contact_scope == ContactScope.CORPORATE
+                    else FactRights.AUTHENTICATED_ONLY
+                ),
+                **{
+                    key: value
+                    for key, value in bridge.items()
+                    if key not in {"evidence_identity", "rights"}
+                },
             ),
         )
     return tuple(result)
@@ -1109,6 +1250,141 @@ def normalize_firmoteka_projection(
     return tuple(values)
 
 
+def _dataset_observation_state(
+    dataset: dict[str, Any],
+    *,
+    observed_at: datetime,
+) -> DataState:
+    """Map dataset operational/freshness metadata to public semantic state."""
+
+    if not dataset.get("enabled") or _date(dataset.get("last_data_date")) is None:
+        return DataState.SOURCE_UNAVAILABLE
+    status = str(dataset.get("operational_status") or "").strip().casefold()
+    if status in {
+        OperationalStatus.ERROR.value,
+        OperationalStatus.UNAVAILABLE.value,
+        OperationalStatus.SOURCE_BLOCKED.value,
+        OperationalStatus.ACCESS_PENDING.value,
+        OperationalStatus.NOT_CONFIGURED.value,
+    }:
+        return DataState.SOURCE_UNAVAILABLE
+    actual_until = _date(dataset.get("official_actual_until"))
+    if actual_until is not None and observed_at.date() > actual_until:
+        return DataState.STALE_DATA
+    if status == OperationalStatus.STALE.value:
+        return DataState.STALE_DATA
+    if is_dataset_stale(
+        now=observed_at,
+        freshness_policy=str(dataset.get("freshness_policy") or "irregular"),
+        source_as_of=_aware(dataset.get("source_as_of")) if dataset.get("source_as_of") else None,
+        last_success_at=(
+            _aware(dataset.get("last_success_at"))
+            if dataset.get("last_success_at")
+            else None
+        ),
+        threshold_seconds=dataset.get("freshness_threshold_seconds"),
+    ):
+        return DataState.STALE_DATA
+    return DataState.FOUND
+
+
+def _safe_text_list(value: Any) -> list[str]:
+    """Extract display text from provider collections without forwarding objects."""
+
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = _semantic_text(item)
+        if text is None and isinstance(item, dict):
+            text = next(
+                (
+                    _semantic_text(item.get(key))
+                    for key in ("name", "title", "value", "caption")
+                    if _semantic_text(item.get(key))
+                ),
+                None,
+            )
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _safe_inspection_value(row: dict[str, Any]) -> dict[str, Any]:
+    """Whitelist ERKNM fields used by the public semantic contract."""
+
+    return {
+        "registry_number": _semantic_text(row.get("erpid")),
+        "status": _semantic_text(row.get("status")),
+        "control_type": _semantic_text(row.get("kind_control")),
+        "inspection_type": _semantic_text(row.get("kind_knm")),
+        "authority": _semantic_text(row.get("kno_organization")),
+        "start_date": _date(row.get("start_date")),
+        "end_date": _date(row.get("end_date")),
+        "place": _semantic_text(row.get("place") or row.get("object_address")),
+        "risk_category": _semantic_text(row.get("risk_category")),
+        "result": _semantic_text(row.get("result_text")),
+        "warning": _semantic_text(row.get("warning_caption")),
+    }
+
+
+def _safe_cbr_warning_value(row: dict[str, Any]) -> dict[str, Any]:
+    """Whitelist official Bank of Russia warning-list fields."""
+
+    return {
+        "name": _semantic_text(row.get("name")),
+        "entry_date": _date(row.get("entry_date")),
+        "update_date": _date(row.get("update_date")),
+        "signs": _safe_text_list(row.get("signs")),
+        "regions": _safe_text_list(row.get("regions")),
+        "liquidation_status": _semantic_text(row.get("liquidation_status")),
+        "organization_type": _semantic_text(row.get("org_type")),
+    }
+
+
+def _connection_candidates(
+    candidates: Iterable[SemanticCandidate],
+) -> tuple[SemanticCandidate, ...]:
+    """Derive provider-independent public relation facts from selected domains."""
+
+    result: list[SemanticCandidate] = []
+    for candidate in candidates:
+        if candidate.section_key not in {"management", "founders"}:
+            continue
+        if not isinstance(candidate.value, dict):
+            continue
+        name = _semantic_text(candidate.value.get("name"))
+        if not name:
+            continue
+        relation = "MANAGER" if candidate.section_key == "management" else "FOUNDER"
+        relation_value = {
+            "name": name,
+            "relation": relation,
+            "position": _semantic_text(candidate.value.get("position")),
+            "share": _semantic_text(candidate.value.get("share")),
+            "current_status": _semantic_text(candidate.value.get("current_status")),
+        }
+        result.append(
+            candidate.model_copy(
+                update={
+                    "section_key": "connections",
+                    "field_key": "person_relation",
+                    "value": relation_value,
+                    "item_identity": f"{relation}:{_person_name_key(name)}",
+                    "limitations": tuple(
+                        dict.fromkeys(
+                            (
+                                *candidate.limitations,
+                                "Связь сформирована из опубликованного факта о руководстве или составе участников.",
+                            )
+                        )
+                    ),
+                }
+            )
+        )
+    return tuple(result)
+
+
 def _rows(cursor: Any, query: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
     cursor.execute(query, params)
     return [dict(row) for row in cursor.fetchall()]
@@ -1120,7 +1396,12 @@ def _one(cursor: Any, query: str, params: tuple[Any, ...]) -> dict[str, Any] | N
     return dict(row) if row else None
 
 
-def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticCandidate, ...]:
+def load_semantic_candidates(
+    cursor: Any,
+    *,
+    company_id: int,
+    observed_at: datetime | None = None,
+) -> tuple[SemanticCandidate, ...]:
     company = _one(cursor, "SELECT * FROM companies WHERE id=%s", (company_id,))
     if company is None:
         return ()
@@ -1329,6 +1610,286 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
                 confidence=1.0,
             ),
         )
+    # Official inspection facts. Absence is scoped only to already-loaded ERKNM periods.
+    erknm_dataset = _one(
+        cursor,
+        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, "
+        "official_actual_until, operational_status, freshness_policy, source_as_of, "
+        "freshness_threshold_seconds FROM data_sets WHERE code=%s",
+        ("erknm_inspections",),
+    )
+    if erknm_dataset is not None:
+        erknm_retrieved = _aware(
+            erknm_dataset.get("retrieved_at") or erknm_dataset.get("last_success_at")
+        )
+        erknm_date = _date(erknm_dataset.get("last_data_date"))
+        erknm_state = _dataset_observation_state(
+            erknm_dataset,
+            observed_at=_aware(observed_at),
+        )
+        erknm_shared = dict(
+            source_code="ERKNM",
+            source_class=EvidenceSourceClass.OFFICIAL_API_OPEN_DATA,
+            evidence_identity=f"erknm:dataset:{erknm_dataset['id']}",
+            source_ref=erknm_dataset.get("source_url"),
+            retrieved_at=erknm_retrieved,
+            source_data_date=erknm_date,
+            rights=FactRights.PUBLIC,
+            confidence=1.0,
+            freshness=(
+                Freshness.STALE
+                if erknm_state == DataState.STALE_DATA
+                else Freshness.UNKNOWN
+                if erknm_state == DataState.SOURCE_UNAVAILABLE
+                else Freshness.CURRENT
+            ),
+        )
+        if not erknm_dataset.get("enabled") or erknm_date is None:
+            _append(
+                values,
+                _candidate(
+                    company_id,
+                    "inspections",
+                    "availability",
+                    None,
+                    state=erknm_state,
+                    limitations=(
+                        "Официальный набор ЕРКНМ зарегистрирован, но актуальный опубликованный snapshot сейчас недоступен.",
+                    ),
+                    **erknm_shared,
+                ),
+            )
+        else:
+            match_params = (
+                erknm_dataset["id"],
+                str(company["inn"]),
+                str(company.get("ogrn") or ""),
+            )
+            count_row = _one(
+                cursor,
+                "SELECT count(*) AS record_count FROM erknm_inspections "
+                "WHERE dataset_id=%s AND (subject_inn=%s OR (subject_inn IS NULL AND subject_ogrn=%s))",
+                match_params,
+            ) or {"record_count": 0}
+            record_count = int(count_row.get("record_count") or 0)
+            inspection_rows = _rows(
+                cursor,
+                "SELECT erpid, data_date, status, kind_control, kind_knm, kno_organization, "
+                "start_date, end_date, place, object_address, risk_category, result_text, warning_caption "
+                "FROM erknm_inspections "
+                "WHERE dataset_id=%s AND (subject_inn=%s OR (subject_inn IS NULL AND subject_ogrn=%s)) "
+                "ORDER BY start_date DESC NULLS LAST, id DESC LIMIT 20",
+                match_params,
+            )
+            _append(
+                values,
+                _candidate(
+                    company_id,
+                    "inspections",
+                    "availability",
+                    {
+                        "record_count": record_count,
+                        "loaded_through": erknm_date,
+                        "records_limited": record_count > len(inspection_rows),
+                    },
+                    state=(
+                        erknm_state
+                        if erknm_state != DataState.FOUND
+                        else DataState.FOUND
+                        if record_count
+                        else DataState.NOT_FOUND
+                    ),
+                    limitations=(
+                        "Отсутствие совпадения означает только отсутствие записи в уже загруженных периодах ЕРКНМ.",
+                    ),
+                    **erknm_shared,
+                ),
+            )
+            for row in inspection_rows:
+                registry_number = str(row.get("erpid") or "").strip()
+                if not registry_number:
+                    continue
+                _append(
+                    values,
+                    _candidate(
+                        company_id,
+                        "inspections",
+                        "inspection",
+                        _safe_inspection_value(row),
+                        source_data_date=_date(row.get("data_date")) or erknm_date,
+                        item_identity=registry_number,
+                        evidence_identity=f"erknm:{registry_number}",
+                        **{
+                            key: value
+                            for key, value in erknm_shared.items()
+                            if key not in {"source_data_date", "evidence_identity"}
+                        },
+                    ),
+                )
+
+    # Official Bank of Russia warning-list facts. This is not a generic sanctions check.
+    cbr_dataset = _one(
+        cursor,
+        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, "
+        "official_actual_until, operational_status, freshness_policy, source_as_of, "
+        "freshness_threshold_seconds FROM data_sets WHERE code=%s",
+        ("cbr_warning_list",),
+    )
+    if cbr_dataset is not None:
+        cbr_retrieved = _aware(
+            cbr_dataset.get("retrieved_at") or cbr_dataset.get("last_success_at")
+        )
+        cbr_date = _date(cbr_dataset.get("last_data_date"))
+        cbr_state = _dataset_observation_state(
+            cbr_dataset,
+            observed_at=_aware(observed_at),
+        )
+        cbr_shared = dict(
+            source_code="CBR_WARNING_LIST",
+            source_class=EvidenceSourceClass.OFFICIAL_API_OPEN_DATA,
+            evidence_identity=f"cbr-warning:dataset:{cbr_dataset['id']}",
+            source_ref=cbr_dataset.get("source_url"),
+            retrieved_at=cbr_retrieved,
+            source_data_date=cbr_date,
+            rights=FactRights.PUBLIC,
+            confidence=1.0,
+            freshness=(
+                Freshness.STALE
+                if cbr_state == DataState.STALE_DATA
+                else Freshness.UNKNOWN
+                if cbr_state == DataState.SOURCE_UNAVAILABLE
+                else Freshness.CURRENT
+            ),
+        )
+        if not cbr_dataset.get("enabled") or cbr_date is None:
+            _append(
+                values,
+                _candidate(
+                    company_id,
+                    "restrictions",
+                    "availability",
+                    None,
+                    state=cbr_state,
+                    limitations=(
+                        "Предупредительный список Банка России зарегистрирован, но актуальный snapshot сейчас недоступен.",
+                    ),
+                    **cbr_shared,
+                ),
+            )
+        else:
+            warning_rows = _rows(
+                cursor,
+                "SELECT cbr_id, data_date, name, entry_date, update_date, signs, regions, "
+                "liquidation_status, org_type FROM cbr_warning_list_entries "
+                "WHERE dataset_id=%s AND data_date=%s AND inn=%s ORDER BY cbr_id",
+                (cbr_dataset["id"], cbr_date, str(company["inn"])),
+            )
+            _append(
+                values,
+                _candidate(
+                    company_id,
+                    "restrictions",
+                    "availability",
+                    {
+                        "warning_count": len(warning_rows),
+                        "list_date": cbr_date,
+                    },
+                    state=(
+                        cbr_state
+                        if cbr_state != DataState.FOUND
+                        else DataState.FOUND
+                        if warning_rows
+                        else DataState.NOT_FOUND
+                    ),
+                    limitations=(
+                        "Проверка относится только к официальному предупредительному списку Банка России и не является универсальной санкционной проверкой.",
+                    ),
+                    **cbr_shared,
+                ),
+            )
+            for row in warning_rows:
+                cbr_id = str(row.get("cbr_id") or "").strip()
+                if not cbr_id:
+                    continue
+                _append(
+                    values,
+                    _candidate(
+                        company_id,
+                        "restrictions",
+                        "warning",
+                        _safe_cbr_warning_value(row),
+                        source_data_date=_date(row.get("data_date")) or cbr_date,
+                        item_identity=cbr_id,
+                        evidence_identity=f"cbr-warning:{cbr_id}",
+                        limitations=(
+                            "Факт относится к предупредительному списку Банка России; его правовое значение следует оценивать по записи источника.",
+                        ),
+                        **{
+                            key: value
+                            for key, value in cbr_shared.items()
+                            if key not in {"source_data_date", "evidence_identity"}
+                        },
+                    ),
+                )
+
+    # The current official general-court integration is deliberately scope-limited.
+    court = _one(
+        cursor,
+        "SELECT request_date, result_status, cases, coverage, source_url, error_code, checked_at "
+        "FROM general_court_checks WHERE company_id=%s "
+        "ORDER BY request_date DESC, checked_at DESC LIMIT 1",
+        (company_id,),
+    )
+    if court is not None:
+        court_date = _date(court.get("request_date"))
+        court_shared = dict(
+            source_code="MOSCOW_COURTS_OFFICIAL",
+            source_class=EvidenceSourceClass.OFFICIAL_PRIMARY,
+            evidence_identity=f"moscow-courts:{court_date or 'unknown'}",
+            source_ref=court.get("source_url"),
+            retrieved_at=_aware(court.get("checked_at")),
+            source_data_date=court_date,
+            rights=FactRights.PUBLIC,
+            confidence=0.8,
+            freshness=Freshness.UNKNOWN,
+        )
+        if court.get("result_status") != "success":
+            _append(
+                values,
+                _candidate(
+                    company_id,
+                    "courts",
+                    "availability",
+                    None,
+                    state=DataState.SOURCE_UNAVAILABLE,
+                    limitations=(
+                        "Последняя проверка официального портала судов общей юрисдикции не завершилась успешно; отрицательный вывод запрещён.",
+                    ),
+                    **court_shared,
+                ),
+            )
+        else:
+            cases = court.get("cases") if isinstance(court.get("cases"), list) else []
+            coverage = court.get("coverage") if isinstance(court.get("coverage"), dict) else {}
+            _append(
+                values,
+                _candidate(
+                    company_id,
+                    "courts",
+                    "general_court_check",
+                    {
+                        "scope": "Суды общей юрисдикции Москвы",
+                        "case_count": len(cases),
+                        "coverage": _semantic_text(coverage.get("coverage_label")),
+                    },
+                    state=DataState.FOUND if cases else DataState.NOT_FOUND,
+                    limitations=(
+                        "Проверка ограничена текущим покрытием официального портала судов общей юрисдикции Москвы; отсутствие совпадений не означает отсутствие дел во всех судах России.",
+                    ),
+                    **court_shared,
+                ),
+            )
+
     snapshot = _one(
         cursor,
         "SELECT id, retrieved_at, source_as_of, projection FROM firmoteka_company_snapshots WHERE company_id=%s AND is_current=TRUE ORDER BY retrieved_at DESC LIMIT 1",
@@ -1343,6 +1904,7 @@ def load_semantic_candidates(cursor: Any, *, company_id: int) -> tuple[SemanticC
                 retrieved_at=_aware(snapshot["retrieved_at"]),
             )
         )
+    values.extend(_connection_candidates(tuple(values)))
     return tuple(values)
 
 
@@ -1409,7 +1971,10 @@ def build_company_view_v1(
     company = _one(cursor, "SELECT inn FROM companies WHERE id=%s", (company_id,))
     if company is None:
         raise ValueError(f"company_id {company_id} is not resolved")
-    facts = select_semantic_facts(load_semantic_candidates(cursor, company_id=company_id), observed_at=now)
+    facts = select_semantic_facts(
+        load_semantic_candidates(cursor, company_id=company_id, observed_at=now),
+        observed_at=now,
+    )
     risk_ref, summary_ref = _risk_summary_refs(cursor, company_id)
     facts_by_section: dict[str, list[SemanticFact]] = defaultdict(list)
     for fact in facts:
@@ -1418,9 +1983,10 @@ def build_company_view_v1(
         CompanyViewSectionV1(
             section_key=key,
             state=(
-                DataState.CONFLICTING_EVIDENCE
-                if any(item.state == DataState.CONFLICTING_EVIDENCE for item in facts_by_section[key])
-                else DataState.FOUND
+                max(
+                    (item.state for item in facts_by_section[key]),
+                    key=lambda state: _SECTION_STATE_RANK[state],
+                )
                 if facts_by_section[key]
                 else DataState.NOT_CHECKED
             ),
@@ -1469,6 +2035,30 @@ def _allowed(rights: FactRights, audience: Audience) -> bool:
     return rights == FactRights.PUBLIC
 
 
+def _public_minimized_value(section_key: str, value: Any) -> Any:
+    """Remove person identifiers/details that are unnecessary on the public card."""
+
+    if section_key not in {"management", "founders"} or not isinstance(value, dict):
+        return value
+    minimized = dict(value)
+    for key in ("identifiers", "tin", "inn", "ogrnip", "psrn"):
+        minimized.pop(key, None)
+    registration = minimized.get("individual_entrepreneur")
+    if isinstance(registration, dict):
+        safe_registration = {
+            key: registration.get(key)
+            for key in (
+                "status",
+                "registration_date",
+                "termination_date",
+                "current_status",
+            )
+            if registration.get(key) is not None
+        }
+        minimized["individual_entrepreneur"] = safe_registration or None
+    return minimized
+
+
 def filter_company_view(view: CompanyViewModelV1, *, audience: Audience) -> CompanyViewModelV1:
     sections: list[CompanyViewSectionV1] = []
     allowed_refs: set[str] = set()
@@ -1481,7 +2071,23 @@ def filter_company_view(view: CompanyViewModelV1, *, audience: Audience) -> Comp
                 evidence for evidence in fact.alternative_evidence if _allowed(evidence.rights, audience)
             )
             anchor = fact.anchor.model_copy(update={"company_id": None}) if audience == Audience.PUBLIC else fact.anchor
-            filtered = fact.model_copy(update={"anchor": anchor, "alternative_evidence": alternatives})
+            selected_evidence = fact.selected_evidence
+            if audience == Audience.PUBLIC:
+                selected_evidence = selected_evidence.model_copy(
+                    update={
+                        "value": _public_minimized_value(
+                            section.section_key,
+                            selected_evidence.value,
+                        )
+                    }
+                )
+            filtered = fact.model_copy(
+                update={
+                    "anchor": anchor,
+                    "selected_evidence": selected_evidence,
+                    "alternative_evidence": alternatives,
+                }
+            )
             facts.append(filtered)
             allowed_refs.add(filtered.fact_ref)
         state = section.state if facts else DataState.NOT_CHECKED

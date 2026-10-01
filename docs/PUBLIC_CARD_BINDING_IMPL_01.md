@@ -58,8 +58,8 @@ locator. Public payloads never contain `company_id`.
             },
             "alternative_sources": [
               {
-                "name": "Firmoteka · вторичный источник",
-                "source_class": "Публичный вторичный источник",
+                "name": "Firmoteka · авторизованный вторичный источник",
+                "source_class": "Авторизованный вторичный источник",
                 "reference": "https://firmoteka.ru/{inn}",
                 "source_data_date": "2025-12-31",
                 "retrieved_at": "<timestamp>",
@@ -85,14 +85,17 @@ The section order is stable:
 
 `identity`, `status`, `registration`, `address`, `activity`, `management`,
 `founders`, `contacts`, `capital`, `finances`, `employees`, `tax`, `enforcement`,
-`licenses`, `events`, `risk`, `summary`, `source_coverage`, `freshness`,
+`licenses`, `courts`, `bankruptcy`, `procurement`, `restrictions`, `inspections`,
+`connections`, `events`, `risk`, `summary`, `source_coverage`, `freshness`,
 `limitations`, `anchors`, `links`.
 
 SSR places the identical revision on the card root as
 `data-view-revision`, exposes `data-section-key`, `data-fact-ref`, and
 `data-item-ref` bindings, and renders the public semantic sections without
-reading Firmoteka snapshots. The implementation is data-complete but does not
-attempt the pending pixel-perfect Card V2 design.
+reading Firmoteka snapshots. Implemented bindings are data-driven; domains without
+accepted evidence remain explicit `NOT_CHECKED`/limiting states rather than being
+filled by provider-specific UI assumptions. The contract does not claim production
+source acceptance or the pending pixel-perfect Card V2 design.
 
 The ordinary public Risk payload is compiled from the persisted Risk model.
 Internal `meaning_id`, factor/rule identifiers, and engine versions remain
@@ -120,25 +123,25 @@ the public selected evidence.
 Rights are assigned by field/domain, never by hiding the whole source. A
 related person is a typed value with a stable semantic `person_ref`, one or
 more `MANAGER`, `FOUNDER`, `PARTICIPANT`, `INDIVIDUAL_ENTREPRENEUR`, or
-`OTHER_PUBLIC_RELATION` relationships, `CURRENT`/`HISTORICAL` state, public
-INN/OGRNIP identifiers, related-company context, role/share, and dated
-provenance. The same person can carry several relationships without creating
+`OTHER_PUBLIC_RELATION` relationships, `CURRENT`/`HISTORICAL` state,
+related-company context, role/share, and dated provenance. Internal/authenticated
+representations may retain person identifiers required for entity resolution, but
+public company-card filtering removes personal INN/OGRNIP values. The same person can carry several relationships without creating
 another `Company`.
 
-Actually observed public-source phones and emails are `PUBLIC` typed facts in
-the `contacts` section. Their value records `PHONE`/`EMAIL`,
-`CORPORATE`/`PERSONAL`/`UNKNOWN`, optional related-person reference and name,
-role context, related company, and current/historical state. Evidence records
-the human source name and class, permitted HTTP(S) reference, source data date,
-and retrieval time. Contact scope is metadata, not a publication gate. No
-phone or email is guessed, derived, or assigned to a person without explicit
-source context.
+Actually observed public-source phones and emails are typed facts in the
+`contacts` section. Only contacts explicitly classified as `CORPORATE` are
+eligible for the public company card. `PERSONAL` and `UNKNOWN` contacts are
+`AUTHENTICATED_ONLY` and are filtered out of public HTML/API. Values still carry
+`PHONE`/`EMAIL`, scope, optional related-person context, related company and
+current/historical state for authorized product flows. No phone or email is
+guessed, derived, or assigned to a person without explicit source context.
 
 Passport fields, passport values, registration/residential/home addresses,
 provider row IDs, raw payloads, checksums, parser fields, worker identifiers,
 credentials, non-public source references, and internal source enums remain
 forbidden by both normalization whitelists and recursive public validation.
-The public provenance label is `Firmoteka · вторичный источник`; the internal
+The public provenance label is `Firmoteka · авторизованный вторичный источник`; the internal
 source code is never serialized publicly.
 
 ## Firmoteka mapping
