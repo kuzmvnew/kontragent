@@ -51,6 +51,7 @@ from app.models.worker import (
     WorkerHandlerRegistration,
     WorkerJob,
     WorkerPublicationState,
+    WorkerRawManifest,
     WorkerRun,
 )
 from app.providers.fns_tax_debt_provider import (
@@ -68,6 +69,7 @@ from app.sources.fns_tax_debt import (
     CONTROLLED_LIVE_HANDLER_VERSION,
     CONTROLLED_LIVE_PILOT_ENABLED,
     DATASET_CODE,
+    HANDLER_VERSION,
     MASS_INGESTION_ENABLED,
     OFFICIAL_SOURCE_PAGE,
     PILOT_ENVIRONMENT,
@@ -96,6 +98,37 @@ SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 CHECKSUM_RE = re.compile(r"[0-9a-f]{64}\Z")
 DOWNLOAD_HOST = "file.nalog.ru"
 DOWNLOAD_DIRECTORY = f"/opendata/{DATASET_ID}/"
+CURRENT_DATASET_STATUSES = frozenset({"ready", "current"})
+BASELINE_JOB_CONTRACTS = frozenset(
+    {
+        ("fns_tax_debt_baseline", BASELINE_HANDLER_VERSION),
+        ("fns_tax_debt_fixture", HANDLER_VERSION),
+    }
+)
+S02_ARTIFACT_JOB_CONTRACTS = frozenset(
+    {
+        *BASELINE_JOB_CONTRACTS,
+        ("fns_tax_debt_controlled_live", CONTROLLED_LIVE_HANDLER_VERSION),
+    }
+)
+DATASET_METADATA_FIELDS = (
+    "last_attempt_at",
+    "last_success_at",
+    "last_data_date",
+    "source_as_of",
+    "retrieved_at",
+    "checked_at",
+    "published_at",
+    "record_count",
+    "coverage",
+    "operational_status",
+    "last_error",
+    "last_error_at",
+    "retry_count",
+    "next_retry_at",
+    "next_expected_update_at",
+    "auto_update_status",
+)
 
 EXIT_CODES = {
     "SOURCE_PACKAGE_CHANGED": 20,
@@ -210,7 +243,53 @@ SAFE_BASELINE_CHECKS = frozenset(
         "baseline_validation_metadata",
         "baseline_dataset_metadata",
         "baseline_published_at",
+        "baseline_job_source",
+        "baseline_job_type",
+        "baseline_job_handler",
+        "baseline_job_status",
+        "baseline_run_missing",
+        "baseline_run_status",
+        "baseline_run_finished_at",
+        "baseline_artifact_missing",
+        "baseline_artifact_dataset",
+        "baseline_artifact_owner",
+        "baseline_raw_manifest",
+        "baseline_cohort",
+        "baseline_facts_outside_cohort",
+        "active_generation_missing",
+        "active_generation",
+        "active_scope",
+        "active_status",
+        "active_dataset",
+        "active_run_missing",
+        "active_run_status",
+        "active_run_finished_at",
+        "active_run_counters",
+        "active_counters",
+        "active_job_missing",
+        "active_job_source",
+        "active_job_type",
+        "active_job_handler",
+        "active_job_status",
+        "active_artifact_missing",
+        "active_artifact_dataset",
+        "active_artifact_pointer",
+        "active_artifact_checksum",
+        "active_artifact_source_as_of",
+        "active_artifact_retrieved_at",
+        "active_artifact_owner",
+        "active_raw_manifest",
+        "active_staging_pointer",
+        "active_pointer_run",
+        "active_pointer_validation",
+        "active_pointer_checksum",
+        "active_validation_metadata",
+        "active_dataset_metadata",
+        "active_coverage",
+        "active_facts_outside_cohort",
+        "pilot_state_missing",
         "pilot_dataset",
+        "pilot_cohort",
         "pilot_generation",
         "pilot_baseline_generation",
         "pilot_normalized_generation",
@@ -221,6 +300,12 @@ SAFE_BASELINE_CHECKS = frozenset(
         "pilot_source_as_of",
         "pilot_retrieved_at",
         "pilot_data_date",
+        "pilot_baseline_data_date",
+        "rollback_pointer",
+        "rollback_generation",
+        "rollback_status",
+        "rollback_fact_generation",
+        "rollback_normalized_generation",
     }
 )
 
@@ -713,24 +798,7 @@ def require_baseline_approval(
 
 def _dataset_metadata_snapshot(dataset: DataSet) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for field in (
-        "last_attempt_at",
-        "last_success_at",
-        "last_data_date",
-        "source_as_of",
-        "retrieved_at",
-        "checked_at",
-        "published_at",
-        "record_count",
-        "coverage",
-        "operational_status",
-        "last_error",
-        "last_error_at",
-        "retry_count",
-        "next_retry_at",
-        "next_expected_update_at",
-        "auto_update_status",
-    ):
+    for field in DATASET_METADATA_FIELDS:
         value = getattr(dataset, field)
         result[field] = (
             value.astimezone(timezone.utc).isoformat()
@@ -758,6 +826,139 @@ def _mapping_dict(value: Any) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, Mapping) else None
 
 
+def _coverage_actual_until(coverage: Mapping[str, Any]) -> date | None:
+    raw_value = coverage.get("official_actual_until")
+    try:
+        return date.fromisoformat(str(raw_value)) if raw_value else None
+    except ValueError:
+        return None
+
+
+def _mapping_contains(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    return all(actual.get(key) == value for key, value in expected.items())
+
+
+def _metadata_value_matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, datetime) and isinstance(actual, str):
+        try:
+            parsed = datetime.fromisoformat(actual)
+        except ValueError:
+            return False
+        return parsed == expected
+    if isinstance(expected, date) and isinstance(actual, str):
+        try:
+            return date.fromisoformat(actual) == expected
+        except ValueError:
+            return False
+    return actual == _json_safe(expected)
+
+
+def _generation_validation_matches(
+    generation: FnsTaxDebtPublicationGeneration,
+    *,
+    ingestion_mode: str,
+) -> bool:
+    validation = _mapping_dict(generation.validation_metadata)
+    coverage = _mapping_dict(generation.coverage)
+    validation_coverage = (
+        _mapping_dict(validation.get("coverage")) if validation is not None else None
+    )
+    if validation is None or coverage is None or validation_coverage is None:
+        return False
+    return (
+        validation.get("raw_pointer") == generation.raw_pointer
+        and _mapping_contains(coverage, validation_coverage)
+        and validation.get("fact_code") == "tax.debt.amount_as_of_date"
+        and validation.get("data_date") == _json_safe(generation.last_data_date)
+        and validation.get("ingestion_mode") == ingestion_mode
+        and validation.get("fact_generation") == generation.generation
+        and validation.get("query_generation") == generation.generation
+    )
+
+
+def _generation_dataset_metadata_matches(
+    generation: FnsTaxDebtPublicationGeneration,
+    *,
+    historical_baseline: bool,
+) -> bool:
+    metadata = _mapping_dict(generation.dataset_metadata)
+    coverage = _mapping_dict(generation.coverage)
+    if metadata is None or coverage is None:
+        return False
+    if historical_baseline and set(metadata) != set(DATASET_METADATA_FIELDS):
+        return False
+    expected = {
+        "last_data_date": generation.last_data_date,
+        "source_as_of": generation.source_as_of,
+        "retrieved_at": generation.retrieved_at,
+        "published_at": generation.published_at,
+        "record_count": generation.record_count,
+        "coverage": coverage,
+        "last_error": None,
+        "last_error_at": None,
+        "retry_count": 0,
+    }
+    if not all(
+        _metadata_value_matches(metadata.get(key), value)
+        for key, value in expected.items()
+    ):
+        return False
+    if metadata.get("operational_status") not in CURRENT_DATASET_STATUSES:
+        return False
+    if historical_baseline:
+        baseline_expected = {
+            "last_attempt_at": generation.retrieved_at,
+            "last_success_at": generation.retrieved_at,
+            "checked_at": generation.published_at,
+            "next_retry_at": None,
+        }
+        return all(
+            _metadata_value_matches(metadata.get(key), value)
+            for key, value in baseline_expected.items()
+        )
+    return True
+
+
+def _generation_coverage_matches(
+    generation: FnsTaxDebtPublicationGeneration,
+    *,
+    cohort: tuple[str, ...],
+    require_scope: bool,
+) -> bool:
+    coverage = _mapping_dict(generation.coverage)
+    if not coverage:
+        return False
+    if not require_scope:
+        return True
+    covered_cohort = tuple(str(value) for value in coverage.get("cohort_inns") or ())
+    return (
+        coverage.get("publication_scope") == generation.publication_scope
+        and len(covered_cohort) == len(cohort)
+        and set(covered_cohort) == set(cohort)
+        and coverage.get("cohort_size") == len(cohort)
+        and coverage.get("official_actual_until")
+        == _json_safe(generation.official_actual_until)
+        and coverage.get("fact_generation") == generation.generation
+        and coverage.get("query_generation") == generation.generation
+    )
+
+
+def _raw_manifest_matches(
+    manifest: WorkerRawManifest | None,
+    *,
+    run: WorkerRun,
+    artifact: FnsTaxDebtRawArtifact,
+) -> bool:
+    return bool(
+        manifest is not None
+        and manifest.run_id == run.id
+        and manifest.artifact_reference == artifact.artifact_reference
+        and manifest.checksum_algorithm == "sha256"
+        and manifest.checksum == artifact.sha256
+        and manifest.immutable is True
+    )
+
+
 def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str, Any]:
     table_names = set(inspect(session.get_bind()).get_table_names())
     required_tables = {
@@ -765,6 +966,7 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
         "data_sets",
         "worker_jobs",
         "worker_runs",
+        "worker_raw_manifests",
         "worker_handler_registry",
         "worker_publication_state",
         "fns_tax_debt_raw_artifacts",
@@ -802,9 +1004,13 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
     pointer = session.get(WorkerPublicationState, SOURCE_ID)
     pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
     baseline_row: FnsTaxDebtPublicationGeneration | None = None
-    run: WorkerRun | None = None
-    job: WorkerJob | None = None
-    artifact: FnsTaxDebtRawArtifact | None = None
+    active_row: FnsTaxDebtPublicationGeneration | None = None
+    baseline_run: WorkerRun | None = None
+    baseline_job: WorkerJob | None = None
+    baseline_artifact: FnsTaxDebtRawArtifact | None = None
+    active_run: WorkerRun | None = None
+    active_job: WorkerJob | None = None
+    active_artifact: FnsTaxDebtRawArtifact | None = None
     raw_count = 0
     fact_count = 0
     pointer_metadata = (
@@ -812,18 +1018,22 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
         if pointer is not None and isinstance(pointer.validation_metadata, Mapping)
         else {}
     )
-    validation = (
+    pointer_validation = (
         dict(pointer_metadata.get("validation"))
         if isinstance(pointer_metadata.get("validation"), Mapping)
         else {}
     )
-    raw_pointer = validation.get("raw_pointer")
-    checksum = pointer_metadata.get("checksum")
     if dataset is not None:
         baseline_row = session.scalar(
             select(FnsTaxDebtPublicationGeneration).where(
                 FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
                 FnsTaxDebtPublicationGeneration.generation == 0,
+            )
+        )
+        active_row = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+                FnsTaxDebtPublicationGeneration.status == "active",
             )
         )
         raw_count = int(
@@ -845,29 +1055,51 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
             )
             or 0
         )
-        if isinstance(raw_pointer, str) and raw_pointer:
-            artifact = session.scalar(
-                select(FnsTaxDebtRawArtifact).where(
-                    FnsTaxDebtRawArtifact.dataset_id == dataset.id,
-                    FnsTaxDebtRawArtifact.artifact_reference == raw_pointer,
+    if baseline_row is not None:
+        baseline_run = session.get(WorkerRun, baseline_row.worker_run_id)
+        baseline_job = (
+            session.get(WorkerJob, baseline_run.job_id)
+            if baseline_run is not None
+            else None
+        )
+        baseline_artifact = session.get(FnsTaxDebtRawArtifact, baseline_row.artifact_id)
+    if active_row is not None:
+        active_run = session.get(WorkerRun, active_row.worker_run_id)
+        active_job = (
+            session.get(WorkerJob, active_run.job_id) if active_run is not None else None
+        )
+        active_artifact = session.get(FnsTaxDebtRawArtifact, active_row.artifact_id)
+
+    dataset_coverage = (
+        dict(dataset.coverage)
+        if dataset is not None and isinstance(dataset.coverage, Mapping)
+        else {}
+    )
+    dataset_actual_until = (
+        dataset.official_actual_until if dataset is not None else None
+    ) or _coverage_actual_until(dataset_coverage)
+    transitioned = bool(
+        active_row is not None
+        or (
+            pointer is not None
+            and (
+                (_usable_count(pointer.generation) and pointer.generation > 1)
+                or pointer.rollback_pointer
+            )
+        )
+        or (
+            pilot is not None
+            and any(
+                not _usable_count(value) or value > 0
+                for value in (
+                    pilot.generation,
+                    pilot.normalized_generation,
+                    pilot.fact_generation,
+                    pilot.query_generation,
                 )
             )
-    if pointer is not None and pointer.published_by_run_id is not None:
-        run = session.get(WorkerRun, pointer.published_by_run_id)
-    if run is not None:
-        job = session.get(WorkerJob, run.job_id)
-
-    baseline_actual_until = None
-    coverage: dict[str, Any] = {}
-    if dataset is not None and isinstance(dataset.coverage, Mapping):
-        coverage = dict(dataset.coverage)
-        raw_actual_until = dict(dataset.coverage or {}).get("official_actual_until")
-        try:
-            baseline_actual_until = (
-                date.fromisoformat(str(raw_actual_until)) if raw_actual_until else None
-            )
-        except ValueError:
-            baseline_actual_until = None
+        )
+    )
 
     failed: list[str] = []
 
@@ -878,19 +1110,22 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
     require(dataset is not None, "dataset_missing")
     if dataset is not None:
         require(dataset.code == DATASET_CODE, "dataset_code")
-        require(dataset.operational_status == "ready", "dataset_status")
+        require(
+            dataset.operational_status in CURRENT_DATASET_STATUSES,
+            "dataset_status",
+        )
         require(dataset.source_as_of is not None, "dataset_source_as_of")
         require(dataset.retrieved_at is not None, "dataset_retrieved_at")
         require(dataset.last_data_date is not None, "dataset_last_data_date")
         require(dataset.published_at is not None, "dataset_published_at")
         require(_usable_count(dataset.record_count), "dataset_record_count")
-        require(bool(coverage), "dataset_coverage")
-        require(baseline_actual_until is not None, "dataset_official_actual_until")
+        require(bool(dataset_coverage), "dataset_coverage")
+        require(dataset_actual_until is not None, "dataset_official_actual_until")
         if dataset.source_as_of is not None and dataset.retrieved_at is not None:
             require(dataset.source_as_of <= dataset.retrieved_at, "dataset_time_order")
-        if dataset.last_data_date is not None and baseline_actual_until is not None:
+        if dataset.last_data_date is not None and dataset_actual_until is not None:
             require(
-                dataset.last_data_date <= baseline_actual_until,
+                dataset.last_data_date <= dataset_actual_until,
                 "dataset_actual_until_order",
             )
 
@@ -903,142 +1138,447 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
             "publication_published_by_run",
         )
         require(
-            _usable_count(pointer.generation) and pointer.generation > 0,
+            _usable_count(pointer.generation)
+            and pointer.generation > (1 if transitioned else 0),
             "publication_generation",
         )
         require(bool(pointer_metadata), "publication_validation_metadata")
         require(
-            isinstance(raw_pointer, str) and bool(raw_pointer),
+            isinstance(pointer_validation.get("raw_pointer"), str)
+            and bool(pointer_validation.get("raw_pointer")),
             "publication_raw_pointer",
         )
         require(
-            isinstance(checksum, str) and CHECKSUM_RE.fullmatch(checksum) is not None,
+            isinstance(pointer_metadata.get("checksum"), str)
+            and CHECKSUM_RE.fullmatch(pointer_metadata["checksum"]) is not None,
             "publication_checksum",
         )
 
-    require(run is not None, "publication_run_missing")
-    if run is not None:
-        require(run.status == "succeeded", "publication_run_status")
-        require(run.finished_at is not None, "publication_run_finished_at")
-        require(
-            all(_usable_count(value) for value in _worker_run_counters(run).values()),
-            "publication_run_counters",
-        )
-    require(job is not None, "publication_job_missing")
-    if job is not None and run is not None:
-        require(job.source_id == SOURCE_ID, "publication_job_source")
-        require(
-            job.job_type
-            in {
-                "fns_tax_debt_baseline",
-                "fns_tax_debt_fixture",
-                "fns_tax_debt_controlled_live",
-            },
-            "publication_job_type",
-        )
-        require(job.handler_version == run.handler_version, "publication_job_handler")
-        require(job.status == "succeeded", "publication_job_status")
-
-    require(artifact is not None, "raw_artifact_missing")
-    if artifact is not None and dataset is not None and run is not None:
-        require(artifact.dataset_id == dataset.id, "raw_artifact_dataset")
-        require(artifact.artifact_reference == raw_pointer, "raw_artifact_pointer")
-        require(artifact.sha256 == checksum, "raw_artifact_checksum")
-        require(artifact.first_worker_run_id == run.id, "raw_artifact_run")
-        require(
-            artifact.source_as_of == dataset.source_as_of,
-            "raw_artifact_source_as_of",
-        )
-        require(
-            artifact.retrieved_at == dataset.retrieved_at,
-            "raw_artifact_retrieved_at",
-        )
-
     require(baseline_row is not None, "baseline_generation_missing")
-    if (
-        baseline_row is not None
-        and dataset is not None
-        and pointer is not None
-        and run is not None
-        and artifact is not None
-    ):
+    require(baseline_run is not None, "baseline_run_missing")
+    require(baseline_job is not None, "publication_job_missing")
+    require(baseline_artifact is not None, "baseline_artifact_missing")
+    if baseline_row is not None and dataset is not None:
         require(baseline_row.generation == 0, "baseline_generation")
         require(baseline_row.publication_scope == "baseline", "baseline_scope")
-        require(baseline_row.status == "baseline", "baseline_status")
+        require(baseline_row.status in {"baseline", "rollback"}, "baseline_status")
         require(baseline_row.dataset_id == dataset.id, "baseline_dataset")
-        require(baseline_row.artifact_id == artifact.id, "baseline_artifact")
-        require(baseline_row.worker_run_id == run.id, "baseline_run")
+        require(bool(baseline_row.staging_pointer), "baseline_staging_pointer")
+        require(baseline_row.published_at is not None, "baseline_published_at")
+        baseline_coverage = _mapping_dict(baseline_row.coverage) or {}
         require(
-            baseline_row.staging_pointer == pointer.active_pointer,
-            "baseline_staging_pointer",
+            _generation_dataset_metadata_matches(
+                baseline_row, historical_baseline=True
+            ),
+            "baseline_dataset_metadata",
+        )
+        baseline_mode = (
+            "controlled_live"
+            if baseline_job is not None
+            and baseline_job.job_type == "fns_tax_debt_baseline"
+            else "fixture"
         )
         require(
-            baseline_row.raw_pointer == artifact.artifact_reference,
-            "baseline_raw_pointer",
-        )
-        require(baseline_row.checksum == artifact.sha256, "baseline_checksum")
-        require(
-            baseline_row.source_as_of == dataset.source_as_of,
-            "baseline_source_as_of",
-        )
-        require(
-            baseline_row.retrieved_at == dataset.retrieved_at,
-            "baseline_retrieved_at",
-        )
-        require(
-            baseline_row.last_data_date == dataset.last_data_date,
-            "baseline_last_data_date",
-        )
-        require(
-            baseline_row.official_actual_until == baseline_actual_until,
-            "baseline_official_actual_until",
-        )
-        require(
-            baseline_row.record_count == dataset.record_count,
-            "baseline_record_count",
-        )
-        require(_mapping_dict(baseline_row.coverage) == coverage, "baseline_coverage")
-        require(
-            _mapping_dict(baseline_row.counters) == _worker_run_counters(run),
-            "baseline_counters",
-        )
-        require(
-            _mapping_dict(baseline_row.validation_metadata) == validation,
+            _generation_validation_matches(
+                baseline_row, ingestion_mode=baseline_mode
+            ),
             "baseline_validation_metadata",
         )
         require(
-            _mapping_dict(baseline_row.dataset_metadata)
-            == _dataset_metadata_snapshot(dataset),
-            "baseline_dataset_metadata",
+            _generation_coverage_matches(
+                baseline_row,
+                cohort=cohort,
+                require_scope=baseline_mode == "controlled_live",
+            ),
+            "baseline_coverage",
         )
         require(
-            baseline_row.published_at == dataset.published_at, "baseline_published_at"
+            baseline_row.official_actual_until
+            == _coverage_actual_until(baseline_coverage),
+            "baseline_official_actual_until",
         )
 
-    if pilot is not None and dataset is not None and artifact is not None:
-        require(pilot.dataset_id == dataset.id, "pilot_dataset")
-        require(pilot.generation == 0, "pilot_generation")
-        require(pilot.baseline_generation == 0, "pilot_baseline_generation")
-        require(pilot.normalized_generation == 0, "pilot_normalized_generation")
-        require(pilot.fact_generation == 0, "pilot_fact_generation")
-        require(pilot.query_generation == 0, "pilot_query_generation")
+    if baseline_run is not None:
+        require(baseline_run.status == "succeeded", "baseline_run_status")
+        require(baseline_run.finished_at is not None, "baseline_run_finished_at")
         require(
-            pilot.active_raw_pointer in {None, artifact.artifact_reference},
-            "pilot_raw_pointer",
+            all(
+                _usable_count(value)
+                for value in _worker_run_counters(baseline_run).values()
+            ),
+            "publication_run_counters",
         )
-        require(pilot.active_checksum in {None, artifact.sha256}, "pilot_checksum")
+        if baseline_row is not None:
+            require(
+                _mapping_dict(baseline_row.counters)
+                == _worker_run_counters(baseline_run),
+                "baseline_counters",
+            )
+    if baseline_job is not None and baseline_run is not None:
+        require(baseline_job.source_id == SOURCE_ID, "baseline_job_source")
         require(
-            pilot.active_source_as_of in {None, dataset.source_as_of},
-            "pilot_source_as_of",
+            (baseline_job.job_type, baseline_job.handler_version)
+            in BASELINE_JOB_CONTRACTS,
+            "baseline_job_type",
         )
         require(
-            pilot.active_retrieved_at in {None, dataset.retrieved_at},
-            "pilot_retrieved_at",
+            baseline_job.handler_version == baseline_run.handler_version,
+            "baseline_job_handler",
+        )
+        require(baseline_job.status == "succeeded", "baseline_job_status")
+
+    if baseline_artifact is not None and baseline_row is not None and dataset is not None:
+        require(
+            baseline_row.artifact_id == baseline_artifact.id,
+            "baseline_artifact",
         )
         require(
-            pilot.baseline_data_date in {None, dataset.last_data_date},
-            "pilot_data_date",
+            baseline_artifact.dataset_id == dataset.id,
+            "baseline_artifact_dataset",
         )
+        require(
+            baseline_row.raw_pointer == baseline_artifact.artifact_reference,
+            "baseline_raw_pointer",
+        )
+        require(
+            baseline_row.checksum == baseline_artifact.sha256,
+            "baseline_checksum",
+        )
+        require(
+            baseline_row.source_as_of == baseline_artifact.source_as_of,
+            "baseline_source_as_of",
+        )
+        require(
+            baseline_row.retrieved_at == baseline_artifact.retrieved_at,
+            "baseline_retrieved_at",
+        )
+        first_run = session.get(WorkerRun, baseline_artifact.first_worker_run_id)
+        first_job = (
+            session.get(WorkerJob, first_run.job_id) if first_run is not None else None
+        )
+        require(
+            first_run is not None
+            and first_job is not None
+            and baseline_run is not None
+            and first_run.id == baseline_run.id
+            and first_run.status == "succeeded"
+            and first_job.status == "succeeded"
+            and first_job.source_id == SOURCE_ID
+            and (first_job.job_type, first_job.handler_version)
+            in S02_ARTIFACT_JOB_CONTRACTS
+            and first_job.handler_version == first_run.handler_version,
+            "baseline_artifact_owner",
+        )
+        if baseline_run is not None:
+            manifest = session.scalar(
+                select(WorkerRawManifest).where(
+                    WorkerRawManifest.run_id == baseline_run.id,
+                    WorkerRawManifest.artifact_reference
+                    == baseline_artifact.artifact_reference,
+                )
+            )
+            require(
+                _raw_manifest_matches(
+                    manifest, run=baseline_run, artifact=baseline_artifact
+                ),
+                "baseline_raw_manifest",
+            )
+
+    if baseline_row is not None and dataset is not None:
+        outside_baseline = int(
+            session.scalar(
+                select(func.count())
+                .select_from(CompanyTaxDebtSnapshot)
+                .join(Company, Company.id == CompanyTaxDebtSnapshot.company_id)
+                .where(
+                    CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                    CompanyTaxDebtSnapshot.publication_generation == 0,
+                    Company.inn.not_in(cohort),
+                )
+            )
+            or 0
+        )
+        require(outside_baseline == 0, "baseline_facts_outside_cohort")
+
+    current_row = active_row if transitioned else baseline_row
+    current_run = active_run if transitioned else baseline_run
+    current_job = active_job if transitioned else baseline_job
+    current_artifact = active_artifact if transitioned else baseline_artifact
+    require(current_run is not None, "publication_run_missing")
+    if current_run is not None:
+        require(current_run.status == "succeeded", "publication_run_status")
+        require(current_run.finished_at is not None, "publication_run_finished_at")
+    require(current_job is not None, "publication_job_missing")
+    require(current_artifact is not None, "raw_artifact_missing")
+    if pointer is not None and current_row is not None:
+        require(
+            pointer.active_pointer == current_row.staging_pointer,
+            "publication_active_pointer",
+        )
+        require(
+            pointer.published_by_run_id == current_row.worker_run_id,
+            "publication_published_by_run",
+        )
+        require(
+            pointer_metadata.get("checksum") == current_row.checksum,
+            "publication_checksum",
+        )
+        require(
+            pointer_validation == _mapping_dict(current_row.validation_metadata),
+            "publication_validation_metadata",
+        )
+        require(
+            pointer_validation.get("raw_pointer") == current_row.raw_pointer,
+            "publication_raw_pointer",
+        )
+    if current_artifact is not None and current_row is not None and dataset is not None:
+        require(current_artifact.dataset_id == dataset.id, "raw_artifact_dataset")
+        require(
+            current_artifact.artifact_reference == current_row.raw_pointer,
+            "raw_artifact_pointer",
+        )
+        require(current_artifact.sha256 == current_row.checksum, "raw_artifact_checksum")
+        require(
+            current_artifact.source_as_of == current_row.source_as_of,
+            "raw_artifact_source_as_of",
+        )
+        require(
+            current_artifact.retrieved_at == current_row.retrieved_at,
+            "raw_artifact_retrieved_at",
+        )
+
+    if not transitioned:
+        if pointer is not None:
+            require(pointer.generation == 1, "publication_generation")
+            require(pointer.rollback_pointer is None, "rollback_pointer")
+        if baseline_row is not None and dataset is not None:
+            require(dataset.source_as_of == baseline_row.source_as_of, "dataset_source_as_of")
+            require(dataset.retrieved_at == baseline_row.retrieved_at, "dataset_retrieved_at")
+            require(
+                dataset.last_data_date == baseline_row.last_data_date,
+                "dataset_last_data_date",
+            )
+            require(dataset.record_count == baseline_row.record_count, "dataset_record_count")
+            require(
+                dataset_actual_until == baseline_row.official_actual_until,
+                "dataset_official_actual_until",
+            )
+            require(dataset_coverage == _mapping_dict(baseline_row.coverage), "dataset_coverage")
+            require(
+                _dataset_metadata_snapshot(dataset)
+                == _mapping_dict(baseline_row.dataset_metadata),
+                "baseline_dataset_metadata",
+            )
+        if pilot is not None and baseline_row is not None and baseline_artifact is not None:
+            require(pilot.dataset_id == dataset.id, "pilot_dataset")
+            require(
+                len(tuple(pilot.cohort_inns or ())) == len(cohort)
+                and set(str(value) for value in pilot.cohort_inns or ()) == set(cohort),
+                "pilot_cohort",
+            )
+            require(pilot.generation == 0, "pilot_generation")
+            require(pilot.baseline_generation == 0, "pilot_baseline_generation")
+            require(pilot.normalized_generation == 0, "pilot_normalized_generation")
+            require(pilot.fact_generation == 0, "pilot_fact_generation")
+            require(pilot.query_generation == 0, "pilot_query_generation")
+            require(
+                pilot.active_raw_pointer
+                in {None, baseline_artifact.artifact_reference},
+                "pilot_raw_pointer",
+            )
+            require(pilot.active_checksum in {None, baseline_artifact.sha256}, "pilot_checksum")
+            require(
+                pilot.active_source_as_of in {None, baseline_row.source_as_of},
+                "pilot_source_as_of",
+            )
+            require(
+                pilot.active_retrieved_at in {None, baseline_row.retrieved_at},
+                "pilot_retrieved_at",
+            )
+            require(
+                pilot.active_data_date in {None, baseline_row.last_data_date},
+                "pilot_data_date",
+            )
+            require(
+                pilot.baseline_data_date in {None, baseline_row.last_data_date},
+                "pilot_baseline_data_date",
+            )
+    else:
+        require(active_row is not None, "active_generation_missing")
+        require(pilot is not None, "pilot_state_missing")
+        if active_row is not None and dataset is not None:
+            require(active_row.generation > 0, "active_generation")
+            require(active_row.publication_scope == "pilot", "active_scope")
+            require(active_row.status == "active", "active_status")
+            require(active_row.dataset_id == dataset.id, "active_dataset")
+            require(
+                _generation_validation_matches(
+                    active_row, ingestion_mode="controlled_live"
+                ),
+                "active_validation_metadata",
+            )
+            require(
+                _generation_dataset_metadata_matches(
+                    active_row, historical_baseline=False
+                ),
+                "active_dataset_metadata",
+            )
+            require(
+                _generation_coverage_matches(
+                    active_row, cohort=cohort, require_scope=True
+                ),
+                "active_coverage",
+            )
+            require(dataset.source_as_of == active_row.source_as_of, "dataset_source_as_of")
+            require(dataset.retrieved_at == active_row.retrieved_at, "dataset_retrieved_at")
+            require(dataset.last_data_date == active_row.last_data_date, "dataset_last_data_date")
+            require(dataset.record_count == active_row.record_count, "dataset_record_count")
+            require(
+                dataset_actual_until == active_row.official_actual_until,
+                "dataset_official_actual_until",
+            )
+            require(
+                _mapping_contains(dataset_coverage, _mapping_dict(active_row.coverage) or {}),
+                "dataset_coverage",
+            )
+            outside_active = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CompanyTaxDebtSnapshot)
+                    .join(Company, Company.id == CompanyTaxDebtSnapshot.company_id)
+                    .where(
+                        CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                        CompanyTaxDebtSnapshot.publication_generation
+                        == active_row.generation,
+                        Company.inn.not_in(cohort),
+                    )
+                )
+                or 0
+            )
+            require(outside_active == 0, "active_facts_outside_cohort")
+        if active_run is not None:
+            require(active_run.status == "succeeded", "active_run_status")
+            require(active_run.finished_at is not None, "active_run_finished_at")
+            require(
+                all(
+                    _usable_count(value)
+                    for value in _worker_run_counters(active_run).values()
+                ),
+                "active_run_counters",
+            )
+            if active_row is not None:
+                require(
+                    _mapping_dict(active_row.counters)
+                    == _worker_run_counters(active_run),
+                    "active_counters",
+                )
+        if active_job is not None and active_run is not None:
+            require(active_job.source_id == SOURCE_ID, "active_job_source")
+            require(
+                (
+                    active_job.job_type,
+                    active_job.handler_version,
+                )
+                == (
+                    "fns_tax_debt_controlled_live",
+                    CONTROLLED_LIVE_HANDLER_VERSION,
+                ),
+                "active_job_type",
+            )
+            require(active_job.handler_version == active_run.handler_version, "active_job_handler")
+            require(active_job.status == "succeeded", "active_job_status")
+        if active_artifact is not None and active_row is not None and dataset is not None:
+            require(active_artifact.dataset_id == dataset.id, "active_artifact_dataset")
+            require(
+                active_artifact.artifact_reference == active_row.raw_pointer,
+                "active_artifact_pointer",
+            )
+            require(active_artifact.sha256 == active_row.checksum, "active_artifact_checksum")
+            require(
+                active_artifact.source_as_of == active_row.source_as_of,
+                "active_artifact_source_as_of",
+            )
+            require(
+                active_artifact.retrieved_at == active_row.retrieved_at,
+                "active_artifact_retrieved_at",
+            )
+            first_run = session.get(WorkerRun, active_artifact.first_worker_run_id)
+            first_job = session.get(WorkerJob, first_run.job_id) if first_run is not None else None
+            require(
+                first_run is not None
+                and first_job is not None
+                and first_run.status == "succeeded"
+                and first_job.status == "succeeded"
+                and first_job.source_id == SOURCE_ID
+                and (first_job.job_type, first_job.handler_version)
+                in S02_ARTIFACT_JOB_CONTRACTS
+                and first_job.handler_version == first_run.handler_version,
+                "active_artifact_owner",
+            )
+            if active_run is not None:
+                manifest = session.scalar(
+                    select(WorkerRawManifest).where(
+                        WorkerRawManifest.run_id == active_run.id,
+                        WorkerRawManifest.artifact_reference
+                        == active_artifact.artifact_reference,
+                    )
+                )
+                require(
+                    _raw_manifest_matches(
+                        manifest, run=active_run, artifact=active_artifact
+                    ),
+                    "active_raw_manifest",
+                )
+        if pilot is not None and active_row is not None and dataset is not None:
+            require(pilot.dataset_id == dataset.id, "pilot_dataset")
+            require(
+                len(tuple(pilot.cohort_inns or ())) == len(cohort)
+                and set(str(value) for value in pilot.cohort_inns or ()) == set(cohort),
+                "pilot_cohort",
+            )
+            require(
+                pointer is not None and pilot.generation == pointer.generation,
+                "pilot_generation",
+            )
+            require(pilot.baseline_generation == 0, "pilot_baseline_generation")
+            require(
+                pilot.normalized_generation == active_row.generation,
+                "pilot_normalized_generation",
+            )
+            require(pilot.fact_generation == active_row.generation, "pilot_fact_generation")
+            require(pilot.query_generation == active_row.generation, "pilot_query_generation")
+            require(pilot.active_raw_pointer == active_row.raw_pointer, "pilot_raw_pointer")
+            require(pilot.active_checksum == active_row.checksum, "pilot_checksum")
+            require(pilot.active_source_as_of == active_row.source_as_of, "pilot_source_as_of")
+            require(pilot.active_retrieved_at == active_row.retrieved_at, "pilot_retrieved_at")
+            require(pilot.active_data_date == active_row.last_data_date, "pilot_data_date")
+            require(
+                baseline_row is not None
+                and pilot.baseline_data_date == baseline_row.last_data_date,
+                "pilot_baseline_data_date",
+            )
+        rollback_row = None
+        if pointer is not None and dataset is not None and pointer.rollback_pointer:
+            rollback_row = session.scalar(
+                select(FnsTaxDebtPublicationGeneration).where(
+                    FnsTaxDebtPublicationGeneration.dataset_id == dataset.id,
+                    FnsTaxDebtPublicationGeneration.staging_pointer
+                    == pointer.rollback_pointer,
+                )
+            )
+        require(pointer is not None and bool(pointer.rollback_pointer), "rollback_pointer")
+        require(rollback_row is not None, "rollback_generation")
+        if rollback_row is not None:
+            require(rollback_row.status in {"baseline", "rollback"}, "rollback_status")
+            if pilot is not None:
+                require(
+                    pilot.rollback_fact_generation == rollback_row.generation,
+                    "rollback_fact_generation",
+                )
+                require(
+                    pilot.rollback_normalized_generation == rollback_row.generation,
+                    "rollback_normalized_generation",
+                )
 
     if failed:
         raise OperatorError(
@@ -1127,6 +1667,7 @@ def baseline_preparation_readiness(
         "fns_tax_debt_raw_artifacts",
         "fns_tax_debt_normalized_records",
         "fns_tax_debt_publication_generations",
+        "fns_tax_debt_pilot_state",
         "company_tax_debt_snapshots",
     }
     table_names = set(inspect(session.get_bind()).get_table_names())
@@ -1212,6 +1753,15 @@ def baseline_preparation_readiness(
         }
 
     pointer = session.get(WorkerPublicationState, SOURCE_ID)
+    pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+    publication_count = int(
+        session.scalar(
+            select(func.count())
+            .select_from(FnsTaxDebtPublicationGeneration)
+            .where(FnsTaxDebtPublicationGeneration.dataset_id == dataset.id)
+        )
+        or 0
+    )
     fact_count = int(
         session.scalar(
             select(func.count())
@@ -1236,7 +1786,14 @@ def baseline_preparation_readiness(
         )
         or 0
     )
-    if pointer is not None or fact_count or raw_count or normalized_count:
+    if (
+        pointer is not None
+        or pilot is not None
+        or publication_count
+        or fact_count
+        or raw_count
+        or normalized_count
+    ):
         raise OperatorError(
             "BASELINE_NOT_READY",
             "S02 state is not empty and has no exact generation-0 ledger",
