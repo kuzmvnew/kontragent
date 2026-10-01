@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.contracts.data_readiness import OperationalStatus, is_dataset_stale
 from app.contracts.company_view_v1 import (
     Audience,
     ContactScope,
@@ -1249,6 +1250,44 @@ def normalize_firmoteka_projection(
     return tuple(values)
 
 
+def _dataset_observation_state(
+    dataset: dict[str, Any],
+    *,
+    observed_at: datetime,
+) -> DataState:
+    """Map dataset operational/freshness metadata to public semantic state."""
+
+    if not dataset.get("enabled") or _date(dataset.get("last_data_date")) is None:
+        return DataState.SOURCE_UNAVAILABLE
+    status = str(dataset.get("operational_status") or "").strip().casefold()
+    if status in {
+        OperationalStatus.ERROR.value,
+        OperationalStatus.UNAVAILABLE.value,
+        OperationalStatus.SOURCE_BLOCKED.value,
+        OperationalStatus.ACCESS_PENDING.value,
+        OperationalStatus.NOT_CONFIGURED.value,
+    }:
+        return DataState.SOURCE_UNAVAILABLE
+    actual_until = _date(dataset.get("official_actual_until"))
+    if actual_until is not None and observed_at.date() > actual_until:
+        return DataState.STALE_DATA
+    if status == OperationalStatus.STALE.value:
+        return DataState.STALE_DATA
+    if is_dataset_stale(
+        now=observed_at,
+        freshness_policy=str(dataset.get("freshness_policy") or "irregular"),
+        source_as_of=_aware(dataset.get("source_as_of")) if dataset.get("source_as_of") else None,
+        last_success_at=(
+            _aware(dataset.get("last_success_at"))
+            if dataset.get("last_success_at")
+            else None
+        ),
+        threshold_seconds=dataset.get("freshness_threshold_seconds"),
+    ):
+        return DataState.STALE_DATA
+    return DataState.FOUND
+
+
 def _safe_text_list(value: Any) -> list[str]:
     """Extract display text from provider collections without forwarding objects."""
 
@@ -1575,8 +1614,9 @@ def load_semantic_candidates(
     # Official inspection facts. Absence is scoped only to already-loaded ERKNM periods.
     erknm_dataset = _one(
         cursor,
-        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, official_actual_until "
-        "FROM data_sets WHERE code=%s",
+        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, "
+        "official_actual_until, operational_status, freshness_policy, source_as_of, "
+        "freshness_threshold_seconds FROM data_sets WHERE code=%s",
         ("erknm_inspections",),
     )
     if erknm_dataset is not None:
@@ -1584,8 +1624,10 @@ def load_semantic_candidates(
             erknm_dataset.get("retrieved_at") or erknm_dataset.get("last_success_at")
         )
         erknm_date = _date(erknm_dataset.get("last_data_date"))
-        erknm_actual_until = _date(erknm_dataset.get("official_actual_until"))
-        erknm_stale = bool(erknm_actual_until and erknm_actual_until < reference_date)
+        erknm_state = _dataset_observation_state(
+            erknm_dataset,
+            observed_at=_aware(observed_at),
+        )
         erknm_shared = dict(
             source_code="ERKNM",
             source_class=EvidenceSourceClass.OFFICIAL_API_OPEN_DATA,
@@ -1595,9 +1637,15 @@ def load_semantic_candidates(
             source_data_date=erknm_date,
             rights=FactRights.PUBLIC,
             confidence=1.0,
-            freshness=Freshness.STALE if erknm_stale else Freshness.CURRENT,
+            freshness=(
+                Freshness.STALE
+                if erknm_state == DataState.STALE_DATA
+                else Freshness.UNKNOWN
+                if erknm_state == DataState.SOURCE_UNAVAILABLE
+                else Freshness.CURRENT
+            ),
         )
-        if not erknm_dataset.get("enabled") or erknm_date is None:
+        if erknm_date is None:
             _append(
                 values,
                 _candidate(
@@ -1605,11 +1653,11 @@ def load_semantic_candidates(
                     "inspections",
                     "availability",
                     None,
-                    state=DataState.SOURCE_UNAVAILABLE,
+                    state=erknm_state,
                     limitations=(
                         "Официальный набор ЕРКНМ зарегистрирован, но актуальный опубликованный snapshot сейчас недоступен.",
                     ),
-                    **{**erknm_shared, "freshness": Freshness.UNKNOWN},
+                    **erknm_shared,
                 ),
             )
         else:
@@ -1646,8 +1694,8 @@ def load_semantic_candidates(
                         "records_limited": record_count > len(inspection_rows),
                     },
                     state=(
-                        DataState.STALE_DATA
-                        if erknm_stale
+                        erknm_state
+                        if erknm_state != DataState.FOUND
                         else DataState.FOUND
                         if record_count
                         else DataState.NOT_FOUND
@@ -1683,8 +1731,9 @@ def load_semantic_candidates(
     # Official Bank of Russia warning-list facts. This is not a generic sanctions check.
     cbr_dataset = _one(
         cursor,
-        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, official_actual_until "
-        "FROM data_sets WHERE code=%s",
+        "SELECT id, enabled, source_url, last_data_date, last_success_at, retrieved_at, "
+        "official_actual_until, operational_status, freshness_policy, source_as_of, "
+        "freshness_threshold_seconds FROM data_sets WHERE code=%s",
         ("cbr_warning_list",),
     )
     if cbr_dataset is not None:
@@ -1692,8 +1741,10 @@ def load_semantic_candidates(
             cbr_dataset.get("retrieved_at") or cbr_dataset.get("last_success_at")
         )
         cbr_date = _date(cbr_dataset.get("last_data_date"))
-        cbr_actual_until = _date(cbr_dataset.get("official_actual_until"))
-        cbr_stale = bool(cbr_actual_until and cbr_actual_until < reference_date)
+        cbr_state = _dataset_observation_state(
+            cbr_dataset,
+            observed_at=_aware(observed_at),
+        )
         cbr_shared = dict(
             source_code="CBR_WARNING_LIST",
             source_class=EvidenceSourceClass.OFFICIAL_API_OPEN_DATA,
@@ -1703,9 +1754,15 @@ def load_semantic_candidates(
             source_data_date=cbr_date,
             rights=FactRights.PUBLIC,
             confidence=1.0,
-            freshness=Freshness.STALE if cbr_stale else Freshness.CURRENT,
+            freshness=(
+                Freshness.STALE
+                if cbr_state == DataState.STALE_DATA
+                else Freshness.UNKNOWN
+                if cbr_state == DataState.SOURCE_UNAVAILABLE
+                else Freshness.CURRENT
+            ),
         )
-        if not cbr_dataset.get("enabled") or cbr_date is None:
+        if cbr_date is None:
             _append(
                 values,
                 _candidate(
@@ -1713,11 +1770,11 @@ def load_semantic_candidates(
                     "restrictions",
                     "availability",
                     None,
-                    state=DataState.SOURCE_UNAVAILABLE,
+                    state=cbr_state,
                     limitations=(
                         "Предупредительный список Банка России зарегистрирован, но актуальный snapshot сейчас недоступен.",
                     ),
-                    **{**cbr_shared, "freshness": Freshness.UNKNOWN},
+                    **cbr_shared,
                 ),
             )
         else:
@@ -1739,8 +1796,8 @@ def load_semantic_candidates(
                         "list_date": cbr_date,
                     },
                     state=(
-                        DataState.STALE_DATA
-                        if cbr_stale
+                        cbr_state
+                        if cbr_state != DataState.FOUND
                         else DataState.FOUND
                         if warning_rows
                         else DataState.NOT_FOUND
