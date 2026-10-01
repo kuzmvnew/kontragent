@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
 import os
@@ -42,11 +42,13 @@ from app.ingestion.fns_tax_debt_pipeline import (
 from app.models.company import Company
 from app.models.source import DataSet
 from app.models.tax_debt import (
+    CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
     FnsTaxDebtNormalizedRecord,
     FnsTaxDebtPilotState,
     FnsTaxDebtPublicationGeneration,
     FnsTaxDebtRawArtifact,
+    TAX_DEBT_FACT_CODE,
 )
 from app.models.worker import (
     WorkerHandlerRegistration,
@@ -72,7 +74,9 @@ from app.sources.fns_tax_debt import (
     DATASET_CODE,
     HANDLER_VERSION,
     MASS_INGESTION_ENABLED,
+    NORMALIZATION_VERSION,
     OFFICIAL_SOURCE_PAGE,
+    PARSER_VERSION,
     PILOT_ENVIRONMENT,
     SOURCE_ID,
 )
@@ -291,6 +295,7 @@ SAFE_BASELINE_CHECKS = frozenset(
         "active_coverage",
         "active_facts_outside_cohort",
         "active_fact_count",
+        "active_fact_integrity",
         "pilot_state_missing",
         "pilot_dataset",
         "pilot_cohort",
@@ -963,6 +968,187 @@ def _raw_manifest_matches(
     )
 
 
+def _normalized_record_hash_matches(record: FnsTaxDebtNormalizedRecord) -> bool:
+    payload = {
+        "inn": record.inn,
+        "company_name": record.company_name,
+        "source_document_id": record.source_document_id,
+        "document_date": record.document_date,
+        "data_date": record.data_date,
+        "total_arrears": record.total_arrears,
+        "total_penalties": record.total_penalties,
+        "total_fines": record.total_fines,
+        "total_debt": record.total_debt,
+        "items": record.items,
+        "normalization_version": record.normalization_version,
+        "limitation_states": record.limitation_states,
+    }
+    canonical = json.dumps(
+        _json_safe(payload),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest() == record.record_hash
+
+
+def _normalized_item_signature(value: Any) -> tuple[Any, ...] | None:
+    if not isinstance(value, Mapping):
+        return None
+    required = {"tax_name", "arrears", "penalties", "fines", "total"}
+    if set(value) != required or not isinstance(value.get("tax_name"), str):
+        return None
+    try:
+        amounts = tuple(
+            Decimal(str(value[field]))
+            for field in ("arrears", "penalties", "fines", "total")
+        )
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return (value["tax_name"], *amounts)
+
+
+def _active_fact_integrity_matches(
+    session: Session,
+    *,
+    dataset: DataSet,
+    generation: FnsTaxDebtPublicationGeneration,
+    artifact: FnsTaxDebtRawArtifact,
+    run: WorkerRun,
+    cohort: tuple[str, ...],
+) -> bool:
+    """Validate the complete published fact projection against accepted lineage."""
+
+    facts = session.execute(
+        select(CompanyTaxDebtSnapshot, Company)
+        .join(Company, Company.id == CompanyTaxDebtSnapshot.company_id)
+        .where(
+            CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+            CompanyTaxDebtSnapshot.publication_generation == generation.generation,
+        )
+    ).all()
+    for snapshot, company in facts:
+        provenance = _mapping_dict(snapshot.provenance)
+        if provenance is None or company.inn not in cohort:
+            return False
+        record_hash = provenance.get("record_hash")
+        if not isinstance(record_hash, str) or CHECKSUM_RE.fullmatch(record_hash) is None:
+            return False
+        if snapshot.normalized_record_id is not None:
+            normalized = session.get(
+                FnsTaxDebtNormalizedRecord, snapshot.normalized_record_id
+            )
+        else:
+            candidates = session.scalars(
+                select(FnsTaxDebtNormalizedRecord).where(
+                    FnsTaxDebtNormalizedRecord.dataset_id == dataset.id,
+                    FnsTaxDebtNormalizedRecord.artifact_id == artifact.id,
+                    FnsTaxDebtNormalizedRecord.record_hash == record_hash,
+                    FnsTaxDebtNormalizedRecord.company_id == snapshot.company_id,
+                    FnsTaxDebtNormalizedRecord.inn == company.inn,
+                    FnsTaxDebtNormalizedRecord.data_date == snapshot.data_date,
+                )
+            ).all()
+            if len(candidates) != 1:
+                return False
+            normalized = candidates[0]
+        if normalized is None:
+            return False
+
+        expected_source_reference = (
+            f"{artifact.artifact_reference}#record={normalized.record_hash}"
+        )
+        expected_provenance = {
+            "source_id": SOURCE_ID,
+            "dataset_code": DATASET_CODE,
+            "official_source": OFFICIAL_SOURCE_PAGE,
+            "artifact_sha256": artifact.sha256,
+            "artifact_reference": artifact.artifact_reference,
+            "worker_run_id": str(run.id),
+            "source_document_id": normalized.source_document_id,
+            "source_member": normalized.source_member,
+            "record_hash": normalized.record_hash,
+            "source_as_of": artifact.source_as_of,
+            "retrieved_at": artifact.retrieved_at,
+            "parser_version": PARSER_VERSION,
+            "normalization_version": NORMALIZATION_VERSION,
+            "matching_method": normalized.match_method,
+        }
+        if set(provenance) != set(expected_provenance) or not all(
+            _metadata_value_matches(provenance.get(field), expected)
+            for field, expected in expected_provenance.items()
+        ):
+            return False
+
+        normalized_items = list(normalized.items or ())
+        expected_items = [_normalized_item_signature(item) for item in normalized_items]
+        if any(item is None for item in expected_items):
+            return False
+        actual_items = session.scalars(
+            select(CompanyTaxDebtItem).where(
+                CompanyTaxDebtItem.snapshot_id == snapshot.id
+            )
+        ).all()
+        actual_signatures = [
+            (
+                item.tax_name,
+                item.arrears,
+                item.penalties,
+                item.fines,
+                item.total,
+            )
+            for item in actual_items
+        ]
+        if sorted(expected_items) != sorted(actual_signatures):
+            return False
+        if any(
+            item.total != item.arrears + item.penalties + item.fines
+            for item in actual_items
+        ):
+            return False
+        if (
+            snapshot.item_count != len(normalized_items)
+            or snapshot.item_count != len(actual_items)
+            or snapshot.total_arrears
+            != sum((item.arrears for item in actual_items), Decimal("0.00"))
+            or snapshot.total_penalties
+            != sum((item.penalties for item in actual_items), Decimal("0.00"))
+            or snapshot.total_fines
+            != sum((item.fines for item in actual_items), Decimal("0.00"))
+            or snapshot.total_debt
+            != sum((item.total for item in actual_items), Decimal("0.00"))
+        ):
+            return False
+
+        if not (
+            snapshot.company_id == normalized.company_id
+            and normalized.inn == company.inn
+            and normalized.dataset_id == dataset.id
+            and normalized.artifact_id == artifact.id
+            and normalized.validation_state == "valid"
+            and normalized.match_state == "matched"
+            and normalized.match_method == "inn_exact"
+            and normalized.normalization_version == NORMALIZATION_VERSION
+            and _normalized_record_hash_matches(normalized)
+            and snapshot.dataset_id == dataset.id
+            and snapshot.publication_generation == generation.generation
+            and snapshot.fact_code == TAX_DEBT_FACT_CODE
+            and snapshot.data_date == normalized.data_date
+            and snapshot.document_date == normalized.document_date
+            and snapshot.source_document_id == normalized.source_document_id
+            and snapshot.total_arrears == normalized.total_arrears
+            and snapshot.total_penalties == normalized.total_penalties
+            and snapshot.total_fines == normalized.total_fines
+            and snapshot.total_debt == normalized.total_debt
+            and list(snapshot.limitation_states or ())
+            == list(normalized.limitation_states or ())
+            and snapshot.retrieved_at == artifact.retrieved_at
+            and snapshot.source_reference == expected_source_reference
+        ):
+            return False
+    return True
+
+
 def _dataset_error_recovery_matches(
     session: Session,
     *,
@@ -992,6 +1178,21 @@ def _dataset_error_recovery_matches(
     if failed_attempt is None:
         return False
     failed_run, failed_job = failed_attempt
+    failed_attempt_contract_matches = (
+        failed_run.job_id == failed_job.id
+        and failed_job.source_id == SOURCE_ID
+        and failed_job.job_type == "fns_tax_debt_controlled_live"
+        and failed_job.handler_version == CONTROLLED_LIVE_HANDLER_VERSION
+        and failed_run.handler_version == failed_job.handler_version
+        and failed_run.handler_version == CONTROLLED_LIVE_HANDLER_VERSION
+        and failed_job.status == "failed"
+        and failed_run.status in {"failed", "timed_out", "interrupted"}
+        and failed_run.started_at >= active_generation.published_at
+        and failed_run.finished_at is not None
+        and failed_run.finished_at > active_generation.published_at
+        and failed_run.finished_at == dataset.last_error_at
+        and failed_run.records_published == 0
+    )
     metadata = _mapping_dict(failed_job.schedule_metadata) or {}
     semantic_fields_are_complete = (
         metadata.get("mode") == "controlled_live"
@@ -1015,7 +1216,11 @@ def _dataset_error_recovery_matches(
             )
         )
     )
-    if not semantic_fields_are_complete or not failed_run.errors:
+    if (
+        not failed_attempt_contract_matches
+        or not semantic_fields_are_complete
+        or not failed_run.errors
+    ):
         return False
     try:
         failed_source_as_of = datetime.fromisoformat(
@@ -1657,6 +1862,17 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
                         manifest, run=active_run, artifact=active_artifact
                     ),
                     "active_raw_manifest",
+                )
+                require(
+                    _active_fact_integrity_matches(
+                        session,
+                        dataset=dataset,
+                        generation=active_row,
+                        artifact=active_artifact,
+                        run=active_run,
+                        cohort=cohort,
+                    ),
+                    "active_fact_integrity",
                 )
         if pilot is not None and active_row is not None and dataset is not None:
             require(pilot.dataset_id == dataset.id, "pilot_dataset")

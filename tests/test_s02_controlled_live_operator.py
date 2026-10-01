@@ -18,6 +18,7 @@ from app.ingestion import fns_tax_debt_pipeline as pipeline
 from app.models.company import Company
 from app.models.source import DataSet, DataSource
 from app.models.tax_debt import (
+    CompanyTaxDebtItem,
     CompanyTaxDebtSnapshot,
     FnsTaxDebtNormalizedRecord,
     FnsTaxDebtPilotState,
@@ -749,27 +750,55 @@ def _seed_transitioned_production_shape(
         )
         session.add(active)
         if baseline_fact is not None:
-            session.add(
-                CompanyTaxDebtSnapshot(
-                    company_id=baseline_fact.company_id,
-                    dataset_id=dataset.id,
-                    normalized_record_id=None,
-                    publication_generation=1,
-                    fact_code=baseline_fact.fact_code,
-                    data_date=baseline_fact.data_date,
-                    document_date=baseline_fact.document_date,
-                    source_document_id=baseline_fact.source_document_id,
-                    total_arrears=baseline_fact.total_arrears,
-                    total_penalties=baseline_fact.total_penalties,
-                    total_fines=baseline_fact.total_fines,
-                    total_debt=baseline_fact.total_debt,
-                    item_count=baseline_fact.item_count,
-                    source_reference=baseline_fact.source_reference,
-                    provenance={**dict(baseline_fact.provenance), "publication_generation": 1},
-                    limitation_states=list(baseline_fact.limitation_states),
-                    retrieved_at=baseline_fact.retrieved_at,
-                )
+            normalized = session.get(
+                FnsTaxDebtNormalizedRecord, baseline_fact.normalized_record_id
             )
+            active_fact = CompanyTaxDebtSnapshot(
+                company_id=baseline_fact.company_id,
+                dataset_id=dataset.id,
+                normalized_record_id=None,
+                publication_generation=1,
+                fact_code=baseline_fact.fact_code,
+                data_date=baseline_fact.data_date,
+                document_date=baseline_fact.document_date,
+                source_document_id=baseline_fact.source_document_id,
+                total_arrears=baseline_fact.total_arrears,
+                total_penalties=baseline_fact.total_penalties,
+                total_fines=baseline_fact.total_fines,
+                total_debt=baseline_fact.total_debt,
+                item_count=baseline_fact.item_count,
+                source_reference=baseline_fact.source_reference,
+                provenance=pipeline.build_fact_provenance(
+                    {
+                        "source_document_id": normalized.source_document_id,
+                        "source_member": normalized.source_member,
+                        "record_hash": normalized.record_hash,
+                    },
+                    artifact=artifact,
+                    run_id=active_run.id,
+                    match_method=normalized.match_method,
+                ),
+                limitation_states=list(baseline_fact.limitation_states),
+                retrieved_at=baseline_fact.retrieved_at,
+            )
+            session.add(active_fact)
+            session.flush()
+            baseline_items = session.scalars(
+                select(CompanyTaxDebtItem).where(
+                    CompanyTaxDebtItem.snapshot_id == baseline_fact.id
+                )
+            ).all()
+            for item in baseline_items:
+                session.add(
+                    CompanyTaxDebtItem(
+                        snapshot_id=active_fact.id,
+                        tax_name=item.tax_name,
+                        arrears=item.arrears,
+                        penalties=item.penalties,
+                        fines=item.fines,
+                        total=item.total,
+                    )
+                )
         dataset.source_as_of = active.source_as_of
         dataset.retrieved_at = active.retrieved_at
         dataset.last_data_date = active.last_data_date
@@ -1009,12 +1038,12 @@ def test_valid_exact_baseline_chain_is_ready_without_pilot_state(
 
 
 def test_transition_aware_production_shape_and_preflight_are_ready(
-    operator_db, source_files, tmp_path
+    committed_operator_db, source_files, tmp_path
 ):
     seeded = _seed_transitioned_production_shape(
-        operator_db, tmp_path, source_files.inn
+        committed_operator_db, tmp_path, source_files.inn
     )
-    with operator_db() as session:
+    with committed_operator_db() as session:
         readiness = operator.database_readiness(
             session, cohort=(source_files.inn,)
         )
@@ -1047,6 +1076,284 @@ def test_transition_aware_production_shape_and_preflight_are_ready(
     assert report["status"] == "READY"
     assert report["baseline_generation"] == 0
     assert report["worker_generation"] == 2
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "total_debt",
+        "total_arrears",
+        "data_date",
+        "document_date",
+        "source_document_id",
+        "item_amount",
+        "item_count",
+        "source_reference",
+        "limitation_states",
+        "retrieved_at",
+        "provenance_artifact_sha256",
+        "provenance_artifact_reference",
+        "provenance_worker_run_id",
+        "provenance_record_hash",
+        "provenance_parser_version",
+        "provenance_normalization_version",
+        "normalized_wrong_artifact",
+        "normalized_semantic_value",
+    ),
+)
+def test_transitioned_active_fact_content_corruption_fails_closed(
+    committed_operator_db, source_files, tmp_path, corruption
+):
+    seeded = _seed_transitioned_production_shape(
+        committed_operator_db, tmp_path, source_files.inn
+    )
+    with committed_operator_db() as session:
+        active = session.get(FnsTaxDebtPublicationGeneration, seeded["active_id"])
+        fact = session.scalar(
+            select(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.dataset_id == seeded["dataset_id"],
+                CompanyTaxDebtSnapshot.publication_generation == active.generation,
+            )
+        )
+        if corruption == "total_debt":
+            fact.total_debt += 1
+        elif corruption == "total_arrears":
+            fact.total_arrears += 1
+        elif corruption == "data_date":
+            fact.data_date += timedelta(days=1)
+        elif corruption == "document_date":
+            fact.document_date += timedelta(days=1)
+        elif corruption == "source_document_id":
+            fact.source_document_id = f"tampered-{uuid4()}"
+        elif corruption == "item_amount":
+            item = session.scalar(
+                select(CompanyTaxDebtItem).where(
+                    CompanyTaxDebtItem.snapshot_id == fact.id
+                )
+            )
+            item.arrears += 1
+        elif corruption == "item_count":
+            fact.item_count += 1
+        elif corruption == "source_reference":
+            fact.source_reference = f"{fact.source_reference}-tampered"
+        elif corruption == "limitation_states":
+            fact.limitation_states = [*fact.limitation_states, "tampered"]
+        elif corruption == "retrieved_at":
+            fact.retrieved_at += timedelta(seconds=1)
+        elif corruption == "normalized_wrong_artifact":
+            normalized = session.scalar(
+                select(FnsTaxDebtNormalizedRecord).where(
+                    FnsTaxDebtNormalizedRecord.record_hash
+                    == fact.provenance["record_hash"]
+                )
+            )
+            run = session.get(WorkerRun, seeded["active_run_id"])
+            alternate = _add_alternate_artifact(
+                session,
+                session.get(DataSet, seeded["dataset_id"]),
+                run,
+                reference=f"file:///safe/wrong-normalized-{uuid4()}.zip",
+                checksum="e" * 64,
+            )
+            normalized.artifact_id = alternate.id
+        elif corruption == "normalized_semantic_value":
+            normalized = session.scalar(
+                select(FnsTaxDebtNormalizedRecord).where(
+                    FnsTaxDebtNormalizedRecord.record_hash
+                    == fact.provenance["record_hash"]
+                )
+            )
+            normalized.total_debt += 1
+        else:
+            field = corruption.removeprefix("provenance_")
+            replacements = {
+                "artifact_sha256": "f" * 64,
+                "artifact_reference": "file:///safe/tampered.zip",
+                "worker_run_id": str(uuid4()),
+                "record_hash": "d" * 64,
+                "parser_version": "tampered-parser",
+                "normalization_version": "tampered-normalization",
+            }
+            fact.provenance = {
+                **dict(fact.provenance),
+                field: replacements[field],
+            }
+        session.commit()
+
+        with pytest.raises(operator.OperatorError) as caught:
+            operator.database_readiness(session, cohort=(source_files.inn,))
+    assert caught.value.code == "BASELINE_NOT_READY"
+    assert "active_fact_integrity" in caught.value.details["failed_checks"]
+
+
+def test_active_fact_integrity_accepts_direct_normalized_record_fk(
+    committed_operator_db, source_files, tmp_path
+):
+    seeded = _seed_transitioned_production_shape(
+        committed_operator_db, tmp_path, source_files.inn
+    )
+    with committed_operator_db() as session:
+        baseline_fact = session.scalar(
+            select(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.dataset_id == seeded["dataset_id"],
+                CompanyTaxDebtSnapshot.publication_generation == 0,
+            )
+        )
+        active_fact = session.scalar(
+            select(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.dataset_id == seeded["dataset_id"],
+                CompanyTaxDebtSnapshot.publication_generation == 1,
+            )
+        )
+        normalized_record_id = baseline_fact.normalized_record_id
+        baseline_fact.normalized_record_id = None
+        session.flush()
+        active_fact.normalized_record_id = normalized_record_id
+        session.commit()
+
+        readiness = operator.database_readiness(session, cohort=(source_files.inn,))
+    assert readiness["worker_generation"] == 2
+
+
+def test_full_preflight_rejects_corrupted_active_fact(
+    committed_operator_db, source_files, tmp_path
+):
+    seeded = _seed_transitioned_production_shape(
+        committed_operator_db, tmp_path, source_files.inn
+    )
+    with committed_operator_db() as session:
+        fact = session.scalar(
+            select(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.dataset_id == seeded["dataset_id"],
+                CompanyTaxDebtSnapshot.publication_generation == 1,
+            )
+        )
+        fact.total_debt += 1
+        session.commit()
+
+        with pytest.raises(operator.OperatorError) as caught:
+            operator.build_preflight_report(
+                session,
+                source_package=source_files.manifest,
+                artifact=source_files.artifact,
+                xsd=source_files.xsd,
+                cohort_path=source_files.cohort,
+                expected_main_sha=operator.resolve_runtime_sha(),
+                now=NOW,
+                discovery_client=_DiscoveryClient(),
+            )
+    assert caught.value.code == "BASELINE_NOT_READY"
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "run_handler_mismatch",
+        "run_handler_unknown",
+        "job_handler_wrong",
+        "run_belongs_to_another_job",
+        "wrong_job_source",
+        "wrong_job_type",
+        "missing_error_evidence",
+        "published_counter",
+        "attempt_started_too_early",
+        "run_not_failed",
+    ),
+)
+def test_error_recovery_rejects_invalid_failed_attempt_contract(
+    committed_operator_db, source_files, tmp_path, corruption
+):
+    seeded = _seed_transitioned_production_shape(
+        committed_operator_db, tmp_path, source_files.inn
+    )
+    package = operator.load_source_package(source_files.manifest)
+    failed_at = NOW + timedelta(seconds=2)
+    with committed_operator_db() as session:
+        dataset = session.get(DataSet, seeded["dataset_id"])
+        dataset.operational_status = "error"
+        dataset.last_error = "reviewed failed refresh"
+        dataset.last_error_at = failed_at
+        dataset.retry_count = 1
+        failed_job = create_job(
+            session,
+            source_id=SOURCE_ID,
+            job_type="fns_tax_debt_controlled_live",
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            idempotency_key=f"failed-handler-contract-{uuid4()}",
+            schedule_metadata={
+                "mode": "controlled_live",
+                "pilot_enabled": True,
+                "pilot_environment": PILOT_ENVIRONMENT,
+                "cohort_inns": [source_files.inn],
+                "expected_sha256": package["artifact_sha256"],
+                "expected_xsd_sha256": package["xsd_sha256"],
+                "source_as_of": SOURCE_AS_OF.isoformat(),
+                "data_as_of": DATA_AS_OF.isoformat(),
+                "official_actual_until": ACTUAL_UNTIL.isoformat(),
+                "discovery_page_url": OFFICIAL_SOURCE_PAGE,
+                "artifact_url": package["artifact_requested_url"],
+                "xsd_url": package["xsd_requested_url"],
+            },
+            now=failed_at,
+        ).job
+        failed_job.status = "failed"
+        failed_run = WorkerRun(
+            job_id=failed_job.id,
+            attempt_no=1,
+            started_at=failed_at - timedelta(seconds=1),
+            finished_at=failed_at,
+            status="failed",
+            worker_id="failed-refresh-runtime",
+            fencing_token=1001,
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            current_stage="failed",
+            errors=[{"kind": "invalid_data", "message": dataset.last_error}],
+            checksum_metadata={},
+            heartbeat_at=failed_at,
+            records_seen=0,
+            records_written=0,
+            records_rejected=0,
+            records_duplicated=0,
+            records_published=0,
+            retryable=False,
+        )
+        session.add(failed_run)
+        session.flush()
+        if corruption == "run_handler_mismatch":
+            failed_run.handler_version = "wrong-handler-version"
+        elif corruption == "run_handler_unknown":
+            failed_run.handler_version = "fns-tax-debt-controlled-live-v0"
+        elif corruption == "job_handler_wrong":
+            failed_job.handler_version = "wrong-handler-version"
+            failed_run.handler_version = failed_job.handler_version
+        elif corruption == "run_belongs_to_another_job":
+            other_job = create_job(
+                session,
+                source_id="OTHER",
+                job_type="other",
+                handler_version="other-v1",
+                idempotency_key=f"other-failed-handler-{uuid4()}",
+                now=failed_at,
+            ).job
+            other_job.status = "failed"
+            failed_run.job_id = other_job.id
+        elif corruption == "wrong_job_source":
+            failed_job.source_id = "OTHER"
+        elif corruption == "wrong_job_type":
+            failed_job.job_type = "other"
+        elif corruption == "missing_error_evidence":
+            failed_run.errors = []
+        elif corruption == "published_counter":
+            failed_run.records_published = 1
+        elif corruption == "attempt_started_too_early":
+            failed_run.started_at = NOW
+        elif corruption == "run_not_failed":
+            failed_run.status = "succeeded"
+        session.commit()
+
+        with pytest.raises(operator.OperatorError) as caught:
+            operator.database_readiness(session, cohort=(source_files.inn,))
+    assert caught.value.code == "BASELINE_NOT_READY"
 
 
 def test_real_production_shape_allows_new_semantic_recovery_job(
