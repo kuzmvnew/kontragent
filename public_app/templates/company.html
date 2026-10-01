@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% macro fact_source(item) -%}
-  <p class="fact-source">Источник: {{ item.source.name }} · {{ item.source.source_class }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date | public_date }}{% endif %}{% if item.source.reference %} · <a href="{{ item.source.reference }}" rel="nofollow noreferrer">открыть источник</a>{% endif %}</p>
+  <p class="fact-source">Источник: {{ item.source.name }} · {{ item.source.source_class }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date | public_date }}{% endif %} · актуальность: {% if item.source.freshness == 'CURRENT' %}текущие сведения{% elif item.source.freshness == 'STALE' %}требуют обновления{% else %}не определена{% endif %}{% if item.source.reference %} · <a href="{{ item.source.reference }}" rel="nofollow noreferrer">открыть источник</a>{% endif %}</p>
   {% if item.alternative_sources %}<p class="fact-alternatives">Также подтверждают: {% for source in item.alternative_sources %}{{ source.name }}{% if source.source_data_date %} ({{ source.source_data_date | public_date }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
 {%- endmacro %}
 {% block head %}
@@ -14,6 +14,7 @@
 <meta property="og:url" content="{{ canonical }}">
 <meta property="og:site_name" content="NEXT Company">
 <script type="application/ld+json">{{ json_ld | tojson }}</script>
+<script src="/static/company.js" defer></script>
 {% endblock %}
 {% block content %}
 {% set company = projection.company %}
@@ -30,6 +31,12 @@
   {% set tax = view.section('tax') %}
   {% set enforcement = view.section('enforcement') %}
   {% set licenses = view.section('licenses') %}
+  {% set courts = view.section('courts') %}
+  {% set bankruptcy = view.section('bankruptcy') %}
+  {% set procurement = view.section('procurement') %}
+  {% set restrictions = view.section('restrictions') %}
+  {% set inspections = view.section('inspections') %}
+  {% set connections = view.section('connections') %}
   {% set address = view.section('address') %}
   {% set events = view.section('events') %}
 {% endif %}
@@ -46,6 +53,10 @@
       <div><dt>КПП</dt><dd>{{ company.kpp or '—' }}</dd></div>
       <div><dt>ОГРН</dt><dd>{{ company.ogrn or '—' }}</dd></div>
     </dl>
+    <div class="requisites-actions">
+      <button type="button" class="copy-button" data-copy-button data-copy-value="{{ company.name }}&#10;ИНН {{ company.inn }}{% if company.kpp %}&#10;КПП {{ company.kpp }}{% endif %}{% if company.ogrn %}&#10;ОГРН {{ company.ogrn }}{% endif %}">Скопировать реквизиты</button>
+      <span class="copy-status" data-copy-status aria-live="polite"></span>
+    </div>
     <p class="result-date">Дата результата <time datetime="{{ projection.publication.result_date }}">{{ projection.publication.result_date.strftime('%d.%m.%Y') }}</time></p>
   </section>
 
@@ -140,8 +151,31 @@
   </section>
   {% endif %}
 
-  {% if view and licenses and licenses.items %}
-  <section class="content-section" data-section-key="licenses"><p class="section-kicker">Разрешения</p><h2>Лицензии</h2><div class="semantic-grid">{% for item in licenses.items %}<article class="semantic-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><h3>{{ item.value.number or 'Лицензия' }}</h3><p>{{ item.value.activity or item.value.status or '' }}</p>{{ fact_source(item) }}</article>{% endfor %}</div></section>
+  {% if view and licenses %}
+  <section class="content-section" data-section-key="licenses">
+    <div class="section-heading"><div><p class="section-kicker">Разрешения</p><h2>Лицензии</h2></div><span class="state-badge">{{ licenses.state }}</span></div>
+    {% if licenses.items %}<div class="semantic-grid">{% for item in licenses.items %}<article class="semantic-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><h3>{{ item.value.number or 'Лицензия' }}</h3><p>{{ item.value.activity or item.value.status or '' }}</p>{{ fact_source(item) }}</article>{% endfor %}</div>{% else %}<p class="empty-state">{{ licenses.state }}</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if view and connections %}
+  <section class="content-section" data-section-key="connections">
+    <div class="section-heading"><div><p class="section-kicker">Связи по подтверждённым фактам</p><h2>Связи</h2></div><span class="state-badge">{{ connections.state }}</span></div>
+    {% if connections.items %}<div class="semantic-grid">{% for item in connections.items %}<article class="semantic-card" data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}"><h3>{{ item.value.name }}</h3><p>{% if item.value.relation == 'MANAGER' %}Руководитель{% else %}Учредитель / участник{% endif %}{% if item.value.position %} · {{ item.value.position }}{% endif %}{% if item.value.share %} · доля {{ item.value.share }}{% endif %}</p>{{ fact_source(item) }}{% if item.limitations %}<p class="limitation">{{ item.limitations | join(' ') }}</p>{% endif %}</article>{% endfor %}</div>{% else %}<p class="empty-state">{{ connections.state }}</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if view %}
+  <section class="content-section" data-section-key="courts bankruptcy procurement restrictions inspections">
+    <p class="section-kicker">Проверки по отдельным источникам</p><h2>Суды, ограничения и контрольные мероприятия</h2>
+    <div class="semantic-grid">
+      {% if courts %}<article class="semantic-card domain-state-card" data-domain="courts"><h3>Суды</h3><p class="state-badge">{{ courts.state }}</p>{% for item in courts.items %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">{% if item.value and item.value.case_count is defined %}<p><strong>{{ item.value.case_count }}</strong> совпадений · {{ item.value.scope }}</p>{% endif %}{{ fact_source(item) }}{% if item.limitations %}<p class="limitation">{{ item.limitations | join(' ') }}</p>{% endif %}</div>{% endfor %}</article>{% endif %}
+      {% if bankruptcy %}<article class="semantic-card domain-state-card" data-domain="bankruptcy"><h3>Банкротство</h3><p class="state-badge">{{ bankruptcy.state }}</p>{% for item in bankruptcy.items %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">{{ fact_source(item) }}{% if item.limitations %}<p class="limitation">{{ item.limitations | join(' ') }}</p>{% endif %}</div>{% endfor %}</article>{% endif %}
+      {% if procurement %}<article class="semantic-card domain-state-card" data-domain="procurement"><h3>Закупки и РНП</h3><p class="state-badge">{{ procurement.state }}</p>{% for item in procurement.items %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">{{ fact_source(item) }}{% if item.limitations %}<p class="limitation">{{ item.limitations | join(' ') }}</p>{% endif %}</div>{% endfor %}</article>{% endif %}
+      {% if restrictions %}<article class="semantic-card domain-state-card" data-domain="restrictions"><h3>Ограничения и предупреждения</h3><p class="state-badge">{{ restrictions.state }}</p>{% for item in restrictions.items %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">{% if item.field_key == 'warning' %}<p><strong>{{ item.value.name or 'Запись Банка России' }}</strong></p>{% if item.value.signs %}<p>{{ item.value.signs | join('; ') }}</p>{% endif %}{% endif %}{{ fact_source(item) }}{% if item.limitations %}<p class="limitation">{{ item.limitations | join(' ') }}</p>{% endif %}</div>{% endfor %}</article>{% endif %}
+      {% if inspections %}<article class="semantic-card domain-state-card" data-domain="inspections"><h3>Контрольные мероприятия</h3><p class="state-badge">{{ inspections.state }}</p>{% for item in inspections.items %}<div data-fact-ref="{{ item.fact_ref }}" data-item-ref="{{ item.item_ref }}">{% if item.field_key == 'availability' and item.value %}<p>Записей в загруженном покрытии: <strong>{{ item.value.record_count }}</strong></p>{% elif item.field_key == 'inspection' %}<p><strong>{{ item.value.registry_number or 'Мероприятие' }}</strong>{% if item.value.status %} · {{ item.value.status }}{% endif %}</p>{% if item.value.result %}<p>{{ item.value.result }}</p>{% endif %}{% endif %}{{ fact_source(item) }}{% if item.limitations %}<p class="limitation">{{ item.limitations | join(' ') }}</p>{% endif %}</div>{% endfor %}</article>{% endif %}
+    </div>
+  </section>
   {% endif %}
 
   {% if view and address and address.facts('division') %}
