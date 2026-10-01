@@ -49,7 +49,7 @@ not-applicability are separate states.
 |---|---|---|---|
 | identity / status / registration / address / OKVED | Master Registry (official master evidence) | Firmoteka | official wins; bridge retained as alternative when present |
 | management / founders / capital | Master Registry where present | Firmoteka | official wins; public minimization applies |
-| contacts | no official authority accepted in this slice | Firmoteka public evidence | bridge only; typed provenance |
+| contacts | no official authority accepted in this slice | Firmoteka evidence | only explicitly corporate contacts are public; personal/unknown are authenticated-only |
 | finance revenue / expenses / profit-loss | FNS REVEXP | Firmoteka | official wins |
 | net profit / equity | GIRBO when accepted | Firmoteka | bridge fallback until accepted official fact exists |
 | employees | FNS headcount | Firmoteka | official wins |
@@ -126,7 +126,9 @@ source.
 Public recursive validation continues to reject operational/internal fields,
 including `company_id`, RAW/artifact/job fields, credentials, passports,
 home/residential/registration-address private fields and private filesystem
-paths.
+paths. Public filtering also removes person INN/OGRNIP identifiers from
+management/founder values and excludes personal/unknown phone/email contacts;
+those remain available only to non-public audiences when permitted.
 
 Provider records for ERKNM and the Bank of Russia are converted through
 explicit allowlists. Firmoteka remains a field-level authorized bridge rather
