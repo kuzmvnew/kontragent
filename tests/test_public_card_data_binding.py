@@ -21,6 +21,7 @@ from app.services.company_view_service import (
     SECTION_KEYS,
     SemanticCandidate,
     _connection_candidates,
+    _dataset_observation_state,
     _safe_cbr_warning_value,
     _safe_inspection_value,
     filter_company_view,
@@ -506,3 +507,39 @@ def test_public_export_preserves_limiting_section_state_with_state_item():
     assert courts.state == "Источник временно недоступен"
     assert courts.items[0].state == "Источник временно недоступен"
     assert courts.items[0].value is None
+
+
+def test_dataset_operational_health_controls_public_semantic_state():
+    current = {
+        "enabled": True,
+        "last_data_date": date(2026, 10, 1),
+        "operational_status": "current",
+        "freshness_policy": "daily",
+        "source_as_of": NOW,
+        "last_success_at": NOW,
+        "freshness_threshold_seconds": 172800,
+        "official_actual_until": date(2026, 10, 10),
+    }
+    assert _dataset_observation_state(current, observed_at=NOW) == DataState.FOUND
+
+    unavailable = {**current, "operational_status": "error"}
+    assert (
+        _dataset_observation_state(unavailable, observed_at=NOW)
+        == DataState.SOURCE_UNAVAILABLE
+    )
+
+    stale = {
+        **current,
+        "operational_status": "current",
+        "official_actual_until": date(2026, 10, 1),
+    }
+    assert _dataset_observation_state(
+        stale,
+        observed_at=datetime(2026, 10, 2, 9, 0, tzinfo=UTC),
+    ) == DataState.STALE_DATA
+
+    disabled = {**current, "enabled": False}
+    assert (
+        _dataset_observation_state(disabled, observed_at=NOW)
+        == DataState.SOURCE_UNAVAILABLE
+    )
