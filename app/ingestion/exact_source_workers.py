@@ -32,7 +32,16 @@ from app.models.roskomnadzor import RoskomnadzorPdOperatorCheck
 from app.models.source import DataSet
 from app.models.worker import WorkerHandlerRegistration, WorkerJob
 from app.providers.fns_npd_provider import API_URL as NPD_URL
-from app.providers.nopriz_provider import NOPRIZ_API_URL, NOPRIZ_REGISTRY_URL
+from app.providers.nopriz_provider import (
+    NOPRIZ_API_URL,
+    NOPRIZ_MAX_PAGES,
+    NOPRIZ_PAGE_SIZE,
+    NOPRIZ_REGISTRY_URL,
+    NoprizCandidatePage,
+    NoprizMemberProvider,
+    NoprizProviderError,
+    parse_nopriz_candidate_pages,
+)
 from app.providers.nostroy_provider import (
     NOSTROY_API_URL,
     NOSTROY_REGISTRY_URL,
@@ -207,6 +216,51 @@ def _perform_sro(source_id: str, inn: str) -> tuple[dict[str, Any], list[dict[st
     return {**parsed, "http_status": 200}, observations
 
 
+def _fetch_nopriz_candidates(
+    inn: str,
+) -> tuple[tuple[NoprizCandidatePage, ...], list[dict[str, Any]]]:
+    """Fetch bounded NOPRIZ candidates without making an identity decision."""
+    try:
+        with httpx.Client(
+            timeout=45,
+            follow_redirects=True,
+            http2=False,
+            headers={
+                "User-Agent": "next.company-source-worker/1.0 (bounded candidate lookup)",
+                "Referer": NOPRIZ_REGISTRY_URL,
+                "Accept": "application/json",
+            },
+        ) as client:
+            pages = NoprizMemberProvider(client=client).fetch_candidate_pages(inn)
+    except NoprizProviderError as error:
+        if error.http_status == 403:
+            raise LegalBlockError(
+                "nopriz_sro_members_on_demand public source returned HTTP 403"
+            ) from error
+        if error.kind in {"timeout", "network_error", "source_protection"}:
+            raise WorkerNetworkError(
+                f"nopriz_sro_members_on_demand candidate request failed: {error.kind}"
+            ) from error
+        raise SchemaMismatchError(
+            f"nopriz_sro_members_on_demand candidate request failed: {error.kind}"
+        ) from error
+    observations = [
+        {
+            "request": page.request,
+            "response": page.response_content,
+            "headers": {
+                str(key).lower(): str(value)
+                for key, value in page.response_headers.items()
+                if str(key).lower() in SAFE_HEADERS
+            },
+            "status": page.http_status,
+            "retrieved_at": page.retrieved_at.isoformat(),
+        }
+        for page in pages
+    ]
+    return pages, observations
+
+
 def _perform_prime(inn: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     url = COMPANY_URL.format(inn=inn)
     try:
@@ -269,21 +323,32 @@ def exact_source_handler(context: HandlerContext) -> HandlerResult:
     raw_root = Path(str(metadata.get("raw_root") or "")).resolve()
     if not str(metadata.get("raw_root") or "").strip():
         raise InvalidDataError("raw_root is required")
+    nopriz_pages: tuple[NoprizCandidatePage, ...] | None = None
     if spec["kind"] == "npd":
         normalized, observations = _perform_npd(inn, request_date)
-    elif spec["kind"] in {"nostroy", "nopriz"}:
+    elif spec["kind"] == "nostroy":
         normalized, observations = _perform_sro(source_id, inn)
+    elif spec["kind"] == "nopriz":
+        # Keep every successful candidate response in RAW before exact
+        # identity post-filtering. Foreign candidates never reach normalized
+        # public records, but remain available as protected provenance.
+        nopriz_pages, observations = _fetch_nopriz_candidates(inn)
+        normalized = None
     elif spec["kind"] == "rkn_pd":
         normalized, observations = _perform_rkn_pd(inn)
     else:
         normalized, observations = _perform_prime(inn)
+    retrieved_at = utc_now().isoformat()
+    matching_method = (
+        "inn_exact_post_filter" if spec["kind"] == "nopriz" else "inn_exact"
+    )
     exchange = {
         "manifest_version": 1,
         "source_id": source_id,
         "source_url": str(spec["url"]),
         "inn": inn,
         "request_date": request_date.isoformat(),
-        "matching_method": "inn_exact",
+        "matching_method": matching_method,
         "exchanges": [
             {
                 "request": item["request"],
@@ -291,6 +356,7 @@ def exact_source_handler(context: HandlerContext) -> HandlerResult:
                 "response_sha256": sha256(item["response"]).hexdigest(),
                 "http_status": item["status"],
                 "response_headers": item["headers"],
+                "retrieved_at": item.get("retrieved_at") or retrieved_at,
             }
             for item in observations
         ],
@@ -300,6 +366,17 @@ def exact_source_handler(context: HandlerContext) -> HandlerResult:
     artifact_dir = raw_root / source_id / raw_sha
     raw_path = artifact_dir / "exchange.json"
     _write_once(raw_path, raw_bytes)
+    if nopriz_pages is not None:
+        normalized = {
+            **parse_nopriz_candidate_pages(
+                nopriz_pages,
+                inn,
+                page_size=NOPRIZ_PAGE_SIZE,
+                max_pages=NOPRIZ_MAX_PAGES,
+            ),
+            "http_status": 200,
+        }
+    assert normalized is not None
     normalized_payload = {
         "source_id": source_id,
         "inn": inn,
@@ -317,8 +394,8 @@ def exact_source_handler(context: HandlerContext) -> HandlerResult:
         "sha256": raw_sha,
         "size": len(raw_bytes),
         "immutable": True,
-        "matching_method": "inn_exact",
-        "retrieved_at": utc_now().isoformat(),
+        "matching_method": matching_method,
+        "retrieved_at": retrieved_at,
     }
     _write_once(artifact_dir / "manifest.json", (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode())
     counters = ExecutionCounters(records_seen=1, records_written=1, records_published=0)
@@ -355,19 +432,38 @@ def _publish_npd(session: Session, *, inn: str, request_date: date, payload: dic
 def _publish_sro(session: Session, *, source_id: str, inn: str, request_date: date, payload: dict[str, Any], now: datetime) -> int:
     model = NostroyMemberCheck if source_id.startswith("nostroy") else NoprizMemberCheck
     constraint = "uq_nostroy_member_check_inn_date" if model is NostroyMemberCheck else "uq_nopriz_member_check_inn_date"
-    values = {
-        "inn": inn, "request_date": request_date, "result_status": "success",
-        "is_found": bool(payload["found"]), "record_count": int(payload["total"]),
-        "public_records": list(payload["records"]), "http_status": 200,
-        "error_code": None, "error_message": None, "checked_at": now,
-    }
+    if model is NoprizMemberCheck:
+        result_status = str(payload["result_status"])
+        is_found = True if result_status == "success" and payload.get("is_found") is True else None
+        record_count = int(payload["record_count"]) if is_found else None
+        public_records = list(payload["public_records"]) if is_found else []
+        error_code = None if is_found else str(payload.get("error_code") or "exact_identity_not_confirmed")
+        values = {
+            "inn": inn,
+            "request_date": request_date,
+            "result_status": "success" if is_found else "unknown",
+            "is_found": is_found,
+            "record_count": record_count,
+            "public_records": public_records,
+            "http_status": 200,
+            "error_code": error_code,
+            "error_message": None,
+            "checked_at": now,
+        }
+    else:
+        values = {
+            "inn": inn, "request_date": request_date, "result_status": "success",
+            "is_found": bool(payload["found"]), "record_count": int(payload["total"]),
+            "public_records": list(payload["records"]), "http_status": 200,
+            "error_code": None, "error_message": None, "checked_at": now,
+        }
     session.execute(
         pg_insert(model).values(**values).on_conflict_do_update(
             constraint=constraint,
             set_={key: value for key, value in values.items() if key not in {"inn", "request_date"}},
         )
     )
-    return int(payload["total"])
+    return int(values["record_count"] or 0)
 
 
 def _publish_prime(session: Session, *, dataset: DataSet, inn: str, request_date: date, payload: dict[str, Any], now: datetime) -> int:
@@ -432,7 +528,12 @@ def publish_exact_source_result(session: Session, claim: Any, result: HandlerRes
         published = _publish_prime(session, dataset=dataset, inn=inn, request_date=request_date, payload=payload, now=now)
     else:
         published = _publish_rkn_pd(session, dataset=dataset, inn=inn, request_date=request_date, payload=payload, now=now)
-    found = bool(payload.get("found"))
+    unknown = (
+        source_id == "nopriz_sro_members_on_demand"
+        and payload.get("result_status") != "success"
+    )
+    found = bool(payload.get("found")) and not unknown
+    not_found = not found and not unknown
     coverage = dict(dataset.coverage or {})
     sweep_id = str(claim.schedule_metadata["sweep_id"])
     cohort_size = int(claim.schedule_metadata["cohort_size"])
@@ -463,10 +564,16 @@ def publish_exact_source_result(session: Session, claim: Any, result: HandlerRes
             "found": int(sweep.get("found") or 0)
             + (int(found) if first_success_for_inn else 0),
             "not_found": int(sweep.get("not_found") or 0)
-            + (int(not found) if first_success_for_inn else 0),
+            + (int(not_found) if first_success_for_inn else 0),
+            "unknown": int(sweep.get("unknown") or 0)
+            + (int(unknown) if first_success_for_inn else 0),
             "published_facts": int(sweep.get("published_facts") or 0)
             + (published if first_success_for_inn else 0),
-            "matching_method": "inn_exact",
+            "matching_method": (
+                "inn_exact_post_filter"
+                if source_id == "nopriz_sro_members_on_demand"
+                else "inn_exact"
+            ),
         }
     )
     coverage["active_sweep"] = sweep
@@ -519,7 +626,7 @@ def publish_exact_source_result(session: Session, claim: Any, result: HandlerRes
         new_facts=published,
         changed_facts=0,
         removed_or_expired_facts=0,
-        unchanged_facts=int(not found),
+        unchanged_facts=int(not_found),
         replayed_facts=0,
         quarantined_records=0,
         source_records=1,
@@ -599,7 +706,12 @@ def schedule_exact_source_sweep(
                     "inn": company.inn, "company_id": company.id,
                     "request_date": request_date.isoformat(),
                     "raw_root": str(Path(raw_root).resolve()),
-                    "matching_method": "inn_exact", "scheduled_index": index,
+                    "matching_method": (
+                        "inn_exact_post_filter"
+                        if spec["kind"] == "nopriz"
+                        else "inn_exact"
+                    ),
+                    "scheduled_index": index,
                 },
                 max_attempts=4, timeout_seconds=120, now=eligible_at,
             )
