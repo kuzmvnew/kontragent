@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ projection.company.name }} — NEXT Company{% endblock %}
+{% block content %}
+{% set company = projection.company %}
+<section class="company-head">
+  <p class="eyebrow">Карточка компании</p>
+  <h1>{{ company.name }}</h1>
+  <p>ИНН {{ company.inn }}{% if company.ogrn %} · ОГРН {{ company.ogrn }}{% endif %}</p>
+  <p>{{ company.legal_status or 'Статус уточняется' }}</p>
+  {% if actions.is_saved %}
+    <form action="/app/companies/{{ company.inn }}/unsave" method="post">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="secondary">Удалить из сохранённых</button>
+    </form>
+  {% elif actions.can_save %}
+    <form action="/app/companies/{{ company.inn }}/save" method="post">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">Сохранить компанию</button>
+    </form>
+  {% else %}
+    <p class="blocked">Сохранение недоступно: {{ actions.save_denial_reason or 'ограничение рабочего пространства' }}</p>
+  {% endif %}
+</section>
+<section class="summary">
+  <p class="eyebrow">Краткий вывод</p>
+  <h2>{{ projection.public_conclusion }}</h2>
+  <p>{{ projection.risk.public_explanation }}</p>
+</section>
+<section>
+  <h2>Реквизиты</h2>
+  <dl class="details">
+    <div><dt>Полное наименование</dt><dd>{{ company.full_name or company.name }}</dd></div>
+    <div><dt>ИНН</dt><dd>{{ company.inn }}</dd></div>
+    <div><dt>КПП</dt><dd>{{ company.kpp or '—' }}</dd></div>
+    <div><dt>ОГРН</dt><dd>{{ company.ogrn or '—' }}</dd></div>
+    <div><dt>Адрес</dt><dd>{{ company.address or '—' }}</dd></div>
+  </dl>
+</section>
+{% if projection.company_view %}
+<section>
+  <h2>Данные проверки</h2>
+  <div class="grid">
+  {% for section in projection.company_view.sections %}
+    {% if section.items or section.state != 'Сведения пока не проверены' %}
+    <article class="card" data-section-key="{{ section.section_key }}">
+      <h3>{{ section.title or section.section_key }}</h3>
+      <p>{{ section.state }}</p>
+      {% if section.items %}<p>{{ section.items|length }} факт(ов)</p>{% endif %}
+    </article>
+    {% endif %}
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+<p class="hint">Публичная карточка: <a href="/companies/{{ company.inn }}">/companies/{{ company.inn }}</a></p>
+{% endblock %}

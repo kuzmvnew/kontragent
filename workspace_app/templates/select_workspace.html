@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Выбор Workspace — NEXT Company{% endblock %}
+{% block content %}
+<section>
+  <p class="eyebrow">Рабочее пространство</p>
+  <h1>Выберите Workspace</h1>
+  <div class="grid">
+  {% for workspace in workspaces %}
+    <form action="/workspace/select" method="post" class="card">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="workspace_id" value="{{ workspace.id }}">
+      <h2>{{ workspace.name }}</h2>
+      <button type="submit">Открыть</button>
+    </form>
+  {% else %}
+    <p class="empty">Нет доступных рабочих пространств.</p>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}

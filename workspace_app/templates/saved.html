@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Сохранённые — NEXT Company{% endblock %}
+{% block content %}
+<section>
+  <p class="eyebrow">Workspace</p>
+  <h1>Сохранённые компании</h1>
+  <div class="list">
+  {% for item in entries %}
+    <a class="row" href="/app/companies/{{ item.inn }}">
+      <strong>{{ item.name }}</strong>
+      <span>ИНН {{ item.inn }} · добавлено {{ item.created_at.strftime('%d.%m.%Y') }}</span>
+      {% if item.note %}<small>{{ item.note }}</small>{% endif %}
+    </a>
+  {% else %}
+    <p class="empty">Пока нет сохранённых компаний.</p>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}
