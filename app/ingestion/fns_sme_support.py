@@ -655,9 +655,36 @@ def publish_fns_sme_support_worker_result(session, claim, result):
     actual_until = _claim_actual_until(claim)
 
     if claim.schedule_metadata.get("check_only"):
+        replay_snapshot = claim.schedule_metadata.get("replay_snapshot", False)
+        if not isinstance(replay_snapshot, bool):
+            raise InvalidDataError("replay_snapshot must be a boolean")
         enrichment_replay = bool(
             claim.schedule_metadata.get("company_enrichment_run_ids")
         )
+        if enrichment_replay and not replay_snapshot:
+            raise InvalidDataError(
+                "targeted SME-support enrichment requires snapshot replay"
+            )
+        if not replay_snapshot:
+            status = _apply_successful_check(
+                dataset,
+                actual_until=actual_until,
+                now=now,
+                check_interval=spec.check_interval,
+            )
+            return replace(
+                result,
+                staging_result=None,
+                checksum_metadata={
+                    **result.checksum_metadata,
+                    "freshness": status.value,
+                    "official_actual_until": actual_until.isoformat()
+                    if actual_until
+                    else None,
+                },
+                counters=ExecutionCounters(),
+            )
+
         state = session.get(WorkerPublicationState, SOURCE_ID)
         validation = dict(state.validation_metadata or {}) if state else {}
         legacy_run_id = (validation.get("validation") or {}).get(
@@ -921,9 +948,10 @@ def schedule_fns_sme_support_check(
         release=release,
         raw_root=Path(raw_root),
         check_only=same_release,
-        replay_pointer=state.active_pointer if same_release and state else None,
-        replay_checksum=str(validation.get("checksum") or "")
-        if same_release
-        else None,
+        # A routine unchanged-release check validates only source metadata and
+        # freshness.  Accepted snapshot replay is scheduled separately and is
+        # explicitly identified by replay_snapshot/replay_pointer metadata.
+        replay_pointer=None,
+        replay_checksum=None,
         scheduled_for=release.discovered_at.date(),
     )
