@@ -58,8 +58,8 @@ locator. Public payloads never contain `company_id`.
             },
             "alternative_sources": [
               {
-                "name": "Firmoteka · вторичный источник",
-                "source_class": "Публичный вторичный источник",
+                "name": "Firmoteka · авторизованный вторичный источник",
+                "source_class": "Авторизованный вторичный источник",
                 "reference": "https://firmoteka.ru/{inn}",
                 "source_data_date": "2025-12-31",
                 "retrieved_at": "<timestamp>",
@@ -138,7 +138,7 @@ Passport fields, passport values, registration/residential/home addresses,
 provider row IDs, raw payloads, checksums, parser fields, worker identifiers,
 credentials, non-public source references, and internal source enums remain
 forbidden by both normalization whitelists and recursive public validation.
-The public provenance label is `Firmoteka · вторичный источник`; the internal
+The public provenance label is `Firmoteka · авторизованный вторичный источник`; the internal
 source code is never serialized publicly.
 
 ## Firmoteka mapping
