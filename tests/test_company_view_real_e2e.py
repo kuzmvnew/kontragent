@@ -314,9 +314,7 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
     enforcement = sections["enforcement"]["items"]
     events = sections["events"]["items"]
     assert len(founder) == 1 and founder[0]["value"]["share"] == "100%"
-    assert founder[0]["value"]["identifiers"] == [
-        {"identifier_type": "INN", "value": "010701178084"}
-    ]
+    assert "identifiers" not in founder[0]["value"]
     assert {item["relation_type"] for item in founder[0]["value"]["relations"]} == {
         "FOUNDER",
         "MANAGER",
@@ -384,7 +382,7 @@ def test_real_alan_public_api_ssr_revision_parity_and_no_leakage():
         "provider_row_id",
     ):
         assert value not in rendered
-    assert "010701178084" in rendered
+    assert "010701178084" not in rendered
     assert "Чундышко Гисса Арамбиевич" in rendered
     assert "Директор" in rendered
     for value in internal_meaning_ids:
