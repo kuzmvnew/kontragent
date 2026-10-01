@@ -1123,11 +1123,39 @@ def _capture_baseline_generation(
     if baseline is not None:
         return baseline
 
+    generation_count = int(
+        session.scalar(
+            select(func.count())
+            .select_from(FnsTaxDebtPublicationGeneration)
+            .where(FnsTaxDebtPublicationGeneration.dataset_id == dataset.id)
+        )
+        or 0
+    )
+    if generation_count:
+        raise LegalBlockError(
+            "S02 legacy baseline capture rejects an existing publication history"
+        )
+    if (
+        pilot.dataset_id not in {None, dataset.id}
+        or pilot.generation != 0
+        or pilot.baseline_generation != 0
+        or pilot.normalized_generation != 0
+        or pilot.fact_generation != 0
+        or pilot.query_generation != 0
+        or pilot.rollback_normalized_generation is not None
+        or pilot.rollback_fact_generation is not None
+    ):
+        raise LegalBlockError(
+            "S02 legacy baseline capture rejects transitioned pilot state"
+        )
+
     pointer = session.get(WorkerPublicationState, SOURCE_ID, with_for_update=True)
     if (
         pointer is None
         or pointer.active_pointer is None
         or pointer.published_by_run_id is None
+        or pointer.generation != 1
+        or pointer.rollback_pointer is not None
     ):
         raise LegalBlockError("S02 controlled live pilot requires an existing baseline")
     pointer_validation = dict(pointer.validation_metadata or {})
@@ -1144,6 +1172,36 @@ def _capture_baseline_generation(
     )
     if artifact is None:
         raise LegalBlockError("S02 baseline RAW artifact is unavailable")
+    run = session.get(WorkerRun, pointer.published_by_run_id)
+    job = session.get(WorkerJob, run.job_id) if run is not None else None
+    if (
+        run is None
+        or run.status != "succeeded"
+        or run.finished_at is None
+        or job is None
+        or job.source_id != SOURCE_ID
+        or job.job_type != "fns_tax_debt_fixture"
+        or job.handler_version != HANDLER_VERSION
+        or run.handler_version != HANDLER_VERSION
+        or job.status != "succeeded"
+        or artifact.first_worker_run_id != run.id
+        or artifact.sha256 != checksum
+        or artifact.artifact_reference != raw_pointer
+        or artifact.source_as_of != dataset.source_as_of
+        or artifact.retrieved_at != dataset.retrieved_at
+        or validation.get("ingestion_mode") != "fixture"
+        or validation.get("fact_generation") != 0
+        or validation.get("query_generation") != 0
+        or pilot.active_raw_pointer not in {None, artifact.artifact_reference}
+        or pilot.active_checksum not in {None, artifact.sha256}
+        or pilot.active_source_as_of not in {None, artifact.source_as_of}
+        or pilot.active_retrieved_at not in {None, artifact.retrieved_at}
+        or pilot.active_data_date not in {None, dataset.last_data_date}
+        or pilot.baseline_data_date not in {None, dataset.last_data_date}
+    ):
+        raise LegalBlockError(
+            "S02 legacy baseline publication provenance is ambiguous"
+        )
     baseline_actual_until = _parse_date(
         dict(dataset.coverage or {}).get("official_actual_until")
     )
@@ -1154,18 +1212,13 @@ def _capture_baseline_generation(
         or baseline_actual_until is None
     ):
         raise LegalBlockError("S02 baseline freshness metadata is incomplete")
-    run = session.get(WorkerRun, pointer.published_by_run_id)
-    counters = (
-        {
-            "records_seen": run.records_seen,
-            "records_written": run.records_written,
-            "records_rejected": run.records_rejected,
-            "records_duplicated": run.records_duplicated,
-            "records_published": run.records_published,
-        }
-        if run is not None
-        else {}
-    )
+    counters = {
+        "records_seen": run.records_seen,
+        "records_written": run.records_written,
+        "records_rejected": run.records_rejected,
+        "records_duplicated": run.records_duplicated,
+        "records_published": run.records_published,
+    }
     baseline = FnsTaxDebtPublicationGeneration(
         dataset_id=dataset.id,
         artifact_id=artifact.id,

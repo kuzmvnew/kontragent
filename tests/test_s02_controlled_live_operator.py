@@ -28,6 +28,7 @@ from app.models.worker import (
     WorkerHandlerRegistration,
     WorkerJob,
     WorkerPublicationState,
+    WorkerRawManifest,
     WorkerRun,
 )
 from app.providers.fns_tax_debt_provider import TaxDebtDiscovery, TaxDebtOfficialRelease
@@ -638,6 +639,191 @@ def _add_alternate_artifact(session, dataset, run, *, reference, checksum):
     return artifact
 
 
+def _seed_transitioned_production_shape(
+    factory,
+    tmp_path: Path,
+    inn: str,
+) -> dict[str, object]:
+    _seed_baseline(factory, tmp_path, inn)
+    with factory() as session:
+        dataset, pointer, baseline_run, artifact, baseline = _baseline_chain(session)
+        baseline_fact = session.scalar(
+            select(CompanyTaxDebtSnapshot).where(
+                CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                CompanyTaxDebtSnapshot.publication_generation == 0,
+            )
+        )
+        active_job = create_job(
+            session,
+            source_id=SOURCE_ID,
+            job_type="fns_tax_debt_controlled_live",
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            idempotency_key=f"transition-aware-{uuid4()}",
+            now=NOW,
+        ).job
+        active_job.status = "succeeded"
+        active_run = WorkerRun(
+            job_id=active_job.id,
+            attempt_no=1,
+            started_at=NOW,
+            finished_at=NOW + timedelta(seconds=1),
+            status="succeeded",
+            worker_id="transition-aware-pilot",
+            fencing_token=999,
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            current_stage="complete",
+            errors=[],
+            checksum_metadata={"input_sha256": artifact.sha256},
+            heartbeat_at=NOW + timedelta(seconds=1),
+            records_seen=baseline_run.records_seen,
+            records_written=baseline_run.records_written,
+            records_rejected=baseline_run.records_rejected,
+            records_duplicated=baseline_run.records_duplicated,
+            records_published=baseline_run.records_published,
+            retryable=False,
+        )
+        session.add(active_run)
+        session.flush()
+        session.add(
+            WorkerRawManifest(
+                run_id=active_run.id,
+                artifact_reference=artifact.artifact_reference,
+                checksum_algorithm="sha256",
+                checksum=artifact.sha256,
+                manifest=dict(artifact.manifest),
+                immutable=True,
+            )
+        )
+        active_coverage = {
+            **dict(baseline.coverage),
+            "publication_scope": "pilot",
+            "cohort_size": 1,
+            "cohort_inns": [inn],
+            "official_actual_until": ACTUAL_UNTIL.isoformat(),
+            "fact_generation": 1,
+            "query_generation": 1,
+            "pilot_environment": PILOT_ENVIRONMENT,
+        }
+        active_validation = {
+            **dict(baseline.validation_metadata),
+            "coverage": active_coverage,
+            "ingestion_mode": "controlled_live",
+            "raw_pointer": artifact.artifact_reference,
+            "fact_generation": 1,
+            "query_generation": 1,
+        }
+        published_at = NOW + timedelta(seconds=1)
+        active = FnsTaxDebtPublicationGeneration(
+            dataset_id=dataset.id,
+            artifact_id=artifact.id,
+            worker_run_id=active_run.id,
+            generation=1,
+            publication_scope="pilot",
+            status="active",
+            staging_pointer=f"file:///safe/pilot-{active_run.id}.json",
+            raw_pointer=artifact.artifact_reference,
+            checksum=artifact.sha256,
+            source_as_of=artifact.source_as_of,
+            retrieved_at=artifact.retrieved_at,
+            official_actual_until=ACTUAL_UNTIL,
+            last_data_date=baseline.last_data_date,
+            record_count=baseline.record_count,
+            coverage=active_coverage,
+            counters=operator._worker_run_counters(active_run),
+            validation_metadata=active_validation,
+            dataset_metadata={
+                "last_attempt_at": artifact.retrieved_at.isoformat(),
+                "last_success_at": artifact.retrieved_at.isoformat(),
+                "last_data_date": baseline.last_data_date.isoformat(),
+                "source_as_of": artifact.source_as_of.isoformat(),
+                "retrieved_at": artifact.retrieved_at.isoformat(),
+                "published_at": published_at.isoformat(),
+                "record_count": baseline.record_count,
+                "coverage": active_coverage,
+                "operational_status": "current",
+                "last_error": None,
+                "last_error_at": None,
+                "retry_count": 0,
+            },
+            published_at=published_at,
+        )
+        session.add(active)
+        if baseline_fact is not None:
+            session.add(
+                CompanyTaxDebtSnapshot(
+                    company_id=baseline_fact.company_id,
+                    dataset_id=dataset.id,
+                    normalized_record_id=None,
+                    publication_generation=1,
+                    fact_code=baseline_fact.fact_code,
+                    data_date=baseline_fact.data_date,
+                    document_date=baseline_fact.document_date,
+                    source_document_id=baseline_fact.source_document_id,
+                    total_arrears=baseline_fact.total_arrears,
+                    total_penalties=baseline_fact.total_penalties,
+                    total_fines=baseline_fact.total_fines,
+                    total_debt=baseline_fact.total_debt,
+                    item_count=baseline_fact.item_count,
+                    source_reference=baseline_fact.source_reference,
+                    provenance={**dict(baseline_fact.provenance), "publication_generation": 1},
+                    limitation_states=list(baseline_fact.limitation_states),
+                    retrieved_at=baseline_fact.retrieved_at,
+                )
+            )
+        dataset.source_as_of = active.source_as_of
+        dataset.retrieved_at = active.retrieved_at
+        dataset.last_data_date = active.last_data_date
+        dataset.record_count = active.record_count
+        dataset.coverage = active_coverage
+        dataset.official_actual_until = active.official_actual_until
+        dataset.operational_status = "current"
+        pointer.active_pointer = active.staging_pointer
+        pointer.rollback_pointer = baseline.staging_pointer
+        pointer.generation = 2
+        pointer.published_by_run_id = active_run.id
+        pointer.validation_metadata = {
+            "checksum": active.checksum,
+            "validation": active_validation,
+            "staging": {"replayable": True, "source_id": SOURCE_ID},
+        }
+        pointer.updated_at = published_at
+        pilot = FnsTaxDebtPilotState(
+            source_id=SOURCE_ID,
+            dataset_id=dataset.id,
+            pilot_environment=PILOT_ENVIRONMENT,
+            enabled=True,
+            cohort_inns=[inn],
+            last_success_at=published_at,
+            active_raw_pointer=active.raw_pointer,
+            active_checksum=active.checksum,
+            active_source_as_of=active.source_as_of,
+            active_retrieved_at=active.retrieved_at,
+            generation=2,
+            baseline_generation=0,
+            normalized_generation=1,
+            fact_generation=1,
+            query_generation=1,
+            rollback_fact_generation=0,
+            rollback_normalized_generation=0,
+            active_data_date=active.last_data_date,
+            baseline_data_date=baseline.last_data_date,
+            counters=operator._worker_run_counters(active_run),
+            freshness="current",
+            errors=[],
+            updated_at=published_at,
+        )
+        session.add(pilot)
+        session.commit()
+        return {
+            "dataset_id": dataset.id,
+            "baseline_id": baseline.id,
+            "baseline_run_id": baseline_run.id,
+            "artifact_id": artifact.id,
+            "active_id": active.id,
+            "active_run_id": active_run.id,
+        }
+
+
 BASELINE_FAILURE_CASES = (
     "generation_missing",
     "published_by_run_null",
@@ -820,6 +1006,197 @@ def test_valid_exact_baseline_chain_is_ready_without_pilot_state(
     assert readiness["pilot_generation"] is None
 
 
+def test_transition_aware_production_shape_and_preflight_are_ready(
+    operator_db, source_files, tmp_path
+):
+    seeded = _seed_transitioned_production_shape(
+        operator_db, tmp_path, source_files.inn
+    )
+    with operator_db() as session:
+        readiness = operator.database_readiness(
+            session, cohort=(source_files.inn,)
+        )
+        active = session.get(FnsTaxDebtPublicationGeneration, seeded["active_id"])
+        artifact = session.get(FnsTaxDebtRawArtifact, seeded["artifact_id"])
+        assert artifact.first_worker_run_id == seeded["baseline_run_id"]
+        assert active.worker_run_id == seeded["active_run_id"]
+        report, _, _, _ = operator.build_preflight_report(
+            session,
+            source_package=source_files.manifest,
+            artifact=source_files.artifact,
+            xsd=source_files.xsd,
+            cohort_path=source_files.cohort,
+            expected_main_sha=operator.resolve_runtime_sha(),
+            now=NOW,
+            discovery_client=_DiscoveryClient(),
+        )
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+    assert readiness["baseline_generation"] == 0
+    assert readiness["worker_generation"] == 2
+    assert readiness["pilot_generation"] == 2
+    assert report["status"] == "READY"
+    assert report["baseline_generation"] == 0
+    assert report["worker_generation"] == 2
+
+
+TRANSITION_FAILURE_CASES = (
+    "baseline_run_failed",
+    "baseline_job_source",
+    "baseline_job_type",
+    "baseline_job_version",
+    "baseline_counters",
+    "baseline_coverage",
+    "baseline_validation_metadata",
+    "baseline_dataset_metadata",
+    "baseline_checksum",
+    "artifact_owner",
+    "baseline_facts_outside_cohort",
+    "active_generation_missing",
+    "active_scope",
+    "active_status",
+    "active_pointer",
+    "active_dataset",
+    "dataset_status",
+    "pilot_generation",
+    "pilot_normalized_generation",
+    "pilot_fact_generation",
+    "pilot_query_generation",
+    "pilot_baseline_generation",
+    "pilot_cohort",
+    "pilot_checksum",
+    "rollback_pointer",
+)
+
+
+@pytest.mark.parametrize("case", TRANSITION_FAILURE_CASES)
+def test_transitioned_chain_tampering_fails_closed(
+    operator_db, source_files, tmp_path, case
+):
+    seeded = _seed_transitioned_production_shape(
+        operator_db, tmp_path, source_files.inn
+    )
+    with operator_db() as session:
+        dataset = session.get(DataSet, seeded["dataset_id"])
+        baseline = session.get(
+            FnsTaxDebtPublicationGeneration, seeded["baseline_id"]
+        )
+        active = session.get(FnsTaxDebtPublicationGeneration, seeded["active_id"])
+        baseline_run = session.get(WorkerRun, seeded["baseline_run_id"])
+        baseline_job = session.get(WorkerJob, baseline_run.job_id)
+        active_run = session.get(WorkerRun, seeded["active_run_id"])
+        pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        if case == "baseline_run_failed":
+            baseline_run.status = "failed"
+        elif case == "baseline_job_source":
+            baseline_job.source_id = "OTHER"
+        elif case == "baseline_job_type":
+            baseline_job.job_type = "other"
+        elif case == "baseline_job_version":
+            baseline_job.handler_version = "wrong-version"
+        elif case == "baseline_counters":
+            baseline.counters = {**dict(baseline.counters), "records_seen": 999}
+        elif case == "baseline_coverage":
+            baseline.coverage = {**dict(baseline.coverage), "matched_records": 999}
+        elif case == "baseline_validation_metadata":
+            baseline.validation_metadata = {
+                **dict(baseline.validation_metadata),
+                "raw_pointer": "file:///safe/tampered.zip",
+            }
+        elif case == "baseline_dataset_metadata":
+            baseline.dataset_metadata = {
+                **dict(baseline.dataset_metadata),
+                "record_count": 999,
+            }
+        elif case == "baseline_checksum":
+            baseline.checksum = "9" * 64
+        elif case == "artifact_owner":
+            artifact = session.get(FnsTaxDebtRawArtifact, seeded["artifact_id"])
+            artifact.first_worker_run_id = active_run.id
+        elif case == "baseline_facts_outside_cohort":
+            outside = Company(
+                inn=_valid_inn(uuid4().int),
+                name="Outside transition cohort",
+                entity_type="legal",
+                source="transition_adversary",
+            )
+            session.add(outside)
+            session.flush()
+            fact = session.scalar(
+                select(CompanyTaxDebtSnapshot).where(
+                    CompanyTaxDebtSnapshot.dataset_id == dataset.id,
+                    CompanyTaxDebtSnapshot.publication_generation == 0,
+                )
+            )
+            session.add(
+                CompanyTaxDebtSnapshot(
+                    company_id=outside.id,
+                    dataset_id=dataset.id,
+                    normalized_record_id=None,
+                    publication_generation=0,
+                    fact_code=fact.fact_code,
+                    data_date=fact.data_date,
+                    document_date=fact.document_date,
+                    source_document_id=f"outside-{uuid4()}",
+                    total_arrears=fact.total_arrears,
+                    total_penalties=fact.total_penalties,
+                    total_fines=fact.total_fines,
+                    total_debt=fact.total_debt,
+                    item_count=fact.item_count,
+                    source_reference=fact.source_reference,
+                    provenance=dict(fact.provenance),
+                    limitation_states=list(fact.limitation_states),
+                    retrieved_at=fact.retrieved_at,
+                )
+            )
+        elif case == "active_generation_missing":
+            session.delete(active)
+        elif case == "active_scope":
+            alternate = _add_alternate_artifact(
+                session,
+                dataset,
+                active_run,
+                reference="file:///safe/wrong-active-scope.zip",
+                checksum="8" * 64,
+            )
+            active.artifact_id = alternate.id
+            active.publication_scope = "baseline"
+        elif case == "active_status":
+            active.status = "rollback"
+        elif case == "active_pointer":
+            pointer.active_pointer = "file:///safe/wrong-active-pointer.json"
+        elif case == "active_dataset":
+            dataset.record_count += 1
+        elif case == "dataset_status":
+            dataset.operational_status = "error"
+        elif case == "pilot_generation":
+            pilot.generation += 1
+        elif case == "pilot_normalized_generation":
+            pilot.normalized_generation = 0
+        elif case == "pilot_fact_generation":
+            pilot.fact_generation = 0
+        elif case == "pilot_query_generation":
+            pilot.query_generation = 0
+        elif case == "pilot_baseline_generation":
+            pilot.baseline_generation = 1
+        elif case == "pilot_cohort":
+            pilot.cohort_inns = [_valid_inn(uuid4().int)]
+        elif case == "pilot_checksum":
+            pilot.active_checksum = "7" * 64
+        elif case == "rollback_pointer":
+            pointer.rollback_pointer = "file:///safe/wrong-rollback.json"
+        session.commit()
+
+        with pytest.raises(operator.OperatorError) as caught:
+            operator.database_readiness(session, cohort=(source_files.inn,))
+        assert caught.value.code == "BASELINE_NOT_READY"
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+
+
 def test_existing_pilot_state_cannot_contradict_baseline_generation_zero(
     operator_db, source_files, tmp_path
 ):
@@ -899,6 +1276,61 @@ def test_existing_legal_company_without_baseline_is_blocked(operator_db, source_
         with pytest.raises(operator.OperatorError) as caught:
             operator.database_readiness(session, cohort=(source_files.inn,))
     assert caught.value.code == "BASELINE_NOT_READY"
+
+
+def test_missing_generation_zero_with_transitioned_state_is_fail_closed(
+    operator_db, source_files, tmp_path
+):
+    seeded = _seed_transitioned_production_shape(
+        operator_db, tmp_path, source_files.inn
+    )
+    with operator_db() as session:
+        baseline = session.get(
+            FnsTaxDebtPublicationGeneration, seeded["baseline_id"]
+        )
+        session.delete(baseline)
+        session.commit()
+        with pytest.raises(operator.OperatorError) as caught:
+            operator.baseline_preparation_readiness(
+                session,
+                cohort=(source_files.inn,),
+                artifact_sha256="0" * 64,
+            )
+        assert caught.value.code == "BASELINE_NOT_READY"
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+
+
+def test_capture_baseline_never_relabels_current_pilot_as_generation_zero(
+    operator_db, source_files, tmp_path
+):
+    seeded = _seed_transitioned_production_shape(
+        operator_db, tmp_path, source_files.inn
+    )
+    with operator_db() as session:
+        baseline = session.get(
+            FnsTaxDebtPublicationGeneration, seeded["baseline_id"]
+        )
+        session.delete(baseline)
+        session.commit()
+        dataset = session.get(DataSet, seeded["dataset_id"])
+        pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        with pytest.raises(pipeline.LegalBlockError):
+            pipeline._capture_baseline_generation(
+                session,
+                dataset=dataset,
+                pilot=pilot,
+            )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(FnsTaxDebtPublicationGeneration)
+                .where(FnsTaxDebtPublicationGeneration.generation == 0)
+            )
+            == 0
+        )
+        session.rollback()
 
 
 def _preflight_cli_args(source_files, **changes):

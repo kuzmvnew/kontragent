@@ -162,26 +162,44 @@ baseline/source tables, worker publication state, generation metadata, safety
 flags, and the current runnable queue. It rolls the session back and performs
 no writes.
 
-`READY` additionally requires one exact persisted baseline chain:
+`READY` additionally resolves the immutable historical baseline independently
+from the current publication coordinates:
 
 ```text
-DataSet
-  -> WorkerPublicationState
-  -> succeeded S02 WorkerRun and WorkerJob
-  -> exact FnsTaxDebtRawArtifact resolved by validation.raw_pointer
-  -> FnsTaxDebtPublicationGeneration(dataset, generation=0)
-  -> matching dataset, coverage, counters and validation metadata
+FnsTaxDebtPublicationGeneration(dataset, generation=0)
+  -> its own succeeded baseline/legacy S02 WorkerRun and WorkerJob
+  -> its own immutable FnsTaxDebtRawArtifact and WorkerRawManifest
+  -> historical coverage, counters, validation and DataSet snapshot
+
+WorkerPublicationState + current DataSet + FnsTaxDebtPilotState
+  -> active pilot publication generation
+  -> current succeeded controlled-live WorkerRun and WorkerJob
+  -> active pointer, validation, checksum and DataSet coordinates
+  -> persisted rollback generation
 ```
 
-The pointer checksum, RAW reference, worker run, staging pointer, source and
-retrieval timestamps, data date, official validity date, record count,
-coverage, counters, validation metadata, and captured dataset metadata must all
-agree. A missing generation-0 ledger is `BASELINE_NOT_READY`; preflight never
-creates it and never calls the pipeline's private baseline-capture helper. This
-means a real first run may require a separate, explicit baseline-preparation
-phase before this operator can return `READY`. Absence of pilot state is valid
-before Run A. If pilot state exists, none of its populated baseline coordinates
-may contradict generation 0.
+Before Run A, the Worker pointer must still describe generation 0 and the pilot
+state may be absent or strictly pre-transition. After Run A, generation 0 is
+validated only against its captured historical run, artifact and metadata; it
+is not compared with the advanced current DataSet or active pointer. The active
+pilot generation is validated separately, with pilot fact/normalized/query
+coordinates equal to that domain generation and pilot/worker operational
+generations equal to each other. The current S02 DataSet status may be `ready`
+or `current`; failure, stale or unavailable states are not ready.
+
+Content-addressed RAW may be reused. `first_worker_run_id` remains the first
+acquisition owner and need not equal the active publication run. Both the owner
+chain and the active run's immutable RAW manifest are checked. The rollback
+pointer must resolve to the persisted baseline/rollback generation selected by
+the pilot state; it is never required to equal the active pointer.
+
+A missing generation-0 ledger is `BASELINE_NOT_READY`; preflight never creates
+it and never calls the pipeline's private baseline-capture helper. The private
+legacy fallback also refuses any nonzero publication history, transitioned
+pilot state, rollback pointer, or non-legacy run contract, so it cannot relabel
+a current pilot as generation 0. A real first run may therefore require the
+separate explicit baseline-preparation phase before this operator can return
+`READY`.
 
 `official_actual_until` is inclusive. The day after it, the package is stale;
 there is no override. If live discovery exposes another release, the command
