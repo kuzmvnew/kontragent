@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.database.postgres import SessionLocal
+from app.models.workspace import Workspace
 from public_app.contracts import valid_legal_inn
 from public_app.repository import PublicRepository
 from workspace_app.auth import (
@@ -266,16 +267,27 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         form = await request.form()
         csrf = str(form.get("csrf") or "")
         if not login_csrf_valid(request.cookies.get(LOGIN_CSRF_COOKIE), csrf):
-            return templates.TemplateResponse(
+            refreshed_csrf = new_login_csrf()
+            response = templates.TemplateResponse(
                 request=request,
                 name="login.html",
                 context={
-                    "csrf": new_login_csrf(),
+                    "csrf": refreshed_csrf,
                     "return_to": safe_return_to(str(form.get("return_to") or "")),
                     "error": "Сессия формы истекла. Повторите вход.",
                 },
                 status_code=403,
             )
+            response.set_cookie(
+                LOGIN_CSRF_COOKIE,
+                refreshed_csrf,
+                httponly=True,
+                secure=app.state.cookie_secure,
+                samesite="lax",
+                path="/login",
+                max_age=10 * 60,
+            )
+            return response
         with _session_factory(request)() as session:
             user = authenticate_customer(
                 session,
@@ -385,7 +397,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 principal, context = _require_active_workspace(
                     request, session, capability="workspace.read"
                 )
-                workspace = session.get(__import__("app.models.workspace", fromlist=["Workspace"]).Workspace, context.workspace_id)
+                workspace = session.get(Workspace, context.workspace_id)
                 count = saved_count(
                     session,
                     user_id=principal.user_id,
