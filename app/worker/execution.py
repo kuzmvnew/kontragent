@@ -142,6 +142,17 @@ def job_work_units(job_type: str, schedule_metadata: dict[str, Any] | None) -> i
         if (count := child_count(key)) is not None
     }
 
+    # Snapshot replay cost is dominated by traversing the accepted normalized
+    # snapshot, not by the number of WorkerJob rows or requested companies.
+    # No bounded cost contract exists for that traversal yet, so controlled
+    # startup must leave current and legacy replay jobs pending.  Uncontrolled
+    # workers retain the legacy behavior in ``claim_next_job``.
+    replay_snapshot = metadata.get("replay_snapshot", False)
+    if not isinstance(replay_snapshot, bool):
+        raise ValueError("replay_snapshot must be a boolean")
+    if replay_snapshot:
+        raise ValueError("snapshot replay has no bounded work-unit contract")
+
     if job_type == "firmoteka_company_batch":
         count = collection_counts.get("items")
         if count is None:
