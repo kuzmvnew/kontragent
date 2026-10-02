@@ -43,7 +43,7 @@ from app.sources.fns_tax_debt import (
     SOURCE_ID,
 )
 from app.worker import execution as worker_execution
-from app.worker.execution import WorkerExecutor, create_job
+from app.worker.execution import WorkerExecutor, claim_next_job, create_job
 from app.worker.registry import HandlerRegistry
 from scripts import run_s02_controlled_live as operator
 
@@ -1258,6 +1258,10 @@ def test_full_preflight_rejects_corrupted_active_fact(
         "published_counter",
         "attempt_started_too_early",
         "run_not_failed",
+        "error_chronology_before_attempt",
+        "failed_run_owns_generation",
+        "failed_run_replaced_active_pointer",
+        "semantic_identity_mismatch",
     ),
 )
 def test_error_recovery_rejects_invalid_failed_attempt_contract(
@@ -1281,6 +1285,10 @@ def test_error_recovery_rejects_invalid_failed_attempt_contract(
             handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
             idempotency_key=f"failed-handler-contract-{uuid4()}",
             schedule_metadata={
+                "source_path": str(source_files.artifact.resolve()),
+                "xsd_path": str(source_files.xsd.resolve()),
+                "artifact_store": str((tmp_path / "failed-raw").resolve()),
+                "retrieved_at": failed_at.isoformat(),
                 "mode": "controlled_live",
                 "pilot_enabled": True,
                 "pilot_environment": PILOT_ENVIRONMENT,
@@ -1349,6 +1357,21 @@ def test_error_recovery_rejects_invalid_failed_attempt_contract(
             failed_run.started_at = NOW
         elif corruption == "run_not_failed":
             failed_run.status = "succeeded"
+        elif corruption == "error_chronology_before_attempt":
+            dataset.last_error_at = failed_at - timedelta(seconds=1)
+        elif corruption == "failed_run_owns_generation":
+            active = session.get(
+                FnsTaxDebtPublicationGeneration, seeded["active_id"]
+            )
+            active.worker_run_id = failed_run.id
+        elif corruption == "failed_run_replaced_active_pointer":
+            pointer = session.get(WorkerPublicationState, SOURCE_ID)
+            pointer.published_by_run_id = failed_run.id
+        elif corruption == "semantic_identity_mismatch":
+            failed_job.schedule_metadata = {
+                **dict(failed_job.schedule_metadata),
+                "semantic_identity": f"{SOURCE_ID}:controlled_live:v2:{'0' * 64}",
+            }
         session.commit()
 
         with pytest.raises(operator.OperatorError) as caught:
@@ -1356,14 +1379,29 @@ def test_error_recovery_rejects_invalid_failed_attempt_contract(
     assert caught.value.code == "BASELINE_NOT_READY"
 
 
-def test_real_production_shape_allows_new_semantic_recovery_job(
+def test_real_production_shape_recovery_and_queue_claim_agree_without_mutation(
     committed_operator_db, source_files, tmp_path, monkeypatch
 ):
     seeded = _seed_transitioned_production_shape(
         committed_operator_db, tmp_path, source_files.inn
     )
+    failed_at = datetime(2026, 9, 25, 16, 11, 37, tzinfo=timezone.utc)
+    operational_error_at = datetime(
+        2026, 10, 2, 1, 39, 1, tzinfo=timezone.utc
+    )
+    current_release = TaxDebtOfficialRelease(
+        **{
+            **_release().__dict__,
+            "official_actual_until": date(2026, 10, 25),
+        }
+    )
+    _write_manifest(
+        source_files.manifest,
+        source_files.artifact,
+        source_files.xsd,
+        official_actual_until=current_release.official_actual_until.isoformat(),
+    )
     package = operator.load_source_package(source_files.manifest)
-    failed_at = NOW + timedelta(seconds=2)
     wrong_dates = {
         "source_as_of": SOURCE_AS_OF.isoformat(),
         "data_as_of": "2026-09-01",
@@ -1374,13 +1412,17 @@ def test_real_production_shape_allows_new_semantic_recovery_job(
         baseline = session.get(
             FnsTaxDebtPublicationGeneration, seeded["baseline_id"]
         )
+        baseline_run = session.get(WorkerRun, seeded["baseline_run_id"])
         pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        baseline_run.started_at = NOW - timedelta(days=2)
+        baseline_run.finished_at = NOW - timedelta(days=2, seconds=-1)
+        baseline_run.heartbeat_at = baseline_run.finished_at
         pilot.baseline_data_date = None
         dataset.coverage = dict(baseline.coverage)
         dataset.operational_status = "error"
-        dataset.last_error = "reviewed failed September refresh"
-        dataset.last_error_at = failed_at
-        dataset.retry_count = 1
+        dataset.last_error = "S02 release job is terminal: incident-controller"
+        dataset.last_error_at = operational_error_at
+        dataset.retry_count = 2
         old_identity = (
             f"{SOURCE_ID}:controlled_live:{package['artifact_sha256']}:"
             f"{package['xsd_sha256']}:{pipeline.NORMALIZATION_VERSION}"
@@ -1410,20 +1452,61 @@ def test_real_production_shape_allows_new_semantic_recovery_job(
             now=failed_at,
         ).job
         old_job.status = "failed"
+        failed_run = WorkerRun(
+            job_id=old_job.id,
+            attempt_no=1,
+            started_at=failed_at - timedelta(seconds=1),
+            finished_at=failed_at,
+            status="failed",
+            worker_id="failed-september-refresh",
+            fencing_token=1001,
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            current_stage="failed",
+            errors=[
+                {
+                    "kind": "invalid_data",
+                    "message": "historical controlled-live failure",
+                }
+            ],
+            checksum_metadata={},
+            heartbeat_at=failed_at,
+            records_seen=0,
+            records_written=0,
+            records_rejected=0,
+            records_duplicated=0,
+            records_published=0,
+            retryable=False,
+        )
+        session.add(failed_run)
+        session.flush()
+
+        # HOME had hundreds of runnable rows, but their source family had run
+        # more recently than S02. Canonical Worker rotation therefore selects
+        # the corrected S02 source first even though its row is created last.
+        backlog_source = "production-shape-backlog"
+        anchor_job = create_job(
+            session,
+            source_id=backlog_source,
+            job_type="fixture",
+            handler_version="fixture-v1",
+            idempotency_key=f"backlog-anchor-{uuid4()}",
+            now=operational_error_at - timedelta(days=1),
+        ).job
+        anchor_job.status = "succeeded"
         session.add(
             WorkerRun(
-                job_id=old_job.id,
+                job_id=anchor_job.id,
                 attempt_no=1,
-                started_at=failed_at - timedelta(seconds=1),
-                finished_at=failed_at,
-                status="failed",
-                worker_id="failed-september-refresh",
-                fencing_token=1001,
-                handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
-                current_stage="failed",
-                errors=[{"kind": "invalid_data", "message": dataset.last_error}],
+                started_at=operational_error_at - timedelta(days=1),
+                finished_at=operational_error_at - timedelta(days=1, seconds=-1),
+                status="succeeded",
+                worker_id="backlog-anchor",
+                fencing_token=1002,
+                handler_version=anchor_job.handler_version,
+                current_stage="complete",
+                errors=[],
                 checksum_metadata={},
-                heartbeat_at=failed_at,
+                heartbeat_at=operational_error_at - timedelta(days=1, seconds=-1),
                 records_seen=0,
                 records_written=0,
                 records_rejected=0,
@@ -1432,14 +1515,34 @@ def test_real_production_shape_allows_new_semantic_recovery_job(
                 retryable=False,
             )
         )
+        backlog_ids = []
+        for index in range(493):
+            backlog_job = create_job(
+                session,
+                source_id=backlog_source,
+                job_type="fixture",
+                handler_version="fixture-v1",
+                idempotency_key=f"production-backlog-{index}-{uuid4()}",
+                now=operational_error_at - timedelta(hours=12),
+            ).job
+            if index >= 490:
+                backlog_job.status = "retry_scheduled"
+                backlog_job.next_attempt_at = operational_error_at
+            backlog_ids.append(backlog_job.id)
         session.commit()
         old_job_id = old_job.id
+        failed_run_id = failed_run.id
         old_metadata = dict(old_job.schedule_metadata)
 
-    monkeypatch.setattr(operator, "FnsTaxDebtOfficialClient", lambda: _DiscoveryClient())
-    monkeypatch.setattr(operator, "_utc_now", lambda: failed_at + timedelta(seconds=1))
     monkeypatch.setattr(
-        worker_execution, "utc_now", lambda: failed_at + timedelta(seconds=1)
+        operator,
+        "FnsTaxDebtOfficialClient",
+        lambda: _DiscoveryClient(current_release),
+    )
+    claim_at = operational_error_at + timedelta(seconds=1)
+    monkeypatch.setattr(operator, "_utc_now", lambda: claim_at)
+    monkeypatch.setattr(
+        worker_execution, "utc_now", lambda: claim_at
     )
     base = _preflight_args(source_files, tmp_path)
     with committed_operator_db() as session:
@@ -1450,12 +1553,15 @@ def test_real_production_shape_allows_new_semantic_recovery_job(
         assert readiness["dataset_status_mode"] == "failed_refresh_recovery"
         assert readiness["effective_baseline_data_date"] == DATA_AS_OF
         assert pilot.baseline_data_date is None
+    preflight = operator.command_preflight(base, committed_operator_db)
+    assert preflight["status"] == "READY"
+    assert len(preflight["runnable_jobs"]) == 493
 
     operator.command_approve(
         SimpleNamespace(
             **vars(base),
             approved_by="S02 recovery regression",
-            approved_at=failed_at.isoformat(),
+            approved_at=operational_error_at.isoformat(),
             confirm_controlled_live=operator.APPROVE_TOKEN,
         ),
         committed_operator_db,
@@ -1475,7 +1581,7 @@ def test_real_production_shape_allows_new_semantic_recovery_job(
         SimpleNamespace(
             **vars(base),
             artifact_store=tmp_path / "corrected-raw",
-            retrieved_at=(failed_at + timedelta(seconds=1)).isoformat(),
+            retrieved_at=claim_at.isoformat(),
             timeout_seconds=3600,
             confirm_enqueue=operator.ENQUEUE_TOKEN,
         ),
@@ -1483,13 +1589,67 @@ def test_real_production_shape_allows_new_semantic_recovery_job(
     )
     assert enqueued["created"] is True
     assert enqueued["job_id"] != old_job_id
+
+    registry = HandlerRegistry()
+    guard_session = operator._start_repeatable_queue_guard(committed_operator_db)
+    try:
+        guarded_job = operator.queue_guard(
+            guard_session,
+            expected_job_id=enqueued["job_id"],
+            now=claim_at,
+        )
+        pipeline.register_fns_tax_debt_controlled_live_handler(
+            guard_session, registry
+        )
+        claimed = claim_next_job(
+            guard_session,
+            registry,
+            worker_id="production-shape-claim-proof",
+            lease_ttl=timedelta(seconds=60),
+            now=claim_at,
+        )
+        assert guarded_job.id == enqueued["job_id"]
+        assert claimed is not None
+        assert claimed.job_id == enqueued["job_id"]
+    finally:
+        guard_session.rollback()
+        guard_session.close()
+
     with committed_operator_db() as session:
         old_job = session.get(WorkerJob, old_job_id)
+        old_run = session.get(WorkerRun, failed_run_id)
         pilot = session.get(FnsTaxDebtPilotState, SOURCE_ID)
+        pointer = session.get(WorkerPublicationState, SOURCE_ID)
+        backlog = session.scalars(
+            select(WorkerJob).where(WorkerJob.id.in_(backlog_ids))
+        ).all()
+        publication_history = session.scalars(
+            select(FnsTaxDebtPublicationGeneration)
+            .where(FnsTaxDebtPublicationGeneration.dataset_id == seeded["dataset_id"])
+            .order_by(FnsTaxDebtPublicationGeneration.generation)
+        ).all()
         assert old_job.status == "failed"
         assert old_job.schedule_metadata == old_metadata
         assert old_job.schedule_metadata["data_as_of"] == "2026-09-01"
+        assert old_run.status == "failed"
+        assert old_run.records_published == 0
         assert pilot.baseline_data_date is None
+        assert len(backlog) == 493
+        assert sum(job.status == "queued" for job in backlog) == 490
+        assert sum(job.status == "retry_scheduled" for job in backlog) == 3
+        assert session.scalar(
+            select(func.count())
+            .select_from(WorkerRun)
+            .where(WorkerRun.job_id.in_(backlog_ids))
+        ) == 0
+        assert [row.generation for row in publication_history] == [0, 1]
+        assert pointer.active_pointer == publication_history[1].staging_pointer
+        assert pointer.generation == 2
+        assert session.scalar(
+            select(func.count())
+            .select_from(WorkerRun)
+            .where(WorkerRun.job_id == enqueued["job_id"])
+        ) == 0
 
 
 TRANSITION_FAILURE_CASES = (
@@ -2120,6 +2280,111 @@ def test_queue_guard_blocks_wrong_job_and_earlier_runnable_job(
         assert wrong.value.code == "JOB_MISMATCH"
 
 
+def test_queue_guard_ignores_delayed_retry_exactly_like_worker_claim(
+    operator_db, source_files, tmp_path
+):
+    _seed_baseline(operator_db, tmp_path, source_files.inn)
+    with operator_db() as session:
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session, approved_by="delayed-retry-test", approved_at=NOW
+        )
+        delayed = create_job(
+            session,
+            source_id="OTHER",
+            job_type="fixture",
+            handler_version="other-v1",
+            idempotency_key=f"delayed-other-{uuid4()}",
+            now=NOW - timedelta(seconds=1),
+        ).job
+        delayed.status = "retry_scheduled"
+        delayed.next_attempt_at = NOW + timedelta(minutes=5)
+        expected = create_job(
+            session,
+            source_id=SOURCE_ID,
+            job_type="fns_tax_debt_controlled_live",
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            idempotency_key=f"s02-after-delay-{uuid4()}",
+            now=NOW,
+        ).job
+        session.commit()
+
+        guarded = operator.queue_guard(
+            session, expected_job_id=expected.id, now=NOW
+        )
+        selected = worker_execution.next_claimable_job(
+            session, now=NOW, lock=True
+        )
+        assert guarded.id == expected.id
+        assert selected is not None
+        assert selected.job.id == expected.id
+        assert delayed.status == "retry_scheduled"
+
+
+def test_repeatable_guard_snapshot_is_safe_against_late_priority_insert(
+    committed_operator_db, source_files, tmp_path
+):
+    _seed_baseline(committed_operator_db, tmp_path, source_files.inn)
+    with committed_operator_db() as session:
+        pipeline.approve_fns_tax_debt_controlled_live_handler(
+            session, approved_by="snapshot-race-test", approved_at=NOW
+        )
+        expected = create_job(
+            session,
+            source_id=SOURCE_ID,
+            job_type="fns_tax_debt_controlled_live",
+            handler_version=CONTROLLED_LIVE_HANDLER_VERSION,
+            idempotency_key=f"snapshot-s02-{uuid4()}",
+            now=NOW,
+        ).job
+        session.commit()
+        expected_id = expected.id
+
+    guard_session = operator._start_repeatable_queue_guard(committed_operator_db)
+    registry = HandlerRegistry()
+    try:
+        operator.queue_guard(
+            guard_session, expected_job_id=expected_id, now=NOW
+        )
+        pipeline.register_fns_tax_debt_controlled_live_handler(
+            guard_session, registry
+        )
+        with committed_operator_db() as concurrent:
+            late_priority = create_job(
+                concurrent,
+                source_id="LATE",
+                job_type="fixture",
+                handler_version="late-v1",
+                idempotency_key=f"late-priority-{uuid4()}",
+                schedule_metadata={
+                    "enrichment_priority": "accepted_public_cohort"
+                },
+                now=NOW - timedelta(seconds=1),
+            ).job
+            concurrent.commit()
+            late_priority_id = late_priority.id
+
+        claimed = claim_next_job(
+            guard_session,
+            registry,
+            worker_id="snapshot-race-worker",
+            lease_ttl=timedelta(seconds=60),
+            now=NOW,
+        )
+        assert claimed is not None
+        assert claimed.job_id == expected_id
+    finally:
+        guard_session.rollback()
+        guard_session.close()
+
+    with committed_operator_db() as session:
+        selected = worker_execution.next_claimable_job(
+            session, now=NOW, lock=False
+        )
+        assert selected is not None
+        assert selected.job.id == late_priority_id
+        assert session.get(WorkerJob, expected_id).status == "queued"
+
+
 @pytest.mark.parametrize(
     ("source_id", "job_type", "handler_version"),
     [
@@ -2217,13 +2482,24 @@ def test_retry_failed_job_is_explicit_and_preserves_attempt_history(
         committed_operator_db,
     )
     with committed_operator_db() as session:
+        baseline_generation = session.scalar(
+            select(FnsTaxDebtPublicationGeneration).where(
+                FnsTaxDebtPublicationGeneration.generation == 0
+            )
+        )
+        baseline_run = session.get(
+            WorkerRun, baseline_generation.worker_run_id
+        )
+        baseline_run.started_at = NOW - timedelta(seconds=10)
+        baseline_run.finished_at = NOW - timedelta(seconds=9)
+        baseline_run.heartbeat_at = baseline_run.finished_at
         job = session.get(WorkerJob, enqueued["job_id"])
         job.status = "failed"
         failed_run = WorkerRun(
             job_id=job.id,
             attempt_no=1,
-            started_at=NOW,
-            finished_at=NOW,
+            started_at=NOW - timedelta(seconds=3),
+            finished_at=NOW - timedelta(seconds=2),
             status="failed",
             worker_id="s02-broken-runtime",
             fencing_token=1,
@@ -2231,7 +2507,7 @@ def test_retry_failed_job_is_explicit_and_preserves_attempt_history(
             current_stage="failed",
             errors=[{"kind": "invalid_data", "message": "reviewed failure"}],
             checksum_metadata={},
-            heartbeat_at=NOW,
+            heartbeat_at=NOW - timedelta(seconds=2),
             records_seen=0,
             records_written=0,
             records_rejected=0,
@@ -2240,8 +2516,49 @@ def test_retry_failed_job_is_explicit_and_preserves_attempt_history(
             retryable=False,
         )
         session.add(failed_run)
+        backlog_source = "retry-backlog"
+        anchor = create_job(
+            session,
+            source_id=backlog_source,
+            job_type="fixture",
+            handler_version="fixture-v1",
+            idempotency_key=f"retry-backlog-anchor-{uuid4()}",
+            now=NOW - timedelta(seconds=1),
+        ).job
+        anchor.status = "succeeded"
+        session.add(
+            WorkerRun(
+                job_id=anchor.id,
+                attempt_no=1,
+                started_at=NOW - timedelta(seconds=1),
+                finished_at=NOW,
+                status="succeeded",
+                worker_id="retry-backlog-anchor",
+                fencing_token=2,
+                handler_version=anchor.handler_version,
+                current_stage="complete",
+                errors=[],
+                checksum_metadata={},
+                heartbeat_at=NOW,
+                records_seen=0,
+                records_written=0,
+                records_rejected=0,
+                records_duplicated=0,
+                records_published=0,
+                retryable=False,
+            )
+        )
+        backlog = create_job(
+            session,
+            source_id=backlog_source,
+            job_type="fixture",
+            handler_version="fixture-v1",
+            idempotency_key=f"retry-backlog-{uuid4()}",
+            now=NOW - timedelta(minutes=1),
+        ).job
         session.commit()
         failed_run_id = failed_run.id
+        backlog_id = backlog.id
 
     retried = operator.command_retry_failed(
         SimpleNamespace(
@@ -2266,6 +2583,7 @@ def test_retry_failed_job_is_explicit_and_preserves_attempt_history(
         assert job.next_attempt_at is None
         assert [(run.attempt_no, run.status) for run in runs] == [(1, "failed")]
         assert runs[0].errors[0]["message"] == "reviewed failure"
+        assert session.get(WorkerJob, backlog_id).status == "queued"
 
 
 def test_prepare_baseline_is_bounded_idempotent_and_supports_same_release_run_a(

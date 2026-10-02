@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import create_engine, func, inspect, or_, select
+from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ingestion.fns_tax_debt_pipeline import (
@@ -80,7 +80,7 @@ from app.sources.fns_tax_debt import (
     PILOT_ENVIRONMENT,
     SOURCE_ID,
 )
-from app.worker.execution import WorkerExecutor
+from app.worker.execution import WorkerExecutor, claimable_jobs, next_claimable_job
 from app.worker.registry import HandlerRegistry
 
 
@@ -722,17 +722,6 @@ def verify_local_files(
     return str(package["artifact_sha256"]), str(package["xsd_sha256"])
 
 
-def _runnable_query(now: datetime):
-    return (
-        select(WorkerJob)
-        .where(
-            WorkerJob.status.in_(("queued", "retry_scheduled")),
-            or_(WorkerJob.next_attempt_at.is_(None), WorkerJob.next_attempt_at <= now),
-        )
-        .order_by(WorkerJob.created_at, WorkerJob.id)
-    )
-
-
 def runnable_jobs(session: Session, *, now: datetime) -> list[dict[str, Any]]:
     return [
         {
@@ -744,7 +733,8 @@ def runnable_jobs(session: Session, *, now: datetime) -> list[dict[str, Any]]:
             "next_attempt_at": job.next_attempt_at,
             "created_at": job.created_at,
         }
-        for job in session.scalars(_runnable_query(now)).all()
+        for selected in claimable_jobs(session, now=now)
+        for job in (selected.job,)
     ]
 
 
@@ -1154,13 +1144,21 @@ def _dataset_error_recovery_matches(
     *,
     dataset: DataSet,
     active_generation: FnsTaxDebtPublicationGeneration,
+    publication_state: WorkerPublicationState,
     cohort: tuple[str, ...],
 ) -> bool:
-    """Prove that ``error`` belongs to a later failed, unpublished refresh."""
+    """Prove a later failed unpublished refresh without mutable attribution."""
 
     if not dataset.last_error or dataset.last_error_at is None:
         return False
-    failed_attempt = session.execute(
+    if (
+        active_generation.published_at is None
+        or dataset.last_error_at < active_generation.published_at
+        or publication_state.active_pointer != active_generation.staging_pointer
+        or publication_state.published_by_run_id != active_generation.worker_run_id
+    ):
+        return False
+    failed_attempts = session.execute(
         select(WorkerRun, WorkerJob)
         .join(WorkerJob, WorkerJob.id == WorkerRun.job_id)
         .where(
@@ -1169,100 +1167,124 @@ def _dataset_error_recovery_matches(
             WorkerJob.handler_version == CONTROLLED_LIVE_HANDLER_VERSION,
             WorkerJob.status == "failed",
             WorkerRun.status.in_(("failed", "timed_out", "interrupted")),
-            WorkerRun.finished_at == dataset.last_error_at,
             WorkerRun.finished_at > active_generation.published_at,
         )
-        .order_by(WorkerRun.attempt_no.desc(), WorkerRun.id.desc())
-        .limit(1)
-    ).one_or_none()
-    if failed_attempt is None:
-        return False
-    failed_run, failed_job = failed_attempt
-    failed_attempt_contract_matches = (
-        failed_run.job_id == failed_job.id
-        and failed_job.source_id == SOURCE_ID
-        and failed_job.job_type == "fns_tax_debt_controlled_live"
-        and failed_job.handler_version == CONTROLLED_LIVE_HANDLER_VERSION
-        and failed_run.handler_version == failed_job.handler_version
-        and failed_run.handler_version == CONTROLLED_LIVE_HANDLER_VERSION
-        and failed_job.status == "failed"
-        and failed_run.status in {"failed", "timed_out", "interrupted"}
-        and failed_run.started_at >= active_generation.published_at
-        and failed_run.finished_at is not None
-        and failed_run.finished_at > active_generation.published_at
-        and failed_run.finished_at == dataset.last_error_at
-        and failed_run.records_published == 0
-    )
-    metadata = _mapping_dict(failed_job.schedule_metadata) or {}
-    semantic_fields_are_complete = (
-        metadata.get("mode") == "controlled_live"
-        and metadata.get("pilot_enabled") is True
-        and metadata.get("pilot_environment") == PILOT_ENVIRONMENT
-        and tuple(sorted(str(value) for value in metadata.get("cohort_inns") or ()))
-        == tuple(sorted(cohort))
-        and isinstance(metadata.get("expected_sha256"), str)
-        and CHECKSUM_RE.fullmatch(metadata["expected_sha256"]) is not None
-        and isinstance(metadata.get("expected_xsd_sha256"), str)
-        and CHECKSUM_RE.fullmatch(metadata["expected_xsd_sha256"]) is not None
-        and all(
-            isinstance(metadata.get(field), str) and bool(metadata[field])
-            for field in (
-                "source_as_of",
-                "data_as_of",
-                "official_actual_until",
-                "discovery_page_url",
-                "artifact_url",
-                "xsd_url",
+        .order_by(
+            WorkerRun.finished_at.desc(),
+            WorkerRun.attempt_no.desc(),
+            WorkerRun.id.desc(),
+        )
+    ).all()
+    for failed_run, failed_job in failed_attempts:
+        failed_attempt_contract_matches = (
+            failed_run.job_id == failed_job.id
+            and failed_job.source_id == SOURCE_ID
+            and failed_job.job_type == "fns_tax_debt_controlled_live"
+            and failed_job.handler_version == CONTROLLED_LIVE_HANDLER_VERSION
+            and failed_run.handler_version == failed_job.handler_version
+            and failed_run.handler_version == CONTROLLED_LIVE_HANDLER_VERSION
+            and failed_job.status == "failed"
+            and failed_run.status in {"failed", "timed_out", "interrupted"}
+            and failed_run.started_at >= active_generation.published_at
+            and failed_run.finished_at is not None
+            and failed_run.finished_at >= failed_run.started_at
+            and failed_run.finished_at > active_generation.published_at
+            # ``last_error_at`` is mutable operational metadata. It can prove
+            # only that the current error was recorded no earlier than this
+            # durable attempt; it is not the attempt's identity.
+            and failed_run.finished_at <= dataset.last_error_at
+            and failed_run.records_published == 0
+            and publication_state.published_by_run_id != failed_run.id
+        )
+        metadata = _mapping_dict(failed_job.schedule_metadata) or {}
+        semantic_fields_are_complete = (
+            metadata.get("mode") == "controlled_live"
+            and metadata.get("pilot_enabled") is True
+            and metadata.get("pilot_environment") == PILOT_ENVIRONMENT
+            and tuple(
+                sorted(str(value) for value in metadata.get("cohort_inns") or ())
+            )
+            == tuple(sorted(cohort))
+            and isinstance(metadata.get("expected_sha256"), str)
+            and CHECKSUM_RE.fullmatch(metadata["expected_sha256"]) is not None
+            and isinstance(metadata.get("expected_xsd_sha256"), str)
+            and CHECKSUM_RE.fullmatch(metadata["expected_xsd_sha256"]) is not None
+            and all(
+                isinstance(metadata.get(field), str) and bool(metadata[field])
+                for field in (
+                    "source_path",
+                    "xsd_path",
+                    "artifact_store",
+                    "retrieved_at",
+                    "source_as_of",
+                    "data_as_of",
+                    "official_actual_until",
+                    "discovery_page_url",
+                    "artifact_url",
+                    "xsd_url",
+                )
             )
         )
-    )
-    if (
-        not failed_attempt_contract_matches
-        or not semantic_fields_are_complete
-        or not failed_run.errors
-    ):
-        return False
-    try:
-        failed_source_as_of = datetime.fromisoformat(
-            metadata["source_as_of"].replace("Z", "+00:00")
+        error_evidence_exists = bool(failed_run.errors) and all(
+            isinstance(item, Mapping)
+            and isinstance(item.get("kind"), str)
+            and bool(item["kind"])
+            and isinstance(item.get("message"), str)
+            and bool(item["message"])
+            for item in failed_run.errors
         )
-        failed_data_as_of = date.fromisoformat(metadata["data_as_of"])
-        failed_actual_until = date.fromisoformat(metadata["official_actual_until"])
-    except ValueError:
-        return False
-    if failed_source_as_of.tzinfo is None:
-        return False
-    stored_semantic_identity = metadata.get("semantic_identity")
-    if stored_semantic_identity is not None:
-        expected_semantic_identity = controlled_live_semantic_job_identity(
-            artifact_sha256=metadata["expected_sha256"],
-            xsd_sha256=metadata["expected_xsd_sha256"],
-            release=TaxDebtOfficialRelease(
-                discovery_page_url=metadata["discovery_page_url"],
-                artifact_url=metadata["artifact_url"],
-                xsd_url=metadata["xsd_url"],
-                source_as_of=failed_source_as_of,
-                data_as_of=failed_data_as_of,
-                official_actual_until=failed_actual_until,
-                metadata={},
-            ),
-            config=ControlledLivePilotConfig(
-                enabled=True, cohort_inns=frozenset(cohort)
-            ),
+        if (
+            not failed_attempt_contract_matches
+            or not semantic_fields_are_complete
+            or not error_evidence_exists
+        ):
+            continue
+        try:
+            failed_retrieved_at = datetime.fromisoformat(
+                metadata["retrieved_at"].replace("Z", "+00:00")
+            )
+            failed_source_as_of = datetime.fromisoformat(
+                metadata["source_as_of"].replace("Z", "+00:00")
+            )
+            failed_data_as_of = date.fromisoformat(metadata["data_as_of"])
+            failed_actual_until = date.fromisoformat(
+                metadata["official_actual_until"]
+            )
+        except ValueError:
+            continue
+        if failed_retrieved_at.tzinfo is None or failed_source_as_of.tzinfo is None:
+            continue
+        stored_semantic_identity = metadata.get("semantic_identity")
+        if stored_semantic_identity is not None:
+            expected_semantic_identity = controlled_live_semantic_job_identity(
+                artifact_sha256=metadata["expected_sha256"],
+                xsd_sha256=metadata["expected_xsd_sha256"],
+                release=TaxDebtOfficialRelease(
+                    discovery_page_url=metadata["discovery_page_url"],
+                    artifact_url=metadata["artifact_url"],
+                    xsd_url=metadata["xsd_url"],
+                    source_as_of=failed_source_as_of,
+                    data_as_of=failed_data_as_of,
+                    official_actual_until=failed_actual_until,
+                    metadata={},
+                ),
+                config=ControlledLivePilotConfig(
+                    enabled=True, cohort_inns=frozenset(cohort)
+                ),
+            )
+            if (
+                stored_semantic_identity != expected_semantic_identity
+                or failed_job.idempotency_key != stored_semantic_identity
+            ):
+                continue
+        published_from_failed_run = session.scalar(
+            select(FnsTaxDebtPublicationGeneration.id)
+            .where(FnsTaxDebtPublicationGeneration.worker_run_id == failed_run.id)
+            .limit(1)
         )
-        if stored_semantic_identity != expected_semantic_identity:
-            return False
-    published_from_failed_run = session.scalar(
-        select(FnsTaxDebtPublicationGeneration.id)
-        .where(FnsTaxDebtPublicationGeneration.worker_run_id == failed_run.id)
-        .limit(1)
-    )
-    unsafe_queue_entry = session.scalar(
-        select(WorkerJob.id)
-        .where(WorkerJob.status.in_(("queued", "running", "retry_scheduled")))
-        .limit(1)
-    )
-    return published_from_failed_run is None and unsafe_queue_entry is None
+        if published_from_failed_run is None:
+            return True
+    return False
 
 
 def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str, Any]:
@@ -1933,10 +1955,12 @@ def database_readiness(session: Session, *, cohort: tuple[str, ...]) -> dict[str
         if dataset is not None and dataset.operational_status == "error":
             require(
                 active_row is not None
+                and pointer is not None
                 and _dataset_error_recovery_matches(
                     session,
                     dataset=dataset,
                     active_generation=active_row,
+                    publication_state=pointer,
                     cohort=cohort,
                 ),
                 "dataset_error_recovery",
@@ -2261,12 +2285,14 @@ def queue_guard(session: Session, *, expected_job_id: UUID, now: datetime) -> Wo
             details={"actual": actual, "status": job.status},
         )
     require_durable_approval(session)
-    ordered = session.scalars(_runnable_query(now)).all()
-    if not ordered or ordered[0].id != expected_job_id:
+    selected = next_claimable_job(session, now=now, lock=True)
+    if selected is None or selected.job.id != expected_job_id:
         raise OperatorError(
             "QUEUE_NOT_EXCLUSIVE",
             "expected S02 job is not the exact next job claimable by WorkerExecutor",
-            details={"next_job_id": str(ordered[0].id) if ordered else None},
+            details={
+                "next_job_id": str(selected.job.id) if selected is not None else None
+            },
         )
     return job
 
@@ -2555,11 +2581,6 @@ def command_retry_failed(args: argparse.Namespace, factory) -> dict[str, Any]:
                     "failed job has no reviewed retry capacity",
                 )
             require_durable_approval(session)
-            if session.scalar(_runnable_query(now).limit(1)) is not None:
-                raise OperatorError(
-                    "QUEUE_NOT_EXCLUSIVE",
-                    "another worker job is runnable before the reviewed retry",
-                )
             job.status = "queued"
             job.next_attempt_at = None
             job.updated_at = now
@@ -2664,12 +2685,14 @@ def baseline_queue_guard(
         artifact_sha256=artifact_sha256,
         xsd_sha256=xsd_sha256,
     )
-    ordered = session.scalars(_runnable_query(now)).all()
-    if not ordered or ordered[0].id != expected_job_id:
+    selected = next_claimable_job(session, now=now, lock=True)
+    if selected is None or selected.job.id != expected_job_id:
         raise OperatorError(
             "QUEUE_NOT_EXCLUSIVE",
             "expected S02 baseline job is not the exact next WorkerExecutor claim",
-            details={"next_job_id": str(ordered[0].id) if ordered else None},
+            details={
+                "next_job_id": str(selected.job.id) if selected is not None else None
+            },
         )
     return job
 

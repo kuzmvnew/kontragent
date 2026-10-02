@@ -203,11 +203,17 @@ The healthy S02 DataSet statuses remain only `ready` and `current`. `error` is
 not globally healthy. A transitioned DataSet may enter the explicit
 `failed_refresh_recovery` path only when its accepted active generation,
 publication pointer, rollback generation, RAW manifest, counters, and bounded
-cohort facts remain coherent, and `last_error_at` identifies a later terminal
-failed controlled-live WorkerRun that published no generation. A queued,
-running, or retry-scheduled competing job blocks this recovery path. Candidate
-checksum, official rediscovery, freshness, and package validation remain
-independent preflight gates. `stale`, `unavailable`, and ambiguous/corrupt
+cohort facts remain coherent, and a durable terminal failed controlled-live
+WorkerRun exists after the accepted active publication. The failed run must
+belong to the exact canonical job/handler, retain complete semantic metadata
+and structured error evidence, report zero published records, own no
+publication generation, and leave the accepted active pointer unchanged.
+`DataSet.last_error_at` is mutable operational metadata: it may be equal to or
+later than the failed run, but it is never the run's identity key. Runnable
+backlog is validated separately by the canonical queue guard and does not make
+an otherwise coherent recovery chain invalid. Candidate checksum, official
+rediscovery, freshness, and package validation remain independent preflight
+gates. `stale`, `unavailable`, impossible chronology, and ambiguous/corrupt
 active states remain blocked.
 
 Content-addressed RAW may be reused. `first_worker_run_id` remains the first
@@ -293,9 +299,11 @@ python -m scripts.run_s02_controlled_live retry-failed \
 ```
 
 The command reruns every preflight gate, verifies the exact failed job package
-and cohort, requires remaining attempt capacity and an empty runnable queue,
-then performs only the durable `failed -> queued` Worker Foundation transition.
-Execution remains a separate `run-once` action.
+and cohort, requires remaining attempt capacity, performs only the durable
+`failed -> queued` Worker Foundation transition, and then proves that this job
+is the canonical next claim. Unrelated backlog is allowed only when the real
+Worker claim semantics still select the reviewed retry first. Execution
+remains a separate `run-once` action.
 
 ### 4. Run once (high risk)
 
@@ -314,7 +322,15 @@ Before calling `WorkerExecutor.run_once`, the launcher proves that the job:
 - is `job_type=fns_tax_debt_controlled_live`;
 - pins `fns-tax-debt-controlled-live-v1`;
 - has the exact active durable approval; and
-- is the first job under the worker's real `created_at, id` claim order.
+- is the exact result of Worker Foundation's shared canonical selector.
+
+The shared selector owns status and retry-time eligibility, lane/source
+admission, accepted-public-cohort priority, source-family rotation, work-unit
+admission, FIFO coordinates and UUID tie-breaking. The executor, controlled
+queue guard, baseline guard, retry guard and runnable-queue report do not keep
+separate ordering implementations. An earlier unapproved or disabled handler
+still blocks the S02 guard because the unrestricted executor would select that
+row and fail its handler gate before reaching S02.
 
 The guard query and the executor's `SELECT ... FOR UPDATE` claim share one
 `REPEATABLE READ` transaction and one database snapshot. A concurrent queue
