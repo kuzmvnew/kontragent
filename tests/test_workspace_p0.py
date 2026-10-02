@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.postgres import SessionLocal, engine
@@ -21,12 +23,22 @@ from app.models.workspace import (
     WorkspaceRoleCapability,
 )
 from tests.public_test_support import projection
-from workspace_app.auth import CSRF_COOKIE, hash_password
+from workspace_app.auth import (
+    CSRF_COOKIE,
+    create_customer_session,
+    hash_password,
+    load_principal,
+    normalize_email,
+    revoke_session,
+    verify_password,
+)
 from workspace_app.main import create_app
 from workspace_app.service import (
     ActionDenied,
     authorize,
     bootstrap_workspace_owner,
+    save_company,
+    saved_company_by_id,
     saved_companies,
 )
 
@@ -160,6 +172,17 @@ def _login(client: TestClient, email: str):
     return response
 
 
+def _api_login(client: TestClient, email: str, *, password: str = PASSWORD):
+    csrf_response = client.get("/app/api/login/csrf")
+    assert csrf_response.status_code == 200
+    csrf = csrf_response.json()["csrf_token"]
+    return client.post(
+        "/app/api/login",
+        headers={"x-csrf-token": csrf},
+        json={"email": email, "password": password},
+    )
+
+
 def test_workspace_p0_search_card_save_saved_and_no_internal_leakage():
     email = f"workspace-p0-{uuid4()}@example.test"
     p1 = projection(sequence=100_100_101)
@@ -277,7 +300,7 @@ def test_workspace_p0_tenant_isolation_and_workspace_selection_fail_closed():
             save_entitlement = session.scalar(
                 sa.select(WorkspaceEntitlement).where(
                     WorkspaceEntitlement.workspace_id == workspace_a,
-                    WorkspaceEntitlement.capability_key == "company.save",
+                    WorkspaceEntitlement.entitlement_key == "saved_companies.enabled",
                 )
             )
             assert save_entitlement is not None
@@ -286,14 +309,14 @@ def test_workspace_p0_tenant_isolation_and_workspace_selection_fail_closed():
                 session,
                 user_id=user_a,
                 workspace_id=workspace_a,
-                capability_key="company.read",
+                permission_key="company.view",
             )
             try:
                 authorize(
                     session,
                     user_id=user_a,
                     workspace_id=workspace_b,
-                    capability_key="company.read",
+                    permission_key="company.view",
                 )
             except ActionDenied as exc:
                 assert exc.code == "membership_required"
@@ -391,7 +414,7 @@ def test_workspace_p0_permission_entitlement_quota_and_csrf_are_distinct():
             entitlement = session.scalar(
                 sa.select(WorkspaceEntitlement).where(
                     WorkspaceEntitlement.workspace_id == workspace_id,
-                    WorkspaceEntitlement.capability_key == "company.save",
+                    WorkspaceEntitlement.entitlement_key == "saved_companies.enabled",
                 )
             )
             entitlement.enabled = False
@@ -404,7 +427,7 @@ def test_workspace_p0_permission_entitlement_quota_and_csrf_are_distinct():
             entitlement = session.scalar(
                 sa.select(WorkspaceEntitlement).where(
                     WorkspaceEntitlement.workspace_id == workspace_id,
-                    WorkspaceEntitlement.capability_key == "company.save",
+                    WorkspaceEntitlement.entitlement_key == "saved_companies.enabled",
                 )
             )
             entitlement.enabled = True
@@ -437,5 +460,380 @@ def test_workspace_p0_session_revoke_blocks_private_routes():
         private = web.get("/app", follow_redirects=False)
         assert private.status_code == 303
         assert private.headers["location"].startswith("/login")
+    finally:
+        _cleanup(email)
+
+
+def test_workspace_p0_canonical_api_login_save_list_unsave_logout():
+    email = f"workspace-api-{uuid4()}@example.test"
+    p = projection(sequence=100_100_105)
+    try:
+        with Session(engine) as session:
+            session.add(Company(inn=p.company.inn, name=p.company.name, entity_type="legal"))
+            session.commit()
+        _bootstrap(email, "Canonical API", saved_limit=2)
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository((p,)),
+                session_factory=SessionLocal,
+            )
+        )
+
+        anonymous = web.get("/app/api/context")
+        assert anonymous.status_code == 401
+        assert anonymous.json()["error"]["code"] == "authentication_required"
+
+        csrf_page = web.get("/app/api/login/csrf")
+        no_csrf = web.post(
+            "/app/api/login",
+            json={"email": email, "password": PASSWORD},
+        )
+        assert csrf_page.status_code == 200
+        assert no_csrf.status_code == 403
+
+        wrong = _api_login(web, email, password="not-the-password")
+        assert wrong.status_code == 401
+        assert PASSWORD not in wrong.text
+        assert "password_hash" not in wrong.text
+
+        login = _api_login(web, email)
+        assert login.status_code == 200
+        session_cookie = "\n".join(login.headers.get_list("set-cookie"))
+        assert "HttpOnly" in session_cookie
+        assert "SameSite=strict" in session_cookie
+
+        context = web.get("/app/api/context")
+        assert context.status_code == 200
+        assert context.json()["user"] == {"email": email}
+        assert context.json()["workspace"] == {"name": "Canonical API", "role": "OWNER"}
+        for forbidden in ("password", "password_hash", "user_id", "workspace_id", "company_id"):
+            assert forbidden not in context.text
+
+        card = web.get(f"/app/api/companies/{p.company.inn}")
+        assert card.status_code == 200
+        assert card.json()["company"]["inn"] == p.company.inn
+        assert card.json()["actions"]["is_saved"] is False
+        assert "company_id" not in card.text
+
+        rejected = web.post(f"/app/api/companies/{p.company.inn}/saved")
+        assert rejected.status_code == 403
+        assert rejected.json()["error"]["code"] == "csrf_invalid"
+
+        csrf = web.get("/app/api/csrf").json()["csrf_token"]
+        saved = web.post(
+            f"/app/api/companies/{p.company.inn}/saved",
+            headers={"x-csrf-token": csrf},
+        )
+        duplicate = web.post(
+            f"/app/api/companies/{p.company.inn}/saved",
+            headers={"x-csrf-token": csrf},
+        )
+        assert saved.status_code == 201
+        assert saved.json() == {"saved": True, "created": True}
+        assert duplicate.status_code == 200
+        assert duplicate.json() == {"saved": True, "created": False}
+
+        listing = web.get("/app/api/saved-companies")
+        assert listing.status_code == 200
+        assert [item["inn"] for item in listing.json()["items"]] == [p.company.inn]
+        assert "company_id" not in listing.text
+
+        removed = web.delete(
+            f"/app/api/companies/{p.company.inn}/saved",
+            headers={"x-csrf-token": csrf},
+        )
+        absent = web.delete(
+            f"/app/api/companies/{p.company.inn}/saved",
+            headers={"x-csrf-token": csrf},
+        )
+        assert removed.json() == {"saved": False, "removed": True}
+        assert absent.json() == {"saved": False, "removed": False}
+
+        logout = web.post("/app/api/logout", headers={"x-csrf-token": csrf})
+        assert logout.status_code == 204
+        assert web.get("/app/api/context").status_code == 401
+
+        with Session(engine) as session:
+            outcomes = tuple(
+                session.scalars(
+                    sa.select(WorkspaceAuditEvent.outcome).where(
+                        WorkspaceAuditEvent.action.in_(("company.save", "company.unsave")),
+                        WorkspaceAuditEvent.workspace_id.in_(
+                            sa.select(WorkspaceMembership.workspace_id).where(
+                                WorkspaceMembership.user_id.in_(
+                                    sa.select(CustomerUser.id).where(CustomerUser.email == email)
+                                )
+                            )
+                        ),
+                    )
+                ).all()
+            )
+        assert {"success", "already_saved", "not_saved"}.issubset(outcomes)
+    finally:
+        _cleanup(email, inns=(p.company.inn,))
+
+
+def test_workspace_p0_session_expiry_tamper_revocation_and_disabled_user():
+    email = f"workspace-session-security-{uuid4()}@example.test"
+    try:
+        user_id, workspace_id = _bootstrap(email, "Session Security")
+        now = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
+        with Session(engine) as session:
+            user = session.get(CustomerUser, user_id)
+            token, _csrf, _record = create_customer_session(
+                session,
+                user=user,
+                active_workspace_id=workspace_id,
+                now=now,
+                ttl=timedelta(minutes=5),
+            )
+            session.commit()
+
+        with Session(engine) as session:
+            principal = load_principal(session, token, now=now + timedelta(minutes=1))
+            assert principal is not None
+            assert load_principal(session, token + "tampered", now=now + timedelta(minutes=1)) is None
+            assert load_principal(session, token, now=now + timedelta(minutes=5)) is None
+            revoke_session(session, principal, now=now + timedelta(minutes=2))
+            session.commit()
+
+        with Session(engine) as session:
+            assert load_principal(session, token, now=now + timedelta(minutes=3)) is None
+            user = session.get(CustomerUser, user_id)
+            token2, _csrf2, _record2 = create_customer_session(
+                session,
+                user=user,
+                active_workspace_id=workspace_id,
+                now=now,
+            )
+            user.status = "disabled"
+            session.commit()
+
+        with Session(engine) as session:
+            assert load_principal(session, token2, now=now + timedelta(minutes=1)) is None
+    finally:
+        _cleanup(email)
+
+
+def test_workspace_p0_membership_user_permission_and_entitlement_fail_closed():
+    email = f"workspace-fail-closed-{uuid4()}@example.test"
+    try:
+        user_id, workspace_id = _bootstrap(email, "Fail Closed")
+        with Session(engine) as session:
+            membership = session.scalar(
+                sa.select(WorkspaceMembership).where(
+                    WorkspaceMembership.user_id == user_id,
+                    WorkspaceMembership.workspace_id == workspace_id,
+                )
+            )
+            membership.status = "suspended"
+            session.commit()
+        with Session(engine) as session:
+            try:
+                authorize(
+                    session,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    permission_key="company.view",
+                )
+            except ActionDenied as exc:
+                assert exc.code == "membership_required"
+            else:
+                raise AssertionError("disabled membership authorized")
+
+            membership = session.scalar(
+                sa.select(WorkspaceMembership).where(
+                    WorkspaceMembership.user_id == user_id,
+                    WorkspaceMembership.workspace_id == workspace_id,
+                )
+            )
+            membership.status = "active"
+            session.get(CustomerUser, user_id).status = "disabled"
+            session.commit()
+        with Session(engine) as session:
+            try:
+                authorize(
+                    session,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    permission_key="company.view",
+                )
+            except ActionDenied as exc:
+                assert exc.code == "authentication_required"
+            else:
+                raise AssertionError("disabled user authorized")
+    finally:
+        _cleanup(email)
+
+
+def test_workspace_p0_resource_id_is_scoped_and_company_identity_is_global():
+    email_a = f"resource-a-{uuid4()}@example.test"
+    email_b = f"resource-b-{uuid4()}@example.test"
+    p = projection(sequence=100_100_106)
+    try:
+        with Session(engine) as session:
+            session.add(Company(inn=p.company.inn, name=p.company.name, entity_type="legal"))
+            session.commit()
+        user_a, workspace_a = _bootstrap(email_a, "Resource A")
+        user_b, workspace_b = _bootstrap(email_b, "Resource B")
+
+        with Session(engine) as session:
+            assert save_company(
+                session,
+                user_id=user_a,
+                workspace_id=workspace_a,
+                inn=p.company.inn,
+            )
+            session.commit()
+            saved = session.scalar(
+                sa.select(SavedCompany).where(SavedCompany.workspace_id == workspace_a)
+            )
+            saved_id = saved.id
+            company_id = saved.company_id
+
+        with Session(engine) as session:
+            assert session.scalar(sa.select(sa.func.count()).select_from(Company).where(Company.id == company_id)) == 1
+            try:
+                saved_company_by_id(
+                    session,
+                    user_id=user_b,
+                    workspace_id=workspace_b,
+                    saved_company_id=saved_id,
+                )
+            except ActionDenied as exc:
+                assert exc.code == "saved_company_not_found"
+                assert exc.status_code == 404
+            else:
+                raise AssertionError("resource id bypassed workspace scope")
+
+            try:
+                authorize(
+                    session,
+                    user_id=user_a,
+                    workspace_id=workspace_b,
+                    permission_key="company.view",
+                )
+            except ActionDenied as exc:
+                assert exc.code == "membership_required"
+            else:
+                raise AssertionError("workspace A membership authorized workspace B")
+    finally:
+        _cleanup(email_a, email_b, inns=(p.company.inn,))
+
+
+def test_workspace_p0_database_constraints_and_role_contract():
+    email_a = f"constraints-a-{uuid4()}@example.test"
+    email_b = f"constraints-b-{uuid4()}@example.test"
+    try:
+        user_a, workspace_a = _bootstrap(email_a, "Constraints A")
+        _user_b, workspace_b = _bootstrap(email_b, "Constraints B")
+
+        with Session(engine) as session:
+            role_keys = set(
+                session.scalars(
+                    sa.select(WorkspaceRole.role_key).where(
+                        WorkspaceRole.workspace_id == workspace_a
+                    )
+                ).all()
+            )
+            entitlement_keys = set(
+                session.scalars(
+                    sa.select(WorkspaceEntitlement.entitlement_key).where(
+                        WorkspaceEntitlement.workspace_id == workspace_a
+                    )
+                ).all()
+            )
+            assert role_keys == {"OWNER", "ADMIN", "MEMBER"}
+            assert entitlement_keys == {
+                "workspace.core.enabled",
+                "saved_companies.enabled",
+                "monitoring.enabled",
+                "workspace_members.enabled",
+            }
+            assert entitlement_keys.isdisjoint(
+                {
+                    "workspace.view",
+                    "company.search",
+                    "company.view",
+                    "company.save",
+                    "company.unsave",
+                    "monitoring.manage",
+                    "workspace.members.manage",
+                }
+            )
+
+            member_role_a = session.scalar(
+                sa.select(WorkspaceRole).where(
+                    WorkspaceRole.workspace_id == workspace_a,
+                    WorkspaceRole.role_key == "MEMBER",
+                )
+            )
+            session.add(
+                WorkspaceMembership(
+                    workspace_id=workspace_a,
+                    user_id=user_a,
+                    role_id=member_role_a.id,
+                    status="active",
+                )
+            )
+            try:
+                session.flush()
+            except IntegrityError:
+                session.rollback()
+            else:
+                raise AssertionError("duplicate membership was accepted")
+
+        with Session(engine) as session:
+            member_role_a = session.scalar(
+                sa.select(WorkspaceRole).where(
+                    WorkspaceRole.workspace_id == workspace_a,
+                    WorkspaceRole.role_key == "MEMBER",
+                )
+            )
+            session.add(
+                WorkspaceMembership(
+                    workspace_id=workspace_b,
+                    user_id=user_a,
+                    role_id=member_role_a.id,
+                    status="active",
+                )
+            )
+            try:
+                session.flush()
+            except IntegrityError:
+                session.rollback()
+            else:
+                raise AssertionError("cross-workspace role assignment was accepted")
+    finally:
+        _cleanup(email_a, email_b)
+
+
+def test_workspace_p0_password_hash_and_email_normalization():
+    encoded = hash_password(PASSWORD, salt=b"0123456789abcdef")
+    assert encoded != PASSWORD
+    assert verify_password(PASSWORD, encoded)
+    assert not verify_password("incorrect-password", encoded)
+    assert not verify_password(PASSWORD, "not-a-valid-hash")
+    assert normalize_email("  Owner@Example.TEST  ") == "owner@example.test"
+
+
+def test_workspace_p0_non_local_cookie_is_secure(monkeypatch):
+    email = f"workspace-secure-cookie-{uuid4()}@example.test"
+    try:
+        _bootstrap(email, "Secure Cookie")
+        monkeypatch.setenv("WORKSPACE_ENV", "production")
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            ),
+            base_url="https://testserver",
+        )
+        response = _api_login(web, email)
+        assert response.status_code == 200
+        cookies = "\n".join(response.headers.get_list("set-cookie"))
+        assert "Secure" in cookies
+        assert "HttpOnly" in cookies
+        assert "SameSite=strict" in cookies
     finally:
         _cleanup(email)

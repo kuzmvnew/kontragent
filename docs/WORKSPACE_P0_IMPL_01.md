@@ -1,165 +1,196 @@
-# WORKSPACE-P0-IMPL-01
+# MAC-OFFLINE-WAVE-B-WORKSPACE-P0-FOUNDATION-01
 
-**TASK:** MAC-OFFLINE-WAVE-B-WORKSPACE-P0-01  
-**Status:** IMPLEMENTATION CANDIDATE / QA PENDING  
-**Production:** NOT DEPLOYED
+Status: READY FOR QA (exact SHA required before merge)
 
-## Scope
+Base: `e4f12d7878a3c5aa844cbb19dcf3941f818aa509`
 
-Workspace P0 implements the controlled/private vertical slice:
+Branch: `mac/workspace-p0-foundation-01`
 
-```text
-Login
-  ↓
-Workspace membership
-  ↓
-Search accepted company projections
-  ↓
-Authorized Company Card
-  ↓
-Save
-  ↓
-Saved Companies
-```
+Production mutation: NO
 
-Public registration, billing-provider integration, custom roles, invitations,
-monitoring delivery, bulk checks and P1/P2 management screens are deliberately
-outside this slice.
+## Current-state audit
 
-## Boundaries
+### FACT
 
-- `Company.id` remains the one global company identity.
-- Workspace-owned objects store `workspace_id` and a foreign key to the
-  global Company; company master data is not copied into tenant tables.
-- Customer auth is a separate `workspace_app`; it does not reuse
-  `admin_app.auth` or owner-console sessions.
-- Company display data comes from the accepted `PublicProjection` contract.
-  Operational `company_id` is used only server-side for Save/tenant links.
-- Private HTML/API are `noindex, nofollow, nosnippet` and `no-store`.
-- The browser never receives internal `company_id`.
-- No RAW/parser/worker objects are exposed.
+- `Company.id` is the canonical global company identity (`companies.id`,
+  `BIGINT`). `companies.inn` is globally unique. No tenant copy of Company
+  existed on the base commit and none is introduced here.
+- Operational persistence uses SQLAlchemy sessions from
+  `app.database.postgres`; Alembic metadata is registered through
+  `app.models`.
+- The base customer/public surfaces are separate from `admin_app`. The admin
+  console has its own `nextcompany_admin_session`, scrypt password primitive,
+  process-local allow-list and admin audit model.
+- The base commit had no customer User, Workspace, Membership, customer
+  session, permission, entitlement or Saved Company model.
+- Public company delivery uses accepted projections derived from semantic
+  company contracts. The canonical semantic contract is
+  `CompanyViewModelV1`; Workspace code does not read provider RAW payloads.
+- The base migration head was `b9e2c4d6f8a0`.
 
-## Persistence
+### TESTED
 
-New operational tables:
+- Fresh PostgreSQL install upgraded from an empty database to
+  `d3e5f7a9b1c4`.
+- `d3e5f7a9b1c4 -> b9e2c4d6f8a0` downgrade and re-upgrade both complete.
+- Schema completeness is compatible: no missing/incompatible model objects.
+- Focused real-PostgreSQL auth, tenant, RBAC, entitlement, CSRF and Saved
+  Company tests pass.
+- Legacy-reconciliation/current-head guards pass after advancing the canonical
+  head.
 
-- `customer_users`
-- `workspaces`
-- `workspace_roles`
-- `workspace_role_capabilities`
-- `workspace_memberships`
-- `customer_sessions`
-- `workspace_entitlements`
-- `saved_companies`
-- `workspace_audit_events`
+### GAP on the base commit
 
-Customer sessions are opaque random tokens. Only SHA-256 hashes of session and
-CSRF tokens are stored in PostgreSQL. Sessions have expiry and explicit
-revocation.
+- No durable customer authentication or revocation.
+- No server-side tenant boundary.
+- No customer RBAC or tariff-entitlement boundary.
+- No workspace-scoped Saved Company lifecycle.
+- No private `/app/api/...` foundation.
 
-## Authorization
+## Architecture decisions
 
-Every protected action is evaluated server-side. P0 uses:
+1. Customer auth is a separate boundary from admin auth. Cookie names, session
+   persistence and authorization code are separate.
+2. Customer sessions are opaque 256-bit tokens; PostgreSQL stores only their
+   SHA-256 digests. Session authority survives process restart and works across
+   processes.
+3. Every protected action evaluates, in order: active user, active Workspace,
+   active membership, role-owned permission, independently named entitlement,
+   quota where applicable, and workspace resource scope.
+4. Permissions and entitlements have disjoint key spaces. For example,
+   `company.save` maps to `saved_companies.enabled`.
+5. Saved Company references the global `companies.id`. Company master rows are
+   never copied into Workspace storage.
+6. Browser writes use session-bound double-submit CSRF tokens. Cookies are
+   HttpOnly, SameSite=Strict and automatically Secure outside local/dev/test.
+7. Private responses expose INN and semantic projection data, not internal
+   `company_id`, workspace IDs, RAW payloads or password hashes.
 
-1. active customer user;
-2. active Workspace;
-3. active Workspace membership;
-4. role capability;
-5. enabled Workspace entitlement;
-6. quota when the capability has a quantitative limit;
-7. exact tenant resource scope;
-8. effect + audit.
+## Data model
 
-P0 capability keys:
+| Domain | Table | Main invariants |
+| --- | --- | --- |
+| User | `customer_users` | UUID, normalized unique email, scrypt hash, active/disabled |
+| Workspace | `workspaces` | UUID, name, active/suspended/closed |
+| Role | `workspace_roles` | tenant-scoped `OWNER`/`ADMIN`/`MEMBER` |
+| Permission | `workspace_role_capabilities` | role + permission key |
+| Membership | `workspace_memberships` | unique workspace/user; composite FK prevents a role from another tenant |
+| Entitlement | `workspace_entitlements` | unique workspace/entitlement key; optional non-negative limit |
+| Session | `customer_sessions` | token hash, CSRF hash, expiry, revocation, active Workspace |
+| Saved Company | `saved_companies` | workspace + global company FK unique; saving user retained |
+| Audit | `workspace_audit_events` | workspace/actor/action/target/outcome for writes |
 
-- `workspace.read`
+## Authentication contract
+
+- Email/password login; passwords require versioned stdlib scrypt hashes.
+- Login uses a pre-session CSRF token and generic invalid-credential response.
+- Active Workspace is selected automatically only when exactly one active
+  membership exists.
+- Each request resolves the opaque cookie against an unexpired, unrevoked
+  PostgreSQL row and rechecks the active user.
+- Logout revokes the database session before deleting browser cookies.
+- Disabled users fail authentication; disabled memberships fail authorization.
+- Customer cookie: `nextcompany_session`; admin cookie:
+  `nextcompany_admin_session`.
+
+## RBAC contract
+
+Permissions:
+
+- `workspace.view`
 - `company.search`
-- `company.read`
+- `company.view`
 - `company.save`
+- `company.unsave`
+- `monitoring.manage`
+- `workspace.members.manage`
 
-Permission and entitlement are independent. A missing/disabled entitlement is
-fail-closed and distinct from a missing capability.
+`OWNER` and `ADMIN` receive all P0 permissions. `MEMBER` receives Workspace
+view plus company search/view/save/unsave. The database prevents a membership
+from referencing a role owned by another Workspace.
 
-## Quota
+## Entitlement contract
 
-`company.save` may carry `limit_value`.
+Permission-to-entitlement mapping:
 
-Save locks the entitlement row before checking the current Workspace saved
-count. This serializes concurrent quota decisions for the same Workspace.
-Already-saved companies are idempotent and do not consume another unit.
+| Permission | Entitlement |
+| --- | --- |
+| `workspace.view`, `company.search`, `company.view` | `workspace.core.enabled` |
+| `company.save`, `company.unsave` | `saved_companies.enabled` |
+| `monitoring.manage` | `monitoring.enabled` |
+| `workspace.members.manage` | `workspace_members.enabled` |
 
-The controlled bootstrap requires an explicit saved-company limit; no
-commercial tariff number is inferred from UI references.
+The Saved Company quota lives only on `saved_companies.enabled`. Save locks the
+entitlement row before counting and inserts with PostgreSQL
+`ON CONFLICT DO NOTHING`, making quota decisions serialized per Workspace and
+duplicate saves idempotent.
 
-## Authentication / CSRF
+## Tenant-isolation invariants
 
-- Password hashes use versioned stdlib scrypt.
-- Login creates a fresh opaque DB-backed session.
-- POST actions require a session-bound CSRF value.
-- Session revoke immediately blocks private routes.
-- `return_to` accepts only internal `/app...` paths.
-- There is no public signup endpoint in P0.
+- A requested Workspace is never trusted without an active membership query.
+- The selected role must belong to the same Workspace (runtime check plus
+  composite foreign key).
+- Saved Company reads include both resource ID and `workspace_id`.
+- List/save/unsave always scope by the authorized Workspace.
+- A global company lookup resolves one canonical Company; no Workspace Company
+  row is created.
+- Missing user, membership, permission, entitlement or resource scope fails
+  closed.
 
-The bootstrap command is:
+## Migration
 
-```bash
-uv run python scripts/bootstrap_workspace_owner.py \
-  --email owner@example.test \
-  --workspace-name "NEXT Workspace" \
-  --saved-limit 100
-```
+Revision: `d3e5f7a9b1c4`
 
-The password is prompted without echo unless explicitly supplied by the
-operator. This command is controlled environment provisioning, not customer
-self-registration.
+Parent: `b9e2c4d6f8a0`
 
-## API / UI
+Single Alembic head: yes
 
-Implemented private routes:
+Downgrade: implemented and tested
 
-- `GET/POST /login`
-- `POST /logout`
-- `GET/POST /workspace/select`
-- `GET /app`
-- `GET /app/search`
-- `GET /app/companies/{inn}`
-- `POST /app/companies/{inn}/save`
-- `POST /app/companies/{inn}/unsave`
-- `GET /app/saved`
-- `GET /api/app/companies/{inn}`
-- `GET /api/app/saved`
+Fresh database: tested
 
-The authorized company response reuses the accepted public semantic projection
-and adds only safe action context such as `is_saved`, `can_save` and quota
-summary. It does not serialize internal company/workspace database identifiers.
+Schema completeness: compatible
 
-## Test contract
+## API
 
-`tests/test_workspace_p0.py` proves on real PostgreSQL:
+Canonical private namespace:
 
-- login and DB-backed session;
-- CSRF rejection;
-- explicit session revocation;
-- one-workspace auto selection;
-- tenant A cannot select/access tenant B;
-- Search → Authorized Card → Save → Saved;
-- idempotent/scope-safe Saved Company model;
-- permission, entitlement and quota are distinct;
-- save quota is enforced;
-- audit contains success and quota rejection;
-- private API/HTML do not leak `company_id`, RAW/parser/worker markers.
+- `GET /app/api/login/csrf`
+- `POST /app/api/login`
+- `GET /app/api/context`
+- `GET /app/api/csrf`
+- `POST /app/api/logout`
+- `GET /app/api/companies/{inn}`
+- `GET /app/api/saved-companies`
+- `POST /app/api/companies/{inn}/saved`
+- `DELETE /app/api/companies/{inn}/saved`
 
-## Not claimed
+The minimal server-rendered routes remain only as an acceptance surface. The
+authorized card reuses an accepted semantic projection and the Save operation
+resolves the exact global Company row before writing.
 
-- production deployment;
-- production customer identity acceptance;
-- external IdP/SSO;
-- native PostgreSQL RLS acceptance;
-- commercial tariff acceptance;
-- billing/payment acceptance;
-- public signup;
-- monitoring/scheduler acceptance;
-- HOME execution.
+## Verification
 
-This slice is intended to reach **QA ACCEPTED / READY_FOR_HOME_DEPLOY**, not
-to claim production readiness by code alone.
+- Focused Workspace PostgreSQL suite: `11 passed`.
+- Current-head/legacy-reconciliation targeted suite: `24 passed`.
+- Full repository suite was executed. Workspace/schema-head regressions were
+  repaired. Three pre-existing Firmoteka scale tests still fail in files
+  unchanged from the base SHA; they reproduce in isolation and are outside
+  this task's auth/tenant scope. Final result: `1680 passed, 20 skipped, 3
+  failed`, with the three failures limited to `tests/test_firmoteka_scale.py`.
+
+## Limitations
+
+- No public self-registration, invitations, password reset or external IdP.
+- No billing provider or commercial tariff acceptance.
+- No native PostgreSQL RLS; isolation is enforced through constraints and the
+  server-side service boundary.
+- No distributed login rate-limit service yet.
+- Monitoring and member-management permissions/entitlements are foundations;
+  their product flows are not implemented in P0.
+- Workspace Search/Card/Saved UI remains intentionally minimal.
+- No production deployment, production migration or production user creation
+  was performed.
+
+HOME is not required for the next local QA gate. It will be required only for
+a separately authorized deployment gate.

@@ -39,7 +39,7 @@ from app.services.post_migration_recovery_service import (  # noqa: E402
 from app.worker.execution import RetryPolicy  # noqa: E402
 
 
-EXPECTED_DATABASE_REVISION = "b9e2c4d6f8a0"
+EXPECTED_DATABASE_REVISION = "d3e5f7a9b1c4"
 
 
 def _current_sha() -> str:

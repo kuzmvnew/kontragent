@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "b9e2c4d6f8a0"
+CURRENT_SCHEMA_HEAD = "d3e5f7a9b1c4"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -87,6 +87,15 @@ POST_CANONICAL_TARGET_TABLES = {
     "public_publication_requests",
     "factory_generations",
     "factory_generation_companies",
+    "customer_users",
+    "workspaces",
+    "workspace_roles",
+    "workspace_role_capabilities",
+    "workspace_memberships",
+    "customer_sessions",
+    "workspace_entitlements",
+    "saved_companies",
+    "workspace_audit_events",
 }
 DEV009_EXTENSION_TABLES = {
     "fns_tax_debt_raw_artifacts",

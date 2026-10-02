@@ -1,7 +1,7 @@
 """add Workspace P0 customer identity and saved-company foundation
 
 Revision ID: d3e5f7a9b1c4
-Revises: c2a4f6d8e0b1
+Revises: b9e2c4d6f8a0
 Create Date: 2026-10-01
 """
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "d3e5f7a9b1c4"
-down_revision = "c2a4f6d8e0b1"
+down_revision = "b9e2c4d6f8a0"
 branch_labels = None
 depends_on = None
 
@@ -26,6 +26,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("status IN ('active','disabled')", name="ck_customer_user_status"),
+        sa.CheckConstraint(
+            "email::text = lower(btrim(email::text))",
+            name="ck_customer_user_email_normalized",
+        ),
         sa.UniqueConstraint("email", name="uq_customer_users_email"),
     )
     op.create_index("ix_customer_users_email", "customer_users", ["email"])
@@ -50,7 +54,12 @@ def upgrade() -> None:
         sa.Column("name", sa.String(160), nullable=False),
         sa.Column("is_system", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint(
+            "role_key IN ('OWNER','ADMIN','MEMBER')",
+            name="ck_workspace_role_key",
+        ),
         sa.UniqueConstraint("workspace_id", "role_key", name="uq_workspace_role_key"),
+        sa.UniqueConstraint("workspace_id", "id", name="uq_workspace_role_scope"),
     )
     op.create_index("ix_workspace_roles_workspace_id", "workspace_roles", ["workspace_id"])
 
@@ -65,10 +74,16 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("workspace_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("customer_users.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("role_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("workspace_roles.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("role_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("status", sa.String(20), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("status IN ('active','suspended','revoked')", name="ck_workspace_membership_status"),
+        sa.ForeignKeyConstraint(
+            ("workspace_id", "role_id"),
+            ("workspace_roles.workspace_id", "workspace_roles.id"),
+            name="fk_workspace_membership_role_scope",
+            ondelete="RESTRICT",
+        ),
         sa.UniqueConstraint("workspace_id", "user_id", name="uq_workspace_membership"),
     )
     op.create_index("ix_workspace_memberships_workspace_id", "workspace_memberships", ["workspace_id"])
@@ -98,30 +113,30 @@ def upgrade() -> None:
         "workspace_entitlements",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("workspace_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("capability_key", sa.String(100), nullable=False),
+        sa.Column("entitlement_key", sa.String(100), nullable=False),
         sa.Column("enabled", sa.Boolean(), nullable=False),
         sa.Column("limit_value", sa.Integer(), nullable=True),
         sa.Column("policy_version", sa.String(80), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("limit_value IS NULL OR limit_value >= 0", name="ck_workspace_entitlement_limit"),
-        sa.UniqueConstraint("workspace_id", "capability_key", name="uq_workspace_entitlement"),
+        sa.UniqueConstraint("workspace_id", "entitlement_key", name="uq_workspace_entitlement"),
     )
     op.create_index("ix_workspace_entitlements_workspace_id", "workspace_entitlements", ["workspace_id"])
-    op.create_index("ix_workspace_entitlements_capability_key", "workspace_entitlements", ["capability_key"])
+    op.create_index("ix_workspace_entitlements_entitlement_key", "workspace_entitlements", ["entitlement_key"])
 
     op.create_table(
         "saved_companies",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("workspace_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False),
         sa.Column("company_id", sa.BigInteger(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("added_by", postgresql.UUID(as_uuid=True), sa.ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("saved_by_user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("note", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint("workspace_id", "company_id", name="uq_saved_company"),
     )
     op.create_index("ix_saved_companies_workspace_id", "saved_companies", ["workspace_id"])
     op.create_index("ix_saved_companies_company_id", "saved_companies", ["company_id"])
-    op.create_index("ix_saved_companies_added_by", "saved_companies", ["added_by"])
+    op.create_index("ix_saved_companies_saved_by_user_id", "saved_companies", ["saved_by_user_id"])
     op.create_index("ix_saved_companies_created_at", "saved_companies", ["created_at"])
 
     op.create_table(

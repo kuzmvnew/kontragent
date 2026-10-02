@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -25,13 +24,49 @@ from app.models.workspace import (
 from workspace_app.auth import normalize_email, verify_password
 
 
-P0_CAPABILITIES = (
-    "workspace.read",
+P0_PERMISSIONS = (
+    "workspace.view",
     "company.search",
-    "company.read",
+    "company.view",
     "company.save",
+    "company.unsave",
+    "monitoring.manage",
+    "workspace.members.manage",
 )
+
+ROLE_PERMISSIONS = {
+    "OWNER": P0_PERMISSIONS,
+    "ADMIN": P0_PERMISSIONS,
+    "MEMBER": (
+        "workspace.view",
+        "company.search",
+        "company.view",
+        "company.save",
+        "company.unsave",
+    ),
+}
+
+PERMISSION_ENTITLEMENTS = {
+    "workspace.view": "workspace.core.enabled",
+    "company.search": "workspace.core.enabled",
+    "company.view": "workspace.core.enabled",
+    "company.save": "saved_companies.enabled",
+    "company.unsave": "saved_companies.enabled",
+    "monitoring.manage": "monitoring.enabled",
+    "workspace.members.manage": "workspace_members.enabled",
+}
+
+DEFAULT_ENTITLEMENTS = {
+    "workspace.core.enabled": True,
+    "saved_companies.enabled": True,
+    "monitoring.enabled": False,
+    "workspace_members.enabled": True,
+}
 BOOTSTRAP_POLICY_VERSION = "workspace-p0-bootstrap-v1"
+_DUMMY_PASSWORD_HASH = (
+    "scrypt-v1$32768$8$1$d29ya3NwYWNlLXAwLWR1bW0$"
+    "6dS6Cf3NriX59EuQ2A5PzSdIXkoy34-HM0xzb0U5x6E"
+)
 
 
 class ActionDenied(PermissionError):
@@ -48,13 +83,15 @@ class AuthorizationContext:
     workspace_id: UUID
     membership_id: UUID
     role_id: UUID
-    capability_key: str
+    permission_key: str
+    entitlement_key: str
     entitlement_id: UUID
     quota_limit: int | None
 
 
 @dataclass(frozen=True)
 class SavedCompanyView:
+    saved_company_id: UUID
     inn: str
     name: str
     created_at: datetime
@@ -67,9 +104,13 @@ def authenticate_customer(session: Session, email: str, password: str) -> Custom
     except ValueError:
         return None
     user = session.scalar(sa.select(CustomerUser).where(CustomerUser.email == normalized))
-    if user is None or user.status != "active":
-        return None
-    return user if verify_password(password, user.password_hash) else None
+    password_hash = (
+        user.password_hash
+        if user is not None and user.status == "active"
+        else _DUMMY_PASSWORD_HASH
+    )
+    password_valid = verify_password(password, password_hash)
+    return user if user is not None and user.status == "active" and password_valid else None
 
 
 def bootstrap_workspace_owner(
@@ -103,34 +144,50 @@ def bootstrap_workspace_owner(
         status="active",
     )
     workspace = Workspace(id=uuid4(), name=name, status="active")
-    role = WorkspaceRole(
-        id=uuid4(),
-        workspace_id=workspace.id,
-        role_key="owner",
-        name="Владелец",
-        is_system=True,
-    )
-    session.add_all((user, workspace, role))
+    roles = {
+        role_key: WorkspaceRole(
+            id=uuid4(),
+            workspace_id=workspace.id,
+            role_key=role_key,
+            name={
+                "OWNER": "Владелец",
+                "ADMIN": "Администратор",
+                "MEMBER": "Участник",
+            }[role_key],
+            is_system=True,
+        )
+        for role_key in ROLE_PERMISSIONS
+    }
+    session.add_all((user, workspace, *roles.values()))
     session.flush()
     session.add(
         WorkspaceMembership(
             id=uuid4(),
             workspace_id=workspace.id,
             user_id=user.id,
-            role_id=role.id,
+            role_id=roles["OWNER"].id,
             status="active",
         )
     )
-    for capability in P0_CAPABILITIES:
-        session.add(WorkspaceRoleCapability(role_id=role.id, capability_key=capability))
+    for role_key, permissions in ROLE_PERMISSIONS.items():
+        for permission in permissions:
+            session.add(
+                WorkspaceRoleCapability(
+                    role_id=roles[role_key].id,
+                    capability_key=permission,
+                )
+            )
+    for entitlement_key, enabled in DEFAULT_ENTITLEMENTS.items():
         session.add(
             WorkspaceEntitlement(
                 id=uuid4(),
                 workspace_id=workspace.id,
-                capability_key=capability,
-                enabled=True,
+                entitlement_key=entitlement_key,
+                enabled=enabled,
                 limit_value=(
-                    saved_company_limit if capability == "company.save" else None
+                    saved_company_limit
+                    if entitlement_key == "saved_companies.enabled"
+                    else None
                 ),
                 policy_version=BOOTSTRAP_POLICY_VERSION,
             )
@@ -197,7 +254,7 @@ def authorize(
     *,
     user_id: UUID,
     workspace_id: UUID,
-    capability_key: str,
+    permission_key: str,
     lock_entitlement: bool = False,
 ) -> AuthorizationContext:
     membership, role = _membership_and_role(
@@ -208,15 +265,18 @@ def authorize(
     allowed = session.scalar(
         sa.select(WorkspaceRoleCapability.capability_key).where(
             WorkspaceRoleCapability.role_id == role.id,
-            WorkspaceRoleCapability.capability_key == capability_key,
+            WorkspaceRoleCapability.capability_key == permission_key,
         )
     )
     if allowed is None:
         raise ActionDenied("permission_denied", "Недостаточно прав для этого действия.")
 
+    entitlement_key = PERMISSION_ENTITLEMENTS.get(permission_key)
+    if entitlement_key is None:
+        raise ActionDenied("permission_unknown", "Неизвестное право доступа.")
     entitlement_query = sa.select(WorkspaceEntitlement).where(
         WorkspaceEntitlement.workspace_id == workspace_id,
-        WorkspaceEntitlement.capability_key == capability_key,
+        WorkspaceEntitlement.entitlement_key == entitlement_key,
     )
     if lock_entitlement:
         entitlement_query = entitlement_query.with_for_update()
@@ -228,25 +288,26 @@ def authorize(
         workspace_id=workspace_id,
         membership_id=membership.id,
         role_id=role.id,
-        capability_key=capability_key,
+        permission_key=permission_key,
+        entitlement_key=entitlement_key,
         entitlement_id=entitlement.id,
         quota_limit=entitlement.limit_value,
     )
 
 
-def capability_state(
+def action_state(
     session: Session,
     *,
     user_id: UUID,
     workspace_id: UUID,
-    capability_key: str,
+    permission_key: str,
 ) -> tuple[bool, str | None, int | None]:
     try:
         context = authorize(
             session,
             user_id=user_id,
             workspace_id=workspace_id,
-            capability_key=capability_key,
+            permission_key=permission_key,
         )
         return True, None, context.quota_limit
     except ActionDenied as exc:
@@ -277,7 +338,7 @@ def is_saved(
         session,
         user_id=user_id,
         workspace_id=workspace_id,
-        capability_key="company.read",
+        permission_key="company.view",
     )
     company = resolve_legal_company(session, inn)
     return session.scalar(
@@ -286,6 +347,28 @@ def is_saved(
             SavedCompany.company_id == company.id,
         )
     ) is not None
+
+
+def _audit_saved_company_write(
+    session: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID,
+    action: str,
+    inn: str,
+    outcome: str,
+) -> None:
+    session.add(
+        WorkspaceAuditEvent(
+            id=uuid4(),
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=action,
+            target_type="company",
+            target_ref=inn,
+            outcome=outcome,
+        )
+    )
 
 
 def save_company(
@@ -299,17 +382,26 @@ def save_company(
         session,
         user_id=user_id,
         workspace_id=workspace_id,
-        capability_key="company.save",
+        permission_key="company.save",
         lock_entitlement=True,
     )
     company = resolve_legal_company(session, inn)
-    existing = session.scalar(
-        sa.select(SavedCompany).where(
+    existing_id = session.scalar(
+        sa.select(SavedCompany.id).where(
             SavedCompany.workspace_id == workspace_id,
             SavedCompany.company_id == company.id,
         )
     )
-    if existing is not None:
+    if existing_id is not None:
+        _audit_saved_company_write(
+            session,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            action="company.save",
+            inn=company.inn,
+            outcome="already_saved",
+        )
+        session.flush()
         return False
 
     if context.quota_limit is not None:
@@ -322,41 +414,41 @@ def save_company(
             or 0
         )
         if used >= context.quota_limit:
-            session.add(
-                WorkspaceAuditEvent(
-                    id=uuid4(),
-                    workspace_id=workspace_id,
-                    actor_user_id=user_id,
-                    action="company.save",
-                    target_type="company",
-                    target_ref=company.inn,
-                    outcome="quota_exceeded",
-                )
+            _audit_saved_company_write(
+                session,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                action="company.save",
+                inn=company.inn,
+                outcome="quota_exceeded",
             )
             session.flush()
             raise ActionDenied("quota_exceeded", "Достигнут лимит сохранённых компаний.")
 
-    session.add(
-        SavedCompany(
+    saved_id = session.scalar(
+        insert(SavedCompany)
+        .values(
             id=uuid4(),
             workspace_id=workspace_id,
             company_id=company.id,
-            added_by=user_id,
+            saved_by_user_id=user_id,
         )
+        .on_conflict_do_nothing(
+            index_elements=[SavedCompany.workspace_id, SavedCompany.company_id]
+        )
+        .returning(SavedCompany.id)
     )
-    session.add(
-        WorkspaceAuditEvent(
-            id=uuid4(),
-            workspace_id=workspace_id,
-            actor_user_id=user_id,
-            action="company.save",
-            target_type="company",
-            target_ref=company.inn,
-            outcome="success",
-        )
+    outcome = "success" if saved_id is not None else "already_saved"
+    _audit_saved_company_write(
+        session,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        action="company.save",
+        inn=company.inn,
+        outcome=outcome,
     )
     session.flush()
-    return True
+    return saved_id is not None
 
 
 def unsave_company(
@@ -370,28 +462,35 @@ def unsave_company(
         session,
         user_id=user_id,
         workspace_id=workspace_id,
-        capability_key="company.save",
+        permission_key="company.unsave",
     )
     company = resolve_legal_company(session, inn)
-    saved = session.scalar(
-        sa.select(SavedCompany).where(
+    saved_id = session.scalar(
+        sa.delete(SavedCompany)
+        .where(
             SavedCompany.workspace_id == workspace_id,
             SavedCompany.company_id == company.id,
         )
+        .returning(SavedCompany.id)
     )
-    if saved is None:
-        return False
-    session.delete(saved)
-    session.add(
-        WorkspaceAuditEvent(
-            id=uuid4(),
+    if saved_id is None:
+        _audit_saved_company_write(
+            session,
             workspace_id=workspace_id,
-            actor_user_id=user_id,
+            user_id=user_id,
             action="company.unsave",
-            target_type="company",
-            target_ref=company.inn,
-            outcome="success",
+            inn=company.inn,
+            outcome="not_saved",
         )
+        session.flush()
+        return False
+    _audit_saved_company_write(
+        session,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        action="company.unsave",
+        inn=company.inn,
+        outcome="success",
     )
     session.flush()
     return True
@@ -407,7 +506,7 @@ def saved_companies(
         session,
         user_id=user_id,
         workspace_id=workspace_id,
-        capability_key="company.read",
+        permission_key="company.view",
     )
     rows = session.execute(
         sa.select(SavedCompany, Company)
@@ -417,12 +516,52 @@ def saved_companies(
     ).all()
     return tuple(
         SavedCompanyView(
+            saved_company_id=saved.id,
             inn=company.inn,
             name=company.short_name or company.name,
             created_at=saved.created_at,
             note=saved.note,
         )
         for saved, company in rows
+    )
+
+
+def saved_company_by_id(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    saved_company_id: UUID,
+) -> SavedCompanyView:
+    """Load a tenant resource only through its workspace-scoped identity."""
+
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="company.view",
+    )
+    row = session.execute(
+        sa.select(SavedCompany, Company)
+        .join(Company, Company.id == SavedCompany.company_id)
+        .where(
+            SavedCompany.id == saved_company_id,
+            SavedCompany.workspace_id == workspace_id,
+        )
+    ).one_or_none()
+    if row is None:
+        raise ActionDenied(
+            "saved_company_not_found",
+            "Сохранённая компания не найдена.",
+            status_code=404,
+        )
+    saved, company = row
+    return SavedCompanyView(
+        saved_company_id=saved.id,
+        inn=company.inn,
+        name=company.short_name or company.name,
+        created_at=saved.created_at,
+        note=saved.note,
     )
 
 
@@ -436,7 +575,7 @@ def saved_count(
         session,
         user_id=user_id,
         workspace_id=workspace_id,
-        capability_key="workspace.read",
+        permission_key="workspace.view",
     )
     return int(
         session.scalar(

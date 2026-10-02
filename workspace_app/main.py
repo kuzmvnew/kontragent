@@ -8,14 +8,14 @@ from typing import Callable
 from uuid import UUID
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.database.postgres import SessionLocal
-from app.models.workspace import Workspace
+from app.models.workspace import Workspace, WorkspaceRole
 from public_app.contracts import valid_legal_inn
 from public_app.repository import PublicRepository
 from workspace_app.auth import (
@@ -36,7 +36,7 @@ from workspace_app.service import (
     ActionDenied,
     authenticate_customer,
     authorize,
-    capability_state,
+    action_state,
     is_saved,
     list_active_workspaces,
     saved_companies,
@@ -52,8 +52,14 @@ MAX_BODY_BYTES = 32_768
 
 
 def _cookie_secure() -> bool:
+    environment = os.getenv("WORKSPACE_ENV", "local").strip().lower()
+    if environment not in {"local", "development", "test"}:
+        return True
     return os.getenv("WORKSPACE_COOKIE_SECURE", "").strip().lower() in {
-        "1", "true", "yes", "on"
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
@@ -84,7 +90,7 @@ def _set_session_cookies(response, *, token: str, csrf: str, secure: bool) -> No
         token,
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite="strict",
         path="/",
         max_age=8 * 60 * 60,
     )
@@ -93,7 +99,7 @@ def _set_session_cookies(response, *, token: str, csrf: str, secure: bool) -> No
         csrf,
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite="strict",
         path="/",
         max_age=8 * 60 * 60,
     )
@@ -119,7 +125,7 @@ def _require_principal(request: Request, session):
     return principal
 
 
-def _require_active_workspace(request: Request, session, *, capability: str):
+def _require_active_workspace(request: Request, session, *, permission: str):
     principal = _require_principal(request, session)
     if principal.active_workspace_id is None:
         raise ActionDenied(
@@ -131,7 +137,7 @@ def _require_active_workspace(request: Request, session, *, capability: str):
         session,
         user_id=principal.user_id,
         workspace_id=principal.active_workspace_id,
-        capability_key=capability,
+        permission_key=permission,
     )
     return principal, context
 
@@ -154,7 +160,7 @@ def _card_context(session, principal, projection) -> dict:
         session,
         user_id=principal.user_id,
         workspace_id=workspace_id,
-        capability_key="company.read",
+        permission_key="company.view",
     )
     saved = is_saved(
         session,
@@ -162,11 +168,11 @@ def _card_context(session, principal, projection) -> dict:
         workspace_id=workspace_id,
         inn=projection.company.inn,
     )
-    can_save, denial, limit_value = capability_state(
+    can_save, denial, limit_value = action_state(
         session,
         user_id=principal.user_id,
         workspace_id=workspace_id,
-        capability_key="company.save",
+        permission_key="company.save",
     )
     used = saved_count(
         session,
@@ -243,6 +249,86 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         )
         return response
 
+    @app.get("/app/api/login/csrf")
+    def api_login_csrf():
+        token = new_login_csrf()
+        response = JSONResponse({"csrf_token": token})
+        response.set_cookie(
+            LOGIN_CSRF_COOKIE,
+            token,
+            httponly=True,
+            secure=app.state.cookie_secure,
+            samesite="strict",
+            path="/app/api/login",
+            max_age=10 * 60,
+        )
+        return response
+
+    @app.post("/app/api/login")
+    async def api_login(request: Request):
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return JSONResponse(
+                {"error": {"code": "json_required", "message": "JSON request required"}},
+                status_code=415,
+            )
+        if not login_csrf_valid(
+            request.cookies.get(LOGIN_CSRF_COOKIE),
+            request.headers.get("x-csrf-token"),
+        ):
+            return JSONResponse(
+                {"error": {"code": "csrf_invalid", "message": "CSRF validation failed"}},
+                status_code=403,
+            )
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "Invalid request"}},
+                status_code=400,
+            )
+        with _session_factory(request)() as session:
+            user = authenticate_customer(
+                session,
+                str(payload.get("email") or ""),
+                str(payload.get("password") or ""),
+            )
+            if user is None:
+                return JSONResponse(
+                    {"error": {"code": "invalid_credentials", "message": "Invalid email or password"}},
+                    status_code=401,
+                )
+            workspace_ids = active_membership_workspaces(session, user.id)
+            if not workspace_ids:
+                return JSONResponse(
+                    {"error": {"code": "membership_required", "message": "Active membership required"}},
+                    status_code=403,
+                )
+            active_workspace_id = workspace_ids[0] if len(workspace_ids) == 1 else None
+            token, session_csrf, record = create_customer_session(
+                session,
+                user=user,
+                active_workspace_id=active_workspace_id,
+            )
+            expires_at = record.expires_at
+            session.commit()
+        response = JSONResponse(
+            {
+                "authenticated": True,
+                "workspace_selection_required": active_workspace_id is None,
+                "expires_at": expires_at.isoformat(),
+            }
+        )
+        _set_session_cookies(
+            response,
+            token=token,
+            csrf=session_csrf,
+            secure=app.state.cookie_secure,
+        )
+        response.delete_cookie(LOGIN_CSRF_COOKIE, path="/app/api/login")
+        return response
+
     @app.get("/login", response_class=HTMLResponse)
     def login_page(request: Request, return_to: str = "/app"):
         csrf = new_login_csrf()
@@ -256,7 +342,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             csrf,
             httponly=True,
             secure=app.state.cookie_secure,
-            samesite="lax",
+            samesite="strict",
             path="/login",
             max_age=10 * 60,
         )
@@ -283,7 +369,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 refreshed_csrf,
                 httponly=True,
                 secure=app.state.cookie_secure,
-                samesite="lax",
+                samesite="strict",
                 path="/login",
                 max_age=10 * 60,
             )
@@ -395,7 +481,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
-                    request, session, capability="workspace.read"
+                    request, session, permission="workspace.view"
                 )
                 workspace = session.get(Workspace, context.workspace_id)
                 count = saved_count(
@@ -426,7 +512,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
-                    request, session, capability="company.search"
+                    request, session, permission="company.search"
                 )
             except ActionDenied as exc:
                 if exc.code == "authentication_required":
@@ -454,7 +540,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         with _session_factory(request)() as session:
             try:
                 principal, _context = _require_active_workspace(
-                    request, session, capability="company.read"
+                    request, session, permission="company.view"
                 )
                 actions = _card_context(session, principal, projection)
             except ActionDenied as exc:
@@ -524,7 +610,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
-                    request, session, capability="company.read"
+                    request, session, permission="company.view"
                 )
                 entries = saved_companies(
                     session,
@@ -545,6 +631,148 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             },
         )
 
+    @app.get("/app/api/context")
+    def api_context(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request,
+                    session,
+                    permission="workspace.view",
+                )
+                workspace = session.get(Workspace, context.workspace_id)
+                role = session.get(WorkspaceRole, context.role_id)
+                if workspace is None or role is None:
+                    raise ActionDenied(
+                        "workspace_unavailable",
+                        "Workspace is unavailable.",
+                    )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {
+                "user": {"email": principal.email},
+                "workspace": {"name": workspace.name, "role": role.role_key},
+                "session": {"expires_at": principal.expires_at.isoformat()},
+            }
+        )
+
+    @app.get("/app/api/csrf")
+    def api_csrf(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                _require_principal(request, session)
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"csrf_token": request.cookies.get(CSRF_COOKIE, "")})
+
+    @app.post("/app/api/logout")
+    def api_logout(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request,
+                    session,
+                    principal,
+                    request.headers.get("x-csrf-token"),
+                )
+                revoke_session(session, principal)
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        response = Response(status_code=204)
+        _clear_session_cookies(response)
+        return response
+
+    @app.get("/app/api/saved-companies")
+    def api_saved_companies(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request,
+                    session,
+                    permission="company.view",
+                )
+                entries = saved_companies(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {
+                "items": [
+                    {
+                        "inn": item.inn,
+                        "name": item.name,
+                        "note": item.note,
+                        "created_at": item.created_at.isoformat(),
+                    }
+                    for item in entries
+                ]
+            }
+        )
+
+    @app.post("/app/api/companies/{inn}/saved")
+    def api_save_company(request: Request, inn: str):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request,
+                    session,
+                    principal,
+                    request.headers.get("x-csrf-token"),
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Select a workspace.")
+                created = save_company(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    inn=inn,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                if exc.code == "quota_exceeded":
+                    session.commit()
+                else:
+                    session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {"saved": True, "created": created},
+            status_code=201 if created else 200,
+        )
+
+    @app.delete("/app/api/companies/{inn}/saved")
+    def api_unsave_company(request: Request, inn: str):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request,
+                    session,
+                    principal,
+                    request.headers.get("x-csrf-token"),
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Select a workspace.")
+                removed = unsave_company(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    inn=inn,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"saved": False, "removed": removed})
+
+    @app.get("/app/api/companies/{inn}")
     @app.get("/api/app/companies/{inn}")
     def company_api(request: Request, inn: str):
         if not valid_legal_inn(inn):
@@ -555,7 +783,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         with _session_factory(request)() as session:
             try:
                 principal, _context = _require_active_workspace(
-                    request, session, capability="company.read"
+                    request, session, permission="company.view"
                 )
                 actions = _card_context(session, principal, projection)
             except ActionDenied as exc:
@@ -569,7 +797,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
-                    request, session, capability="company.read"
+                    request, session, permission="company.view"
                 )
                 entries = saved_companies(
                     session,
@@ -594,7 +822,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith(("/api/", "/app/api/")):
             return JSONResponse(
                 {"error": {"code": "not_found", "message": "Not found"}},
                 status_code=exc.status_code,

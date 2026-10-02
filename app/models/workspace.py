@@ -15,6 +15,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -31,6 +32,10 @@ class CustomerUser(Base):
     __tablename__ = "customer_users"
     __table_args__ = (
         CheckConstraint("status IN ('active','disabled')", name="ck_customer_user_status"),
+        CheckConstraint(
+            "email::text = lower(btrim(email::text))",
+            name="ck_customer_user_email_normalized",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -58,6 +63,11 @@ class WorkspaceRole(Base):
     __tablename__ = "workspace_roles"
     __table_args__ = (
         UniqueConstraint("workspace_id", "role_key", name="uq_workspace_role_key"),
+        UniqueConstraint("workspace_id", "id", name="uq_workspace_role_scope"),
+        CheckConstraint(
+            "role_key IN ('OWNER','ADMIN','MEMBER')",
+            name="ck_workspace_role_key",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -80,12 +90,18 @@ class WorkspaceMembership(Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "user_id", name="uq_workspace_membership"),
         CheckConstraint("status IN ('active','suspended','revoked')", name="ck_workspace_membership_status"),
+        ForeignKeyConstraint(
+            ("workspace_id", "role_id"),
+            ("workspace_roles.workspace_id", "workspace_roles.id"),
+            name="fk_workspace_membership_role_scope",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("customer_users.id", ondelete="CASCADE"), nullable=False, index=True)
-    role_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("workspace_roles.id", ondelete="RESTRICT"), nullable=False, index=True)
+    role_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
@@ -106,13 +122,13 @@ class CustomerSession(Base):
 class WorkspaceEntitlement(Base):
     __tablename__ = "workspace_entitlements"
     __table_args__ = (
-        UniqueConstraint("workspace_id", "capability_key", name="uq_workspace_entitlement"),
+        UniqueConstraint("workspace_id", "entitlement_key", name="uq_workspace_entitlement"),
         CheckConstraint("limit_value IS NULL OR limit_value >= 0", name="ck_workspace_entitlement_limit"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
-    capability_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    entitlement_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     limit_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
     policy_version: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -128,7 +144,7 @@ class SavedCompany(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
-    added_by: Mapped[UUID] = mapped_column(Uuid, ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    saved_by_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=False, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
 

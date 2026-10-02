@@ -20,7 +20,7 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from app.models.workspace import CustomerSession, CustomerUser, WorkspaceMembership
+from app.models.workspace import CustomerSession, CustomerUser, Workspace, WorkspaceMembership
 
 
 SESSION_COOKIE = "nextcompany_session"
@@ -128,6 +128,23 @@ def create_customer_session(
     ttl: timedelta = DEFAULT_SESSION_TTL,
 ) -> tuple[str, str, CustomerSession]:
     now = now or datetime.now(UTC)
+    if ttl <= timedelta(0):
+        raise ValueError("session ttl must be positive")
+    if user.status != "active":
+        raise PermissionError("active customer user is required")
+    if active_workspace_id is not None:
+        membership = session.scalar(
+            sa.select(WorkspaceMembership.id)
+            .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
+            .where(
+                WorkspaceMembership.user_id == user.id,
+                WorkspaceMembership.workspace_id == active_workspace_id,
+                WorkspaceMembership.status == "active",
+                Workspace.status == "active",
+            )
+        )
+        if membership is None:
+            raise PermissionError("active workspace membership is required")
     token = secrets.token_urlsafe(32)
     csrf = secrets.token_urlsafe(32)
     record = CustomerSession(
@@ -202,10 +219,14 @@ def revoke_session(
 
 def active_membership_workspaces(session: Session, user_id: UUID) -> tuple[UUID, ...]:
     rows = session.scalars(
-        sa.select(WorkspaceMembership.workspace_id).where(
+        sa.select(WorkspaceMembership.workspace_id)
+        .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
+        .where(
             WorkspaceMembership.user_id == user_id,
             WorkspaceMembership.status == "active",
+            Workspace.status == "active",
         )
+        .order_by(WorkspaceMembership.created_at, WorkspaceMembership.workspace_id)
     ).all()
     return tuple(rows)
 
@@ -216,10 +237,13 @@ def set_active_workspace(
     workspace_id: UUID,
 ) -> None:
     membership = session.scalar(
-        sa.select(WorkspaceMembership.id).where(
+        sa.select(WorkspaceMembership.id)
+        .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
+        .where(
             WorkspaceMembership.user_id == principal.user_id,
             WorkspaceMembership.workspace_id == workspace_id,
             WorkspaceMembership.status == "active",
+            Workspace.status == "active",
         )
     )
     if membership is None:
