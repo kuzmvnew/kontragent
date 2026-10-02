@@ -34,11 +34,14 @@ from workspace_app.auth import (
 )
 from workspace_app.service import (
     ActionDenied,
-    authenticate_customer,
+    authenticate_customer_attempt,
     authorize,
     action_state,
     is_saved,
     list_active_workspaces,
+    record_login_audit,
+    record_logout_audit,
+    record_workspace_selection_audit,
     saved_companies,
     saved_count,
     save_company,
@@ -289,18 +292,33 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 status_code=400,
             )
         with _session_factory(request)() as session:
-            user = authenticate_customer(
+            attempt = authenticate_customer_attempt(
                 session,
                 str(payload.get("email") or ""),
                 str(payload.get("password") or ""),
             )
+            user = attempt.authenticated_user
             if user is None:
+                record_login_audit(
+                    session,
+                    attempt=attempt,
+                    workspace_id=None,
+                    outcome="denied",
+                )
+                session.commit()
                 return JSONResponse(
                     {"error": {"code": "invalid_credentials", "message": "Invalid email or password"}},
                     status_code=401,
                 )
             workspace_ids = active_membership_workspaces(session, user.id)
             if not workspace_ids:
+                record_login_audit(
+                    session,
+                    attempt=attempt,
+                    workspace_id=None,
+                    outcome="denied",
+                )
+                session.commit()
                 return JSONResponse(
                     {"error": {"code": "membership_required", "message": "Active membership required"}},
                     status_code=403,
@@ -310,6 +328,12 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 session,
                 user=user,
                 active_workspace_id=active_workspace_id,
+            )
+            record_login_audit(
+                session,
+                attempt=attempt,
+                workspace_id=active_workspace_id,
+                outcome="success",
             )
             expires_at = record.expires_at
             session.commit()
@@ -375,12 +399,20 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             )
             return response
         with _session_factory(request)() as session:
-            user = authenticate_customer(
+            attempt = authenticate_customer_attempt(
                 session,
                 str(form.get("email") or ""),
                 str(form.get("password") or ""),
             )
+            user = attempt.authenticated_user
             if user is None:
+                record_login_audit(
+                    session,
+                    attempt=attempt,
+                    workspace_id=None,
+                    outcome="denied",
+                )
+                session.commit()
                 return templates.TemplateResponse(
                     request=request,
                     name="login.html",
@@ -393,6 +425,13 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 )
             workspace_ids = active_membership_workspaces(session, user.id)
             if not workspace_ids:
+                record_login_audit(
+                    session,
+                    attempt=attempt,
+                    workspace_id=None,
+                    outcome="denied",
+                )
+                session.commit()
                 return templates.TemplateResponse(
                     request=request,
                     name="error.html",
@@ -407,6 +446,12 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 session,
                 user=user,
                 active_workspace_id=active_workspace_id,
+            )
+            record_login_audit(
+                session,
+                attempt=attempt,
+                workspace_id=active_workspace_id,
+                outcome="success",
             )
             session.commit()
         target = (
@@ -432,6 +477,11 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 principal = _require_principal(request, session)
                 _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
                 revoke_session(session, principal)
+                record_logout_audit(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                )
                 session.commit()
             except ActionDenied:
                 session.rollback()
@@ -461,14 +511,29 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
     async def workspace_select_post(request: Request):
         form = await request.form()
         with _session_factory(request)() as session:
+            principal = None
             try:
                 principal = _require_principal(request, session)
                 _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
                 workspace_id = UUID(str(form.get("workspace_id") or ""))
                 set_active_workspace(session, principal, workspace_id)
+                record_workspace_selection_audit(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=workspace_id,
+                    outcome="success",
+                )
                 session.commit()
             except (ValueError, ActionDenied, PermissionError) as exc:
                 session.rollback()
+                if principal is not None:
+                    record_workspace_selection_audit(
+                        session,
+                        user_id=principal.user_id,
+                        workspace_id=None,
+                        outcome="denied",
+                    )
+                    session.commit()
                 denied = exc if isinstance(exc, ActionDenied) else ActionDenied(
                     "workspace_selection_denied",
                     "Не удалось выбрать рабочее пространство.",
@@ -678,6 +743,11 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                     request.headers.get("x-csrf-token"),
                 )
                 revoke_session(session, principal)
+                record_logout_audit(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                )
                 session.commit()
             except ActionDenied as exc:
                 session.rollback()

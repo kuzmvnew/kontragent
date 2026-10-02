@@ -151,10 +151,39 @@ class SavedCompany(Base):
 
 class WorkspaceAuditEvent(Base):
     __tablename__ = "workspace_audit_events"
+    __table_args__ = (
+        CheckConstraint(
+            "workspace_id IS NOT NULL OR (action::text = ANY "
+            "(ARRAY['auth.login'::character varying::text, "
+            "'auth.logout'::character varying::text, "
+            "'workspace.select'::character varying::text]))",
+            name="ck_workspace_audit_nullable_workspace",
+        ),
+        CheckConstraint(
+            "workspace_id IS NOT NULL OR "
+            "action::text <> 'workspace.select'::text OR "
+            "outcome::text = 'denied'::text",
+            name="ck_workspace_audit_denied_selection_workspace",
+        ),
+        CheckConstraint(
+            "actor_user_id IS NOT NULL OR action::text = 'auth.login'::text "
+            "AND outcome::text = 'denied'::text",
+            name="ck_workspace_audit_nullable_actor",
+        ),
+        CheckConstraint(
+            "(action::text <> ALL (ARRAY['auth.login'::character varying::text, "
+            "'auth.logout'::character varying::text, "
+            "'workspace.select'::character varying::text])) "
+            "OR (outcome::text = ANY "
+            "(ARRAY['success'::character varying::text, "
+            "'denied'::character varying::text]))",
+            name="ck_workspace_audit_auth_outcome",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    workspace_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
-    actor_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    workspace_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True, index=True)
+    actor_user_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     target_type: Mapped[str] = mapped_column(String(80), nullable=False)
     target_ref: Mapped[str] = mapped_column(String(240), nullable=False)

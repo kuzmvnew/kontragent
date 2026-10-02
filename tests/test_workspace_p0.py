@@ -25,6 +25,7 @@ from app.models.workspace import (
 from tests.public_test_support import projection
 from workspace_app.auth import (
     CSRF_COOKIE,
+    SESSION_COOKIE,
     create_customer_session,
     hash_password,
     load_principal,
@@ -37,6 +38,7 @@ from workspace_app.service import (
     ActionDenied,
     authorize,
     bootstrap_workspace_owner,
+    login_identity_ref,
     save_company,
     saved_company_by_id,
     saved_companies,
@@ -83,12 +85,20 @@ def _cleanup(*emails: str, inns: tuple[str, ...] = ()) -> None:
                 )
             ).all()
         ) if user_ids else ()
-        if workspace_ids:
-            session.execute(
-                sa.delete(WorkspaceAuditEvent).where(
-                    WorkspaceAuditEvent.workspace_id.in_(workspace_ids)
-                )
+        audit_filters = [
+            WorkspaceAuditEvent.target_ref.in_(
+                tuple(login_identity_ref(email) for email in emails)
             )
+        ] if emails else []
+        if user_ids:
+            audit_filters.append(WorkspaceAuditEvent.actor_user_id.in_(user_ids))
+        if workspace_ids:
+            audit_filters.append(WorkspaceAuditEvent.workspace_id.in_(workspace_ids))
+        if audit_filters:
+            session.execute(
+                sa.delete(WorkspaceAuditEvent).where(sa.or_(*audit_filters))
+            )
+        if workspace_ids:
             session.execute(
                 sa.delete(SavedCompany).where(SavedCompany.workspace_id.in_(workspace_ids))
             )
@@ -151,6 +161,39 @@ def _bootstrap(email: str, name: str, *, saved_limit: int = 3):
         workspace_id = workspace.id
         session.commit()
     return user_id, workspace_id
+
+
+def _grant_membership(user_id, workspace_id, *, role_key: str = "MEMBER") -> None:
+    with Session(engine) as session:
+        role_id = session.scalar(
+            sa.select(WorkspaceRole.id).where(
+                WorkspaceRole.workspace_id == workspace_id,
+                WorkspaceRole.role_key == role_key,
+            )
+        )
+        assert role_id is not None
+        session.add(
+            WorkspaceMembership(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                role_id=role_id,
+                status="active",
+            )
+        )
+        session.commit()
+
+
+def _inject_invalid_audit(session, **_kwargs) -> None:
+    session.add(
+        WorkspaceAuditEvent(
+            workspace_id=None,
+            actor_user_id=None,
+            action="workspace.select",
+            target_type="workspace",
+            target_ref="self",
+            outcome="success",
+        )
+    )
 
 
 def _login(client: TestClient, email: str):
@@ -337,6 +380,23 @@ def test_workspace_p0_tenant_isolation_and_workspace_selection_fail_closed():
         )
         assert cross.status_code == 403
         assert "workspace_selection_denied" in cross.text
+        with Session(engine) as session:
+            active_workspace_id = session.scalar(
+                sa.select(CustomerSession.active_workspace_id).where(
+                    CustomerSession.user_id == user_a,
+                    CustomerSession.revoked_at.is_(None),
+                )
+            )
+            selection_events = session.scalars(
+                sa.select(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.action == "workspace.select",
+                    WorkspaceAuditEvent.actor_user_id == user_a,
+                )
+            ).all()
+        assert active_workspace_id == workspace_a
+        assert len(selection_events) == 1
+        assert selection_events[0].workspace_id is None
+        assert selection_events[0].outcome == "denied"
 
         own = web_a.get(f"/api/app/companies/{p.company.inn}")
         assert own.status_code == 200
@@ -351,6 +411,172 @@ def test_workspace_p0_tenant_isolation_and_workspace_selection_fail_closed():
         assert web_b.get("/api/app/saved").json()["items"] == []
     finally:
         _cleanup(email_a, email_b, inns=(p.company.inn,))
+
+
+def test_workspace_p0_html_auth_audit_multi_membership_flow():
+    email = f"workspace-audit-{uuid4()}@example.test"
+    other_email = f"workspace-audit-other-{uuid4()}@example.test"
+    wrong_password = "wrong-password-for-audit"
+    try:
+        user_id, workspace_a = _bootstrap(email, "Audit A")
+        _other_user_id, workspace_b = _bootstrap(other_email, "Audit B")
+        _grant_membership(user_id, workspace_b)
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+
+        login_page = web.get("/login")
+        denied = web.post(
+            "/login",
+            data={
+                "csrf": _csrf_from_html(login_page.text),
+                "email": email,
+                "password": wrong_password,
+                "return_to": "/app",
+            },
+        )
+        assert denied.status_code == 401
+        assert email not in denied.text
+        with Session(engine) as session:
+            denied_events = session.scalars(
+                sa.select(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.action == "auth.login",
+                    WorkspaceAuditEvent.actor_user_id == user_id,
+                    WorkspaceAuditEvent.outcome == "denied",
+                )
+            ).all()
+            assert len(denied_events) == 1
+            denied_event = denied_events[0]
+            assert denied_event.workspace_id is None
+            assert denied_event.target_type == "login_identity"
+            assert denied_event.target_ref == login_identity_ref(email)
+            assert denied_event.target_ref.startswith("sha256:")
+            assert email not in denied_event.target_ref
+            assert wrong_password not in denied_event.target_ref
+            assert denied_event.created_at is not None
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(CustomerSession)
+                .where(CustomerSession.user_id == user_id)
+            ) == 0
+
+        successful = _login(web, email)
+        assert successful.headers["location"] == "/workspace/select"
+        with Session(engine) as session:
+            success_events = session.scalars(
+                sa.select(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.action == "auth.login",
+                    WorkspaceAuditEvent.actor_user_id == user_id,
+                    WorkspaceAuditEvent.outcome == "success",
+                )
+            ).all()
+            assert len(success_events) == 1
+            assert success_events[0].workspace_id is None
+            assert success_events[0].created_at is not None
+            active_session = session.scalar(
+                sa.select(CustomerSession).where(
+                    CustomerSession.user_id == user_id,
+                    CustomerSession.revoked_at.is_(None),
+                )
+            )
+            assert active_session is not None
+            assert active_session.active_workspace_id is None
+            event_text = "|".join(
+                (
+                    success_events[0].action,
+                    success_events[0].target_type,
+                    success_events[0].target_ref,
+                    success_events[0].outcome,
+                )
+            )
+            for forbidden in (
+                PASSWORD,
+                wrong_password,
+                active_session.token_hash,
+                active_session.csrf_hash,
+                web.cookies[SESSION_COOKIE],
+                web.cookies[CSRF_COOKIE],
+                "password_hash",
+                "cookie",
+                "authorization",
+            ):
+                assert forbidden not in event_text
+
+        csrf = web.cookies[CSRF_COOKIE]
+        selected = web.post(
+            "/workspace/select",
+            data={"csrf": csrf, "workspace_id": str(workspace_b)},
+            follow_redirects=False,
+        )
+        assert selected.status_code == 303
+        with Session(engine) as session:
+            selection_events = session.scalars(
+                sa.select(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.action == "workspace.select",
+                    WorkspaceAuditEvent.actor_user_id == user_id,
+                )
+            ).all()
+            assert len(selection_events) == 1
+            assert selection_events[0].workspace_id == workspace_b
+            assert selection_events[0].outcome == "success"
+            assert selection_events[0].created_at is not None
+            assert session.scalar(
+                sa.select(CustomerSession.active_workspace_id).where(
+                    CustomerSession.user_id == user_id,
+                    CustomerSession.revoked_at.is_(None),
+                )
+            ) == workspace_b
+
+        logged_out = web.post(
+            "/logout",
+            data={"csrf": csrf},
+            follow_redirects=False,
+        )
+        assert logged_out.status_code == 303
+        with Session(engine) as session:
+            logout_events = session.scalars(
+                sa.select(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.action == "auth.logout",
+                    WorkspaceAuditEvent.actor_user_id == user_id,
+                )
+            ).all()
+            assert len(logout_events) == 1
+            assert logout_events[0].workspace_id == workspace_b
+            assert logout_events[0].outcome == "success"
+            assert logout_events[0].created_at is not None
+    finally:
+        _cleanup(email, other_email)
+
+
+def test_workspace_p0_unknown_login_audit_has_no_actor_or_raw_identity():
+    email = f"unknown-audit-{uuid4()}@example.test"
+    try:
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+        denied = _api_login(web, email, password="unknown-user-password")
+        assert denied.status_code == 401
+        with Session(engine) as session:
+            event = session.scalar(
+                sa.select(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.action == "auth.login",
+                    WorkspaceAuditEvent.target_ref == login_identity_ref(email),
+                )
+            )
+            assert event is not None
+            assert event.actor_user_id is None
+            assert event.workspace_id is None
+            assert event.outcome == "denied"
+            assert event.created_at is not None
+            assert email not in event.target_ref
+    finally:
+        _cleanup(email)
 
 
 def test_workspace_p0_permission_entitlement_quota_and_csrf_are_distinct():
@@ -464,6 +690,127 @@ def test_workspace_p0_session_revoke_blocks_private_routes():
         _cleanup(email)
 
 
+def test_workspace_p0_login_rolls_back_when_audit_insert_fails(monkeypatch):
+    email = f"workspace-audit-login-rollback-{uuid4()}@example.test"
+    try:
+        user_id, _workspace_id = _bootstrap(email, "Login Rollback")
+        monkeypatch.setattr(
+            "workspace_app.main.record_login_audit",
+            _inject_invalid_audit,
+        )
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            ),
+            raise_server_exceptions=False,
+        )
+        response = _api_login(web, email)
+        assert response.status_code == 500
+        with Session(engine) as session:
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(CustomerSession)
+                .where(CustomerSession.user_id == user_id)
+            ) == 0
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(WorkspaceAuditEvent)
+                .where(
+                    WorkspaceAuditEvent.action == "auth.login",
+                    WorkspaceAuditEvent.actor_user_id == user_id,
+                )
+            ) == 0
+    finally:
+        _cleanup(email)
+
+
+def test_workspace_p0_selection_rolls_back_when_audit_insert_fails(monkeypatch):
+    email = f"workspace-audit-select-rollback-{uuid4()}@example.test"
+    other_email = f"workspace-audit-select-other-{uuid4()}@example.test"
+    try:
+        user_id, _workspace_a = _bootstrap(email, "Select Rollback A")
+        _other_user_id, workspace_b = _bootstrap(other_email, "Select Rollback B")
+        _grant_membership(user_id, workspace_b)
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            ),
+            raise_server_exceptions=False,
+        )
+        login = _api_login(web, email)
+        assert login.status_code == 200
+        assert login.json()["workspace_selection_required"] is True
+        monkeypatch.setattr(
+            "workspace_app.main.record_workspace_selection_audit",
+            _inject_invalid_audit,
+        )
+        csrf = web.get("/app/api/csrf").json()["csrf_token"]
+        response = web.post(
+            "/workspace/select",
+            data={"csrf": csrf, "workspace_id": str(workspace_b)},
+        )
+        assert response.status_code == 500
+        with Session(engine) as session:
+            assert session.scalar(
+                sa.select(CustomerSession.active_workspace_id).where(
+                    CustomerSession.user_id == user_id,
+                    CustomerSession.revoked_at.is_(None),
+                )
+            ) is None
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(WorkspaceAuditEvent)
+                .where(
+                    WorkspaceAuditEvent.action == "workspace.select",
+                    WorkspaceAuditEvent.actor_user_id == user_id,
+                )
+            ) == 0
+    finally:
+        _cleanup(email, other_email)
+
+
+def test_workspace_p0_logout_rolls_back_when_audit_insert_fails(monkeypatch):
+    email = f"workspace-audit-logout-rollback-{uuid4()}@example.test"
+    try:
+        user_id, _workspace_id = _bootstrap(email, "Logout Rollback")
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            ),
+            raise_server_exceptions=False,
+        )
+        login = _api_login(web, email)
+        assert login.status_code == 200
+        csrf = web.get("/app/api/csrf").json()["csrf_token"]
+        monkeypatch.setattr(
+            "workspace_app.main.record_logout_audit",
+            _inject_invalid_audit,
+        )
+        response = web.post("/app/api/logout", headers={"x-csrf-token": csrf})
+        assert response.status_code == 500
+        with Session(engine) as session:
+            customer_session = session.scalar(
+                sa.select(CustomerSession).where(
+                    CustomerSession.user_id == user_id,
+                    CustomerSession.revoked_at.is_(None),
+                )
+            )
+            assert customer_session is not None
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(WorkspaceAuditEvent)
+                .where(
+                    WorkspaceAuditEvent.action == "auth.logout",
+                    WorkspaceAuditEvent.actor_user_id == user_id,
+                )
+            ) == 0
+    finally:
+        _cleanup(email)
+
+
 def test_workspace_p0_canonical_api_login_save_list_unsave_logout():
     email = f"workspace-api-{uuid4()}@example.test"
     p = projection(sequence=100_100_105)
@@ -471,7 +818,7 @@ def test_workspace_p0_canonical_api_login_save_list_unsave_logout():
         with Session(engine) as session:
             session.add(Company(inn=p.company.inn, name=p.company.name, entity_type="legal"))
             session.commit()
-        _bootstrap(email, "Canonical API", saved_limit=2)
+        user_id, workspace_id = _bootstrap(email, "Canonical API", saved_limit=2)
         web = TestClient(
             create_app(
                 public_repository=FakePublicRepository((p,)),
@@ -568,7 +915,25 @@ def test_workspace_p0_canonical_api_login_save_list_unsave_logout():
                     )
                 ).all()
             )
+            auth_events = tuple(
+                session.scalars(
+                    sa.select(WorkspaceAuditEvent).where(
+                        WorkspaceAuditEvent.actor_user_id == user_id,
+                        WorkspaceAuditEvent.action.in_(("auth.login", "auth.logout")),
+                    )
+                ).all()
+            )
         assert {"success", "already_saved", "not_saved"}.issubset(outcomes)
+        assert sorted(
+            (event.action, event.outcome, event.workspace_id)
+            for event in auth_events
+        ) == sorted(
+            (
+                ("auth.login", "denied", None),
+                ("auth.login", "success", workspace_id),
+                ("auth.logout", "success", workspace_id),
+            )
+        )
     finally:
         _cleanup(email, inns=(p.company.inn,))
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -98,11 +99,35 @@ class SavedCompanyView:
     note: str | None
 
 
-def authenticate_customer(session: Session, email: str, password: str) -> CustomerUser | None:
+@dataclass(frozen=True)
+class CustomerAuthenticationAttempt:
+    resolved_user: CustomerUser | None
+    authenticated_user: CustomerUser | None
+    identity_ref: str
+
+
+def login_identity_ref(email: str) -> str:
+    """Return a bounded, one-way audit reference without persisting an email."""
+
+    raw = " ".join(str(email or "").strip().split()).casefold()[:320]
+    try:
+        raw = normalize_email(raw)
+    except ValueError:
+        pass
+    digest = hashlib.sha256(f"workspace-login-v1\0{raw}".encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def authenticate_customer_attempt(
+    session: Session,
+    email: str,
+    password: str,
+) -> CustomerAuthenticationAttempt:
+    identity_ref = login_identity_ref(email)
     try:
         normalized = normalize_email(email)
     except ValueError:
-        return None
+        return CustomerAuthenticationAttempt(None, None, identity_ref)
     user = session.scalar(sa.select(CustomerUser).where(CustomerUser.email == normalized))
     password_hash = (
         user.password_hash
@@ -110,7 +135,126 @@ def authenticate_customer(session: Session, email: str, password: str) -> Custom
         else _DUMMY_PASSWORD_HASH
     )
     password_valid = verify_password(password, password_hash)
-    return user if user is not None and user.status == "active" and password_valid else None
+    authenticated_user = (
+        user if user is not None and user.status == "active" and password_valid else None
+    )
+    return CustomerAuthenticationAttempt(user, authenticated_user, identity_ref)
+
+
+def authenticate_customer(session: Session, email: str, password: str) -> CustomerUser | None:
+    return authenticate_customer_attempt(session, email, password).authenticated_user
+
+
+def _active_workspace_is_attributable(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+) -> bool:
+    return session.scalar(
+        sa.select(WorkspaceMembership.id)
+        .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
+        .where(
+            WorkspaceMembership.user_id == user_id,
+            WorkspaceMembership.workspace_id == workspace_id,
+            WorkspaceMembership.status == "active",
+            Workspace.status == "active",
+        )
+    ) is not None
+
+
+def record_login_audit(
+    session: Session,
+    *,
+    attempt: CustomerAuthenticationAttempt,
+    workspace_id: UUID | None,
+    outcome: str,
+) -> None:
+    if outcome not in {"success", "denied"}:
+        raise ValueError("unsupported login audit outcome")
+    if outcome == "success":
+        user = attempt.authenticated_user
+        if user is None:
+            raise ValueError("successful login audit requires an authenticated user")
+        if workspace_id is not None and not _active_workspace_is_attributable(
+            session,
+            user_id=user.id,
+            workspace_id=workspace_id,
+        ):
+            raise ValueError("login workspace is not attributable to the user")
+    else:
+        user = attempt.resolved_user
+        if workspace_id is not None:
+            raise ValueError("denied login cannot be attributed to a workspace")
+    session.add(
+        WorkspaceAuditEvent(
+            id=uuid4(),
+            workspace_id=workspace_id,
+            actor_user_id=user.id if user is not None else None,
+            action="auth.login",
+            target_type="login_identity",
+            target_ref=attempt.identity_ref,
+            outcome=outcome,
+        )
+    )
+
+
+def record_workspace_selection_audit(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID | None,
+    outcome: str,
+) -> None:
+    if outcome == "success":
+        if workspace_id is None or not _active_workspace_is_attributable(
+            session,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        ):
+            raise ValueError("workspace selection is not attributable to the user")
+    elif outcome == "denied":
+        if workspace_id is not None:
+            raise ValueError("denied selection cannot be attributed to a workspace")
+    else:
+        raise ValueError("unsupported workspace selection audit outcome")
+    session.add(
+        WorkspaceAuditEvent(
+            id=uuid4(),
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action="workspace.select",
+            target_type="workspace",
+            target_ref="self",
+            outcome=outcome,
+        )
+    )
+
+
+def record_logout_audit(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID | None,
+) -> None:
+    attributable_workspace_id = workspace_id
+    if workspace_id is not None and not _active_workspace_is_attributable(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+    ):
+        attributable_workspace_id = None
+    session.add(
+        WorkspaceAuditEvent(
+            id=uuid4(),
+            workspace_id=attributable_workspace_id,
+            actor_user_id=user_id,
+            action="auth.logout",
+            target_type="customer_session",
+            target_ref="self",
+            outcome="success",
+        )
+    )
 
 
 def bootstrap_workspace_owner(

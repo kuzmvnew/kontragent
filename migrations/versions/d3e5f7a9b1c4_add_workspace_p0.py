@@ -142,13 +142,40 @@ def upgrade() -> None:
     op.create_table(
         "workspace_audit_events",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("workspace_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("actor_user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("workspace_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("actor_user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("customer_users.id", ondelete="RESTRICT"), nullable=True),
         sa.Column("action", sa.String(100), nullable=False),
         sa.Column("target_type", sa.String(80), nullable=False),
         sa.Column("target_ref", sa.String(240), nullable=False),
         sa.Column("outcome", sa.String(30), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint(
+            "workspace_id IS NOT NULL OR (action::text = ANY "
+            "(ARRAY['auth.login'::character varying::text, "
+            "'auth.logout'::character varying::text, "
+            "'workspace.select'::character varying::text]))",
+            name="ck_workspace_audit_nullable_workspace",
+        ),
+        sa.CheckConstraint(
+            "workspace_id IS NOT NULL OR "
+            "action::text <> 'workspace.select'::text OR "
+            "outcome::text = 'denied'::text",
+            name="ck_workspace_audit_denied_selection_workspace",
+        ),
+        sa.CheckConstraint(
+            "actor_user_id IS NOT NULL OR action::text = 'auth.login'::text "
+            "AND outcome::text = 'denied'::text",
+            name="ck_workspace_audit_nullable_actor",
+        ),
+        sa.CheckConstraint(
+            "(action::text <> ALL (ARRAY['auth.login'::character varying::text, "
+            "'auth.logout'::character varying::text, "
+            "'workspace.select'::character varying::text])) "
+            "OR (outcome::text = ANY "
+            "(ARRAY['success'::character varying::text, "
+            "'denied'::character varying::text]))",
+            name="ck_workspace_audit_auth_outcome",
+        ),
     )
     op.create_index("ix_workspace_audit_events_workspace_id", "workspace_audit_events", ["workspace_id"])
     op.create_index("ix_workspace_audit_events_actor_user_id", "workspace_audit_events", ["actor_user_id"])

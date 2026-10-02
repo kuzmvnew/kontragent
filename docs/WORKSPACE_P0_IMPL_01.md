@@ -65,6 +65,9 @@ Production mutation: NO
    HttpOnly, SameSite=Strict and automatically Secure outside local/dev/test.
 7. Private responses expose INN and semantic projection data, not internal
    `company_id`, workspace IDs, RAW payloads or password hashes.
+8. Login, active-Workspace selection and logout write canonical audit actions
+   in the same transaction as the session mutation. An audit insert failure
+   therefore rolls back session creation, selection or revocation.
 
 ## Data model
 
@@ -78,7 +81,7 @@ Production mutation: NO
 | Entitlement | `workspace_entitlements` | unique workspace/entitlement key; optional non-negative limit |
 | Session | `customer_sessions` | token hash, CSRF hash, expiry, revocation, active Workspace |
 | Saved Company | `saved_companies` | workspace + global company FK unique; saving user retained |
-| Audit | `workspace_audit_events` | workspace/actor/action/target/outcome for writes |
+| Audit | `workspace_audit_events` | workspace/actor/action/target/outcome; narrowly nullable before tenant or principal resolution |
 
 ## Authentication contract
 
@@ -86,6 +89,14 @@ Production mutation: NO
 - Login uses a pre-session CSRF token and generic invalid-credential response.
 - Active Workspace is selected automatically only when exactly one active
   membership exists.
+- Canonical audit actions are `auth.login`, `workspace.select` and
+  `auth.logout`; their outcomes are `success` or `denied`.
+- A multi-membership login is audited without a Workspace until the user makes
+  a validated selection. Failed pre-auth login is never assigned to a
+  Workspace. An unresolved principal uses a bounded SHA-256 identity reference
+  and a null actor; raw email and credential/session material are not stored.
+- A denied Workspace selection is recorded with the authenticated actor and a
+  null Workspace, so an untrusted requested tenant is never attributed.
 - Each request resolves the opaque cookie against an unexpired, unrevoked
   PostgreSQL row and rechecks the active user.
 - Logout revokes the database session before deleting browser cookies.
@@ -171,13 +182,16 @@ resolves the exact global Company row before writing.
 
 ## Verification
 
-- Focused Workspace PostgreSQL suite: `11 passed`.
+- Focused Workspace PostgreSQL suite: `16 passed`, including HTML/API audit
+  semantics and audit-insert rollback for login/select/logout.
 - Current-head/legacy-reconciliation targeted suite: `24 passed`.
-- Full repository suite was executed. Workspace/schema-head regressions were
-  repaired. Three pre-existing Firmoteka scale tests still fail in files
-  unchanged from the base SHA; they reproduce in isolation and are outside
-  this task's auth/tenant scope. Final result: `1680 passed, 20 skipped, 3
-  failed`, with the three failures limited to `tests/test_firmoteka_scale.py`.
+- Fresh install, previous-head upgrade, downgrade/re-upgrade, one-head and
+  schema-completeness checks pass; schema report is `compatible: true`.
+- Full repository suite result in this local environment: `1685 passed, 20
+  skipped, 3 failed`. The three failures are the pre-existing
+  `tests/test_firmoteka_scale.py` cases and reproduce with both Firmoteka code
+  and tests unchanged from `bda08a6e`; they are outside this correction's
+  authorized scope.
 
 ## Limitations
 
