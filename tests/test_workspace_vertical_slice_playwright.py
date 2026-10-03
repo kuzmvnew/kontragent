@@ -4,6 +4,7 @@ import re
 import socket
 import threading
 import time
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -219,3 +220,34 @@ def test_browser_two_workspace_selection_keeps_destination_and_isolates_saved():
         assert saved_workspaces == (workspace_a,)
     finally:
         _cleanup(email, other_email, inns=(item.company.inn,))
+
+
+def test_browser_malicious_return_to_always_lands_on_workspace_home():
+    email = f"browser-return-negative-{uuid4()}@example.test"
+    item = projection(sequence=100_100_133)
+    destinations = (
+        "/app/../admin",
+        "/app/%2e%2e/admin",
+        "/application",
+        "//[bad",
+    )
+    try:
+        _bootstrap(email, "Browser Return Safety")
+        _public, workspace = _apps(item)
+        with workspace, sync_playwright() as manager:
+            browser = manager.chromium.launch(headless=True)
+
+            for destination in destinations:
+                context = browser.new_context()
+                page = context.new_page()
+                encoded = quote(destination, safe="")
+                page.goto(f"{workspace.url}/login?return_to={encoded}")
+                expect(page.locator('input[name="return_to"]')).to_have_value("/app")
+                _login(page, email)
+                expect(page).to_have_url(f"{workspace.url}/app")
+                assert "/admin" not in page.url
+                context.close()
+
+            browser.close()
+    finally:
+        _cleanup(email)

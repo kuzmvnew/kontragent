@@ -4,6 +4,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +32,7 @@ from workspace_app.auth import (
     load_principal,
     normalize_email,
     revoke_session,
+    safe_return_to,
     verify_password,
 )
 from workspace_app.main import create_app
@@ -1183,6 +1185,189 @@ def test_workspace_p0_password_hash_and_email_normalization():
     assert not verify_password("incorrect-password", encoded)
     assert not verify_password(PASSWORD, "not-a-valid-hash")
     assert normalize_email("  Owner@Example.TEST  ") == "owner@example.test"
+
+
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "/app",
+        "/app/search",
+        "/app/saved",
+        "/app/companies/9706063520",
+        "/app/companies/9706063520/monitoring",
+        "/app/search?q=test",
+    ),
+)
+def test_safe_return_to_allows_only_canonical_workspace_destinations(destination):
+    assert safe_return_to(destination) == destination
+
+
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "/application",
+        "/app2",
+        "/app-admin",
+        "/app/..",
+        "/app/../admin",
+        "/app/./search",
+        "/app/%2e%2e/admin",
+        "/app/%2E%2E/admin",
+        "/app/.%2e/admin",
+        "/app/%252e%252e/admin",
+        "/app/%25252e%25252e/admin",
+        "/app/company%2f..%2fadmin",
+        "/app/company%252f..%252fadmin",
+        "/app/company%5c..%5cadmin",
+        "/app//admin",
+        "///app",
+        "//evil.example",
+        "https://evil.example",
+        "javascript:alert(1)",
+        "/app\\..\\admin",
+        "/app/search?q=bad\\value",
+        "//[bad",
+        "http://[bad",
+        "/app/search\x00?q=test",
+        "/app/search\r\nLocation:https://evil.example",
+        "/app/search#fragment",
+        " /app/search",
+    ),
+)
+def test_safe_return_to_rejects_ambiguous_or_malformed_destinations(destination):
+    assert safe_return_to(destination) == "/app"
+
+
+def test_login_get_preserves_safe_return_to():
+    web = TestClient(
+        create_app(
+            public_repository=FakePublicRepository(()),
+            session_factory=SessionLocal,
+        )
+    )
+    destination = "/app/companies/9706063520"
+    response = web.get("/login", params={"return_to": destination})
+
+    assert response.status_code == 200
+    assert f'name="return_to" value="{destination}"' in response.text
+
+
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "/application",
+        "/app/../admin",
+        "/app/%2e%2e/admin",
+        "//[bad",
+    ),
+)
+def test_login_get_falls_back_for_unsafe_or_malformed_return_to(destination):
+    web = TestClient(
+        create_app(
+            public_repository=FakePublicRepository(()),
+            session_factory=SessionLocal,
+        )
+    )
+    response = web.get("/login", params={"return_to": destination})
+
+    assert response.status_code == 200
+    assert 'name="return_to" value="/app"' in response.text
+
+
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "/application",
+        "/app/../admin",
+        "/app/%2e%2e/admin",
+        "//[bad",
+    ),
+)
+def test_single_workspace_login_post_falls_back_for_unsafe_return_to(destination):
+    email = f"return-login-{uuid4()}@example.test"
+    try:
+        _bootstrap(email, "Return Login")
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+        page = web.get("/login")
+        response = web.post(
+            "/login",
+            data={
+                "csrf": _csrf_from_html(page.text),
+                "email": email,
+                "password": PASSWORD,
+                "return_to": destination,
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/app"
+    finally:
+        _cleanup(email)
+
+
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "/application",
+        "/app/../admin",
+        "/app/%2e%2e/admin",
+        "//[bad",
+    ),
+)
+def test_workspace_selection_get_post_drops_unsafe_return_to(destination):
+    email = f"return-selection-{uuid4()}@example.test"
+    other_email = f"return-selection-other-{uuid4()}@example.test"
+    try:
+        user_id, _workspace_a = _bootstrap(email, "Return Selection A")
+        _other_user_id, workspace_b = _bootstrap(other_email, "Return Selection B")
+        _grant_membership(user_id, workspace_b)
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+
+        login_page = web.get("/login")
+        login = web.post(
+            "/login",
+            data={
+                "csrf": _csrf_from_html(login_page.text),
+                "email": email,
+                "password": PASSWORD,
+                "return_to": destination,
+            },
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert login.headers["location"] == "/workspace/select"
+
+        selection_page = web.get(
+            "/workspace/select",
+            params={"return_to": destination},
+        )
+        assert selection_page.status_code == 200
+        assert 'name="return_to" value="/app"' in selection_page.text
+
+        selected = web.post(
+            "/workspace/select",
+            data={
+                "csrf": web.cookies[CSRF_COOKIE],
+                "workspace_id": str(workspace_b),
+                "return_to": destination,
+            },
+            follow_redirects=False,
+        )
+        assert selected.status_code == 303
+        assert selected.headers["location"] == "/app"
+    finally:
+        _cleanup(email, other_email)
 
 
 def test_workspace_p0_non_local_cookie_is_secure(monkeypatch):
