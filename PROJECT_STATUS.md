@@ -4,8 +4,8 @@
 > Regenerate with `uv run python scripts/project_status.py update`.
 
 - Schema version: `1.0.0`
-- Generated at: `2026-10-01T17:07:54Z`
-- Canonical main SHA: `d30f8cd269d93ce73de48c252a6fdb342bfa53bc`
+- Generated at: `2026-10-03T06:32:17Z`
+- Canonical main SHA: `75310eabe84871f2f8a43c9b47f2fdf3b45436fc`
 
 Layer states are independent. A merge is not deployment, QA acceptance is
 not deployment, and production deployment is not user-visible verification.
@@ -15,11 +15,11 @@ not deployment, and production deployment is not user-visible verification.
 | Field | Value |
 |---|---|
 | State | VERIFIED |
-| Main SHA | d30f8cd269d93ce73de48c252a6fdb342bfa53bc |
-| Latest relevant merged PR | #126 — https://github.com/kuzmvnew/kontragent/pull/126 |
-| Merge SHA | d30f8cd269d93ce73de48c252a6fdb342bfa53bc |
-| Merged at | 2026-10-01T10:50:39Z |
-| Operational migration head in code | b9e2c4d6f8a0 |
+| Main SHA | 75310eabe84871f2f8a43c9b47f2fdf3b45436fc |
+| Latest relevant merged PR | #131 — https://github.com/kuzmvnew/kontragent/pull/131 |
+| Merge SHA | 75310eabe84871f2f8a43c9b47f2fdf3b45436fc |
+| Merged at | 2026-10-03T06:16:46Z |
+| Operational migration head in code | d3e5f7a9b1c4 |
 | Public migration head in code | public_0002 |
 | Release-capable artifact state | PRESENT |
 | Release-capable artifact | nextcompany-canonical-operational-cohort-40 |
