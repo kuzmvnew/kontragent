@@ -1,27 +1,27 @@
 schema_version: 1.0.0
-generated_at: '2026-10-01T17:07:54Z'
-main_sha: d30f8cd269d93ce73de48c252a6fdb342bfa53bc
+generated_at: '2026-10-03T06:32:17Z'
+main_sha: 75310eabe84871f2f8a43c9b47f2fdf3b45436fc
 code:
   state: VERIFIED
-  main_sha: d30f8cd269d93ce73de48c252a6fdb342bfa53bc
+  main_sha: 75310eabe84871f2f8a43c9b47f2fdf3b45436fc
   latest_relevant_merged_pr:
-    number: 126
-    url: https://github.com/kuzmvnew/kontragent/pull/126
-    merge_sha: d30f8cd269d93ce73de48c252a6fdb342bfa53bc
-    merged_at: '2026-10-01T10:50:39Z'
+    number: 131
+    url: https://github.com/kuzmvnew/kontragent/pull/131
+    merge_sha: 75310eabe84871f2f8a43c9b47f2fdf3b45436fc
+    merged_at: '2026-10-03T06:16:46Z'
     evidence:
     - status: VERIFIED
       kind: git
       reference: git log --first-parent --merges -1 origin/main
-      observed_at: '2026-10-01T17:07:54Z'
+      observed_at: '2026-10-03T06:32:17Z'
   migration_heads:
-    operational: b9e2c4d6f8a0
+    operational: d3e5f7a9b1c4
     public: public_0002
     evidence:
     - status: VERIFIED
       kind: git
       reference: Static Alembic revision graph in migrations/versions and public_migrations/versions
-      observed_at: '2026-10-01T17:07:54Z'
+      observed_at: '2026-10-03T06:32:17Z'
   release_capable_artifact:
     state: PRESENT
     artifact_id: nextcompany-canonical-operational-cohort-40
@@ -31,7 +31,7 @@ code:
     - status: VERIFIED
       kind: release_manifest
       reference: sha256(docs/releases/public-v1-cohort-40.json)
-      observed_at: '2026-10-01T17:07:54Z'
+      observed_at: '2026-10-03T06:32:17Z'
   capabilities:
   - id: transition-aware-public-releases
     name: Transition-aware public cohort updates and withdrawals
