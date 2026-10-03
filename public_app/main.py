@@ -11,6 +11,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -77,6 +78,52 @@ def _repo(request: Request):
     return request.app.state.repository
 
 
+def _validated_workspace_origin(value: str | None) -> str:
+    """Return one explicit, safe origin for the customer Workspace boundary.
+
+    An empty value means that deployment routes the public and Workspace apps
+    on the same origin. A configured value may contain only an HTTP(S) origin;
+    paths, credentials, query strings and fragments are rejected.
+    """
+
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    parsed = urlsplit(raw)
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("WORKSPACE_ORIGIN contains an invalid port") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("WORKSPACE_ORIGIN must be an HTTP(S) origin without a path")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _workspace_url(request: Request, path: str, *, return_to: str | None = None) -> str:
+    origin = request.app.state.workspace_origin
+    query = urlencode({"return_to": return_to}) if return_to else ""
+    return f"{origin}{path}{'?' + query if query else ''}"
+
+
+def _page_context(request: Request, **values) -> dict:
+    return {
+        "workspace_login_url": _workspace_url(
+            request,
+            "/login",
+            return_to="/app",
+        ),
+        **values,
+    }
+
+
 def _card_description(projection: PublicProjection) -> str:
     company = projection.company
     parts = [company.name, f"ИНН {company.inn}"]
@@ -103,7 +150,7 @@ def _card_json_ld(projection: PublicProjection) -> dict:
     return value
 
 
-def create_app(repository=None) -> FastAPI:
+def create_app(repository=None, *, workspace_origin: str | None = None) -> FastAPI:
     force_noindex = os.getenv("PUBLIC_FORCE_NOINDEX", "").strip().lower() in {
         "1",
         "true",
@@ -118,6 +165,11 @@ def create_app(repository=None) -> FastAPI:
     )
     app.state.repository = repository or PublicRepository()
     app.state.force_noindex = force_noindex
+    app.state.workspace_origin = _validated_workspace_origin(
+        os.getenv("WORKSPACE_ORIGIN", "")
+        if workspace_origin is None
+        else workspace_origin
+    )
     allowed_hosts = [
         host.strip()
         for host in os.getenv(
@@ -147,7 +199,11 @@ def create_app(repository=None) -> FastAPI:
                 response = templates.TemplateResponse(
                     request=request,
                     name="error.html",
-                    context={"status_code": 500, "message": "Сервис временно недоступен"},
+                    context=_page_context(
+                        request,
+                        status_code=500,
+                        message="Сервис временно недоступен",
+                    ),
                     status_code=500,
                 )
         response.headers.update(
@@ -184,10 +240,15 @@ def create_app(repository=None) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="error.html",
-            context={
-                "status_code": exc.status_code,
-                "message": "Страница не найдена" if exc.status_code == 404 else "Не удалось выполнить запрос",
-            },
+            context=_page_context(
+                request,
+                status_code=exc.status_code,
+                message=(
+                    "Страница не найдена"
+                    if exc.status_code == 404
+                    else "Не удалось выполнить запрос"
+                ),
+            ),
             status_code=exc.status_code,
         )
 
@@ -201,7 +262,13 @@ def create_app(repository=None) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="index.html",
-            context={"ready": ready, "release_id": release_id, "company_count": count, "origin": PUBLIC_ORIGIN},
+            context=_page_context(
+                request,
+                ready=ready,
+                release_id=release_id,
+                company_count=count,
+                origin=PUBLIC_ORIGIN,
+            ),
         )
 
     @app.get("/search", response_class=HTMLResponse)
@@ -214,7 +281,12 @@ def create_app(repository=None) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="search.html",
-            context={"query": query, "results": results, "origin": PUBLIC_ORIGIN},
+            context=_page_context(
+                request,
+                query=query,
+                results=results,
+                origin=PUBLIC_ORIGIN,
+            ),
             headers={"X-Robots-Tag": "noindex, follow"},
         )
 
@@ -237,13 +309,19 @@ def create_app(repository=None) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="company.html",
-            context={
-                "projection": projection,
-                "canonical": f"{PUBLIC_ORIGIN}/companies/{inn}",
-                "description": _card_description(projection),
-                "json_ld": _card_json_ld(projection),
-                "robots": robots,
-            },
+            context=_page_context(
+                request,
+                projection=projection,
+                canonical=f"{PUBLIC_ORIGIN}/companies/{inn}",
+                description=_card_description(projection),
+                json_ld=_card_json_ld(projection),
+                robots=robots,
+                workspace_company_url=_workspace_url(
+                    request,
+                    "/login",
+                    return_to=f"/app/companies/{inn}",
+                ),
+            ),
             headers={"X-Robots-Tag": robots},
         )
 

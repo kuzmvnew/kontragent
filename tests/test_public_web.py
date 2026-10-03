@@ -43,6 +43,38 @@ def test_search_full_inn_redirects_to_canonical_card():
     assert response.headers["location"] == "/companies/0274101890"
 
 
+def test_public_card_and_header_use_validated_workspace_entry_contract():
+    repository = FakeRepository()
+    web = TestClient(
+        create_app(
+            repository,
+            workspace_origin="https://cabinet.nextcompany.test",
+        )
+    )
+    card = web.get(f"/companies/{repository.item.company.inn}")
+    assert (
+        'href="https://cabinet.nextcompany.test/login?return_to=%2Fapp%2Fcompanies%2F0274101890"'
+        in card.text
+    )
+    assert "Открыть в кабинете" in card.text
+    assert 'href="https://cabinet.nextcompany.test/login?return_to=%2Fapp"' in card.text
+
+
+def test_workspace_origin_rejects_paths_credentials_and_non_http_schemes():
+    for value in (
+        "https://nextcompany.test/customer",
+        "https://user:secret@nextcompany.test",
+        "javascript:alert(1)",
+        "//nextcompany.test",
+    ):
+        try:
+            create_app(FakeRepository(), workspace_origin=value)
+        except ValueError as exc:
+            assert "WORKSPACE_ORIGIN" in str(exc)
+        else:
+            raise AssertionError(f"unsafe Workspace origin accepted: {value}")
+
+
 def test_search_by_name_and_search_is_noindex():
     web, _ = client()
     response = web.get("/search?q=ТЕСТ")

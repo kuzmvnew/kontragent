@@ -57,6 +57,10 @@
       <button type="button" class="copy-button" data-copy-button data-copy-value="{{ company.name }}&#10;ИНН {{ company.inn }}{% if company.kpp %}&#10;КПП {{ company.kpp }}{% endif %}{% if company.ogrn %}&#10;ОГРН {{ company.ogrn }}{% endif %}">Скопировать реквизиты</button>
       <span class="copy-status" data-copy-status aria-live="polite"></span>
     </div>
+    <div class="workspace-entry">
+      <a class="workspace-entry-button" href="{{ workspace_company_url }}">Открыть в кабинете</a>
+      <span>Сохранение и мониторинг доступны после входа.</span>
+    </div>
     <p class="result-date">Дата результата <time datetime="{{ projection.publication.result_date }}">{{ projection.publication.result_date.strftime('%d.%m.%Y') }}</time></p>
   </section>
 

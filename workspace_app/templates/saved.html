@@ -6,13 +6,15 @@
   <h1>Сохранённые компании</h1>
   <div class="list">
   {% for item in entries %}
-    <a class="row" href="/app/companies/{{ item.inn }}">
-      <strong>{{ item.name }}</strong>
-      <span>ИНН {{ item.inn }} · добавлено {{ item.created_at.strftime('%d.%m.%Y') }}</span>
-      {% if item.note %}<small>{{ item.note }}</small>{% endif %}
-    </a>
+    <article class="saved-row">
+      <div><strong>{{ item.name }}</strong><span>ИНН {{ item.inn }} · добавлено {{ item.created_at.strftime('%d.%m.%Y') }}</span>{% if item.note %}<small>{{ item.note }}</small>{% endif %}</div>
+      <div class="saved-actions">
+        <a class="button secondary" href="/app/companies/{{ item.inn }}">Открыть карточку</a>
+        {% if can_unsave %}<form action="/app/companies/{{ item.inn }}/unsave" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/saved"><button type="submit" class="danger-secondary">Удалить</button></form>{% endif %}
+      </div>
+    </article>
   {% else %}
-    <p class="empty">Пока нет сохранённых компаний.</p>
+    <div class="empty-state"><h2>Пока нет сохранённых компаний</h2><p>Найдите компанию и сохраните её карточку в этом Workspace.</p><a class="button" href="/app/search">Перейти к поиску</a></div>
   {% endfor %}
   </div>
 </section>
