@@ -1,0 +1,1 @@
+"""Customer Workspace application boundary."""
