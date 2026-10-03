@@ -46,6 +46,7 @@ from app.worker.execution import (
     create_job,
     heartbeat_run,
     job_work_units,
+    next_claimable_job,
     observe_run,
     recover_stale_runs,
     register_handler,
@@ -1025,6 +1026,52 @@ def test_accepted_public_cohort_job_preempts_normal_fifo(worker_db):
 
     assert claimed.job_id == priority
     assert claimed.job_id != normal
+
+
+def test_canonical_selector_and_claim_agree_for_retry_delay_and_ties(worker_db):
+    registry = HandlerRegistry()
+    source_id = _identity("canonical-claim")
+    _register_fixture(worker_db, registry, source_id, _empty_handler)
+    first_tied = _create(
+        worker_db,
+        source_id,
+        idempotency_key=_identity("first-tied"),
+        now=NOW,
+    )
+    second_tied = _create(
+        worker_db,
+        source_id,
+        idempotency_key=_identity("second-tied"),
+        now=NOW,
+    )
+    delayed = _create(
+        worker_db,
+        source_id,
+        idempotency_key=_identity("delayed"),
+        now=NOW - timedelta(seconds=1),
+    )
+    with worker_db() as session:
+        delayed_job = session.get(WorkerJob, delayed)
+        delayed_job.status = "retry_scheduled"
+        delayed_job.next_attempt_at = NOW + timedelta(minutes=5)
+        session.commit()
+
+    with worker_db() as session:
+        selected = next_claimable_job(session, now=NOW, lock=True)
+        claimed = claim_next_job(
+            session,
+            registry,
+            worker_id="canonical-selector-worker",
+            lease_ttl=timedelta(seconds=30),
+            now=NOW,
+        )
+        session.commit()
+
+    assert selected is not None
+    assert claimed is not None
+    assert selected.job.id in {first_tied, second_tied}
+    assert claimed.job_id == selected.job.id
+    assert claimed.job_id != delayed
 
 
 def test_claim_isolates_bulk_and_point_factory_lanes(worker_db):

@@ -77,6 +77,14 @@ class ClaimedExecution:
 
 
 @dataclass(frozen=True)
+class ClaimableJob:
+    """The exact next job selected by canonical Worker claim semantics."""
+
+    job: WorkerJob
+    work_units: int
+
+
+@dataclass(frozen=True)
 class RunObservation:
     run_id: UUID
     status: str
@@ -431,25 +439,24 @@ def _acquire_lease(
     return int(claimed_token)
 
 
-def claim_next_job(
+def _claimable_job_candidates(
     session: Session,
-    registry: HandlerRegistry,
     *,
-    worker_id: str,
-    lease_ttl: timedelta,
-    now: datetime | None = None,
-    allowed_lanes: Sequence[str] | None = None,
-    allowed_source_ids: Sequence[str] | None = None,
-    max_work_units: int | None = None,
-) -> ClaimedExecution | None:
-    """Claim one admitted runnable job and source lease atomically.
+    now: datetime,
+    allowed_lanes: Sequence[str] | None,
+    allowed_source_ids: Sequence[str] | None,
+    max_work_units: int | None,
+    lock: bool,
+):
+    """Yield admitted jobs in the exact order used by WorkerExecutor.
 
-    ``None`` retains the legacy unrestricted behavior.  An explicit empty
-    source allow-list admits nothing.  ``max_work_units`` is evaluated before
-    a job or lease is mutated, so an oversized batch remains queued intact.
+    This is the single queue-ordering contract for both guarded operators and
+    the mutating claim path.  A guarded caller can use the same
+    ``SELECT ... FOR UPDATE SKIP LOCKED`` semantics without creating a run;
+    the later claim in that transaction then sees the same protected row and
+    snapshot.
     """
 
-    now = now or utc_now()
     requested_lanes = tuple(dict.fromkeys(allowed_lanes or ()))
     valid_lanes = set(FACTORY_LANES)
     if requested_lanes and not set(requested_lanes) <= valid_lanes:
@@ -463,7 +470,7 @@ def claim_next_job(
         if any(not source_id for source_id in requested_sources):
             raise ValueError("allowed source ids must be non-empty")
         if not requested_sources:
-            return None
+            return
     if max_work_units is not None:
         if (
             not isinstance(max_work_units, int)
@@ -472,7 +479,8 @@ def claim_next_job(
         ):
             raise ValueError("max_work_units must be a non-negative integer")
         if max_work_units == 0:
-            return None
+            return
+
     prior_job = aliased(WorkerJob)
     last_source_run_at = (
         select(func.max(WorkerRun.started_at))
@@ -503,7 +511,7 @@ def claim_next_job(
         if requested_sources is not None
         else True
     )
-    candidates = session.scalars(
+    statement = (
         select(WorkerJob)
         .where(
             WorkerJob.status.in_(("queued", "retry_scheduled")),
@@ -511,7 +519,7 @@ def claim_next_job(
             lane_filter,
             source_filter,
         )
-        # Rotate runnable source families by their last execution time.  FIFO
+        # Rotate runnable source families by their last execution time. FIFO
         # remains authoritative within a source, while a large bounded queue
         # for one provider cannot starve independent source continuations.
         .order_by(
@@ -520,10 +528,10 @@ def claim_next_job(
             WorkerJob.created_at,
             WorkerJob.id,
         )
-        .with_for_update(skip_locked=True)
-    ).yield_per(100)
-    job: WorkerJob | None = None
-    work_units = 0
+    )
+    if lock:
+        statement = statement.with_for_update(skip_locked=True)
+    candidates = session.scalars(statement).yield_per(100)
     try:
         for candidate in candidates:
             try:
@@ -531,26 +539,101 @@ def claim_next_job(
                     candidate.job_type, candidate.schedule_metadata
                 )
             except ValueError:
-                # A malformed/opaque batch is deliberately left pending.  It
-                # may be repaired by an operator, but controlled admission
-                # must never guess a lower cost.
+                # A malformed/opaque batch is deliberately left pending under
+                # controlled admission. Legacy unrestricted execution retains
+                # its historical one-unit fallback.
                 if max_work_units is not None:
                     continue
-                # Legacy/uncontrolled execution had no work-unit gate.
-                # Preserve that behavior when no gate was requested.
                 candidate_work_units = 1
             if (
                 max_work_units is not None
                 and candidate_work_units > max_work_units
             ):
                 continue
-            job = candidate
-            work_units = candidate_work_units
-            break
+            yield ClaimableJob(job=candidate, work_units=candidate_work_units)
     finally:
         candidates.close()
-    if job is None:
+
+
+def next_claimable_job(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    allowed_lanes: Sequence[str] | None = None,
+    allowed_source_ids: Sequence[str] | None = None,
+    max_work_units: int | None = None,
+    lock: bool = True,
+) -> ClaimableJob | None:
+    """Return the exact job WorkerExecutor would claim next, without mutation."""
+
+    candidates = _claimable_job_candidates(
+        session,
+        now=now or utc_now(),
+        allowed_lanes=allowed_lanes,
+        allowed_source_ids=allowed_source_ids,
+        max_work_units=max_work_units,
+        lock=lock,
+    )
+    try:
+        return next(candidates, None)
+    finally:
+        candidates.close()
+
+
+def claimable_jobs(
+    session: Session,
+    *,
+    now: datetime | None = None,
+    allowed_lanes: Sequence[str] | None = None,
+    allowed_source_ids: Sequence[str] | None = None,
+    max_work_units: int | None = None,
+    lock: bool = False,
+) -> tuple[ClaimableJob, ...]:
+    """List claimable jobs using the canonical executor order."""
+
+    return tuple(
+        _claimable_job_candidates(
+            session,
+            now=now or utc_now(),
+            allowed_lanes=allowed_lanes,
+            allowed_source_ids=allowed_source_ids,
+            max_work_units=max_work_units,
+            lock=lock,
+        )
+    )
+
+
+def claim_next_job(
+    session: Session,
+    registry: HandlerRegistry,
+    *,
+    worker_id: str,
+    lease_ttl: timedelta,
+    now: datetime | None = None,
+    allowed_lanes: Sequence[str] | None = None,
+    allowed_source_ids: Sequence[str] | None = None,
+    max_work_units: int | None = None,
+) -> ClaimedExecution | None:
+    """Claim one admitted runnable job and source lease atomically.
+
+    ``None`` retains the legacy unrestricted behavior.  An explicit empty
+    source allow-list admits nothing.  ``max_work_units`` is evaluated before
+    a job or lease is mutated, so an oversized batch remains queued intact.
+    """
+
+    now = now or utc_now()
+    selected = next_claimable_job(
+        session,
+        now=now,
+        allowed_lanes=allowed_lanes,
+        allowed_source_ids=allowed_source_ids,
+        max_work_units=max_work_units,
+        lock=True,
+    )
+    if selected is None:
         return None
+    job = selected.job
+    work_units = selected.work_units
 
     handler = registry.resolve(job.source_id, job.handler_version)
     approval = session.get(
