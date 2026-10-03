@@ -48,6 +48,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync --group dev
 
+      - name: Install Workspace browser runtime
+        run: uv run playwright install --with-deps chromium
+
       - name: Verify migrations
         run: uv run alembic upgrade head
 

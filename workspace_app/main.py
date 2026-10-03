@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 from fastapi import FastAPI, Request
@@ -50,8 +53,57 @@ from workspace_app.service import (
 
 
 ROOT = Path(__file__).resolve().parent
-templates = Jinja2Templates(directory=str(ROOT / "templates"))
+def _shared_template_context(request: Request) -> dict:
+    return {"public_origin": request.app.state.public_origin}
+
+
+templates = Jinja2Templates(
+    directory=str(ROOT / "templates"),
+    context_processors=[_shared_template_context],
+)
 MAX_BODY_BYTES = 32_768
+
+
+_VALUE_LABELS = {
+    "amount": "Сумма",
+    "count": "Количество",
+    "currency": "Валюта",
+    "name": "Наименование",
+    "number": "Номер",
+    "position": "Должность",
+    "record_count": "Количество записей",
+    "registry_number": "Номер в реестре",
+    "result": "Результат",
+    "share": "Доля",
+    "status": "Статус",
+    "total": "Итого",
+    "value": "Значение",
+}
+
+
+def _workspace_value(value) -> str:
+    """Render already-minimized semantic values without exposing internals."""
+
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, bool):
+        return "Да" if value else "Нет"
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%d.%m.%Y")
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        parts = []
+        for key, child in value.items():
+            label = _VALUE_LABELS.get(str(key), str(key).replace("_", " ").capitalize())
+            parts.append(f"{label}: {_workspace_value(child)}")
+        return " · ".join(parts) or "—"
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return "; ".join(_workspace_value(item) for item in value) or "—"
+    return str(value)
+
+
+templates.env.filters["workspace_value"] = _workspace_value
 
 
 def _cookie_secure() -> bool:
@@ -64,6 +116,28 @@ def _cookie_secure() -> bool:
         "yes",
         "on",
     }
+
+
+def _validated_public_origin(value: str | None) -> str:
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    parsed = urlsplit(raw)
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("PUBLIC_ORIGIN contains an invalid port") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("PUBLIC_ORIGIN must be an HTTP(S) origin without a path")
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _session_factory(request: Request):
@@ -85,6 +159,17 @@ def _html_error(request: Request, exc: ActionDenied):
         context={"code": exc.code, "message": exc.message},
         status_code=exc.status_code,
     )
+
+
+def _workspace_shell(session, context) -> tuple[Workspace, WorkspaceRole]:
+    workspace = session.get(Workspace, context.workspace_id)
+    role = session.get(WorkspaceRole, context.role_id)
+    if workspace is None or role is None:
+        raise ActionDenied(
+            "workspace_unavailable",
+            "Рабочее пространство недоступно.",
+        )
+    return workspace, role
 
 
 def _set_session_cookies(response, *, token: str, csrf: str, secure: bool) -> None:
@@ -183,17 +268,64 @@ def _card_context(session, principal, projection) -> dict:
         workspace_id=workspace_id,
     )
     remaining = None if limit_value is None else max(limit_value - used, 0)
+    effective_save_denial = (
+        denial
+        if not can_save
+        else ("quota_exceeded" if remaining == 0 and not saved else None)
+    )
+    save_denial_message = {
+        "permission_denied": "У вашей роли нет права сохранять компании.",
+        "entitlement_blocked": "Сохранение компаний не подключено для этого Workspace.",
+        "quota_exceeded": "Достигнут лимит сохранённых компаний.",
+    }.get(effective_save_denial, "Сохранение недоступно для этого Workspace.")
+    monitoring_allowed, monitoring_denial, _monitoring_limit = action_state(
+        session,
+        user_id=principal.user_id,
+        workspace_id=workspace_id,
+        permission_key="monitoring.manage",
+    )
+    if not saved:
+        monitoring = {
+            "state": "NOT_ACTIVE",
+            "message": "Сначала сохраните компанию в этом Workspace.",
+            "entry_enabled": False,
+        }
+    elif monitoring_allowed:
+        monitoring = {
+            "state": "NOT_IMPLEMENTED",
+            "message": "Подписка на мониторинг появится в следующем продуктовом этапе.",
+            "entry_enabled": True,
+        }
+    elif monitoring_denial == "permission_denied":
+        monitoring = {
+            "state": "NOT_ACTIVE",
+            "message": "У вашей роли нет права управлять мониторингом.",
+            "entry_enabled": True,
+        }
+    else:
+        monitoring = {
+            "state": "NOT_ACTIVE",
+            "message": "Мониторинг не подключён для этого Workspace.",
+            "entry_enabled": True,
+        }
     return {
         "is_saved": saved,
         "can_save": can_save and (remaining is None or remaining > 0 or saved),
-        "save_denial_reason": denial if not can_save else ("quota_exceeded" if remaining == 0 and not saved else None),
+        "save_denial_reason": effective_save_denial,
+        "save_denial_message": save_denial_message,
         "saved_limit": limit_value,
         "saved_used": used,
         "saved_remaining": remaining,
+        "monitoring": monitoring,
     }
 
 
-def create_app(public_repository=None, session_factory=None) -> FastAPI:
+def create_app(
+    public_repository=None,
+    session_factory=None,
+    *,
+    public_origin: str | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="NEXT Company Workspace",
         docs_url=None,
@@ -203,6 +335,9 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
     app.state.public_repository = public_repository or PublicRepository()
     app.state.session_factory = session_factory or SessionLocal
     app.state.cookie_secure = _cookie_secure()
+    app.state.public_origin = _validated_public_origin(
+        os.getenv("PUBLIC_ORIGIN", "") if public_origin is None else public_origin
+    )
 
     allowed_hosts = [
         item.strip()
@@ -454,11 +589,10 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 outcome="success",
             )
             session.commit()
-        target = (
-            safe_return_to(str(form.get("return_to") or ""))
-            if active_workspace_id is not None
-            else "/workspace/select"
-        )
+        intended = safe_return_to(str(form.get("return_to") or ""))
+        target = intended if active_workspace_id is not None else "/workspace/select"
+        if active_workspace_id is None and intended != "/app":
+            target = f"/workspace/select?{urlencode({'return_to': intended})}"
         response = RedirectResponse(target, status_code=303)
         _set_session_cookies(
             response,
@@ -490,7 +624,8 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         return response
 
     @app.get("/workspace/select", response_class=HTMLResponse)
-    def workspace_select(request: Request):
+    def workspace_select(request: Request, return_to: str = "/app"):
+        intended = safe_return_to(return_to)
         with _session_factory(request)() as session:
             try:
                 principal = _require_principal(request, session)
@@ -504,6 +639,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 "principal": principal,
                 "workspaces": workspaces,
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
+                "return_to": intended,
             },
         )
 
@@ -539,7 +675,10 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                     "Не удалось выбрать рабочее пространство.",
                 )
                 return _html_error(request, denied)
-        return RedirectResponse("/app", status_code=303)
+        return RedirectResponse(
+            safe_return_to(str(form.get("return_to") or "")),
+            status_code=303,
+        )
 
     @app.get("/app", response_class=HTMLResponse)
     def home(request: Request):
@@ -554,6 +693,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
                 )
+                workspace, role = _workspace_shell(session, context)
             except ActionDenied as exc:
                 if exc.code == "authentication_required":
                     return RedirectResponse("/login?return_to=/app", status_code=303)
@@ -566,6 +706,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             context={
                 "principal": principal,
                 "workspace": workspace,
+                "role": role,
                 "saved_count": count,
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
             },
@@ -579,9 +720,21 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 principal, context = _require_active_workspace(
                     request, session, permission="company.search"
                 )
+                workspace, role = _workspace_shell(session, context)
             except ActionDenied as exc:
                 if exc.code == "authentication_required":
-                    return RedirectResponse("/login?return_to=/app/search", status_code=303)
+                    intended = "/app/search"
+                    if query:
+                        intended = f"{intended}?{urlencode({'q': query})}"
+                    return RedirectResponse(
+                        f"/login?{urlencode({'return_to': intended})}",
+                        status_code=303,
+                    )
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        f"/workspace/select?{urlencode({'return_to': '/app/search'})}",
+                        status_code=303,
+                    )
                 return _html_error(request, exc)
         results = _public_repository(request).search(query) if query else []
         return templates.TemplateResponse(
@@ -589,6 +742,8 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             name="search.html",
             context={
                 "principal": principal,
+                "workspace": workspace,
+                "role": role,
                 "query": query,
                 "results": results,
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
@@ -596,7 +751,7 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
         )
 
     @app.get("/app/companies/{inn}", response_class=HTMLResponse)
-    def company_card(request: Request, inn: str):
+    def company_card(request: Request, inn: str, notice: str = ""):
         if not valid_legal_inn(inn):
             raise StarletteHTTPException(status_code=404)
         projection = _public_repository(request).get_company(inn)
@@ -604,14 +759,21 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             raise StarletteHTTPException(status_code=404)
         with _session_factory(request)() as session:
             try:
-                principal, _context = _require_active_workspace(
+                principal, context = _require_active_workspace(
                     request, session, permission="company.view"
                 )
+                workspace, role = _workspace_shell(session, context)
                 actions = _card_context(session, principal, projection)
             except ActionDenied as exc:
                 if exc.code == "authentication_required":
                     return RedirectResponse(
-                        f"/login?return_to=/app/companies/{inn}", status_code=303
+                        f"/login?{urlencode({'return_to': f'/app/companies/{inn}'})}",
+                        status_code=303,
+                    )
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        f"/workspace/select?{urlencode({'return_to': f'/app/companies/{inn}'})}",
+                        status_code=303,
                     )
                 return _html_error(request, exc)
         return templates.TemplateResponse(
@@ -619,8 +781,11 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             name="company.html",
             context={
                 "principal": principal,
+                "workspace": workspace,
+                "role": role,
                 "projection": projection,
                 "actions": actions,
+                "notice": notice if notice in {"saved", "unsaved"} else "",
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
             },
         )
@@ -647,7 +812,10 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                 else:
                     session.rollback()
                 return _html_error(request, exc)
-        return RedirectResponse(f"/app/companies/{inn}", status_code=303)
+        return RedirectResponse(
+            f"/app/companies/{inn}?notice=saved",
+            status_code=303,
+        )
 
     @app.post("/app/companies/{inn}/unsave")
     async def unsave(request: Request, inn: str):
@@ -668,7 +836,13 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
             except ActionDenied as exc:
                 session.rollback()
                 return _html_error(request, exc)
-        return RedirectResponse(f"/app/companies/{inn}", status_code=303)
+        return RedirectResponse(
+            safe_return_to(
+                str(form.get("return_to") or ""),
+                default=f"/app/companies/{inn}?notice=unsaved",
+            ),
+            status_code=303,
+        )
 
     @app.get("/app/saved", response_class=HTMLResponse)
     def saved(request: Request):
@@ -682,16 +856,74 @@ def create_app(public_repository=None, session_factory=None) -> FastAPI:
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
                 )
+                workspace, role = _workspace_shell(session, context)
+                can_unsave, _unsave_denial, _unsave_limit = action_state(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    permission_key="company.unsave",
+                )
             except ActionDenied as exc:
                 if exc.code == "authentication_required":
                     return RedirectResponse("/login?return_to=/app/saved", status_code=303)
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        "/workspace/select?return_to=/app/saved",
+                        status_code=303,
+                    )
                 return _html_error(request, exc)
         return templates.TemplateResponse(
             request=request,
             name="saved.html",
             context={
                 "principal": principal,
+                "workspace": workspace,
+                "role": role,
                 "entries": entries,
+                "can_unsave": can_unsave,
+                "csrf": request.cookies.get(CSRF_COOKIE) or "",
+            },
+        )
+
+    @app.get("/app/companies/{inn}/monitoring", response_class=HTMLResponse)
+    def monitoring_entry(request: Request, inn: str):
+        if not valid_legal_inn(inn):
+            raise StarletteHTTPException(status_code=404)
+        projection = _public_repository(request).get_company(inn)
+        if projection is None:
+            raise StarletteHTTPException(status_code=404)
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request,
+                    session,
+                    permission="company.view",
+                )
+                workspace, role = _workspace_shell(session, context)
+                actions = _card_context(session, principal, projection)
+                if not actions["is_saved"]:
+                    raise ActionDenied(
+                        "saved_company_required",
+                        "Сначала сохраните компанию в этом Workspace.",
+                        status_code=409,
+                    )
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    intended = f"/app/companies/{inn}/monitoring"
+                    return RedirectResponse(
+                        f"/login?{urlencode({'return_to': intended})}",
+                        status_code=303,
+                    )
+                return _html_error(request, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="monitoring.html",
+            context={
+                "principal": principal,
+                "workspace": workspace,
+                "role": role,
+                "company": projection.company,
+                "monitoring": actions["monitoring"],
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
             },
         )

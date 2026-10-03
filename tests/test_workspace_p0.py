@@ -309,7 +309,8 @@ def test_workspace_p0_search_card_save_saved_and_no_internal_leakage():
             data={"csrf": csrf},
         )
         assert quota.status_code == 403
-        assert "quota_exceeded" in quota.text
+        assert "Достигнут лимит сохранённых компаний" in quota.text
+        assert "quota_exceeded" not in quota.text
         assert p2.company.inn not in web.get("/api/app/saved").text
 
         with Session(engine) as session:
@@ -379,7 +380,8 @@ def test_workspace_p0_tenant_isolation_and_workspace_selection_fail_closed():
             data={"csrf": csrf, "workspace_id": str(workspace_b)},
         )
         assert cross.status_code == 403
-        assert "workspace_selection_denied" in cross.text
+        assert "Не удалось выбрать рабочее пространство" in cross.text
+        assert "workspace_selection_denied" not in cross.text
         with Session(engine) as session:
             active_workspace_id = session.scalar(
                 sa.select(CustomerSession.active_workspace_id).where(
@@ -602,7 +604,8 @@ def test_workspace_p0_permission_entitlement_quota_and_csrf_are_distinct():
             data={"csrf": "wrong"},
         )
         assert bad_csrf.status_code == 403
-        assert "csrf_invalid" in bad_csrf.text
+        assert "Запрос отклонён защитой CSRF" in bad_csrf.text
+        assert "csrf_invalid" not in bad_csrf.text
 
         with Session(engine) as session:
             membership = session.scalar(
@@ -1202,3 +1205,155 @@ def test_workspace_p0_non_local_cookie_is_secure(monkeypatch):
         assert "SameSite=strict" in cookies
     finally:
         _cleanup(email)
+
+
+def test_vertical_slice_return_to_survives_validated_workspace_selection():
+    email = f"vertical-return-{uuid4()}@example.test"
+    other_email = f"vertical-return-other-{uuid4()}@example.test"
+    p = projection(sequence=100_100_121)
+    try:
+        with Session(engine) as session:
+            session.add(Company(inn=p.company.inn, name=p.company.name, entity_type="legal"))
+            session.commit()
+        user_id, _workspace_a = _bootstrap(email, "Return A")
+        _other_user_id, workspace_b = _bootstrap(other_email, "Return B")
+        _grant_membership(user_id, workspace_b)
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository((p,)),
+                session_factory=SessionLocal,
+            )
+        )
+
+        anonymous = web.get(
+            f"/app/companies/{p.company.inn}",
+            follow_redirects=False,
+        )
+        assert anonymous.status_code == 303
+        assert anonymous.headers["location"].startswith("/login?return_to=")
+
+        intended = f"/app/companies/{p.company.inn}"
+        login_page = web.get(f"/login?return_to={intended}")
+        login = web.post(
+            "/login",
+            data={
+                "csrf": _csrf_from_html(login_page.text),
+                "email": email,
+                "password": PASSWORD,
+                "return_to": intended,
+            },
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert login.headers["location"] == (
+            f"/workspace/select?return_to=%2Fapp%2Fcompanies%2F{p.company.inn}"
+        )
+        selection_page = web.get(login.headers["location"])
+        assert f'name="return_to" value="{intended}"' in selection_page.text
+        selected = web.post(
+            "/workspace/select",
+            data={
+                "csrf": web.cookies[CSRF_COOKIE],
+                "workspace_id": str(workspace_b),
+                "return_to": intended,
+            },
+            follow_redirects=False,
+        )
+        assert selected.status_code == 303
+        assert selected.headers["location"] == intended
+
+        malicious = TestClient(
+            create_app(
+                public_repository=FakePublicRepository((p,)),
+                session_factory=SessionLocal,
+            )
+        )
+        malicious_page = malicious.get(
+            "/login?return_to=https://attacker.example/steal"
+        )
+        assert 'name="return_to" value="/app"' in malicious_page.text
+        rejected = malicious.post(
+            "/login",
+            data={
+                "csrf": _csrf_from_html(malicious_page.text),
+                "email": email,
+                "password": PASSWORD,
+                "return_to": "//attacker.example/steal",
+            },
+            follow_redirects=False,
+        )
+        assert rejected.headers["location"] == "/workspace/select"
+        assert "attacker.example" not in rejected.headers["location"]
+    finally:
+        _cleanup(email, other_email, inns=(p.company.inn,))
+
+
+def test_vertical_slice_html_api_parity_saved_unsave_and_monitoring_contract():
+    email = f"vertical-parity-{uuid4()}@example.test"
+    p = projection(sequence=100_100_122)
+    try:
+        with Session(engine) as session:
+            session.add(Company(inn=p.company.inn, name=p.company.name, entity_type="legal"))
+            session.commit()
+        _user_id, workspace_id = _bootstrap(email, "Parity Workspace")
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository((p,)),
+                session_factory=SessionLocal,
+            )
+        )
+        _login(web, email)
+        csrf = web.cookies[CSRF_COOKIE]
+
+        initial_html = web.get(f"/app/companies/{p.company.inn}")
+        initial_api = web.get(f"/app/api/companies/{p.company.inn}").json()
+        assert f'data-company-inn="{initial_api["company"]["inn"]}"' in initial_html.text
+        assert 'data-saved="false"' in initial_html.text
+        assert initial_api["actions"]["is_saved"] is False
+
+        saved = web.post(
+            f"/app/companies/{p.company.inn}/save",
+            data={"csrf": csrf},
+            follow_redirects=False,
+        )
+        assert saved.headers["location"].endswith("?notice=saved")
+        saved_html = web.get(saved.headers["location"])
+        saved_api = web.get(f"/app/api/companies/{p.company.inn}").json()
+        assert 'data-saved="true"' in saved_html.text
+        assert saved_api["actions"]["is_saved"] is True
+        assert 'data-monitoring-state="NOT_ACTIVE"' in saved_html.text
+        assert saved_api["actions"]["monitoring"]["state"] == "NOT_ACTIVE"
+
+        monitoring = web.get(f"/app/companies/{p.company.inn}/monitoring")
+        assert monitoring.status_code == 200
+        assert 'data-monitoring-state="NOT_ACTIVE"' in monitoring.text
+        assert "Мониторинг не подключён" in monitoring.text
+
+        with Session(engine) as session:
+            entitlement = session.scalar(
+                sa.select(WorkspaceEntitlement).where(
+                    WorkspaceEntitlement.workspace_id == workspace_id,
+                    WorkspaceEntitlement.entitlement_key == "monitoring.enabled",
+                )
+            )
+            assert entitlement is not None
+            entitlement.enabled = True
+            session.commit()
+
+        implemented_html = web.get(f"/app/companies/{p.company.inn}")
+        implemented_api = web.get(f"/app/api/companies/{p.company.inn}").json()
+        assert 'data-monitoring-state="NOT_IMPLEMENTED"' in implemented_html.text
+        assert implemented_api["actions"]["monitoring"]["state"] == "NOT_IMPLEMENTED"
+        assert "Мониторинг включён" not in implemented_html.text
+
+        removed = web.post(
+            f"/app/companies/{p.company.inn}/unsave",
+            data={"csrf": csrf, "return_to": "/app/saved"},
+            follow_redirects=False,
+        )
+        assert removed.headers["location"] == "/app/saved"
+        empty = web.get("/app/saved")
+        assert p.company.name not in empty.text
+        assert "Перейти к поиску" in empty.text
+    finally:
+        _cleanup(email, inns=(p.company.inn,))

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Мониторинг {{ company.name }} — NEXT Company{% endblock %}
+{% block content %}
+<section class="monitoring-card">
+  <p class="eyebrow">Мониторинг компании</p>
+  <h1>{{ company.name }}</h1>
+  <p>ИНН {{ company.inn }}</p>
+  <div class="state-panel" data-monitoring-state="{{ monitoring.state }}">
+    <strong>{{ monitoring.state }}</strong>
+    <p>{{ monitoring.message }}</p>
+  </div>
+  {% if monitoring.state == 'NOT_IMPLEMENTED' %}
+    <p class="hint">Подписка, события и лента изменений в этой задаче не создаются. Эта страница — стабильная точка перехода для следующего Monitoring workstream.</p>
+  {% endif %}
+  <div class="actions"><a class="button secondary" href="/app/companies/{{ company.inn }}">Вернуться к карточке</a><a class="button secondary" href="/app/saved">Сохранённые компании</a></div>
+</section>
+{% endblock %}
