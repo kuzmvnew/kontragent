@@ -257,6 +257,26 @@ def set_active_workspace(
     record.active_workspace_id = workspace_id
 
 
+def _contains_unicode_control(value: str) -> bool:
+    return any(
+        unicodedata.category(character).startswith("C") for character in value
+    )
+
+
+def _query_has_decoded_control(value: str) -> bool:
+    candidate = value
+    for _ in range(_RETURN_TO_DECODE_LIMIT):
+        if _contains_unicode_control(candidate):
+            return True
+        decoded = unquote(candidate, errors="strict")
+        if _contains_unicode_control(decoded):
+            return True
+        if decoded == candidate:
+            return False
+        candidate = decoded
+    return True
+
+
 def safe_return_to(value: str | None, *, default: str = "/app") -> str:
     try:
         raw = "" if value is None else str(value)
@@ -266,7 +286,7 @@ def safe_return_to(value: str | None, *, default: str = "/app") -> str:
             or raw != raw.strip()
             or raw.startswith("//")
             or "\\" in raw
-            or any(unicodedata.category(character).startswith("C") for character in raw)
+            or _contains_unicode_control(raw)
         ):
             return default
 
@@ -280,15 +300,19 @@ def safe_return_to(value: str | None, *, default: str = "/app") -> str:
 
         candidate = path
         for _ in range(_RETURN_TO_DECODE_LIMIT):
-            if "\\" in candidate:
+            if _contains_unicode_control(candidate) or "\\" in candidate:
                 return default
             if any(segment in {".", ".."} for segment in candidate.split("/")):
                 return default
 
             decoded = unquote(candidate, errors="strict")
+            if _contains_unicode_control(decoded):
+                return default
             if decoded == candidate:
                 break
             if decoded.count("/") != candidate.count("/") or "\\" in decoded:
+                return default
+            if any(segment in {".", ".."} for segment in decoded.split("/")):
                 return default
             candidate = decoded
         else:
@@ -301,6 +325,8 @@ def safe_return_to(value: str | None, *, default: str = "/app") -> str:
         ):
             return default
         if any(segment in {".", ".."} for segment in candidate.split("/")):
+            return default
+        if parsed.query and _query_has_decoded_control(parsed.query):
             return default
     except (TypeError, ValueError, UnicodeError, OverflowError):
         return default

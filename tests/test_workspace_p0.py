@@ -48,6 +48,18 @@ from workspace_app.service import (
 
 
 PASSWORD = "correct-horse-battery-staple"
+RETURN_TO_SURFACE_ATTACKS = (
+    "/application",
+    "/app/../admin",
+    "/app/%2e%2e/admin",
+    "//[bad",
+    "/app/%00",
+    "/app/%0a",
+    "/app/%E2%80%AEfoo",
+    "/app/%2500",
+    "/app/search?q=%00",
+    "/app/search?q=%25E2%2580%25AEfoo",
+)
 
 
 class FakePublicRepository:
@@ -1196,6 +1208,8 @@ def test_workspace_p0_password_hash_and_email_normalization():
         "/app/companies/9706063520",
         "/app/companies/9706063520/monitoring",
         "/app/search?q=test",
+        "/app/search?q=company",
+        "/app/search?q=%D0%BA%D0%BE%D0%BC%D0%BF%D0%B0%D0%BD%D0%B8%D1%8F",
     ),
 )
 def test_safe_return_to_allows_only_canonical_workspace_destinations(destination):
@@ -1219,6 +1233,23 @@ def test_safe_return_to_allows_only_canonical_workspace_destinations(destination
         "/app/company%2f..%2fadmin",
         "/app/company%252f..%252fadmin",
         "/app/company%5c..%5cadmin",
+        "/app/%00",
+        "/app/%0a",
+        "/app/%0A",
+        "/app/%0d",
+        "/app/%09",
+        "/app/%E2%80%AEfoo",
+        "/app/%e2%80%aefoo",
+        "/app/%2500",
+        "/app/%250a",
+        "/app/%25E2%2580%25AEfoo",
+        "/app/%252500",
+        "/app/%2525E2%252580%2525AEfoo",
+        "/app/search?q=%00",
+        "/app/search?q=%0a",
+        "/app/search?q=%E2%80%AEfoo",
+        "/app/search?q=%2500",
+        "/app/search?q=%25E2%2580%25AEfoo",
         "/app//admin",
         "///app",
         "//evil.example",
@@ -1229,6 +1260,7 @@ def test_safe_return_to_allows_only_canonical_workspace_destinations(destination
         "//[bad",
         "http://[bad",
         "/app/search\x00?q=test",
+        "/app/\u202efoo",
         "/app/search\r\nLocation:https://evil.example",
         "/app/search#fragment",
         " /app/search",
@@ -1252,15 +1284,7 @@ def test_login_get_preserves_safe_return_to():
     assert f'name="return_to" value="{destination}"' in response.text
 
 
-@pytest.mark.parametrize(
-    "destination",
-    (
-        "/application",
-        "/app/../admin",
-        "/app/%2e%2e/admin",
-        "//[bad",
-    ),
-)
+@pytest.mark.parametrize("destination", RETURN_TO_SURFACE_ATTACKS)
 def test_login_get_falls_back_for_unsafe_or_malformed_return_to(destination):
     web = TestClient(
         create_app(
@@ -1274,15 +1298,7 @@ def test_login_get_falls_back_for_unsafe_or_malformed_return_to(destination):
     assert 'name="return_to" value="/app"' in response.text
 
 
-@pytest.mark.parametrize(
-    "destination",
-    (
-        "/application",
-        "/app/../admin",
-        "/app/%2e%2e/admin",
-        "//[bad",
-    ),
-)
+@pytest.mark.parametrize("destination", RETURN_TO_SURFACE_ATTACKS)
 def test_single_workspace_login_post_falls_back_for_unsafe_return_to(destination):
     email = f"return-login-{uuid4()}@example.test"
     try:
@@ -1311,15 +1327,7 @@ def test_single_workspace_login_post_falls_back_for_unsafe_return_to(destination
         _cleanup(email)
 
 
-@pytest.mark.parametrize(
-    "destination",
-    (
-        "/application",
-        "/app/../admin",
-        "/app/%2e%2e/admin",
-        "//[bad",
-    ),
-)
+@pytest.mark.parametrize("destination", RETURN_TO_SURFACE_ATTACKS)
 def test_workspace_selection_get_post_drops_unsafe_return_to(destination):
     email = f"return-selection-{uuid4()}@example.test"
     other_email = f"return-selection-other-{uuid4()}@example.test"

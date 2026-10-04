@@ -230,6 +230,10 @@ def test_browser_malicious_return_to_always_lands_on_workspace_home():
         "/app/%2e%2e/admin",
         "/application",
         "//[bad",
+        "/app/%00",
+        "/app/%0a",
+        "/app/%E2%80%AEfoo",
+        "/app/%2500",
     )
     try:
         _bootstrap(email, "Browser Return Safety")
@@ -245,6 +249,9 @@ def test_browser_malicious_return_to_always_lands_on_workspace_home():
                 expect(page.locator('input[name="return_to"]')).to_have_value("/app")
                 _login(page, email)
                 expect(page).to_have_url(f"{workspace.url}/app")
+                expect(
+                    page.get_by_role("heading", name="Browser Return Safety")
+                ).to_be_visible()
                 assert "/admin" not in page.url
                 context.close()
 
