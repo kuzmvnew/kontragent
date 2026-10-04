@@ -234,6 +234,10 @@ def test_browser_malicious_return_to_always_lands_on_workspace_home():
         "/app/%0a",
         "/app/%E2%80%AEfoo",
         "/app/%2500",
+        "/app/search?q=%",
+        "/app/search?q=%0",
+        "/app/search?q=%GG",
+        "/app/search?q=%25GG",
     )
     try:
         _bootstrap(email, "Browser Return Safety")

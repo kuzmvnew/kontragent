@@ -35,6 +35,7 @@ _SCRYPT_MAXMEM = 64 * 1024 * 1024
 DEFAULT_SESSION_TTL = timedelta(hours=8)
 _RETURN_TO_MAX_LENGTH = 1000
 _RETURN_TO_DECODE_LIMIT = 4
+_ASCII_HEX_DIGITS = frozenset("0123456789ABCDEFabcdef")
 
 
 @dataclass(frozen=True)
@@ -263,10 +264,30 @@ def _contains_unicode_control(value: str) -> bool:
     )
 
 
-def _query_has_decoded_control(value: str) -> bool:
+def _has_invalid_percent_escape(value: str) -> bool:
+    index = 0
+    while index < len(value):
+        if value[index] != "%":
+            index += 1
+            continue
+        if index + 2 >= len(value):
+            return True
+        if (
+            value[index + 1] not in _ASCII_HEX_DIGITS
+            or value[index + 2] not in _ASCII_HEX_DIGITS
+        ):
+            return True
+        index += 3
+    return False
+
+
+def _query_is_unsafe(value: str) -> bool:
     candidate = value
     for _ in range(_RETURN_TO_DECODE_LIMIT):
-        if _contains_unicode_control(candidate):
+        if (
+            _has_invalid_percent_escape(candidate)
+            or _contains_unicode_control(candidate)
+        ):
             return True
         decoded = unquote(candidate, errors="strict")
         if _contains_unicode_control(decoded):
@@ -300,7 +321,11 @@ def safe_return_to(value: str | None, *, default: str = "/app") -> str:
 
         candidate = path
         for _ in range(_RETURN_TO_DECODE_LIMIT):
-            if _contains_unicode_control(candidate) or "\\" in candidate:
+            if (
+                _has_invalid_percent_escape(candidate)
+                or _contains_unicode_control(candidate)
+                or "\\" in candidate
+            ):
                 return default
             if any(segment in {".", ".."} for segment in candidate.split("/")):
                 return default
@@ -326,7 +351,7 @@ def safe_return_to(value: str | None, *, default: str = "/app") -> str:
             return default
         if any(segment in {".", ".."} for segment in candidate.split("/")):
             return default
-        if parsed.query and _query_has_decoded_control(parsed.query):
+        if parsed.query and _query_is_unsafe(parsed.query):
             return default
     except (TypeError, ValueError, UnicodeError, OverflowError):
         return default

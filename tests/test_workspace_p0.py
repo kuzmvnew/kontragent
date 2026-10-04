@@ -27,6 +27,7 @@ from tests.public_test_support import projection
 from workspace_app.auth import (
     CSRF_COOKIE,
     SESSION_COOKIE,
+    _has_invalid_percent_escape,
     create_customer_session,
     hash_password,
     load_principal,
@@ -59,6 +60,10 @@ RETURN_TO_SURFACE_ATTACKS = (
     "/app/%2500",
     "/app/search?q=%00",
     "/app/search?q=%25E2%2580%25AEfoo",
+    "/app/search?q=%",
+    "/app/search?q=%0",
+    "/app/search?q=%GG",
+    "/app/search?q=%25GG",
 )
 
 
@@ -1200,6 +1205,22 @@ def test_workspace_p0_password_hash_and_email_normalization():
 
 
 @pytest.mark.parametrize(
+    "value",
+    ("", "q=test", "q=%D0%BA", "q=%25GG"),
+)
+def test_percent_escape_syntax_validator_accepts_complete_ascii_hex_pairs(value):
+    assert _has_invalid_percent_escape(value) is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("%", "%0", "%GG", "%G0", "%0G", "%1", "%2Z"),
+)
+def test_percent_escape_syntax_validator_rejects_partial_or_non_hex_pairs(value):
+    assert _has_invalid_percent_escape(value) is True
+
+
+@pytest.mark.parametrize(
     "destination",
     (
         "/app",
@@ -1250,6 +1271,16 @@ def test_safe_return_to_allows_only_canonical_workspace_destinations(destination
         "/app/search?q=%E2%80%AEfoo",
         "/app/search?q=%2500",
         "/app/search?q=%25E2%2580%25AEfoo",
+        "/app/search?q=%",
+        "/app/search?q=%0",
+        "/app/search?q=%GG",
+        "/app/search?q=%25GG",
+        "/app/search?q=%2525GG",
+        "/app/search?q=%2",
+        "/app/search?q=%G0",
+        "/app/search?q=%0G",
+        "/app/search?q=%1",
+        "/app/search?q=%2Z",
         "/app//admin",
         "///app",
         "//evil.example",
