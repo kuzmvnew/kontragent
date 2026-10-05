@@ -917,6 +917,11 @@ def test_pause_resume_uses_new_baseline_without_replay():
                 now=NOW + timedelta(hours=2),
             )
             assert changed and resumed.baseline_snapshot_id != original_baseline_id
+            resumed_baseline = session.get(
+                CompanyMonitoringSnapshot, resumed.baseline_snapshot_id
+            )
+            assert resumed_baseline.facts[0]["value"] == "B"
+            assert resumed_baseline.last_known_business_facts[0]["value"] == "B"
             no_replay = monitor_company_once(
                 session, company_id=company_id, detected_at=NOW + timedelta(hours=3)
             )
@@ -1240,6 +1245,429 @@ def test_public_and_authenticated_rights_are_both_monitoring_eligible():
                 assert snapshot.facts[0]["rights"] == rights
                 assert snapshot.last_known_business_facts[0]["rights"] == rights
             assert _count(session, MonitoringEvent, company_id) == 0
+            session.rollback()
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+@pytest.mark.parametrize("restored_value", (100, 150))
+@pytest.mark.parametrize("multi_workspace", (False, True))
+def test_resume_preserves_privacy_barrier_through_missing_then_rebases(
+    restored_value: int, multi_workspace: bool
+):
+    email_a = f"monitoring-resume-privacy-a-{uuid4()}@example.test"
+    email_b = f"monitoring-resume-privacy-b-{uuid4()}@example.test" if multi_workspace else None
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    secret = f"restricted-resume-evidence-{uuid4()}"
+    try:
+        user_a, workspace_a, company_id = _seed(email_a, inn)
+        user_b = workspace_b = None
+        if multi_workspace:
+            user_b, workspace_b = _bootstrap(email_b, "Monitoring resume privacy B")
+        with Session(engine) as session:
+            if multi_workspace:
+                _enable_entitlement(session, workspace_b)
+                save_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            subscription_a, _ = subscribe_company(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            if multi_workspace:
+                subscribe_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            original_id = subscription_a.baseline_snapshot_id
+            original_fingerprint = session.get(
+                CompanyMonitoringSnapshot, original_id
+            ).fingerprint
+            _set_fact_rights(fact, rights="INTERNAL_ONLY", value=100, evidence_ref=secret)
+            session.flush()
+            assert monitor_company_once(session, company_id=company_id).canonical_event_count == 0
+            if restored_value == 150:
+                _set_fact_rights(
+                    fact, rights="INTERNAL_ONLY", value=150, evidence_ref=secret
+                )
+                session.flush()
+                assert monitor_company_once(session, company_id=company_id).canonical_event_count == 0
+            fact.is_current = False
+            session.flush()
+            assert monitor_company_once(session, company_id=company_id).canonical_event_count == 0
+            before_pause_id = subscription_a.baseline_snapshot_id
+            before_pause = session.get(CompanyMonitoringSnapshot, before_pause_id)
+            barrier = list(before_pause.privacy_blocked_coordinates)
+            assert len(barrier) == 1
+            assert before_pause.facts == before_pause.last_known_business_facts == []
+            pause_subscription(session, user_id=user_a, workspace_id=workspace_a, inn=inn)
+            resumed, changed = resume_subscription(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            assert changed and resumed.status == "ACTIVE"
+            after_resume = session.get(
+                CompanyMonitoringSnapshot, resumed.baseline_snapshot_id
+            )
+            assert after_resume.id != before_pause_id
+            assert after_resume.facts == after_resume.last_known_business_facts == []
+            assert after_resume.privacy_blocked_coordinates == barrier
+            assert after_resume.fingerprint == before_pause.fingerprint
+            assert secret not in str(after_resume.__dict__)
+            unanchored = capture_snapshot(session, company_id=company_id)
+            assert unanchored.privacy_blocked_coordinates == []
+            assert unanchored.fingerprint != after_resume.fingerprint
+            assert _count(session, MonitoringEvent, company_id) == 0
+
+            fact.is_current = True
+            _set_fact_rights(
+                fact,
+                rights="PUBLIC",
+                value=restored_value,
+                evidence_ref=f"restored-evidence-{uuid4()}",
+            )
+            session.flush()
+            restoration = monitor_company_once(session, company_id=company_id)
+            assert restoration.canonical_event_count == restoration.feed_entry_count == 0
+            restored = session.get(
+                CompanyMonitoringSnapshot, subscription_a.baseline_snapshot_id
+            )
+            assert restored.privacy_blocked_coordinates == []
+            assert restored.facts[0]["value"] == restored_value
+            assert restored.last_known_business_facts[0]["value"] == restored_value
+            assert _count(session, MonitoringEvent, company_id) == 0
+            assert _count(session, WorkspaceFeedEntry) == 0
+
+            _set_fact(fact, value=175)
+            session.flush()
+            future = monitor_company_once(session, company_id=company_id)
+            assert future.canonical_event_count == 1
+            assert future.feed_entry_count == (2 if multi_workspace else 1)
+            event = session.scalar(
+                sa.select(MonitoringEvent).where(MonitoringEvent.company_id == company_id)
+            )
+            assert (event.origin, event.change_kind) == ("SOURCE_CHANGE", "FACT_CHANGED")
+            assert (event.old_value, event.new_value) == (restored_value, 175)
+            assert secret not in str(event.__dict__)
+            if multi_workspace:
+                feed_a = list_workspace_feed(
+                    session, user_id=user_a, workspace_id=workspace_a
+                )
+                feed_b = list_workspace_feed(
+                    session, user_id=user_b, workspace_id=workspace_b
+                )
+                assert len(feed_a) == len(feed_b) == 1
+                assert feed_a[0].event_ref == feed_b[0].event_ref
+                with pytest.raises(ActionDenied) as denied:
+                    mark_feed_entry_read(
+                        session,
+                        user_id=user_a,
+                        workspace_id=workspace_a,
+                        entry_id=feed_b[0].entry_id,
+                    )
+                assert denied.value.code == "feed_entry_not_found"
+            assert session.get(CompanyMonitoringSnapshot, original_id).fingerprint == original_fingerprint
+            assert session.get(CompanyMonitoringSnapshot, before_pause_id).privacy_blocked_coordinates == barrier
+            audit_rows = session.scalars(
+                sa.select(WorkspaceAuditEvent).where(WorkspaceAuditEvent.workspace_id == workspace_a)
+            ).all()
+            assert any(row.action == "monitoring.resume" for row in audit_rows)
+            assert all(secret not in str(row.__dict__) for row in audit_rows)
+            session.rollback()
+    finally:
+        _cleanup(email_a, *((email_b,) if email_b else ()), inns=(inn,))
+
+
+def test_resume_with_current_internal_fact_keeps_only_privacy_safe_state():
+    email = f"monitoring-resume-internal-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    secret = f"restricted-resume-evidence-{uuid4()}"
+    try:
+        user_id, workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            subscription, _ = subscribe_company(
+                session, user_id=user_id, workspace_id=workspace_id, inn=inn
+            )
+            pause_subscription(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            _set_fact_rights(fact, rights="INTERNAL_ONLY", value=150, evidence_ref=secret)
+            session.flush()
+            resume_subscription(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            resumed = session.get(
+                CompanyMonitoringSnapshot, subscription.baseline_snapshot_id
+            )
+            assert resumed.facts == resumed.last_known_business_facts == []
+            assert len(resumed.privacy_blocked_coordinates) == 1
+            assert secret not in str(resumed.__dict__)
+            assert monitor_company_once(session, company_id=company_id).canonical_event_count == 0
+            assert _count(session, MonitoringEvent, company_id) == 0
+            assert _count(session, WorkspaceFeedEntry) == 0
+            session.rollback()
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+@pytest.mark.parametrize("restored_value", (100, 150))
+def test_resume_preserves_coverage_context_without_false_fact_added(restored_value: int):
+    email = f"monitoring-resume-coverage-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_id, workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            subscription, _ = subscribe_company(
+                session, user_id=user_id, workspace_id=workspace_id, inn=inn
+            )
+            fact.is_current = False
+            session.flush()
+            monitor_company_once(session, company_id=company_id)
+            pause_subscription(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            resume_subscription(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            resumed = session.get(
+                CompanyMonitoringSnapshot, subscription.baseline_snapshot_id
+            )
+            assert resumed.facts == []
+            assert resumed.last_known_business_facts[0]["value"] == 100
+            assert resumed.privacy_blocked_coordinates == []
+            fact.is_current = True
+            _set_fact(fact, value=restored_value)
+            session.flush()
+            recovery = monitor_company_once(session, company_id=company_id)
+            assert recovery.canonical_event_count == (0 if restored_value == 100 else 1)
+            if restored_value == 150:
+                event = session.scalar(
+                    sa.select(MonitoringEvent).where(
+                        MonitoringEvent.company_id == company_id,
+                        MonitoringEvent.origin == "SOURCE_CHANGE",
+                    )
+                )
+                assert event.change_kind == "FACT_CHANGED"
+                assert (event.old_value, event.new_value) == (100, 150)
+            session.rollback()
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+@pytest.mark.parametrize("restored_value", (100, 150))
+def test_http_pause_resume_privacy_restoration_has_no_feed_replay(restored_value: int):
+    email = f"monitoring-http-resume-privacy-{uuid4()}@example.test"
+    item = projection(sequence=100_350_000 + uuid4().int % 100_000)
+    inn = item.company.inn
+    secret = f"restricted-http-resume-evidence-{uuid4()}"
+    try:
+        _user_id, _workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            fact_ref = fact.fact_ref
+            session.commit()
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository((item,)),
+                session_factory=SessionLocal,
+            )
+        )
+        _login(web, email)
+        csrf = web.cookies[CSRF_COOKIE]
+        enabled = web.post(
+            f"/app/api/companies/{inn}/monitoring/enable",
+            headers={"x-csrf-token": csrf},
+        )
+        assert enabled.status_code == 201
+        with Session(engine) as session:
+            fact = session.get(CompanySemanticFact, fact_ref)
+            _set_fact_rights(
+                fact, rights="INTERNAL_ONLY", value=restored_value, evidence_ref=secret
+            )
+            session.flush()
+            assert monitor_company_once(session, company_id=company_id).feed_entry_count == 0
+            fact.is_current = False
+            session.flush()
+            assert monitor_company_once(session, company_id=company_id).feed_entry_count == 0
+            session.commit()
+        paused = web.post(
+            f"/app/api/companies/{inn}/monitoring/pause",
+            headers={"x-csrf-token": csrf},
+        )
+        assert paused.status_code == 200
+        assert paused.json()["monitoring"]["state"] == "PAUSED"
+        resumed = web.post(
+            f"/app/api/companies/{inn}/monitoring/resume",
+            headers={"x-csrf-token": csrf},
+        )
+        assert resumed.status_code == 200
+        assert resumed.json()["monitoring"]["state"] == "ACTIVE"
+        with Session(engine) as session:
+            subscription = session.scalar(
+                sa.select(MonitoringSubscription).where(
+                    MonitoringSubscription.company_id == company_id
+                )
+            )
+            baseline = session.get(
+                CompanyMonitoringSnapshot, subscription.baseline_snapshot_id
+            )
+            assert baseline.facts == baseline.last_known_business_facts == []
+            assert len(baseline.privacy_blocked_coordinates) == 1
+            assert secret not in str(baseline.__dict__)
+            fact = session.get(CompanySemanticFact, fact_ref)
+            fact.is_current = True
+            _set_fact_rights(
+                fact,
+                rights="PUBLIC",
+                value=restored_value,
+                evidence_ref=f"restored-evidence-{uuid4()}",
+            )
+            session.flush()
+            restoration = monitor_company_once(session, company_id=company_id)
+            assert restoration.canonical_event_count == restoration.feed_entry_count == 0
+            session.commit()
+        assert web.get("/app/api/monitoring").json()["items"] == []
+        with Session(engine) as session:
+            fact = session.get(CompanySemanticFact, fact_ref)
+            _set_fact(fact, value=175)
+            session.flush()
+            future = monitor_company_once(session, company_id=company_id)
+            assert future.canonical_event_count == future.feed_entry_count == 1
+            session.commit()
+        feed = web.get("/app/api/monitoring")
+        assert feed.status_code == 200
+        assert len(feed.json()["items"]) == 1
+        assert feed.json()["items"][0]["old_value"] == restored_value
+        assert feed.json()["items"][0]["new_value"] == 175
+        for path in (
+            f"/app/api/companies/{inn}/monitoring",
+            "/app/api/monitoring",
+            f"/app/companies/{inn}/monitoring",
+            "/app/monitoring",
+        ):
+            response = web.get(path)
+            assert response.status_code == 200
+            assert secret not in response.text
+            assert "privacy_blocked_coordinates" not in response.text
+        with Session(engine) as session:
+            assert session.scalar(
+                sa.select(sa.func.count()).select_from(MonitoringEvent).where(
+                    MonitoringEvent.company_id == company_id,
+                    MonitoringEvent.origin == "SOURCE_CHANGE",
+                )
+            ) == 1
+            audit_rows = session.scalars(sa.select(WorkspaceAuditEvent)).all()
+            assert all(secret not in str(row.__dict__) for row in audit_rows)
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+def test_resume_snapshot_failure_rolls_back_baseline_status_and_audit(monkeypatch):
+    email = f"monitoring-resume-atomic-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_id, workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            _semantic_fact(session, company_id, value=100)
+            subscription, _ = subscribe_company(
+                session, user_id=user_id, workspace_id=workspace_id, inn=inn
+            )
+            pause_subscription(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            baseline_id = subscription.baseline_snapshot_id
+            snapshot_count = _count(session, CompanyMonitoringSnapshot, company_id)
+            session.commit()
+        from workspace_app import monitoring_service
+
+        def fail_capture(*_args, **_kwargs):
+            raise RuntimeError("baseline capture failed")
+
+        monkeypatch.setattr(monitoring_service, "capture_snapshot", fail_capture)
+        with Session(engine) as session:
+            with pytest.raises(RuntimeError, match="baseline capture failed"):
+                resume_subscription(
+                    session, user_id=user_id, workspace_id=workspace_id, inn=inn
+                )
+            session.rollback()
+        with Session(engine) as session:
+            subscription = session.scalar(
+                sa.select(MonitoringSubscription).where(
+                    MonitoringSubscription.company_id == company_id
+                )
+            )
+            assert subscription.status == "PAUSED"
+            assert subscription.baseline_snapshot_id == baseline_id
+            assert _count(session, CompanyMonitoringSnapshot, company_id) == snapshot_count
+            assert session.scalar(
+                sa.select(sa.func.count()).select_from(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.workspace_id == workspace_id,
+                    WorkspaceAuditEvent.action == "monitoring.resume",
+                )
+            ) == 0
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+def test_concurrent_resume_and_scan_keep_privacy_cursor_consistent():
+    email = f"monitoring-resume-concurrent-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_id, workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            fact_ref = fact.fact_ref
+            subscribe_company(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            _set_fact_rights(fact, rights="INTERNAL_ONLY", value=100)
+            session.flush()
+            monitor_company_once(session, company_id=company_id)
+            fact.is_current = False
+            session.flush()
+            monitor_company_once(session, company_id=company_id)
+            pause_subscription(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            session.commit()
+
+        gate = Barrier(2)
+
+        def resume():
+            with Session(engine) as session:
+                gate.wait(timeout=10)
+                result = resume_subscription(
+                    session, user_id=user_id, workspace_id=workspace_id, inn=inn
+                )
+                session.commit()
+                return result[1]
+
+        def scan():
+            with Session(engine) as session:
+                gate.wait(timeout=10)
+                result = monitor_company_once(session, company_id=company_id)
+                session.commit()
+                return result
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            resume_future = executor.submit(resume)
+            scan_future = executor.submit(scan)
+            assert resume_future.result(timeout=20)
+            concurrent_scan = scan_future.result(timeout=20)
+            assert concurrent_scan.canonical_event_count == 0
+            assert concurrent_scan.feed_entry_count == 0
+        with Session(engine) as session:
+            subscription = session.scalar(
+                sa.select(MonitoringSubscription).where(
+                    MonitoringSubscription.company_id == company_id
+                )
+            )
+            assert subscription.status == "ACTIVE"
+            baseline = session.get(
+                CompanyMonitoringSnapshot, subscription.baseline_snapshot_id
+            )
+            assert baseline.facts == baseline.last_known_business_facts == []
+            assert len(baseline.privacy_blocked_coordinates) == 1
+            fact = session.get(CompanySemanticFact, fact_ref)
+            fact.is_current = True
+            _set_fact_rights(fact, rights="PUBLIC", value=100)
+            session.flush()
+            restored = monitor_company_once(session, company_id=company_id)
+            assert restored.canonical_event_count == restored.feed_entry_count == 0
+            _set_fact(fact, value=150)
+            session.flush()
+            changed = monitor_company_once(session, company_id=company_id)
+            assert changed.canonical_event_count == changed.feed_entry_count == 1
+            assert monitor_company_once(session, company_id=company_id).feed_entry_count == 0
+            assert session.scalar(
+                sa.select(sa.func.count()).select_from(MonitoringEvent).where(
+                    MonitoringEvent.company_id == company_id,
+                    MonitoringEvent.origin == "SOURCE_CHANGE",
+                )
+            ) == 1
+            assert _count(session, WorkspaceFeedEntry) == 1
             session.rollback()
     finally:
         _cleanup(email, inns=(inn,))

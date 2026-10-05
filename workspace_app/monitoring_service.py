@@ -803,7 +803,20 @@ def resume_subscription(
                 status_code=409,
             )
         when = _now(now)
-        baseline = capture_snapshot(session, company_id=company.id, captured_at=when)
+        previous = (
+            session.get(CompanyMonitoringSnapshot, subscription.baseline_snapshot_id)
+            if subscription.baseline_snapshot_id
+            else None
+        )
+        # Rebase business state to what is eligible now, while retaining the
+        # prior snapshot's privacy and coverage safety context through gaps.
+        # Capture alone does not detect or replay changes from the paused period.
+        baseline = capture_snapshot(
+            session,
+            company_id=company.id,
+            captured_at=when,
+            previous_snapshot=previous,
+        )
         subscription.status = "ACTIVE"
         subscription.paused_at = None
         subscription.last_checked_at = when
