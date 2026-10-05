@@ -212,6 +212,16 @@ def _coordinate(fact: dict[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
+def _privacy_coordinate_digest(company_id: int, coordinate: tuple[str, str, str, str]) -> str:
+    return _digest(
+        {
+            "domain": "monitoring-privacy-coordinate-v1",
+            "company_id": company_id,
+            "coordinate": coordinate,
+        }
+    )
+
+
 def _current_risk_summary_refs(session: Session, company_id: int) -> tuple[str | None, str | None]:
     risk_ref = session.scalar(
         sa.select(CompanyRiskAssessmentV3.assessment_id)
@@ -253,7 +263,7 @@ def _observed_semantic_state(
     session: Session,
     *,
     company_id: int,
-) -> tuple[list[dict[str, Any]], str | None, str | None]:
+) -> tuple[list[dict[str, Any]], set[str], str | None, str | None]:
     if session.get(Company, company_id) is None:
         raise ValueError(f"company_id {company_id} is not resolved")
     rows = tuple(
@@ -273,17 +283,35 @@ def _observed_semantic_state(
         ).all()
     )
     facts = [_snapshot_fact(row) for row in rows if row.rights in _CLIENT_RIGHTS]
+    restricted = {
+        _privacy_coordinate_digest(
+            company_id,
+            (
+                row.section_key,
+                row.field_key,
+                row.period_identity or "",
+                row.item_identity or "",
+            ),
+        )
+        for row in rows
+        if row.rights == "INTERNAL_ONLY"
+    }
     risk_ref, summary_ref = _current_risk_summary_refs(session, company_id)
-    return facts, risk_ref, summary_ref
+    return facts, restricted, risk_ref, summary_ref
 
 
 def _last_known_business_facts(
     previous: CompanyMonitoringSnapshot | None,
     observed_facts: list[dict[str, Any]],
+    *,
+    company_id: int,
+    privacy_blocked_coordinates: set[str],
 ) -> list[dict[str, Any]]:
     known = {
         _coordinate(fact): fact
         for fact in (previous.last_known_business_facts if previous is not None else ())
+        if _privacy_coordinate_digest(company_id, _coordinate(fact))
+        not in privacy_blocked_coordinates
     }
     for fact in observed_facts:
         if fact["state"] in _BUSINESS_STATES:
@@ -296,16 +324,36 @@ def _create_snapshot(
     *,
     company_id: int,
     facts: list[dict[str, Any]],
+    restricted_coordinates: set[str],
     risk_ref: str | None,
     summary_ref: str | None,
     previous_snapshot: CompanyMonitoringSnapshot | None,
     captured_at: datetime | None,
 ) -> CompanyMonitoringSnapshot:
-    last_known = _last_known_business_facts(previous_snapshot, facts)
+    privacy_blocked = (
+        set(previous_snapshot.privacy_blocked_coordinates)
+        if previous_snapshot is not None
+        else set()
+    ) | restricted_coordinates
+    # A coverage-only eligible row does not establish a business baseline.
+    # Keep the barrier until an authoritative eligible value is observed.
+    privacy_blocked.difference_update(
+        _privacy_coordinate_digest(company_id, _coordinate(fact))
+        for fact in facts
+        if fact["state"] in _BUSINESS_STATES
+    )
+    last_known = _last_known_business_facts(
+        previous_snapshot,
+        facts,
+        company_id=company_id,
+        privacy_blocked_coordinates=privacy_blocked,
+    )
+    blocked_digests = sorted(privacy_blocked)
     revision_input = {
         "company_id": company_id,
         "facts": facts,
         "last_known_business_facts": last_known,
+        "privacy_blocked_coordinates": blocked_digests,
         "company_view_revision": None,
         "risk_ref": risk_ref,
         "summary_ref": summary_ref,
@@ -321,6 +369,7 @@ def _create_snapshot(
         summary_ref=summary_ref,
         facts=facts,
         last_known_business_facts=last_known,
+        privacy_blocked_coordinates=blocked_digests,
         fact_count=len(facts),
         fingerprint=fingerprint,
         captured_at=_now(captured_at),
@@ -341,13 +390,14 @@ def capture_snapshot(
 
     if previous_snapshot is not None and previous_snapshot.company_id != company_id:
         raise ValueError("previous monitoring snapshot belongs to another company")
-    facts, risk_ref, summary_ref = _observed_semantic_state(
+    facts, restricted, risk_ref, summary_ref = _observed_semantic_state(
         session, company_id=company_id
     )
     return _create_snapshot(
         session,
         company_id=company_id,
         facts=facts,
+        restricted_coordinates=restricted,
         risk_ref=risk_ref,
         summary_ref=summary_ref,
         previous_snapshot=previous_snapshot,
@@ -479,8 +529,13 @@ def detect_changes(
     old_business = {
         _coordinate(item): item for item in previous.last_known_business_facts
     }
+    privacy_blocked = set(previous.privacy_blocked_coordinates) | set(
+        current.privacy_blocked_coordinates
+    )
     changes = []
     for coordinate in sorted(set(old_facts) | set(new_facts)):
+        if _privacy_coordinate_digest(current.company_id, coordinate) in privacy_blocked:
+            continue
         old_observed = old_facts.get(coordinate)
         new_observed = new_facts.get(coordinate)
         if new_observed is not None and new_observed["state"] in _BUSINESS_STATES:
@@ -911,7 +966,9 @@ def monitor_company_once(
     if not subscriptions:
         return MonitoringRunResult(company_id, None, 0, 0, 0, 0)
     when = _now(detected_at)
-    facts, risk_ref, summary_ref = _observed_semantic_state(session, company_id=company_id)
+    facts, restricted, risk_ref, summary_ref = _observed_semantic_state(
+        session, company_id=company_id
+    )
     all_dedupe_keys: set[str] = set()
     all_event_ids: set[UUID] = set()
     feed_count = 0
@@ -926,6 +983,7 @@ def monitor_company_once(
             session,
             company_id=company_id,
             facts=facts,
+            restricted_coordinates=restricted,
             risk_ref=risk_ref,
             summary_ref=summary_ref,
             previous_snapshot=previous,

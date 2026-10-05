@@ -61,6 +61,7 @@ class CompanyMonitoringSnapshot(Base):
     summary_ref: Mapped[str | None] = mapped_column(String(80), nullable=True)
     facts: Mapped[list] = mapped_column(JSONB, nullable=False)
     last_known_business_facts: Mapped[list] = mapped_column(JSONB, nullable=False)
+    privacy_blocked_coordinates: Mapped[list] = mapped_column(JSONB, nullable=False)
     fact_count: Mapped[int] = mapped_column(Integer, nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     captured_at: Mapped[datetime] = mapped_column(

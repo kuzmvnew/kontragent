@@ -31,6 +31,7 @@ def upgrade() -> None:
         sa.Column("summary_ref", sa.String(80), nullable=True),
         sa.Column("facts", postgresql.JSONB(), nullable=False),
         sa.Column("last_known_business_facts", postgresql.JSONB(), nullable=False),
+        sa.Column("privacy_blocked_coordinates", postgresql.JSONB(), nullable=False),
         sa.Column("fact_count", sa.Integer(), nullable=False),
         sa.Column("fingerprint", sa.String(64), nullable=False),
         sa.Column(

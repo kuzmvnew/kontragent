@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+import re
 from threading import Barrier
 from uuid import uuid4
 
@@ -124,6 +125,19 @@ def _set_fact(
         evidence["source_data_date"] = source_date
     row.selected_evidence = evidence
     row.state = state
+
+
+def _set_fact_rights(
+    row: CompanySemanticFact, *, rights: str, value, evidence_ref: str | None = None
+) -> None:
+    evidence = dict(row.selected_evidence)
+    evidence["rights"] = rights
+    evidence["value"] = value
+    if evidence_ref is not None:
+        evidence["evidence_ref"] = evidence_ref
+        evidence["source_code"] = evidence_ref
+    row.rights = rights
+    row.selected_evidence = evidence
 
 
 def _seed(email: str, inn: str, *, entitlement: bool = True, save: bool = True):
@@ -990,5 +1004,242 @@ def test_monitoring_http_api_csrf_scope_and_feed():
         with Session(engine) as session:
             assert _count(session, MonitoringSubscription, company_id) == 1
             assert _count(session, MonitoringEvent, company_id) == 1
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+def _exercise_privacy_barrier(
+    *, initial_rights: str, restored_value: int, multi_workspace: bool
+) -> None:
+    email_a = f"monitoring-privacy-a-{uuid4()}@example.test"
+    email_b = f"monitoring-privacy-b-{uuid4()}@example.test" if multi_workspace else None
+    item = projection(sequence=100_250_000 + uuid4().int % 100_000)
+    inn = item.company.inn
+    secret_evidence_1 = f"restricted-evidence-{uuid4()}"
+    secret_evidence_2 = f"restricted-evidence-{uuid4()}"
+    try:
+        user_a, workspace_a, company_id = _seed(email_a, inn)
+        user_b = workspace_b = None
+        if multi_workspace:
+            user_b, workspace_b = _bootstrap(email_b, "Monitoring privacy B")
+        with Session(engine) as session:
+            if multi_workspace:
+                _enable_entitlement(session, workspace_b)
+                save_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            fact = _semantic_fact(
+                session, company_id, value=100, field="TAX_DEBT", rights=initial_rights
+            )
+            fact_ref = fact.fact_ref
+            subscription_a, _ = subscribe_company(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            subscription_a_id = subscription_a.id
+            if multi_workspace:
+                subscribe_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            baseline_id = subscription_a.baseline_snapshot_id
+            baseline = session.get(CompanyMonitoringSnapshot, baseline_id)
+            baseline_fingerprint = baseline.fingerprint
+            assert baseline.facts[0]["value"] == 100
+            assert baseline.last_known_business_facts[0]["rights"] == initial_rights
+            _set_fact_rights(
+                fact,
+                rights="INTERNAL_ONLY",
+                value=100,
+                evidence_ref=secret_evidence_1,
+            )
+            session.flush()
+            downgrade = monitor_company_once(session, company_id=company_id)
+            assert downgrade.canonical_event_count == 0
+            assert downgrade.feed_entry_count == 0
+            restricted = session.get(
+                CompanyMonitoringSnapshot, subscription_a.baseline_snapshot_id
+            )
+            assert restricted.facts == []
+            assert restricted.last_known_business_facts == []
+            assert len(restricted.privacy_blocked_coordinates) == 1
+            assert re.fullmatch(r"[0-9a-f]{64}", restricted.privacy_blocked_coordinates[0])
+            restricted_barrier = list(restricted.privacy_blocked_coordinates)
+            assert secret_evidence_1 not in str(restricted.__dict__)
+            assert restricted.fingerprint != baseline_fingerprint
+            restricted_fingerprint = restricted.fingerprint
+            assert _count(session, MonitoringEvent, company_id) == 0
+            session.commit()
+
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository((item,)),
+                session_factory=SessionLocal,
+            )
+        )
+        _login(web, email_a)
+        for path in (
+            f"/app/api/companies/{inn}/monitoring",
+            "/app/api/monitoring",
+            f"/app/companies/{inn}/monitoring",
+            f"/app/companies/{inn}",
+            "/app/monitoring",
+        ):
+            response = web.get(path)
+            assert response.status_code == 200
+            assert secret_evidence_1 not in response.text
+            assert "privacy_blocked_coordinates" not in response.text
+        assert web.get("/app/api/monitoring").json()["items"] == []
+
+        with Session(engine) as session:
+            fact = session.get(CompanySemanticFact, fact_ref)
+            subscription_a = session.get(MonitoringSubscription, subscription_a_id)
+            _set_fact_rights(
+                fact,
+                rights="INTERNAL_ONLY",
+                value=150,
+                evidence_ref=secret_evidence_2,
+            )
+            session.flush()
+            restricted_change = monitor_company_once(session, company_id=company_id)
+            assert restricted_change.canonical_event_count == 0
+            assert restricted_change.feed_entry_count == 0
+            restricted_again = session.get(
+                CompanyMonitoringSnapshot, subscription_a.baseline_snapshot_id
+            )
+            assert restricted_again.facts == []
+            assert restricted_again.last_known_business_facts == []
+            assert restricted_again.privacy_blocked_coordinates == restricted_barrier
+            assert restricted_again.fingerprint == restricted_fingerprint
+            assert secret_evidence_2 not in str(restricted_again.__dict__)
+
+            fact.is_current = False
+            session.flush()
+            missing = monitor_company_once(session, company_id=company_id)
+            assert missing.canonical_event_count == 0
+            missing_snapshot = session.get(
+                CompanyMonitoringSnapshot, subscription_a.baseline_snapshot_id
+            )
+            assert missing_snapshot.facts == []
+            assert missing_snapshot.last_known_business_facts == []
+            assert missing_snapshot.privacy_blocked_coordinates == restricted_barrier
+            assert missing_snapshot.fingerprint == restricted_fingerprint
+
+            fact.is_current = True
+            _set_fact_rights(
+                fact,
+                rights=initial_rights,
+                value=restored_value,
+                evidence_ref=f"restored-evidence-{uuid4()}",
+            )
+            session.flush()
+            restoration = monitor_company_once(session, company_id=company_id)
+            assert restoration.canonical_event_count == 0
+            assert restoration.feed_entry_count == 0
+            restored = session.get(
+                CompanyMonitoringSnapshot, subscription_a.baseline_snapshot_id
+            )
+            assert restored.privacy_blocked_coordinates == []
+            assert restored.facts[0]["value"] == restored_value
+            assert restored.last_known_business_facts[0]["value"] == restored_value
+            assert restored.last_known_business_facts[0]["rights"] == initial_rights
+            assert restored.fingerprint != restricted_fingerprint
+            assert _count(session, MonitoringEvent, company_id) == 0
+
+            future_value = 150 if restored_value == 100 else 175
+            _set_fact(fact, value=future_value)
+            session.flush()
+            future = monitor_company_once(session, company_id=company_id)
+            assert future.canonical_event_count == 1
+            assert future.feed_entry_count == (2 if multi_workspace else 1)
+            event_row = session.scalar(
+                sa.select(MonitoringEvent).where(MonitoringEvent.company_id == company_id)
+            )
+            assert event_row.origin == "SOURCE_CHANGE"
+            assert event_row.change_kind == "FACT_CHANGED"
+            assert event_row.old_value == restored_value
+            assert event_row.new_value == future_value
+            assert secret_evidence_1 not in str(event_row.__dict__)
+            assert secret_evidence_2 not in str(event_row.__dict__)
+            repeat = monitor_company_once(session, company_id=company_id)
+            assert repeat.feed_entry_count == 0
+            if multi_workspace:
+                feed_a = list_workspace_feed(
+                    session, user_id=user_a, workspace_id=workspace_a
+                )
+                feed_b = list_workspace_feed(
+                    session, user_id=user_b, workspace_id=workspace_b
+                )
+                assert len(feed_a) == len(feed_b) == 1
+                assert feed_a[0].event_ref == feed_b[0].event_ref
+                with pytest.raises(ActionDenied) as denied:
+                    mark_feed_entry_read(
+                        session,
+                        user_id=user_a,
+                        workspace_id=workspace_a,
+                        entry_id=feed_b[0].entry_id,
+                    )
+                assert denied.value.code == "feed_entry_not_found"
+            audit_rows = session.scalars(
+                sa.select(WorkspaceAuditEvent).where(
+                    WorkspaceAuditEvent.workspace_id == workspace_a
+                )
+            ).all()
+            assert all(secret_evidence_1 not in str(row.__dict__) for row in audit_rows)
+            assert all(secret_evidence_2 not in str(row.__dict__) for row in audit_rows)
+            old_baseline = session.get(CompanyMonitoringSnapshot, baseline_id)
+            assert old_baseline.facts[0]["value"] == 100
+            assert old_baseline.fingerprint == baseline_fingerprint
+            session.commit()
+
+        api_feed = web.get("/app/api/monitoring")
+        assert api_feed.status_code == 200
+        assert len(api_feed.json()["items"]) == 1
+        assert api_feed.json()["items"][0]["old_value"] == restored_value
+        assert api_feed.json()["items"][0]["new_value"] == future_value
+        for path in ("/app/api/monitoring", "/app/monitoring"):
+            response = web.get(path)
+            assert secret_evidence_1 not in response.text
+            assert secret_evidence_2 not in response.text
+    finally:
+        _cleanup(email_a, *((email_b,) if email_b else ()), inns=(inn,))
+
+
+@pytest.mark.parametrize("initial_rights", ("PUBLIC", "AUTHENTICATED_ONLY"))
+@pytest.mark.parametrize("restored_value", (100, 150))
+def test_privacy_barrier_redacts_restricted_state_and_resets_on_restoration(
+    initial_rights: str, restored_value: int
+):
+    _exercise_privacy_barrier(
+        initial_rights=initial_rights,
+        restored_value=restored_value,
+        multi_workspace=False,
+    )
+
+
+def test_two_workspaces_share_privacy_barrier_without_leaking_feed():
+    _exercise_privacy_barrier(
+        initial_rights="PUBLIC", restored_value=100, multi_workspace=True
+    )
+
+
+def test_public_and_authenticated_rights_are_both_monitoring_eligible():
+    email = f"monitoring-eligible-rights-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_id, workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            fact = _semantic_fact(session, company_id, value=100, rights="PUBLIC")
+            subscription, _ = subscribe_company(
+                session, user_id=user_id, workspace_id=workspace_id, inn=inn
+            )
+            for rights in ("AUTHENTICATED_ONLY", "PUBLIC"):
+                _set_fact_rights(fact, rights=rights, value=100)
+                session.flush()
+                result = monitor_company_once(session, company_id=company_id)
+                assert result.canonical_event_count == 0
+                assert result.feed_entry_count == 0
+                snapshot = session.get(
+                    CompanyMonitoringSnapshot, subscription.baseline_snapshot_id
+                )
+                assert snapshot.privacy_blocked_coordinates == []
+                assert snapshot.facts[0]["rights"] == rights
+                assert snapshot.last_known_business_facts[0]["rights"] == rights
+            assert _count(session, MonitoringEvent, company_id) == 0
+            session.rollback()
     finally:
         _cleanup(email, inns=(inn,))
