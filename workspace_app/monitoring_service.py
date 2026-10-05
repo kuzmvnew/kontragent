@@ -52,6 +52,7 @@ _COVERAGE_STATES = frozenset(
     }
 )
 _CLIENT_RIGHTS = frozenset({"PUBLIC", "AUTHENTICATED_ONLY"})
+_BUSINESS_STATES = frozenset({"FOUND", "NOT_FOUND", "NOT_APPLICABLE"})
 
 
 EVENT_TITLES = {
@@ -248,14 +249,11 @@ def _snapshot_fact(row: CompanySemanticFact) -> dict[str, Any]:
     }
 
 
-def capture_snapshot(
+def _observed_semantic_state(
     session: Session,
     *,
     company_id: int,
-    captured_at: datetime | None = None,
-) -> CompanyMonitoringSnapshot:
-    """Capture a new immutable semantic snapshot in the caller transaction."""
-
+) -> tuple[list[dict[str, Any]], str | None, str | None]:
     if session.get(Company, company_id) is None:
         raise ValueError(f"company_id {company_id} is not resolved")
     rows = tuple(
@@ -276,9 +274,39 @@ def capture_snapshot(
     )
     facts = [_snapshot_fact(row) for row in rows if row.rights in _CLIENT_RIGHTS]
     risk_ref, summary_ref = _current_risk_summary_refs(session, company_id)
+    return facts, risk_ref, summary_ref
+
+
+def _last_known_business_facts(
+    previous: CompanyMonitoringSnapshot | None,
+    observed_facts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    known = {
+        _coordinate(fact): fact
+        for fact in (previous.last_known_business_facts if previous is not None else ())
+    }
+    for fact in observed_facts:
+        if fact["state"] in _BUSINESS_STATES:
+            known[_coordinate(fact)] = fact
+    return [known[coordinate] for coordinate in sorted(known)]
+
+
+def _create_snapshot(
+    session: Session,
+    *,
+    company_id: int,
+    facts: list[dict[str, Any]],
+    risk_ref: str | None,
+    summary_ref: str | None,
+    previous_snapshot: CompanyMonitoringSnapshot | None,
+    captured_at: datetime | None,
+) -> CompanyMonitoringSnapshot:
+    last_known = _last_known_business_facts(previous_snapshot, facts)
     revision_input = {
         "company_id": company_id,
         "facts": facts,
+        "last_known_business_facts": last_known,
+        "company_view_revision": None,
         "risk_ref": risk_ref,
         "summary_ref": summary_ref,
     }
@@ -292,6 +320,7 @@ def capture_snapshot(
         risk_ref=risk_ref,
         summary_ref=summary_ref,
         facts=facts,
+        last_known_business_facts=last_known,
         fact_count=len(facts),
         fingerprint=fingerprint,
         captured_at=_now(captured_at),
@@ -299,6 +328,31 @@ def capture_snapshot(
     session.add(snapshot)
     session.flush()
     return snapshot
+
+
+def capture_snapshot(
+    session: Session,
+    *,
+    company_id: int,
+    captured_at: datetime | None = None,
+    previous_snapshot: CompanyMonitoringSnapshot | None = None,
+) -> CompanyMonitoringSnapshot:
+    """Append observed and last-known business state in the caller transaction."""
+
+    if previous_snapshot is not None and previous_snapshot.company_id != company_id:
+        raise ValueError("previous monitoring snapshot belongs to another company")
+    facts, risk_ref, summary_ref = _observed_semantic_state(
+        session, company_id=company_id
+    )
+    return _create_snapshot(
+        session,
+        company_id=company_id,
+        facts=facts,
+        risk_ref=risk_ref,
+        summary_ref=summary_ref,
+        previous_snapshot=previous_snapshot,
+        captured_at=captured_at,
+    )
 
 
 def _event_type(section_key: str, field_key: str) -> str:
@@ -422,13 +476,25 @@ def detect_changes(
         raise ValueError("monitoring snapshots must belong to the same company")
     old_facts = {_coordinate(item): item for item in previous.facts}
     new_facts = {_coordinate(item): item for item in current.facts}
+    old_business = {
+        _coordinate(item): item for item in previous.last_known_business_facts
+    }
     changes = []
     for coordinate in sorted(set(old_facts) | set(new_facts)):
-        change = _change(
-            current.company_id,
-            old_facts.get(coordinate),
-            new_facts.get(coordinate),
-        )
+        old_observed = old_facts.get(coordinate)
+        new_observed = new_facts.get(coordinate)
+        if new_observed is not None and new_observed["state"] in _BUSINESS_STATES:
+            # A coverage gap cannot erase the last trusted business value.
+            # Recovery to that value is not a new business fact.
+            change = _change(
+                current.company_id,
+                old_business.get(coordinate),
+                new_observed,
+            )
+        else:
+            change = _change(current.company_id, old_observed, new_observed) if (
+                old_observed is not None or new_observed is not None
+            ) else None
         if change is not None:
             changes.append(change)
     return tuple(changes)
@@ -845,16 +911,28 @@ def monitor_company_once(
     if not subscriptions:
         return MonitoringRunResult(company_id, None, 0, 0, 0, 0)
     when = _now(detected_at)
-    current = capture_snapshot(session, company_id=company_id, captured_at=when)
+    facts, risk_ref, summary_ref = _observed_semantic_state(session, company_id=company_id)
     all_dedupe_keys: set[str] = set()
     all_event_ids: set[UUID] = set()
     feed_count = 0
+    first_snapshot_id: UUID | None = None
     for subscription in subscriptions:
         previous = (
             session.get(CompanyMonitoringSnapshot, subscription.baseline_snapshot_id)
             if subscription.baseline_snapshot_id
             else None
         )
+        current = _create_snapshot(
+            session,
+            company_id=company_id,
+            facts=facts,
+            risk_ref=risk_ref,
+            summary_ref=summary_ref,
+            previous_snapshot=previous,
+            captured_at=when,
+        )
+        if first_snapshot_id is None:
+            first_snapshot_id = current.id
         changes = detect_changes(previous, current) if previous is not None else ()
         events = persist_events(session, changes, detected_at=when)
         all_dedupe_keys.update(change.dedupe_key for change in changes)
@@ -865,7 +943,7 @@ def monitor_company_once(
     session.flush()
     return MonitoringRunResult(
         company_id=company_id,
-        snapshot_id=current.id,
+        snapshot_id=first_snapshot_id,
         subscription_count=len(subscriptions),
         detected_change_count=len(all_dedupe_keys),
         canonical_event_count=len(all_event_ids),

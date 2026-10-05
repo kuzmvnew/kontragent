@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -310,6 +312,7 @@ def test_semantic_change_dedupe_timestamp_order_and_privacy():
             )
             assert baseline.fact_count == 1
             assert "secret-token-never-visible" not in str(baseline.facts)
+            assert "secret-token-never-visible" not in str(baseline.last_known_business_facts)
             _set_fact(
                 public,
                 value={"b": 2, "a": 1},
@@ -353,6 +356,333 @@ def test_semantic_change_dedupe_timestamp_order_and_privacy():
             session.commit()
     finally:
         _cleanup(email, inns=(inn,))
+
+
+def test_database_rejects_history_updates_but_lifecycle_rows_remain_mutable():
+    email = f"monitoring-immutable-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_id, workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            fact_ref = fact.fact_ref
+            subscription, _ = subscribe_company(
+                session, user_id=user_id, workspace_id=workspace_id, inn=inn
+            )
+            snapshot_id = subscription.baseline_snapshot_id
+            _set_fact(fact, value=150)
+            session.flush()
+            result = monitor_company_once(session, company_id=company_id)
+            assert result.feed_entry_count == 1
+            event_id = session.scalar(
+                sa.select(MonitoringEvent.id).where(MonitoringEvent.company_id == company_id)
+            )
+            entry_id = session.scalar(
+                sa.select(WorkspaceFeedEntry.id).where(WorkspaceFeedEntry.workspace_id == workspace_id)
+            )
+            session.commit()
+
+        with Session(engine) as session:
+            snapshot = session.get(CompanyMonitoringSnapshot, snapshot_id)
+            event_row = session.get(MonitoringEvent, event_id)
+            original_facts = snapshot.facts
+            original_fingerprint = snapshot.fingerprint
+            original_old = event_row.old_value
+            original_new = event_row.new_value
+
+        for model, row_id, field, replacement in (
+            (CompanyMonitoringSnapshot, snapshot_id, "fingerprint", "0" * 64),
+            (MonitoringEvent, event_id, "new_value", "tampered"),
+        ):
+            with Session(engine) as session:
+                setattr(session.get(model, row_id), field, replacement)
+                with pytest.raises(ValueError, match="immutable"):
+                    session.flush()
+                session.rollback()
+
+        for model, row_id, values in (
+            (CompanyMonitoringSnapshot, snapshot_id, {"facts": []}),
+            (MonitoringEvent, event_id, {"old_value": "tampered"}),
+        ):
+            with Session(engine) as session:
+                with pytest.raises(sa.exc.DBAPIError, match="immutable"):
+                    session.execute(sa.update(model).where(model.id == row_id).values(**values))
+                session.rollback()
+            with engine.begin() as connection:
+                with pytest.raises(sa.exc.DBAPIError, match="immutable"):
+                    connection.execute(sa.update(model).where(model.id == row_id).values(**values))
+                # The PostgreSQL transaction is aborted by the trigger.
+                connection.rollback()
+
+        for table, row_id, column, value in (
+            ("company_monitoring_snapshots", snapshot_id, "facts", "[]"),
+            ("monitoring_events", event_id, "new_value", '"tampered"'),
+        ):
+            with Session(engine) as session:
+                with pytest.raises(sa.exc.DBAPIError, match="immutable"):
+                    session.execute(
+                        sa.text(
+                            f"UPDATE {table} SET {column} = CAST(:value AS jsonb) WHERE id = :id"
+                        ),
+                        {"value": value, "id": row_id},
+                    )
+                session.rollback()
+
+        with Session(engine) as session:
+            snapshot = session.get(CompanyMonitoringSnapshot, snapshot_id)
+            event_row = session.get(MonitoringEvent, event_id)
+            assert snapshot.facts == original_facts
+            assert snapshot.fingerprint == original_fingerprint
+            assert event_row.old_value == original_old
+            assert event_row.new_value == original_new
+            pause_subscription(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            resumed, changed = resume_subscription(
+                session, user_id=user_id, workspace_id=workspace_id, inn=inn
+            )
+            assert changed and resumed.status == "ACTIVE"
+            assert resumed.baseline_snapshot_id != snapshot_id
+            read_entry, changed = mark_feed_entry_read(
+                session, user_id=user_id, workspace_id=workspace_id, entry_id=entry_id
+            )
+            assert changed and read_entry.read_at is not None
+            current_fact = session.get(CompanySemanticFact, fact_ref)
+            _set_fact(current_fact, value=175)
+            session.flush()
+            scan = monitor_company_once(session, company_id=company_id)
+            assert scan.feed_entry_count == 1
+            assert resumed.last_checked_at is not None
+            session.commit()
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+def _exercise_recovery(
+    *, gap_kind: str, recovery_value: int, multi_workspace: bool
+) -> None:
+    email_a = f"monitoring-recovery-a-{uuid4()}@example.test"
+    email_b = f"monitoring-recovery-b-{uuid4()}@example.test" if multi_workspace else None
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_a, workspace_a, company_id = _seed(email_a, inn)
+        user_b = workspace_b = None
+        if multi_workspace:
+            user_b, workspace_b = _bootstrap(email_b, "Monitoring recovery B")
+        with Session(engine) as session:
+            if multi_workspace:
+                _enable_entitlement(session, workspace_b)
+                save_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            subscription_a, _ = subscribe_company(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            if multi_workspace:
+                subscribe_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            baseline = session.get(
+                CompanyMonitoringSnapshot, subscription_a.baseline_snapshot_id
+            )
+            assert baseline.last_known_business_facts[0]["value"] == 100
+            if gap_kind == "MISSING":
+                fact.is_current = False
+            else:
+                _set_fact(fact, value=None, state="SOURCE_UNAVAILABLE")
+            session.flush()
+            gap = monitor_company_once(session, company_id=company_id)
+            assert gap.feed_entry_count == 0
+            gap_snapshot = session.get(
+                CompanyMonitoringSnapshot, subscription_a.baseline_snapshot_id
+            )
+            assert gap_snapshot.fingerprint != baseline.fingerprint
+            assert gap_snapshot.last_known_business_facts[0]["value"] == 100
+            if gap_kind == "MISSING":
+                assert gap_snapshot.facts == []
+                fact.is_current = True
+            _set_fact(fact, value=recovery_value, state="FOUND")
+            session.flush()
+            recovery = monitor_company_once(session, company_id=company_id)
+            changed = recovery_value == 150
+            assert recovery.canonical_event_count == int(changed)
+            assert recovery.feed_entry_count == (2 if multi_workspace else 1) * int(changed)
+            business_events = session.scalars(
+                sa.select(MonitoringEvent).where(
+                    MonitoringEvent.company_id == company_id,
+                    MonitoringEvent.origin == "SOURCE_CHANGE",
+                )
+            ).all()
+            assert len(business_events) == int(changed)
+            if changed:
+                assert business_events[0].change_kind == "FACT_CHANGED"
+                assert business_events[0].old_value == 100
+                assert business_events[0].new_value == 150
+            feed_a = list_workspace_feed(
+                session, user_id=user_a, workspace_id=workspace_a
+            )
+            assert len(feed_a) == int(changed)
+            if changed:
+                assert feed_a[0].old_value == 100
+                assert feed_a[0].new_value == 150
+            if multi_workspace:
+                feed_b = list_workspace_feed(
+                    session, user_id=user_b, workspace_id=workspace_b
+                )
+                assert len(feed_b) == int(changed)
+                if changed:
+                    assert feed_a[0].event_ref == feed_b[0].event_ref
+                    with pytest.raises(ActionDenied, match="не найдено"):
+                        mark_feed_entry_read(
+                            session,
+                            user_id=user_a,
+                            workspace_id=workspace_a,
+                            entry_id=feed_b[0].entry_id,
+                        )
+            repeat = monitor_company_once(session, company_id=company_id)
+            assert repeat.detected_change_count == 0
+            assert repeat.feed_entry_count == 0
+            session.commit()
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+        _login(web, email_a)
+        api_feed = web.get("/app/api/monitoring")
+        assert api_feed.status_code == 200
+        assert len(api_feed.json()["items"]) == int(changed)
+        if changed:
+            assert api_feed.json()["items"][0]["old_value"] == 100
+            assert api_feed.json()["items"][0]["new_value"] == 150
+    finally:
+        _cleanup(email_a, *((email_b,) if email_b else ()), inns=(inn,))
+
+
+@pytest.mark.parametrize("gap_kind", ("MISSING", "SOURCE_UNAVAILABLE"))
+@pytest.mark.parametrize("recovery_value", (100, 150))
+def test_last_known_business_state_survives_coverage_gap(
+    gap_kind: str, recovery_value: int
+):
+    _exercise_recovery(
+        gap_kind=gap_kind, recovery_value=recovery_value, multi_workspace=False
+    )
+
+
+@pytest.mark.parametrize("recovery_value", (100, 150))
+def test_two_workspaces_share_recovery_verdict(recovery_value: int):
+    _exercise_recovery(
+        gap_kind="MISSING", recovery_value=recovery_value, multi_workspace=True
+    )
+
+
+def test_genuinely_new_business_fact_remains_fact_added():
+    email = f"monitoring-new-fact-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_id, workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            subscribe_company(session, user_id=user_id, workspace_id=workspace_id, inn=inn)
+            _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            result = monitor_company_once(session, company_id=company_id)
+            assert result.canonical_event_count == 1
+            assert result.feed_entry_count == 1
+            event_row = session.scalar(
+                sa.select(MonitoringEvent).where(MonitoringEvent.company_id == company_id)
+            )
+            assert event_row.origin == "SOURCE_CHANGE"
+            assert event_row.change_kind == "FACT_ADDED"
+            assert event_row.old_value is None
+            assert event_row.new_value == 100
+            session.rollback()
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+def test_snapshot_fingerprint_includes_last_known_business_state():
+    email = f"monitoring-fingerprint-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        _user_id, _workspace_id, company_id = _seed(email, inn)
+        with Session(engine) as session:
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            known_100 = capture_snapshot(session, company_id=company_id)
+            _set_fact(fact, value=150)
+            session.flush()
+            known_150 = capture_snapshot(session, company_id=company_id)
+            fact.is_current = False
+            session.flush()
+            gap_100 = capture_snapshot(
+                session, company_id=company_id, previous_snapshot=known_100
+            )
+            gap_150 = capture_snapshot(
+                session, company_id=company_id, previous_snapshot=known_150
+            )
+            assert gap_100.facts == gap_150.facts == []
+            assert gap_100.last_known_business_facts[0]["value"] == 100
+            assert gap_150.last_known_business_facts[0]["value"] == 150
+            assert gap_100.fingerprint != gap_150.fingerprint
+            session.rollback()
+    finally:
+        _cleanup(email, inns=(inn,))
+
+
+def test_concurrent_scans_keep_one_business_event_and_consistent_cursors():
+    email_a = f"monitoring-concurrent-a-{uuid4()}@example.test"
+    email_b = f"monitoring-concurrent-b-{uuid4()}@example.test"
+    inn = f"98{uuid4().int % 100_000_000:08d}"
+    try:
+        user_a, workspace_a, company_id = _seed(email_a, inn)
+        user_b, workspace_b = _bootstrap(email_b, "Monitoring concurrent B")
+        with Session(engine) as session:
+            _enable_entitlement(session, workspace_b)
+            save_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            fact = _semantic_fact(session, company_id, value=100, field="TAX_DEBT")
+            fact_ref = fact.fact_ref
+            subscribe_company(session, user_id=user_a, workspace_id=workspace_a, inn=inn)
+            subscribe_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            session.commit()
+        with Session(engine) as session:
+            fact = session.get(CompanySemanticFact, fact_ref)
+            _set_fact(fact, value=150)
+            session.commit()
+
+        gate = Barrier(2)
+
+        def scan():
+            with Session(engine) as session:
+                gate.wait(timeout=10)
+                result = monitor_company_once(session, company_id=company_id)
+                session.commit()
+                return result
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = tuple(executor.map(lambda _index: scan(), range(2)))
+        assert sum(result.canonical_event_count for result in results) == 1
+        assert sum(result.feed_entry_count for result in results) == 2
+        with Session(engine) as session:
+            assert session.scalar(
+                sa.select(sa.func.count()).select_from(MonitoringEvent).where(
+                    MonitoringEvent.company_id == company_id,
+                    MonitoringEvent.origin == "SOURCE_CHANGE",
+                )
+            ) == 1
+            assert session.scalar(
+                sa.select(sa.func.count()).select_from(WorkspaceFeedEntry).join(
+                    MonitoringSubscription,
+                    MonitoringSubscription.id == WorkspaceFeedEntry.subscription_id,
+                ).where(MonitoringSubscription.company_id == company_id)
+            ) == 2
+            subscriptions = session.scalars(
+                sa.select(MonitoringSubscription).where(
+                    MonitoringSubscription.company_id == company_id
+                )
+            ).all()
+            assert len(subscriptions) == 2
+            for subscription in subscriptions:
+                snapshot = session.get(
+                    CompanyMonitoringSnapshot, subscription.baseline_snapshot_id
+                )
+                assert snapshot.facts[0]["value"] == 150
+                assert snapshot.last_known_business_facts[0]["value"] == 150
+    finally:
+        _cleanup(email_a, email_b, inns=(inn,))
 
 
 def test_state_and_missing_fact_changes_fail_closed():
@@ -433,7 +763,9 @@ def test_found_not_found_is_visible_but_source_recovery_is_coverage():
             session.flush()
             second = monitor_company_once(session, company_id=company_id)
             assert second.feed_entry_count == 0
-            _set_fact(fact, value="DEBT", state="FOUND")
+            # Recovery to the last authoritative NOT_FOUND state is coverage
+            # recovery, not a new business change.
+            _set_fact(fact, value=None, state="NOT_FOUND")
             session.flush()
             third = monitor_company_once(session, company_id=company_id)
             assert third.feed_entry_count == 0

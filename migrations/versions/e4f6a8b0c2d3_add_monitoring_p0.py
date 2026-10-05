@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.Column("risk_ref", sa.String(80), nullable=True),
         sa.Column("summary_ref", sa.String(80), nullable=True),
         sa.Column("facts", postgresql.JSONB(), nullable=False),
+        sa.Column("last_known_business_facts", postgresql.JSONB(), nullable=False),
         sa.Column("fact_count", sa.Integer(), nullable=False),
         sa.Column("fingerprint", sa.String(64), nullable=False),
         sa.Column(
@@ -268,9 +269,28 @@ def upgrade() -> None:
         ["workspace_id", "created_at"],
         postgresql_where=sa.text("read_at IS NULL"),
     )
+    op.execute(
+        """
+        CREATE FUNCTION reject_monitoring_history_update() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'Monitoring history content is immutable: %', TG_TABLE_NAME;
+        END;
+        $$
+        """
+    )
+    for table in ("company_monitoring_snapshots", "monitoring_events"):
+        op.execute(
+            f"CREATE TRIGGER trg_{table}_immutable "
+            f"BEFORE UPDATE ON {table} FOR EACH ROW "
+            "EXECUTE FUNCTION reject_monitoring_history_update()"
+        )
 
 
 def downgrade() -> None:
+    for table in ("monitoring_events", "company_monitoring_snapshots"):
+        op.execute(f"DROP TRIGGER trg_{table}_immutable ON {table}")
+    op.execute("DROP FUNCTION reject_monitoring_history_update()")
     op.drop_table("workspace_feed_entries")
     op.drop_table("monitoring_events")
     op.drop_table("monitoring_subscriptions")
