@@ -266,8 +266,15 @@ def test_code_layer_rejects_deployed_property(
         status_tool.validate_schema(candidate, schema)
 
 
+@pytest.mark.parametrize(
+    "merge_subject",
+    (
+        "Merge pull request #109 from example/status",
+        "Merge PR #109: status update",
+    ),
+)
 def test_repository_collection_preserves_unknown_runtime_evidence(
-    canonical_status: dict, monkeypatch
+    canonical_status: dict, monkeypatch, merge_subject: str
 ) -> None:
     def fake_git(*args: str) -> str:
         if args[:2] == ("rev-parse", "test-main"):
@@ -275,16 +282,25 @@ def test_repository_collection_preserves_unknown_runtime_evidence(
         if args[:2] == ("log", "--first-parent"):
             return (
                 f"{'a' * 40}\x1f2026-09-29T10:00:00Z\x1f"
-                "Merge pull request #109 from example/status"
+                + merge_subject
             )
         if args == ("remote", "get-url", "origin"):
             return "https://github.com/kuzmvnew/kontragent.git"
+        if args[:4] == ("ls-tree", "-r", "--name-only", "test-main"):
+            return f"{args[-1]}/base.py"
+        if args == ("show", "test-main:migrations/versions/base.py"):
+            return 'revision = "main-operational-head"\ndown_revision = None'
+        if args == ("show", "test-main:public_migrations/versions/base.py"):
+            return 'revision = "main-public-head"\ndown_revision = None'
         raise AssertionError(f"unexpected git call: {args}")
 
     monkeypatch.setattr(status_tool, "git", fake_git)
     collected = status_tool.collect_repository(canonical_status, "test-main")
 
     assert collected["main_sha"] == "b" * 40
+    assert collected["code"]["latest_relevant_merged_pr"]["number"] == 109
+    assert collected["code"]["migration_heads"]["operational"] == "main-operational-head"
+    assert collected["code"]["migration_heads"]["public"] == "main-public-head"
     assert collected["production"]["runtime_sha"] == "UNKNOWN"
     assert collected["production"]["operational_db_revision"] == "UNKNOWN"
     assert any(

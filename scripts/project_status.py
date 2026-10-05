@@ -611,10 +611,23 @@ def run_update(args: argparse.Namespace) -> None:
     check_parity(args.markdown, render_markdown(status))
 
 
-def migration_heads(directory: Path) -> str:
+def migration_heads(directory: Path, *, ref: str | None = None) -> str:
     revisions: dict[str, Any] = {}
-    for path in sorted(directory.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    if ref is None:
+        sources = (
+            (str(path), path.read_text(encoding="utf-8"))
+            for path in sorted(directory.glob("*.py"))
+        )
+    else:
+        directory_name = directory.relative_to(ROOT).as_posix()
+        paths = git("ls-tree", "-r", "--name-only", ref, "--", directory_name).splitlines()
+        sources = (
+            (path, git("show", f"{ref}:{path}"))
+            for path in paths
+            if path.startswith(f"{directory_name}/") and path.endswith(".py")
+        )
+    for path, source in sources:
+        tree = ast.parse(source, filename=path)
         values: dict[str, Any] = {}
         for node in tree.body:
             if not isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -640,7 +653,7 @@ def migration_heads(directory: Path) -> str:
             referenced.update(str(item) for item in down_revision if item)
     heads = sorted(set(revisions) - referenced)
     if not heads:
-        raise StatusError(f"no migration head found in {directory}")
+        raise StatusError(f"no migration head found in {directory} at {ref or 'working tree'}")
     return ",".join(heads)
 
 
@@ -674,7 +687,7 @@ def collect_repository(status: dict[str, Any], ref: str) -> dict[str, Any]:
         ref,
     )
     merge_sha, merged_at, subject = merge_line.split("\x1f", 2)
-    match = re.search(r"Merge pull request #(\d+)", subject)
+    match = re.search(r"Merge (?:pull request|PR) #(\d+)", subject)
     if not match:
         raise StatusError(f"latest first-parent merge does not name a pull request: {subject}")
     pr_number = int(match.group(1))
@@ -694,10 +707,10 @@ def collect_repository(status: dict[str, Any], ref: str) -> dict[str, Any]:
         ),
     }
     collected["code"]["migration_heads"] = {
-        "operational": migration_heads(ROOT / "migrations" / "versions"),
-        "public": migration_heads(ROOT / "public_migrations" / "versions"),
+        "operational": migration_heads(ROOT / "migrations" / "versions", ref=ref),
+        "public": migration_heads(ROOT / "public_migrations" / "versions", ref=ref),
         "evidence": repository_evidence(
-            "Static Alembic revision graph in migrations/versions and public_migrations/versions",
+            f"Static Alembic revision graph in {ref}:migrations/versions and {ref}:public_migrations/versions",
             observed_at,
         ),
     }
