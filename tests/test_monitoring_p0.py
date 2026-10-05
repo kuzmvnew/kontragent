@@ -150,7 +150,7 @@ def _count(session: Session, model, company_id: int | None = None) -> int:
 
 def test_subscription_guards_idempotency_baseline_audit_and_atomicity():
     email = f"monitoring-guards-{uuid4()}@example.test"
-    inn = "9706063520"
+    inn = "9799990001"
     try:
         user_id, workspace_id, company_id = _seed(email, inn, entitlement=False, save=False)
         with Session(engine) as session:
