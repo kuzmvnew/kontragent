@@ -2,55 +2,98 @@
 {% block title %}{{ projection.company.name }} — NEXT Company{% endblock %}
 {% block content %}
 {% set company = projection.company %}
-<section class="company-head">
-  <p class="eyebrow">Карточка компании</p>
-  <h1>{{ company.name }}</h1>
-  <p>ИНН {{ company.inn }}{% if company.ogrn %} · ОГРН {{ company.ogrn }}{% endif %}</p>
-  <p>{{ company.legal_status or 'Статус уточняется' }}</p>
-  {% if actions.is_saved %}
-    <form action="/app/companies/{{ company.inn }}/unsave" method="post">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="secondary">Удалить из сохранённых</button>
-    </form>
-  {% elif actions.can_save %}
-    <form action="/app/companies/{{ company.inn }}/save" method="post">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit">Сохранить компанию</button>
-    </form>
-  {% else %}
-    <p class="blocked">Сохранение недоступно: {{ actions.save_denial_reason or 'ограничение рабочего пространства' }}</p>
-  {% endif %}
-</section>
-<section class="summary">
-  <p class="eyebrow">Краткий вывод</p>
-  <h2>{{ projection.public_conclusion }}</h2>
-  <p>{{ projection.risk.public_explanation }}</p>
-</section>
-<section>
-  <h2>Реквизиты</h2>
-  <dl class="details">
-    <div><dt>Полное наименование</dt><dd>{{ company.full_name or company.name }}</dd></div>
+{% if notice == 'saved' %}<div class="notice success" role="status">Компания сохранена в {{ workspace.name }}.</div>{% elif notice == 'unsaved' %}<div class="notice" role="status">Компания удалена из сохранённых.</div>{% endif %}
+
+<section class="company-head" data-company-inn="{{ company.inn }}" data-saved="{{ 'true' if actions.is_saved else 'false' }}">
+  <div>
+    <p class="eyebrow">Авторизованная карточка</p>
+    <h1>{{ company.name }}</h1>
+    {% if company.full_name and company.full_name != company.name %}<p class="workspace-lead">{{ company.full_name }}</p>{% endif %}
+  </div>
+  <span class="status-pill">{{ company.legal_status or 'UNKNOWN' }}</span>
+  <dl class="identity-grid">
     <div><dt>ИНН</dt><dd>{{ company.inn }}</dd></div>
     <div><dt>КПП</dt><dd>{{ company.kpp or '—' }}</dd></div>
     <div><dt>ОГРН</dt><dd>{{ company.ogrn or '—' }}</dd></div>
-    <div><dt>Адрес</dt><dd>{{ company.address or '—' }}</dd></div>
+    <div><dt>Дата регистрации</dt><dd>{{ company.registration_date.strftime('%d.%m.%Y') if company.registration_date else '—' }}</dd></div>
+    <div class="wide"><dt>Адрес</dt><dd>{{ company.address or '—' }}</dd></div>
   </dl>
-</section>
-{% if projection.company_view %}
-<section>
-  <h2>Данные проверки</h2>
-  <div class="grid">
-  {% for section in projection.company_view.sections %}
-    {% if section.items or section.state != 'Сведения пока не проверены' %}
-    <article class="card" data-section-key="{{ section.section_key }}">
-      <h3>{{ section.title or section.section_key }}</h3>
-      <p>{{ section.state }}</p>
-      {% if section.items %}<p>{{ section.items|length }} факт(ов)</p>{% endif %}
-    </article>
+  <div class="actions">
+    {% if actions.is_saved %}
+      <span class="saved-badge">Сохранено</span>
+      <form action="/app/companies/{{ company.inn }}/unsave" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="secondary">Удалить из сохранённых</button>
+      </form>
+    {% elif actions.can_save %}
+      <form action="/app/companies/{{ company.inn }}/save" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Сохранить компанию</button>
+      </form>
+    {% else %}
+      <p class="blocked">{{ actions.save_denial_message }}</p>
     {% endif %}
+    <a class="button secondary" href="{{ public_origin or '' }}/companies/{{ company.inn }}">Публичная карточка</a>
+  </div>
+  {% if actions.saved_limit is not none %}<p class="hint">Сохранено {{ actions.saved_used }} из {{ actions.saved_limit }} доступных компаний.</p>{% endif %}
+</section>
+
+<section class="summary">
+  <p class="eyebrow">Risk & Summary</p>
+  <h2>{{ projection.public_conclusion }}</h2>
+  <p>{{ projection.risk.public_explanation }}</p>
+  <div class="summary-meta"><span>{{ projection.risk.public_status }}</span><span>Оценка на {{ projection.risk.assessment_date.strftime('%d.%m.%Y') }}</span></div>
+  {% if projection.risk.factors %}<div class="factor-list">{% for factor in projection.risk.factors %}<article><strong>{{ factor.public_headline }}</strong><p>{{ factor.public_explanation }}</p>{% if factor.source_name %}<small>{{ factor.source_name }}{% if factor.source_data_date %} · {{ factor.source_data_date.strftime('%d.%m.%Y') }}{% endif %}</small>{% endif %}</article>{% endfor %}</div>{% endif %}
+</section>
+
+{% if projection.company_view %}
+<section class="semantic-section">
+  <div class="section-heading"><div><p class="eyebrow">Company View</p><h2>Сведения проверки</h2></div><span class="contract-badge">{{ projection.company_view.contract_version }}</span></div>
+  <div class="domain-grid">
+  {% for section in projection.company_view.sections %}
+    <article class="domain-card" data-section-key="{{ section.section_key }}" data-section-state="{{ section.state }}">
+      <header><div><p class="domain-key">{{ section.section_key }}</p><h3>{{ section.title or section.section_key }}</h3></div><span class="state-badge">{{ section.state }}</span></header>
+      {% if section.items %}
+        <dl class="fact-list">
+        {% for item in section.items %}
+          <div>
+            <dt>{{ item.label or item.field_key }}{% if item.period %}<small>{{ item.period }}</small>{% endif %}</dt>
+            <dd>{{ item.value | workspace_value }}</dd>
+            <dd class="fact-meta">{{ item.state }} · {{ item.source.name }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date.strftime('%d.%m.%Y') }}{% endif %} · {{ item.source.freshness }}</dd>
+            {% if item.alternative_sources %}<dd class="fact-meta">Также подтверждают: {% for source in item.alternative_sources %}{{ source.name }}{% if not loop.last %}; {% endif %}{% endfor %}</dd>{% endif %}
+            {% if item.limitations %}<dd class="limitation">{{ item.limitations | join(' ') }}</dd>{% endif %}
+          </div>
+        {% endfor %}
+        </dl>
+      {% else %}
+        <p class="empty">Факты отсутствуют. Состояние домена: {{ section.state }}.</p>
+      {% endif %}
+    </article>
   {% endfor %}
   </div>
 </section>
+{% else %}
+<section class="empty-state"><h2>Семантическая проекция пока недоступна</h2><p>Карточка не подменяет отсутствие Company View данными провайдера.</p></section>
 {% endif %}
-<p class="hint">Публичная карточка: <a href="/companies/{{ company.inn }}">/companies/{{ company.inn }}</a></p>
+
+<section class="source-section">
+  <p class="eyebrow">Источники и актуальность</p>
+  <h2>Покрытие проверки</h2>
+  <div class="source-grid">{% for source in projection.sources %}<article><header><h3>{{ source.public_name }}</h3><span class="state-badge">{{ source.state }}</span></header><p>{{ source.public_explanation }}</p><small>Дата данных: {{ source.source_data_date.strftime('%d.%m.%Y') if source.source_data_date else 'не указана' }} · результат: {{ source.result_date.strftime('%d.%m.%Y') }}</small></article>{% endfor %}</div>
+</section>
+
+{% if projection.public_limitations or projection.summary.recommendations %}
+<section class="guidance-grid">
+  <article><p class="eyebrow">Ограничения</p><h2>Что учитывать</h2><ul>{% for item in projection.public_limitations %}<li><strong>{{ item.headline }}</strong> {{ item.short_explanation }} {{ item.what_remains_unknown }}</li>{% else %}<li>Дополнительные ограничения не указаны.</li>{% endfor %}</ul></article>
+  <article><p class="eyebrow">Рекомендации</p><h2>Следующие шаги</h2><ul>{% for item in projection.summary.recommendations %}<li><strong>{{ item.action }}</strong> {{ item.rationale }}</li>{% else %}<li>Рекомендации не сформированы.</li>{% endfor %}</ul></article>
+</section>
+{% endif %}
+
+{% if actions.is_saved %}
+<section class="monitoring-preview" data-monitoring-state="{{ actions.monitoring.state }}">
+  <div><p class="eyebrow">Monitoring</p><h2>Мониторинг изменений</h2><p>{{ actions.monitoring.message }}</p></div>
+  {% if actions.monitoring.entry_enabled %}<a class="button secondary" href="/app/companies/{{ company.inn }}/monitoring">Открыть статус мониторинга</a>{% endif %}
+  <span class="state-badge">{{ actions.monitoring.state }}</span>
+</section>
+{% endif %}
 {% endblock %}

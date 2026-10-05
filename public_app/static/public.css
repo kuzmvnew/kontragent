@@ -3,6 +3,7 @@
 .requisites-actions{display:flex;align-items:center;gap:.75rem;margin-top:.75rem;flex-wrap:wrap}
 .copy-button{border:1px solid var(--border,#d8dde6);background:var(--surface,#fff);border-radius:.65rem;padding:.55rem .8rem;font:inherit;cursor:pointer}
 .copy-button:hover,.copy-button:focus-visible{border-color:currentColor}
+.workspace-login{border:1px solid var(--ink);border-radius:5px;padding:11px 16px;text-decoration:none;font-weight:750;white-space:nowrap}.workspace-login:hover,.workspace-login:focus-visible{background:var(--ink);color:#fff}.workspace-entry{grid-column:1/-1;display:flex;align-items:center;gap:14px;flex-wrap:wrap}.workspace-entry-button{display:inline-flex;background:var(--accent);color:#fff;border-radius:5px;padding:13px 19px;text-decoration:none;font-weight:800}.workspace-entry-button:hover,.workspace-entry-button:focus-visible{background:#d95627}.workspace-entry span{color:var(--muted);font-size:14px}@media(max-width:760px){.workspace-login{margin-left:auto}.workspace-entry{align-items:flex-start;flex-direction:column}}
 .copy-status{min-height:1.25rem;font-size:.875rem}
 .empty-state{margin:.5rem 0;color:var(--muted,#667085)}
 .domain-state-card .state-badge{display:inline-block;margin:.25rem 0 .65rem}

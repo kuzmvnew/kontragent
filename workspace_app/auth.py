@@ -12,9 +12,10 @@ import hashlib
 import hmac
 import re
 import secrets
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -32,6 +33,9 @@ _SCRYPT_R = 8
 _SCRYPT_P = 1
 _SCRYPT_MAXMEM = 64 * 1024 * 1024
 DEFAULT_SESSION_TTL = timedelta(hours=8)
+_RETURN_TO_MAX_LENGTH = 1000
+_RETURN_TO_DECODE_LIMIT = 4
+_ASCII_HEX_DIGITS = frozenset("0123456789ABCDEFabcdef")
 
 
 @dataclass(frozen=True)
@@ -254,13 +258,101 @@ def set_active_workspace(
     record.active_workspace_id = workspace_id
 
 
+def _contains_unicode_control(value: str) -> bool:
+    return any(
+        unicodedata.category(character).startswith("C") for character in value
+    )
+
+
+def _has_invalid_percent_escape(value: str) -> bool:
+    index = 0
+    while index < len(value):
+        if value[index] != "%":
+            index += 1
+            continue
+        if index + 2 >= len(value):
+            return True
+        if (
+            value[index + 1] not in _ASCII_HEX_DIGITS
+            or value[index + 2] not in _ASCII_HEX_DIGITS
+        ):
+            return True
+        index += 3
+    return False
+
+
+def _query_is_unsafe(value: str) -> bool:
+    candidate = value
+    for _ in range(_RETURN_TO_DECODE_LIMIT):
+        if (
+            _has_invalid_percent_escape(candidate)
+            or _contains_unicode_control(candidate)
+        ):
+            return True
+        decoded = unquote(candidate, errors="strict")
+        if _contains_unicode_control(decoded):
+            return True
+        if decoded == candidate:
+            return False
+        candidate = decoded
+    return True
+
+
 def safe_return_to(value: str | None, *, default: str = "/app") -> str:
-    raw = str(value or "").strip()
-    if not raw:
+    try:
+        raw = "" if value is None else str(value)
+        if (
+            not raw
+            or len(raw) > _RETURN_TO_MAX_LENGTH
+            or raw != raw.strip()
+            or raw.startswith("//")
+            or "\\" in raw
+            or _contains_unicode_control(raw)
+        ):
+            return default
+
+        parsed = urlsplit(raw)
+        if parsed.scheme or parsed.netloc or parsed.fragment:
+            return default
+
+        path = parsed.path
+        if "//" in path or (path != "/app" and not path.startswith("/app/")):
+            return default
+
+        candidate = path
+        for _ in range(_RETURN_TO_DECODE_LIMIT):
+            if (
+                _has_invalid_percent_escape(candidate)
+                or _contains_unicode_control(candidate)
+                or "\\" in candidate
+            ):
+                return default
+            if any(segment in {".", ".."} for segment in candidate.split("/")):
+                return default
+
+            decoded = unquote(candidate, errors="strict")
+            if _contains_unicode_control(decoded):
+                return default
+            if decoded == candidate:
+                break
+            if decoded.count("/") != candidate.count("/") or "\\" in decoded:
+                return default
+            if any(segment in {".", ".."} for segment in decoded.split("/")):
+                return default
+            candidate = decoded
+        else:
+            return default
+
+        if "%" in candidate:
+            return default
+        if "//" in candidate or (
+            candidate != "/app" and not candidate.startswith("/app/")
+        ):
+            return default
+        if any(segment in {".", ".."} for segment in candidate.split("/")):
+            return default
+        if parsed.query and _query_is_unsafe(parsed.query):
+            return default
+    except (TypeError, ValueError, UnicodeError, OverflowError):
         return default
-    parsed = urlsplit(raw)
-    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/app"):
-        return default
-    if raw.startswith("//") or "\\" in raw:
-        return default
-    return raw[:1000]
+    return raw

@@ -4,11 +4,14 @@
 <section>
   <p class="eyebrow">Workspace</p>
   <h1>{{ workspace.name }}</h1>
-  <p>{{ principal.email }}</p>
-  <div class="metric"><span>Сохранено компаний</span><strong>{{ saved_count }}</strong></div>
+  <p class="workspace-lead">Активное рабочее пространство для {{ principal.email }} · роль {{ role.name }}</p>
+  <div class="home-grid">
+    <div class="metric"><span>Сохранено компаний</span><strong>{{ saved_count }}</strong></div>
+    <div class="metric"><span>Рабочий контекст</span><strong>{{ role.role_key }}</strong></div>
+  </div>
   <div class="actions">
     <a class="button" href="/app/search">Найти компанию</a>
-    <a class="button secondary" href="/app/saved">Сохранённые</a>
+    <a class="button secondary" href="/app/saved">Открыть сохранённые</a>
   </div>
 </section>
 {% endblock %}

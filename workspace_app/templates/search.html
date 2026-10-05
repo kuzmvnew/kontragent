@@ -20,6 +20,8 @@
       <p class="empty">Совпадений нет.</p>
     {% endfor %}
   </div>
+  {% else %}
+    <div class="empty-state"><h2>Введите ИНН или название</h2><p>Поиск работает по принятой семантической проекции компаний.</p></div>
   {% endif %}
 </section>
 {% endblock %}

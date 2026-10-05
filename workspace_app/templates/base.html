@@ -11,12 +11,13 @@
 <header class="app-header">
   <a class="brand" href="/app">NEXT Company</a>
   {% if principal %}
-  <nav>
+  <nav aria-label="Навигация кабинета">
     <a href="/app">Главная</a>
     <a href="/app/search">Поиск</a>
     <a href="/app/saved">Сохранённые</a>
-    <a href="/workspace/select">Workspace</a>
+    <a href="/workspace/select">Сменить Workspace</a>
   </nav>
+  {% if workspace %}<div class="workspace-context" aria-label="Активное рабочее пространство"><span>{{ workspace.name }}</span>{% if role %}<small>{{ role.name }}</small>{% endif %}</div>{% endif %}
   <form action="/logout" method="post">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit" class="link-button">Выйти</button>
@@ -24,5 +25,6 @@
   {% endif %}
 </header>
 <main class="shell">{% block content %}{% endblock %}</main>
+<footer class="app-footer"><a href="{{ public_origin or '' }}/">Публичный поиск компаний</a><span>NEXT Company</span></footer>
 </body>
 </html>
