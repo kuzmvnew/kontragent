@@ -76,6 +76,6 @@ No production scheduler, worker schedule, notification channel, or public detect
 - Monitoring P0 PostgreSQL/API tests: 9 passed, zero skipped.
 - Workspace, browser, Company View, S02, and schema focused regression: 194 passed, 3 unrelated skips.
 - Real Chromium Monitoring flow: login, save, enable, semantic change, controlled scan, feed, card, pause passed. A second browser test proved separate entries and cross-Workspace read denial.
-- Final full repository suite: 1,830 passed, 20 skipped, zero failures. The Mac's disk was below the existing Firmoteka safety threshold, so this local run set `FACTORY_MIN_DISK_FREE_PERCENT=1`; the unmodified threshold caused three unrelated Firmoteka scale tests to pause intake.
+- Final full repository suite: 1,831 passed, 20 skipped, zero failures. The Mac's disk was below the existing Firmoteka safety threshold, so this local run set `FACTORY_MIN_DISK_FREE_PERCENT=1`; the unmodified threshold caused three unrelated Firmoteka scale tests to pause intake.
 
 Known P0 limits: there is no production scan cadence or delivery outside the in-app feed; source dates are not an authoritative event occurrence timestamp; absent facts do not produce client-visible resolved alerts; pause/re-enable does not replay historical events; a recurrence of the exact same transition with the same source data dates shares its dedupe identity. No production Monitoring acceptance or deployment is claimed.
