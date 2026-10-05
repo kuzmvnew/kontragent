@@ -1564,11 +1564,12 @@ def test_vertical_slice_html_api_parity_saved_unsave_and_monitoring_contract():
             entitlement.enabled = True
             session.commit()
 
-        implemented_html = web.get(f"/app/companies/{p.company.inn}")
-        implemented_api = web.get(f"/app/api/companies/{p.company.inn}").json()
-        assert 'data-monitoring-state="NOT_IMPLEMENTED"' in implemented_html.text
-        assert implemented_api["actions"]["monitoring"]["state"] == "NOT_IMPLEMENTED"
-        assert "Мониторинг включён" not in implemented_html.text
+        enabled_html = web.get(f"/app/companies/{p.company.inn}")
+        enabled_api = web.get(f"/app/api/companies/{p.company.inn}").json()
+        assert 'data-monitoring-state="NOT_ACTIVE"' in enabled_html.text
+        assert enabled_api["actions"]["monitoring"]["state"] == "NOT_ACTIVE"
+        monitoring_page = web.get(f"/app/companies/{p.company.inn}/monitoring")
+        assert "Включить мониторинг" in monitoring_page.text
 
         removed = web.post(
             f"/app/companies/{p.company.inn}/unsave",

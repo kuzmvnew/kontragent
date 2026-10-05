@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
+from app.models.monitoring import MonitoringSubscription
 from app.models.workspace import (
     CustomerUser,
     SavedCompany,
@@ -609,6 +610,27 @@ def unsave_company(
         permission_key="company.unsave",
     )
     company = resolve_legal_company(session, inn)
+    session.scalar(
+        sa.select(SavedCompany.id)
+        .where(
+            SavedCompany.workspace_id == workspace_id,
+            SavedCompany.company_id == company.id,
+        )
+        .with_for_update()
+    )
+    active_subscription = session.scalar(
+        sa.select(MonitoringSubscription.id).where(
+            MonitoringSubscription.workspace_id == workspace_id,
+            MonitoringSubscription.company_id == company.id,
+            MonitoringSubscription.status == "ACTIVE",
+        )
+    )
+    if active_subscription is not None:
+        raise ActionDenied(
+            "monitoring_active",
+            "Сначала приостановите мониторинг компании.",
+            status_code=409,
+        )
     saved_id = session.scalar(
         sa.delete(SavedCompany)
         .where(

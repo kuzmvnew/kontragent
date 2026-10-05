@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Лента мониторинга — NEXT Company{% endblock %}
+{% block content %}
+<section class="monitoring-feed">
+  <p class="eyebrow">Workspace Monitoring</p>
+  <h1>Лента мониторинга</h1>
+  <p class="workspace-lead">Изменения по компаниям, для которых в этом Workspace включён мониторинг.</p>
+  {% if entries %}
+    <div class="feed-list">
+    {% for item in entries %}
+      <article class="feed-item" data-feed-entry-id="{{ item.entry_id }}" data-read="{{ 'true' if item.read_at else 'false' }}">
+        <div class="feed-item-head">
+          <div>
+            <p class="eyebrow">{{ item.company_name }} · ИНН {{ item.inn }}</p>
+            <h2>{{ item.title }}</h2>
+          </div>
+          <span class="state-badge">{{ item.severity }}</span>
+        </div>
+        <p>{{ item.old_value | workspace_value }} → {{ item.new_value | workspace_value }}</p>
+        {% if item.old_state != item.new_state %}<p class="hint">Состояние: {{ item.old_state or '—' }} → {{ item.new_state or '—' }}</p>{% endif %}
+        <p class="fact-meta">Обнаружено: {{ item.detected_at.strftime('%d.%m.%Y %H:%M') }}{% if item.source_code %} · Источник: {{ item.source_code }}{% endif %}{% if item.evidence_refs %} · Свидетельство: {{ item.evidence_refs | join(', ') }}{% endif %}</p>
+        <div class="actions">
+          <a class="button secondary" href="/app/companies/{{ item.inn }}">Открыть карточку</a>
+          {% if item.read_at %}
+            <span class="saved-badge">Прочитано</span>
+          {% else %}
+            <form action="/app/monitoring/feed/{{ item.entry_id }}/read" method="post">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <button type="submit" class="secondary">Отметить прочитанным</button>
+            </form>
+          {% endif %}
+        </div>
+      </article>
+    {% endfor %}
+    </div>
+  {% else %}
+    <section class="empty-state"><h2>Пока нет событий</h2><p>После первого включения создаётся исходное состояние компании. Новые изменения появятся здесь после проверки.</p></section>
+  {% endif %}
+</section>
+{% endblock %}

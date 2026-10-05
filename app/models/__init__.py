@@ -86,6 +86,12 @@ from app.models.publication import (
 )
 from app.models.summary import CompanySummary
 from app.models.semantic_fact import CompanySemanticFact
+from app.models.monitoring import (
+    CompanyMonitoringSnapshot,
+    MonitoringEvent,
+    MonitoringSubscription,
+    WorkspaceFeedEntry,
+)
 from app.models.source import (
     CompanySourceData,
     DatasetPublication,
@@ -174,6 +180,10 @@ __all__ = [
     "CompanySummary",
     "CompanySummaryV3",
     "CompanySemanticFact",
+    "CompanyMonitoringSnapshot",
+    "MonitoringEvent",
+    "MonitoringSubscription",
+    "WorkspaceFeedEntry",
     "PublicProjectionPublication",
     "PublicPublicationRequest",
     "CompanySourceData",
