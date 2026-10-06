@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.database.postgres import SessionLocal, engine
 from app.models.company import Company
+from app.models.semantic_fact import CompanySemanticFact
 from app.models.workspace import SavedCompany, WorkspaceMembership
+from tests.test_monitoring_p0 import NOW, _enable_entitlement, _semantic_fact, _set_fact
 from public_app.main import create_app as create_public_app
 from tests.public_test_support import projection
 from tests.test_workspace_p0 import (
@@ -26,6 +28,8 @@ from tests.test_workspace_p0 import (
     _grant_membership,
 )
 from workspace_app.main import create_app as create_workspace_app
+from workspace_app.monitoring_service import monitor_company_once, subscribe_company
+from workspace_app.service import save_company
 
 
 class LiveServer:
@@ -155,6 +159,166 @@ def test_browser_public_login_search_save_saved_open_and_unsave():
             browser.close()
     finally:
         _cleanup(email, inns=(item.company.inn,))
+
+
+def test_browser_monitoring_enable_event_feed_and_pause():
+    email = f"browser-monitoring-{uuid4()}@example.test"
+    item = projection(sequence=100_100_152)
+    try:
+        _seed_company(item)
+        _user_id, workspace_id = _bootstrap(email, "Browser Monitoring")
+        with Session(engine) as session:
+            _enable_entitlement(session, workspace_id)
+            company_id = session.scalar(
+                sa.select(Company.id).where(Company.inn == item.company.inn)
+            )
+            _semantic_fact(
+                session,
+                company_id,
+                section="ADDRESS",
+                field="ADDRESS",
+                value="Старый адрес",
+            )
+            session.commit()
+        public, workspace = _apps(item)
+        with workspace, public, sync_playwright() as manager:
+            browser = manager.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(f"{workspace.url}/login")
+            _login(page, email)
+            page.goto(f"{workspace.url}/app/companies/{item.company.inn}")
+            page.get_by_role("button", name="Сохранить компанию").click()
+            page.get_by_role("link", name="Открыть статус мониторинга").click()
+            expect(page.locator(".state-panel")).to_have_attribute(
+                "data-monitoring-state", "NOT_ACTIVE"
+            )
+            page.get_by_role("button", name="Включить мониторинг").click()
+            expect(page.locator(".state-panel")).to_have_attribute(
+                "data-monitoring-state", "ACTIVE"
+            )
+            with Session(engine) as session:
+                fact = session.scalar(
+                    sa.select(CompanySemanticFact).where(
+                        CompanySemanticFact.company_id == company_id,
+                        CompanySemanticFact.field_key == "ADDRESS",
+                    )
+                )
+                _set_fact(fact, value="Новый адрес")
+                session.flush()
+                result = monitor_company_once(session, company_id=company_id)
+                assert result.canonical_event_count == 1
+                assert result.feed_entry_count == 1
+                session.commit()
+            page.get_by_role("link", name="Лента мониторинга").click()
+            expect(page.get_by_text("Новый адрес")).to_be_visible()
+            expect(page.get_by_text("Старый адрес")).to_be_visible()
+            page.get_by_role("link", name="Открыть карточку").click()
+            expect(page.locator(".company-head")).to_have_attribute(
+                "data-company-inn", item.company.inn
+            )
+            page.get_by_role("link", name="Открыть статус мониторинга").click()
+            page.get_by_role("button", name="Приостановить мониторинг").click()
+            expect(page.locator(".state-panel")).to_have_attribute(
+                "data-monitoring-state", "PAUSED"
+            )
+            browser.close()
+    finally:
+        _cleanup(email, inns=(item.company.inn,))
+
+
+def test_browser_two_workspace_monitoring_feeds_are_separate():
+    email_a = f"browser-monitoring-a-{uuid4()}@example.test"
+    email_b = f"browser-monitoring-b-{uuid4()}@example.test"
+    item = projection(sequence=100_100_153)
+    try:
+        _seed_company(item)
+        user_a, workspace_a = _bootstrap(email_a, "Monitoring Tenant A")
+        user_b, workspace_b = _bootstrap(email_b, "Monitoring Tenant B")
+        with Session(engine) as session:
+            company_id = session.scalar(
+                sa.select(Company.id).where(Company.inn == item.company.inn)
+            )
+            _enable_entitlement(session, workspace_a)
+            _enable_entitlement(session, workspace_b)
+            save_company(
+                session,
+                user_id=user_a,
+                workspace_id=workspace_a,
+                inn=item.company.inn,
+            )
+            save_company(
+                session,
+                user_id=user_b,
+                workspace_id=workspace_b,
+                inn=item.company.inn,
+            )
+            fact = _semantic_fact(
+                session,
+                company_id,
+                section="ADDRESS",
+                field="ADDRESS",
+                value="Before",
+            )
+            subscribe_company(
+                session,
+                user_id=user_a,
+                workspace_id=workspace_a,
+                inn=item.company.inn,
+            )
+            subscribe_company(
+                session,
+                user_id=user_b,
+                workspace_id=workspace_b,
+                inn=item.company.inn,
+            )
+            _set_fact(fact, value="After")
+            session.flush()
+            result = monitor_company_once(session, company_id=company_id)
+            assert result.canonical_event_count == 1
+            assert result.feed_entry_count == 2
+            session.commit()
+
+        _public, workspace = _apps(item)
+        with workspace, sync_playwright() as manager:
+            browser = manager.chromium.launch(headless=True)
+            pages = []
+            for email, workspace_name in (
+                (email_a, "Monitoring Tenant A"),
+                (email_b, "Monitoring Tenant B"),
+            ):
+                context = browser.new_context()
+                page = context.new_page()
+                page.goto(f"{workspace.url}/login")
+                _login(page, email)
+                page.goto(f"{workspace.url}/app/monitoring")
+                expect(page.locator(".workspace-context")).to_contain_text(
+                    workspace_name
+                )
+                expect(page.locator(".feed-item")).to_have_count(1)
+                expect(page.get_by_text("After")).to_be_visible()
+                pages.append((context, page))
+            entry_a = pages[0][1].locator(".feed-item").get_attribute(
+                "data-feed-entry-id"
+            )
+            entry_b = pages[1][1].locator(".feed-item").get_attribute(
+                "data-feed-entry-id"
+            )
+            assert entry_a and entry_b and entry_a != entry_b
+            csrf_a = next(
+                cookie["value"]
+                for cookie in pages[0][0].cookies()
+                if cookie["name"] == "nextcompany_csrf"
+            )
+            denied = pages[0][0].request.post(
+                f"{workspace.url}/app/api/monitoring/feed/{entry_b}/read",
+                headers={"x-csrf-token": csrf_a},
+            )
+            assert denied.status == 404
+            for context, _page in pages:
+                context.close()
+            browser.close()
+    finally:
+        _cleanup(email_a, email_b, inns=(item.company.inn,))
 
 
 def test_browser_two_workspace_selection_keeps_destination_and_isolates_saved():

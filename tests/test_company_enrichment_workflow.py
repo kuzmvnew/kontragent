@@ -4,6 +4,8 @@ import threading
 import time
 from uuid import UUID, uuid4
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
@@ -1073,7 +1075,7 @@ def test_legacy_unknown_fails_closed_before_recovery_then_materializes_once(
 ):
     with Session(engine) as session:
         assert session.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-            "d3e5f7a9b1c4"
+            ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
         )
         baseline = collect_factory_metrics(
             session, window_hours=1, now=NOW, enforce_read_only=False

@@ -9,9 +9,30 @@
     <strong>{{ monitoring.state }}</strong>
     <p>{{ monitoring.message }}</p>
   </div>
-  {% if monitoring.state == 'NOT_IMPLEMENTED' %}
-    <p class="hint">Подписка, события и лента изменений в этой задаче не создаются. Эта страница — стабильная точка перехода для следующего Monitoring workstream.</p>
+  {% if monitoring.subscription_id %}
+    <dl class="identity-grid">
+      <div><dt>Мониторинг начат</dt><dd>{{ monitoring.started_at or '—' }}</dd></div>
+      <div><dt>Последняя проверка</dt><dd>{{ monitoring.last_checked_at or '—' }}</dd></div>
+    </dl>
   {% endif %}
-  <div class="actions"><a class="button secondary" href="/app/companies/{{ company.inn }}">Вернуться к карточке</a><a class="button secondary" href="/app/saved">Сохранённые компании</a></div>
+  {% if monitoring.can_manage %}
+    {% if monitoring.state == 'NOT_ACTIVE' %}
+      <form action="/app/companies/{{ company.inn }}/monitoring/enable" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Включить мониторинг</button>
+      </form>
+    {% elif monitoring.state == 'ACTIVE' %}
+      <form action="/app/companies/{{ company.inn }}/monitoring/pause" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="secondary">Приостановить мониторинг</button>
+      </form>
+    {% elif monitoring.state == 'PAUSED' %}
+      <form action="/app/companies/{{ company.inn }}/monitoring/resume" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Возобновить мониторинг</button>
+      </form>
+    {% endif %}
+  {% endif %}
+  <div class="actions"><a class="button secondary" href="/app/companies/{{ company.inn }}">Вернуться к карточке</a><a class="button secondary" href="/app/monitoring">Лента мониторинга</a><a class="button secondary" href="/app/saved">Сохранённые компании</a></div>
 </section>
 {% endblock %}

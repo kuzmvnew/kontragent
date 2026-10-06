@@ -50,6 +50,14 @@ from workspace_app.service import (
     save_company,
     unsave_company,
 )
+from workspace_app.monitoring_service import (
+    get_monitoring_state,
+    list_workspace_feed,
+    mark_feed_entry_read,
+    pause_subscription,
+    resume_subscription,
+    subscribe_company,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -278,36 +286,14 @@ def _card_context(session, principal, projection) -> dict:
         "entitlement_blocked": "Сохранение компаний не подключено для этого Workspace.",
         "quota_exceeded": "Достигнут лимит сохранённых компаний.",
     }.get(effective_save_denial, "Сохранение недоступно для этого Workspace.")
-    monitoring_allowed, monitoring_denial, _monitoring_limit = action_state(
+    state = get_monitoring_state(
         session,
         user_id=principal.user_id,
         workspace_id=workspace_id,
-        permission_key="monitoring.manage",
+        inn=projection.company.inn,
     )
-    if not saved:
-        monitoring = {
-            "state": "NOT_ACTIVE",
-            "message": "Сначала сохраните компанию в этом Workspace.",
-            "entry_enabled": False,
-        }
-    elif monitoring_allowed:
-        monitoring = {
-            "state": "NOT_IMPLEMENTED",
-            "message": "Подписка на мониторинг появится в следующем продуктовом этапе.",
-            "entry_enabled": True,
-        }
-    elif monitoring_denial == "permission_denied":
-        monitoring = {
-            "state": "NOT_ACTIVE",
-            "message": "У вашей роли нет права управлять мониторингом.",
-            "entry_enabled": True,
-        }
-    else:
-        monitoring = {
-            "state": "NOT_ACTIVE",
-            "message": "Мониторинг не подключён для этого Workspace.",
-            "entry_enabled": True,
-        }
+    monitoring = _monitoring_payload(state)
+    monitoring["entry_enabled"] = saved
     return {
         "is_saved": saved,
         "can_save": can_save and (remaining is None or remaining > 0 or saved),
@@ -317,6 +303,39 @@ def _card_context(session, principal, projection) -> dict:
         "saved_used": used,
         "saved_remaining": remaining,
         "monitoring": monitoring,
+    }
+
+
+def _monitoring_payload(state) -> dict:
+    return {
+        "state": state.state,
+        "message": state.message,
+        "can_manage": state.can_manage,
+        "denial_code": state.denial_code,
+        "subscription_id": str(state.subscription_id) if state.subscription_id else None,
+        "started_at": state.started_at.isoformat() if state.started_at else None,
+        "paused_at": state.paused_at.isoformat() if state.paused_at else None,
+        "last_checked_at": state.last_checked_at.isoformat() if state.last_checked_at else None,
+    }
+
+
+def _feed_payload(item) -> dict:
+    return {
+        "id": str(item.entry_id),
+        "event_ref": item.event_ref,
+        "company": {"inn": item.inn, "name": item.company_name},
+        "title": item.title,
+        "event_type": item.event_type,
+        "change_kind": item.change_kind,
+        "old_value": item.old_value,
+        "new_value": item.new_value,
+        "old_state": item.old_state,
+        "new_state": item.new_state,
+        "severity": item.severity,
+        "detected_at": item.detected_at.isoformat(),
+        "source_code": item.source_code,
+        "evidence_refs": list(item.evidence_refs),
+        "read_at": item.read_at.isoformat() if item.read_at else None,
     }
 
 
@@ -926,6 +945,189 @@ def create_app(
                 "monitoring": actions["monitoring"],
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
             },
+        )
+
+    @app.post("/app/companies/{inn}/monitoring/{action}")
+    async def monitoring_action_form(request: Request, inn: str, action: str):
+        if action not in {"enable", "pause", "resume"}:
+            raise StarletteHTTPException(status_code=404)
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                operations = {
+                    "enable": subscribe_company,
+                    "pause": pause_subscription,
+                    "resume": resume_subscription,
+                }
+                operations[action](
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    inn=inn,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse(
+            f"/app/companies/{inn}/monitoring",
+            status_code=303,
+        )
+
+    @app.get("/app/monitoring", response_class=HTMLResponse)
+    def monitoring_feed_page(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="monitoring.manage"
+                )
+                entries = list_workspace_feed(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+                workspace, role = _workspace_shell(session, context)
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    return RedirectResponse(
+                        "/login?return_to=/app/monitoring", status_code=303
+                    )
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        "/workspace/select?return_to=/app/monitoring", status_code=303
+                    )
+                return _html_error(request, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="monitoring_feed.html",
+            context={
+                "principal": principal,
+                "workspace": workspace,
+                "role": role,
+                "entries": entries,
+                "csrf": request.cookies.get(CSRF_COOKIE) or "",
+            },
+        )
+
+    @app.post("/app/monitoring/feed/{entry_id}/read")
+    async def monitoring_feed_read_form(request: Request, entry_id: UUID):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                mark_feed_entry_read(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    entry_id=entry_id,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse("/app/monitoring", status_code=303)
+
+    @app.get("/app/api/companies/{inn}/monitoring")
+    def api_monitoring_state(request: Request, inn: str):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="company.view"
+                )
+                state = get_monitoring_state(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    inn=inn,
+                )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(_monitoring_payload(state))
+
+    @app.post("/app/api/companies/{inn}/monitoring/{action}")
+    def api_monitoring_action(request: Request, inn: str, action: str):
+        if action not in {"enable", "pause", "resume"}:
+            raise StarletteHTTPException(status_code=404)
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                operations = {
+                    "enable": subscribe_company,
+                    "pause": pause_subscription,
+                    "resume": resume_subscription,
+                }
+                _subscription, changed = operations[action](
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    inn=inn,
+                )
+                state = get_monitoring_state(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    inn=inn,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {"changed": changed, "monitoring": _monitoring_payload(state)},
+            status_code=201 if action == "enable" and changed else 200,
+        )
+
+    @app.get("/app/api/monitoring")
+    def api_monitoring_feed(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="monitoring.manage"
+                )
+                entries = list_workspace_feed(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"items": [_feed_payload(item) for item in entries]})
+
+    @app.post("/app/api/monitoring/feed/{entry_id}/read")
+    def api_monitoring_feed_read(request: Request, entry_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                entry, changed = mark_feed_entry_read(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    entry_id=entry_id,
+                )
+                read_at = entry.read_at
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {"id": str(entry_id), "changed": changed, "read_at": read_at.isoformat()}
         )
 
     @app.get("/app/api/context")
