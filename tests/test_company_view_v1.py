@@ -12,9 +12,12 @@ from app.contracts.company_view_v1 import (
 )
 from app.database.postgres import engine
 from app.models.company import Company
+from app.models.source import DataSet, DataSource
 from app.models.semantic_fact import CompanySemanticFact
+from app.models.tax_regime import CompanyTaxRegimeSnapshot
 from app.services.company_view_service import (
     SemanticCandidate,
+    materialize_company_view_v1,
     filter_company_view,
     persist_semantic_facts,
     normalize_firmoteka_projection,
@@ -447,6 +450,115 @@ def test_persisted_fact_identity_survives_selected_value_and_source_change():
         assert rows[0].selected_evidence["source_code"] == "OFFICIAL"
         assert rows[0].evidence_history[0]["value"] == "1"
         assert rows[0].is_current is True
+        session.rollback()
+
+
+def test_tax_regime_snapshot_materializes_as_provenance_backed_semantic_fact():
+    with Session(engine) as session:
+        source = DataSource(
+            code=f"fns_tax_regime_cv_{int(NOW.timestamp())}",
+            name="FNS tax regime Company View test",
+            source_type="official",
+            priority=10,
+            enabled=True,
+        )
+        session.add(source)
+        session.flush()
+        datasets = {}
+        for code, source_url in (
+            (
+                "fns_tax_regime",
+                "https://www.nalog.gov.ru/opendata/7707329152-snr/",
+            ),
+            ("fns_snr", "https://www.nalog.gov.ru/opendata/7707329152-snr/"),
+        ):
+            dataset = session.scalar(sa.select(DataSet).where(DataSet.code == code))
+            if dataset is None:
+                dataset = DataSet(
+                    source_id=source.id,
+                    code=code,
+                    name=code,
+                    domain="tax_regime",
+                    update_mode="bulk",
+                    data_format="xml",
+                    priority=10,
+                    source_url=source_url,
+                )
+                session.add(dataset)
+                session.flush()
+            dataset.enabled = True
+            dataset.operational_status = "current"
+            dataset.last_success_at = NOW
+            dataset.last_data_date = date(2026, 9, 1)
+            dataset.source_as_of = NOW
+            dataset.retrieved_at = NOW
+            dataset.published_at = NOW
+            dataset.official_actual_until = date(2026, 10, 25)
+            dataset.coverage = {
+                "release_identity": f"{code}-release",
+                "artifact_sha256": "a" * 64,
+                "xsd_sha256": "b" * 64,
+            }
+            datasets[code] = dataset
+        company = Company(
+            inn="7701234599",
+            name="Tax regime semantic",
+            entity_type="legal",
+        )
+        session.add(company)
+        session.flush()
+        session.add(
+            CompanyTaxRegimeSnapshot(
+                company_id=company.id,
+                dataset_id=datasets["fns_snr"].id,
+                entity_type="legal",
+                data_date=date(2026, 9, 1),
+                regime_codes=["usn", "srp"],
+                source_document_id="SNR-DOC-1",
+                source_document_date=date(2026, 9, 25),
+            )
+        )
+        session.flush()
+
+        view = materialize_company_view_v1(
+            session,
+            company_id=company.id,
+            generated_at=NOW,
+        )
+
+        tax_section = next(item for item in view.sections if item.section_key == "tax")
+        fact = next(item for item in tax_section.facts if item.anchor.field_key == "regime")
+        assert fact.state == DataState.FOUND
+        assert fact.selected_evidence.source_code == "FNS_TAX_REGIME"
+        assert fact.selected_evidence.source_data_date == date(2026, 9, 1)
+        assert fact.selected_evidence.value["regime_codes"] == ["srp", "usn"]
+        assert fact.selected_evidence.value["source_document_id"] == "SNR-DOC-1"
+        provenance = dict(fact.selected_evidence.value["provenance"])
+        assert datetime.fromisoformat(provenance.pop("retrieved_at")) == NOW
+        assert datetime.fromisoformat(provenance.pop("published_at")) == NOW
+        assert provenance == {
+            "source": "fns",
+            "source_id": "fns_tax_regime",
+            "member_dataset_code": "fns_snr",
+            "official_source_url": (
+                "https://www.nalog.gov.ru/opendata/7707329152-snr/"
+            ),
+            "source_data_date": "2026-09-01",
+            "family_release_identity": "fns_tax_regime-release",
+            "member_release_identity": "fns_snr-release",
+            "artifact_sha256": "a" * 64,
+            "xsd_sha256": "b" * 64,
+        }
+        assert fact.selected_evidence.source_ref.endswith("7707329152-snr/")
+        persisted = session.scalar(
+            sa.select(CompanySemanticFact).where(
+                CompanySemanticFact.company_id == company.id,
+                CompanySemanticFact.section_key == "tax",
+                CompanySemanticFact.field_key == "regime",
+                CompanySemanticFact.is_current.is_(True),
+            )
+        )
+        assert persisted is not None
         session.rollback()
 
 

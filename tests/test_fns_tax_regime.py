@@ -102,12 +102,45 @@ def test_parse_legal_invalid_inn():
         """
     )
 
-    assert (
-        parse_legal_document(
-            document
-        )
-        is None
+    assert parse_legal_document(document) is None
+
+
+def test_parser_rejects_missing_document_identity_and_invalid_ip_ogrn():
+    legal = ET.fromstring(
+        """
+        <Документ ДатаДок="25.08.2026" ДатаСост="01.08.2026">
+            <СведНП ИННЮЛ="7714914147" />
+            <СведСНР ПризнУСН="1" ПризнАУСН="0" ПризнЕСХН="0" ПризнСРП="0" />
+        </Документ>
+        """
     )
+    ip = ET.fromstring(
+        """
+        <Документ ИдДок="IP-BAD" ДатаДок="25.08.2026" ДатаСост="01.08.2026">
+            <СведНП ИННФЛ="345907922962" ОГРНИП="123" />
+            <СведСНР ПризнСНР="1" />
+        </Документ>
+        """
+    )
+
+    assert parse_legal_document(legal) is None
+    assert parse_ip_document(ip) is None
+
+
+def test_legal_unknown_flag_is_preserved_as_qa_signal():
+    document = ET.fromstring(
+        """
+        <Документ ИдДок="LEGAL-UNKNOWN" ДатаДок="25.08.2026" ДатаСост="01.08.2026">
+            <СведНП ИННЮЛ="7714914147" />
+            <СведСНР ПризнУСН="2" ПризнАУСН="0" ПризнЕСХН="0" ПризнСРП="0" />
+        </Документ>
+        """
+    )
+
+    result = parse_legal_document(document)
+
+    assert result["regime_codes"] == []
+    assert result["unknown_codes"] == ["ПризнУСН=2"]
 
 
 def test_ip_code_mapping():
@@ -177,10 +210,13 @@ def test_ip_unknown_code_is_preserved():
     document = ET.fromstring(
         """
         <Документ
+            ИдДок="IP-UNKNOWN"
+            ДатаДок="25.08.2026"
             ДатаСост="01.08.2026"
         >
             <СведНП
                 ИННФЛ="345907922962"
+                ОГРНИП="324940100014240"
             />
 
             <СведСНР
@@ -324,6 +360,8 @@ def test_legal_zip_iterator_limit(tmp_path):
     xml = """
     <Файл>
         <Документ
+            ИдДок="DOC-1"
+            ДатаДок="25.08.2026"
             ДатаСост="01.08.2026"
         >
             <СведНП ИННЮЛ="7714914147" />
@@ -336,6 +374,8 @@ def test_legal_zip_iterator_limit(tmp_path):
         </Документ>
 
         <Документ
+            ИдДок="DOC-2"
+            ДатаДок="25.08.2026"
             ДатаСост="01.08.2026"
         >
             <СведНП ИННЮЛ="3906293351" />
@@ -448,19 +488,25 @@ def test_ip_zip_iterator_limit(
     xml = """
     <Файл>
         <Документ
+            ИдДок="IP-1"
+            ДатаДок="25.08.2026"
             ДатаСост="01.08.2026"
         >
             <СведНП
                 ИННФЛ="345907922962"
+                ОГРНИП="324940100014240"
             />
             <СведСНР ПризнСНР="1" />
         </Документ>
 
         <Документ
+            ИдДок="IP-2"
+            ДатаДок="25.08.2026"
             ДатаСост="01.08.2026"
         >
             <СведНП
                 ИННФЛ="784305462631"
+                ОГРНИП="326780400000001"
             />
             <СведСНР ПризнСНР="4" />
         </Документ>

@@ -71,6 +71,17 @@ def product_db(monkeypatch):
                 dataset.last_data_date = date(2026, 9, 10)
                 dataset.source_as_of = datetime(2026, 9, 10, tzinfo=timezone.utc)
                 dataset.last_success_at = datetime(2026, 9, 25, tzinfo=timezone.utc)
+                if code in {"fns_tax_regime", "fns_snr", "fns_snrip"}:
+                    dataset.source_url = (
+                        "https://www.nalog.gov.ru/opendata/7707329152-snrip/"
+                        if code == "fns_snrip"
+                        else "https://www.nalog.gov.ru/opendata/7707329152-snr/"
+                    )
+                    dataset.coverage = {
+                        "release_identity": f"{code}-release",
+                        "artifact_sha256": "a" * 64,
+                        "xsd_sha256": "b" * 64,
+                    }
                 datasets[code] = dataset
 
             companies = {
@@ -162,6 +173,22 @@ def test_postgresql_actual_until_boundary_then_next_day_hides_positive_facts(pro
     assert tax_regime_service.get_tax_regime_check_for_company(
         ids["ip_found"], now=BOUNDARY
     )["member_dataset_code"] == "fns_snrip"
+    legal_check = tax_regime_service.get_tax_regime_check_for_company(
+        ids["legal_found"], now=BOUNDARY
+    )
+    assert legal_check["provenance"] == {
+        "source": "fns",
+        "source_id": "fns_tax_regime",
+        "member_dataset_code": "fns_snr",
+        "official_source_url": "https://www.nalog.gov.ru/opendata/7707329152-snr/",
+        "source_data_date": date(2026, 9, 10),
+        "retrieved_at": None,
+        "published_at": None,
+        "family_release_identity": "fns_tax_regime-release",
+        "member_release_identity": "fns_snr-release",
+        "artifact_sha256": "a" * 64,
+        "xsd_sha256": "b" * 64,
+    }
 
     for check in (
         headcount_service.get_headcount_check_for_company(

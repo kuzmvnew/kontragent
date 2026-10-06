@@ -161,6 +161,7 @@ SEMANTIC_FIELD_POLICIES: dict[str, SemanticFieldPolicy] = {
     "tax.paid": _policy("PAYTAX", bridge=True),
     "tax.debt": _policy("DEBTAM", bridge=True),
     "tax.offence": _policy("TAXOFFENCE"),
+    "tax.regime": _policy("FNS_TAX_REGIME", not_applicable=True),
     "enforcement.*": _policy("FSSP", bridge=True),
     "licenses.*": _policy("ROSZDRAV_LICENSES", bridge=True),
     "courts.*": _policy("MOSCOW_COURTS_OFFICIAL"),
@@ -1396,6 +1397,185 @@ def _one(cursor: Any, query: str, params: tuple[Any, ...]) -> dict[str, Any] | N
     return dict(row) if row else None
 
 
+def _tax_regime_candidate(
+    cursor: Any,
+    *,
+    company: dict[str, Any],
+    company_id: int,
+    observed_at: datetime,
+) -> SemanticCandidate:
+    inn = str(company.get("inn") or "").strip()
+    entity_type = company.get("entity_type")
+    is_legal = len(inn) == 10 and inn.isdigit() and entity_type in {None, "legal"}
+    is_ip = (
+        len(inn) == 12
+        and inn.isdigit()
+        and entity_type in {None, "individual_entrepreneur"}
+    )
+    member_code = "fns_snr" if is_legal else "fns_snrip" if is_ip else None
+    source_url = (
+        "https://www.nalog.gov.ru/opendata/7707329152-snr/"
+        if member_code == "fns_snr"
+        else "https://www.nalog.gov.ru/opendata/7707329152-snrip/"
+        if member_code == "fns_snrip"
+        else None
+    )
+    shared = {
+        "source_code": "FNS_TAX_REGIME",
+        "source_class": EvidenceSourceClass.OFFICIAL_API_OPEN_DATA,
+        "source_ref": source_url,
+        "retrieved_at": observed_at,
+        "rights": FactRights.PUBLIC,
+        "confidence": 1.0,
+    }
+    if member_code is None:
+        return _candidate(
+            company_id,
+            "tax",
+            "regime",
+            None,
+            evidence_identity="fns-tax-regime:not-applicable",
+            state=DataState.NOT_APPLICABLE,
+            limitations=(
+                "Официальные наборы SNR/SNRIP применимы только к юридическим лицам и индивидуальным предпринимателям.",
+            ),
+            **shared,
+        )
+
+    dataset_fields = (
+        "id, code, enabled, source_url, last_data_date, last_success_at, "
+        "retrieved_at, published_at, official_actual_until, operational_status, "
+        "freshness_policy, source_as_of, freshness_threshold_seconds, coverage, "
+        "last_error"
+    )
+    family = _one(
+        cursor,
+        f"SELECT {dataset_fields} FROM data_sets WHERE code=%s",
+        ("fns_tax_regime",),
+    )
+    member = _one(
+        cursor,
+        f"SELECT {dataset_fields} FROM data_sets WHERE code=%s",
+        (member_code,),
+    )
+    if member is not None:
+        shared["source_ref"] = member.get("source_url") or source_url
+    available = family is not None and member is not None
+    retrieval = (
+        (member or {}).get("retrieved_at")
+        or (family or {}).get("retrieved_at")
+        or observed_at
+    )
+    shared["retrieved_at"] = _aware(retrieval)
+    source_date = _date((member or {}).get("last_data_date"))
+    state = DataState.NOT_CHECKED
+    if available and family.get("last_success_at") and member.get("last_success_at"):
+        error_text = " ".join(
+            str(item.get("last_error") or "") for item in (family, member)
+        ).casefold()
+        if any(token in error_text for token in ("schema", "xsd", "xml", "parse")):
+            state = DataState.PARSING_ERROR
+        else:
+            family_state = _dataset_observation_state(
+                family, observed_at=observed_at
+            )
+            member_state = _dataset_observation_state(
+                member, observed_at=observed_at
+            )
+            state = max(
+                (family_state, member_state),
+                key=lambda value: _SECTION_STATE_RANK[value],
+            )
+
+    snapshot = (
+        _one(
+            cursor,
+            "SELECT entity_type, data_date, regime_codes, source_document_id, "
+            "source_document_date FROM company_tax_regime_snapshots "
+            "WHERE company_id=%s AND dataset_id=%s "
+            "ORDER BY data_date DESC, id DESC LIMIT 1",
+            (company_id, member["id"]),
+        )
+        if member is not None
+        else None
+    )
+    if state == DataState.FOUND:
+        state = DataState.FOUND if snapshot is not None else DataState.NOT_FOUND
+    regime_codes = sorted(str(code) for code in (snapshot or {}).get("regime_codes") or ())
+    value = {
+        "entity_type": (snapshot or {}).get("entity_type") or entity_type,
+        "regime_codes": regime_codes,
+        "source_document_id": (snapshot or {}).get("source_document_id"),
+        "source_document_date": _date((snapshot or {}).get("source_document_date")),
+    }
+    coverage = dict((member or {}).get("coverage") or {})
+    family_coverage = dict((family or {}).get("coverage") or {})
+    release_identity = (
+        coverage.get("release_identity")
+        or family_coverage.get("release_identity")
+        or "unpublished"
+    )
+    value["provenance"] = {
+        "source": "fns",
+        "source_id": "fns_tax_regime",
+        "member_dataset_code": member_code,
+        "official_source_url": shared["source_ref"],
+        "source_data_date": source_date,
+        "retrieved_at": shared["retrieved_at"],
+        "published_at": (
+            _aware(member.get("published_at"))
+            if member and member.get("published_at")
+            else None
+        ),
+        "family_release_identity": family_coverage.get("release_identity"),
+        "member_release_identity": coverage.get("release_identity"),
+        "artifact_sha256": coverage.get("artifact_sha256"),
+        "xsd_sha256": coverage.get("xsd_sha256"),
+    }
+    limitations = (
+        (
+            "Отсутствие означает только отсутствие ИНН в текущем официальном наборе применимых специальных режимов.",
+        )
+        if state == DataState.NOT_FOUND
+        else (
+            "Актуальность обязательной двухкомпонентной семьи SNR/SNRIP не подтверждена; отрицательный вывод запрещён.",
+        )
+        if state in {
+            DataState.NOT_CHECKED,
+            DataState.SOURCE_UNAVAILABLE,
+            DataState.PARSING_ERROR,
+            DataState.STALE_DATA,
+        }
+        else ()
+    )
+    return _candidate(
+        company_id,
+        "tax",
+        "regime",
+        value,
+        evidence_identity=(
+            f"fns-tax-regime:{member_code}:{release_identity}:"
+            f"{(snapshot or {}).get('source_document_id') or inn}"
+        ),
+        source_data_date=_date((snapshot or {}).get("data_date")) or source_date,
+        freshness=(
+            Freshness.STALE
+            if state == DataState.STALE_DATA
+            else Freshness.UNKNOWN
+            if state
+            in {
+                DataState.NOT_CHECKED,
+                DataState.SOURCE_UNAVAILABLE,
+                DataState.PARSING_ERROR,
+            }
+            else Freshness.CURRENT
+        ),
+        state=state,
+        limitations=limitations,
+        **shared,
+    )
+
+
 def load_semantic_candidates(
     cursor: Any,
     *,
@@ -1497,6 +1677,14 @@ def load_semantic_candidates(
                 confidence=1.0,
             ),
         )
+    values.append(
+        _tax_regime_candidate(
+            cursor,
+            company=company,
+            company_id=company_id,
+            observed_at=_aware(observed_at),
+        )
+    )
     for row in _rows(cursor, "SELECT * FROM company_tax_payment_snapshots WHERE company_id=%s ORDER BY data_year, id", (company_id,)):
         year = int(row["data_year"])
         _append(

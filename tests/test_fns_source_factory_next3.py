@@ -116,7 +116,6 @@ def test_two_artifact_family_freshness_is_fail_closed_and_conservative():
     ip = _release(
         fns_tax_regime._member_specs()["ip"],
         actual_until=date(2026, 10, 10),
-        source_date=date(2026, 9, 1),
     )
     bundle = bulk.FnsReleaseBundle({"legal": legal, "ip": ip})
 
@@ -136,6 +135,19 @@ def test_two_artifact_family_freshness_is_fail_closed_and_conservative():
             ),
         }
     ).actual_until is None
+
+    with pytest.raises(
+        bulk.SchemaMismatchError,
+        match="incompatible member source dates",
+    ):
+        bulk.FnsReleaseBundle(
+            {
+                "legal": legal,
+                "ip": bulk.FnsRelease(
+                    **{**ip.__dict__, "source_data_date": date(2026, 9, 1)}
+                ),
+            }
+        )
 
 
 def test_tax_regime_handler_stages_two_artifacts_into_one_publication(
@@ -159,6 +171,7 @@ def test_tax_regime_handler_stages_two_artifacts_into_one_publication(
             "artifact_sha256": checksum,
             "artifact_size": size,
             "xsd_sha256": bulk._hash_file(xsd_path)[0],
+            "xsd_size": xsd_path.stat().st_size,
         }
 
     def fake_normalize(zip_path, *, xsd_path, iterator, postprocess):
@@ -201,6 +214,54 @@ def test_tax_regime_handler_stages_two_artifacts_into_one_publication(
     assert result.checksum_metadata["normalized_bundle_sha256"] == bulk._hash_file(
         bulk._file_path(result.staging_result.staging_pointer)
     )[0]
+
+
+def test_tax_regime_handler_stops_on_schema_valid_unknown_regime_code(
+    tmp_path, monkeypatch
+):
+    specs = fns_tax_regime._member_specs()
+    bundle = bulk.FnsReleaseBundle(
+        {name: _release(spec) for name, spec in specs.items()}
+    )
+
+    def fake_stage(spec, _release_value, *, raw_root):
+        member_root = raw_root / spec.dataset_code
+        member_root.mkdir(parents=True, exist_ok=True)
+        zip_path = member_root / "data.zip"
+        xsd_path = member_root / "structure.xsd"
+        zip_path.write_bytes(b"zip")
+        xsd_path.write_bytes(b"xsd")
+        return zip_path, xsd_path, {
+            "artifact_sha256": bulk._hash_file(zip_path)[0],
+            "artifact_size": zip_path.stat().st_size,
+            "xsd_sha256": bulk._hash_file(xsd_path)[0],
+            "xsd_size": xsd_path.stat().st_size,
+        }
+
+    def fake_normalize(zip_path, **_kwargs):
+        normalized = zip_path.parent / "normalized.jsonl"
+        normalized.write_text("{}\n")
+        is_ip = zip_path.parent.name == "fns_snrip"
+        return normalized, bulk._hash_file(normalized)[0], {
+            "records_seen": 1,
+            "records_valid": 1,
+            "records_rejected": 0,
+            "source_data_date": bundle.source_data_date.isoformat(),
+            "unknown_codes": int(is_ip),
+            "unknown_code_values": ["9"] if is_ip else [],
+        }
+
+    monkeypatch.setattr(bulk, "stage_release", fake_stage)
+    monkeypatch.setattr(bulk, "normalize_release", fake_normalize)
+    context = SimpleNamespace(
+        schedule_metadata={**bundle.as_metadata(), "raw_root": str(tmp_path)},
+        ensure_active=lambda **_kwargs: None,
+        heartbeat=lambda: None,
+        report_counters=lambda _counters: None,
+    )
+
+    with pytest.raises(bulk.SchemaMismatchError, match="unknown regime codes: 9"):
+        fns_tax_regime.fns_tax_regime_worker_handler(context)
 
 
 def test_postgresql_scoped_family_registry_upsert_preserves_child_schedules(
@@ -320,6 +381,77 @@ def test_snrip_duplicate_inn_mixed_dates_fail_closed(tmp_path):
 
     with pytest.raises(bulk.SchemaMismatchError, match="mixed source dates"):
         fns_tax_regime.coalesce_tax_regime_records(source)
+
+
+def test_snrip_duplicate_inn_conflicting_ogrn_fails_closed(tmp_path):
+    source = tmp_path / "snrip-conflicting-ogrn.jsonl"
+    base = {
+        "inn": "345907922962",
+        "entity_type": "individual_entrepreneur",
+        "dataset_code": "fns_snrip",
+        "data_date": "2026-09-01",
+        "source_document_date": "2026-09-10",
+        "regime_codes": ["usn"],
+        "unknown_codes": [],
+    }
+    source.write_text(
+        json.dumps(
+            {
+                **base,
+                "ogrn": "324940100014240",
+                "source_document_id": "DOC-A",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                **base,
+                "ogrn": "324940100014241",
+                "source_document_id": "DOC-B",
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(bulk.SchemaMismatchError, match="conflicting OGRN"):
+        fns_tax_regime.coalesce_tax_regime_records(source)
+
+
+def test_tax_regime_exact_inn_match_rejects_entity_applicability_conflict(
+    next3_db, tmp_path
+):
+    inn = f"66{str(uuid4().int % 10**8).zfill(8)}11"
+    normalized = tmp_path / "ip.jsonl"
+    normalized.write_text(
+        json.dumps(
+            {
+                "inn": inn,
+                "entity_type": "individual_entrepreneur",
+                "dataset_code": "fns_snrip",
+                "data_date": "2026-09-01",
+                "source_document_id": "IP-CONFLICT",
+                "source_document_date": "2026-09-25",
+                "regime_codes": ["usn"],
+            }
+        )
+        + "\n"
+    )
+    with next3_db() as session:
+        dataset = _source_and_dataset(session, "fns_snrip")
+        session.add(Company(inn=inn, name="wrong type", entity_type="legal"))
+        session.flush()
+
+        with pytest.raises(
+            bulk.SchemaMismatchError,
+            match="entity applicability",
+        ):
+            bulk._project_normalized_snapshot(
+                session,
+                dataset=dataset,
+                spec=fns_tax_regime._member_specs()["ip"],
+                staging_path=normalized,
+                replace_existing=False,
+            )
 
 
 @pytest.mark.parametrize("kind", ("headcount", "msp"))

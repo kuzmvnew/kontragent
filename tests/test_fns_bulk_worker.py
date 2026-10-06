@@ -66,8 +66,10 @@ def _release(spec):
 def test_official_discovery_extracts_current_zip_xsd_and_separate_source_date():
     spec = taxoffence._worker_spec()
     html = f"""
+      <td property="dc:identifier">{spec.source_path}</td>
       <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-20251201-structure-20191201.zip">ZIP</a>
-      <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-20181201.xsd">XSD</a>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-20191201.xsd">XSD</a>
+      <td property="dc:modified" content="01.12.2025">01.12.2025</td>
       <td property="dc:provenance">Данные на 31.12.2024</td>
       <td property="dc:valid" content="01.12.2026">01.12.2026</td>
     """.encode()
@@ -83,8 +85,10 @@ def test_official_discovery_extracts_current_zip_xsd_and_separate_source_date():
 def test_official_discovery_falls_back_to_unambiguous_artifact_source_date():
     spec = taxoffence._worker_spec()
     html = f"""
+      <td property="dc:identifier">{spec.source_path}</td>
       <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-10092026-structure-12052026.zip">ZIP</a>
       <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052026.xsd">XSD</a>
+      <td property="dc:modified" content="10.09.2026">10.09.2026</td>
       <td property="dc:provenance">Обновление набора</td>
       <td property="dc:valid" content="10.10.2026">10.10.2026</td>
     """.encode()
@@ -99,8 +103,10 @@ def test_official_discovery_falls_back_to_unambiguous_artifact_source_date():
 def test_official_discovery_rejects_invalid_artifact_source_date():
     spec = taxoffence._worker_spec()
     html = f"""
+      <td property="dc:identifier">{spec.source_path}</td>
       <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-31022026-structure-12052026.zip">ZIP</a>
       <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052026.xsd">XSD</a>
+      <td property="dc:modified" content="10.09.2026">10.09.2026</td>
       <td property="dc:provenance">Обновление набора</td>
     """.encode()
 
@@ -111,12 +117,42 @@ def test_official_discovery_rejects_invalid_artifact_source_date():
 def test_official_discovery_rejects_ambiguous_artifact_source_date():
     spec = taxoffence._worker_spec()
     html = f"""
+      <td property="dc:identifier">{spec.source_path}</td>
       <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-10092026-11092026-structure-12052026.zip">ZIP</a>
       <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052026.xsd">XSD</a>
+      <td property="dc:modified" content="10.09.2026">10.09.2026</td>
       <td property="dc:provenance">Обновление набора</td>
     """.encode()
 
-    with pytest.raises(bulk.SchemaMismatchError, match="no source data date"):
+    with pytest.raises(bulk.SchemaMismatchError, match="structure versions differ"):
+        bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
+
+
+def test_official_discovery_rejects_passport_identifier_substitution():
+    spec = taxoffence._worker_spec()
+    html = f"""
+      <td property="dc:identifier">7707329152-wrong</td>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-10092026-structure-12052026.zip">ZIP</a>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052026.xsd">XSD</a>
+      <td property="dc:modified" content="10.09.2026">10.09.2026</td>
+      <td property="dc:provenance">Данные на 31.12.2025</td>
+    """.encode()
+
+    with pytest.raises(bulk.SchemaMismatchError, match="identifier differs"):
+        bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
+
+
+def test_official_discovery_rejects_artifact_xsd_version_substitution():
+    spec = taxoffence._worker_spec()
+    html = f"""
+      <td property="dc:identifier">{spec.source_path}</td>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/data-10092026-structure-12052026.zip">ZIP</a>
+      <a href="https://data.nalog.ru/opendata/{spec.source_path}/structure-12052025.xsd">XSD</a>
+      <td property="dc:modified" content="10.09.2026">10.09.2026</td>
+      <td property="dc:provenance">Данные на 31.12.2025</td>
+    """.encode()
+
+    with pytest.raises(bulk.SchemaMismatchError, match="structure versions differ"):
         bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
 
 
@@ -407,7 +443,13 @@ def test_existing_bulk_manifest_rejects_xsd_invariant_change(
         nonlocal sequence
         sequence += 1
         path = root / f"download-{sequence}"
-        path.write_bytes(b"zip-bytes" if url.endswith(".zip") else b"xsd-bytes")
+        path.write_bytes(
+            b"zip-bytes"
+            if url.endswith(".zip")
+            else b"xsd-bytes"
+            if sequence == 2
+            else b"changed-xsd-bytes"
+        )
         return path, {"Content-Length": str(path.stat().st_size)}
 
     monkeypatch.setattr(bulk, "_download_temp", fake_download)
@@ -417,14 +459,14 @@ def test_existing_bulk_manifest_rejects_xsd_invariant_change(
     changed = bulk.FnsRelease(
         source_page_url=release.source_page_url,
         artifact_url=release.artifact_url,
-        xsd_url=release.xsd_url.replace("structure-20200101", "structure-20200102"),
+        xsd_url=release.xsd_url,
         source_data_date=release.source_data_date,
         actual_until=release.actual_until,
         discovered_at=NOW.replace(minute=NOW.minute + 5),
         provenance=release.provenance,
     )
 
-    with pytest.raises(bulk.InvalidDataError, match="manifest invariant differs"):
+    with pytest.raises(bulk.InvalidDataError, match="immutable RAW artifact differs"):
         bulk.stage_release(spec, changed, raw_root=tmp_path)
 
     assert manifest_path.read_bytes() == first_bytes

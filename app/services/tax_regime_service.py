@@ -54,6 +54,26 @@ def _empty_payload():
         "regimes": [],
         "source_document_id": None,
         "source_document_date": None,
+        "provenance": None,
+    }
+
+
+def _provenance_payload(family, member):
+    coverage = dict(member.coverage or {})
+    return {
+        "source": "fns",
+        "source_id": FAMILY_DATASET_CODE,
+        "member_dataset_code": member.code,
+        "official_source_url": member.source_url,
+        "source_data_date": member.last_data_date,
+        "retrieved_at": member.retrieved_at,
+        "published_at": member.published_at,
+        "family_release_identity": dict(family.coverage or {}).get(
+            "release_identity"
+        ),
+        "member_release_identity": coverage.get("release_identity"),
+        "artifact_sha256": coverage.get("artifact_sha256"),
+        "xsd_sha256": coverage.get("xsd_sha256"),
     }
 
 
@@ -160,6 +180,8 @@ def get_tax_regime_check_for_company(
                 **_empty_payload(),
             )
 
+        provenance = _provenance_payload(family, member)
+
         snapshot = session.scalar(
             select(CompanyTaxRegimeSnapshot)
             .where(
@@ -187,7 +209,10 @@ def get_tax_regime_check_for_company(
                     "Отсутствие означает только, что ИНН не найден в текущем "
                     "официальном наборе применимых специальных режимов."
                 ),
-                **_empty_payload(),
+                **{
+                    **_empty_payload(),
+                    "provenance": provenance,
+                },
             )
 
         regime_codes = list(snapshot.regime_codes or [])
@@ -211,6 +236,7 @@ def get_tax_regime_check_for_company(
             dataset_id=snapshot.dataset_id,
             source_document_id=snapshot.source_document_id,
             source_document_date=snapshot.source_document_date,
+            provenance=provenance,
         )
     finally:
         session.close()
@@ -239,4 +265,5 @@ def get_tax_regime_profile_for_company(
         "dataset_code": check["member_dataset_code"],
         "source_document_id": check["source_document_id"],
         "source_document_date": check["source_document_date"],
+        "provenance": check["provenance"],
     }

@@ -40,6 +40,12 @@ IP_CODE_TO_REGIME = {
 }
 
 
+# A schema-valid but unknown regime value means the official vocabulary moved
+# ahead of this handler.  Preserve the value in normalized QA evidence, then
+# fail the release instead of silently publishing an incomplete meaning.
+UNKNOWN_CODE_THRESHOLD = 0
+
+
 def local_name(tag):
     if "}" in tag:
         return tag.rsplit(
@@ -130,13 +136,15 @@ def parse_legal_document(document):
     ):
         return None
 
+    source_document_id = str(document.attrib.get("ИдДок") or "").strip()
+    source_document_date = parse_fns_date(document.attrib.get("ДатаДок"))
     data_date = parse_fns_date(
         document.attrib.get(
             "ДатаСост"
         )
     )
 
-    if data_date is None:
+    if not source_document_id or source_document_date is None or data_date is None:
         return None
 
     regime_codes = []
@@ -169,18 +177,8 @@ def parse_legal_document(document):
         "entity_type": "legal",
         "dataset_code": LEGAL_DATASET_CODE,
         "data_date": data_date,
-        "source_document_date": (
-            parse_fns_date(
-                document.attrib.get(
-                    "ДатаДок"
-                )
-            )
-        ),
-        "source_document_id": (
-            document.attrib.get(
-                "ИдДок"
-            )
-        ),
+        "source_document_date": source_document_date,
+        "source_document_id": source_document_id,
         "regime_codes": (
             deduplicate(
                 regime_codes
@@ -247,13 +245,19 @@ def parse_ip_document(document):
     ):
         return None
 
+    ogrn = str(taxpayer.attrib.get("ОГРНИП") or "").strip()
+    if len(ogrn) != 15 or not ogrn.isdigit():
+        return None
+
+    source_document_id = str(document.attrib.get("ИдДок") or "").strip()
+    source_document_date = parse_fns_date(document.attrib.get("ДатаДок"))
     data_date = parse_fns_date(
         document.attrib.get(
             "ДатаСост"
         )
     )
 
-    if data_date is None:
+    if not source_document_id or source_document_date is None or data_date is None:
         return None
 
     regime_codes = []
@@ -289,28 +293,14 @@ def parse_ip_document(document):
 
     return {
         "inn": inn,
-        "ogrn": (
-            taxpayer.attrib.get(
-                "ОГРНИП"
-            )
-        ),
+        "ogrn": ogrn,
         "entity_type": (
             "individual_entrepreneur"
         ),
         "dataset_code": IP_DATASET_CODE,
         "data_date": data_date,
-        "source_document_date": (
-            parse_fns_date(
-                document.attrib.get(
-                    "ДатаДок"
-                )
-            )
-        ),
-        "source_document_id": (
-            document.attrib.get(
-                "ИдДок"
-            )
-        ),
+        "source_document_date": source_document_date,
+        "source_document_id": source_document_id,
         "regime_codes": (
             deduplicate(
                 regime_codes
@@ -1078,12 +1068,21 @@ def fns_tax_regime_worker_handler(context):
             raise SchemaMismatchError(
                 f"parsed {name} source data date differs from official passport"
             )
+        if int(counters.get("unknown_codes") or 0) > UNKNOWN_CODE_THRESHOLD:
+            raise SchemaMismatchError(
+                f"parsed {name} release contains unknown regime codes: "
+                + ", ".join(counters.get("unknown_code_values") or ())
+            )
         members[name] = {
             "dataset_code": spec.dataset_code,
             "staging_pointer": normalized_path.as_uri(),
             "normalized_sha256": normalized_checksum,
             "release": release.as_metadata(),
             "coverage": counters,
+            "artifact_sha256": manifest["artifact_sha256"],
+            "artifact_size": manifest["artifact_size"],
+            "xsd_sha256": manifest["xsd_sha256"],
+            "xsd_size": manifest["xsd_size"],
         }
         raw_artifacts.append(
             RawArtifactReference(
@@ -1215,6 +1214,14 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
 
     now = utc_now()
     totals = {"matched": 0, "unmatched": 0, "changed": 0, "published": 0}
+    qa_totals = {
+        "source_records": 0,
+        "parsed_records": 0,
+        "invalid_records": 0,
+        "unknown_codes": 0,
+        "duplicate_inns_coalesced": 0,
+        "normalized_unique_inns": 0,
+    }
     matched_companies = set()
     member_coverage = {}
     for name, spec in _member_specs().items():
@@ -1251,6 +1258,19 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
         totals["changed"] += changed
         totals["published"] += published
         matched_companies.update(companies)
+        member_stats = dict(member.get("coverage") or {})
+        qa_totals["source_records"] += int(member_stats.get("records_seen") or 0)
+        qa_totals["parsed_records"] += int(member_stats.get("records_valid") or 0)
+        qa_totals["invalid_records"] += int(member_stats.get("records_rejected") or 0)
+        qa_totals["unknown_codes"] += int(member_stats.get("unknown_codes") or 0)
+        qa_totals["duplicate_inns_coalesced"] += int(
+            member_stats.get("duplicate_inn_rows") or 0
+        )
+        qa_totals["normalized_unique_inns"] += int(
+            member_stats.get("normalized_unique_inns")
+            or member_stats.get("records_valid")
+            or 0
+        )
         if not check_only:
             dataset.enabled = True
             dataset.last_success_at = now
@@ -1277,12 +1297,33 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
             dataset.next_expected_update_at = None
             dataset.coverage = {
                 "managed_by_source_id": SOURCE_ID,
-                "source_records": int((member.get("coverage") or {}).get("records_seen") or 0),
+                "source_records": int(member_stats.get("records_seen") or 0),
+                "parsed_records": int(member_stats.get("records_valid") or 0),
+                "invalid_records": int(member_stats.get("records_rejected") or 0),
+                "quarantined_records": int(
+                    member_stats.get("records_rejected") or 0
+                ),
+                "unknown_codes": int(member_stats.get("unknown_codes") or 0),
+                "unknown_code_values": list(
+                    member_stats.get("unknown_code_values") or ()
+                ),
+                "duplicate_inns_coalesced": int(
+                    member_stats.get("duplicate_inn_rows") or 0
+                ),
+                "normalized_unique_inns": int(
+                    member_stats.get("normalized_unique_inns")
+                    or member_stats.get("records_valid")
+                    or 0
+                ),
                 "matched": matched,
                 "unmatched": unmatched,
                 "published_facts": published,
                 "freshness": child_status.value,
                 "release_identity": release.identity,
+                "artifact_sha256": member.get("artifact_sha256"),
+                "artifact_size": member.get("artifact_size"),
+                "xsd_sha256": member.get("xsd_sha256"),
+                "xsd_size": member.get("xsd_size"),
             }
         member_coverage[name] = dict(dataset.coverage)
 
@@ -1309,19 +1350,30 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
     )
     if not enrichment_replay:
         family.coverage = {
-            "source_records": totals["matched"] + totals["unmatched"],
+            **qa_totals,
+            "quarantined_records": qa_totals["invalid_records"],
             "matched": totals["matched"],
             "unmatched": totals["unmatched"],
             "published_facts": totals["published"],
+            "replayed_facts": totals["changed"] if check_only else 0,
             "risk_summary_candidate_companies": len(matched_companies),
             "api_projection": family_spec.api_projection,
             "card_projection": family_spec.card_projection,
             "release_identity": bundle.identity,
+            "family_bundle_identity": bundle.identity,
             "members": member_coverage,
         }
     counters = ExecutionCounters(
-        records_seen=totals["matched"] + totals["unmatched"],
-        records_written=(totals["changed"] if check_only else totals["matched"]),
+        records_seen=(
+            totals["matched"] + totals["unmatched"]
+            if check_only
+            else qa_totals["source_records"]
+        ),
+        records_written=(
+            totals["changed"] if check_only else qa_totals["normalized_unique_inns"]
+        ),
+        records_rejected=qa_totals["invalid_records"],
+        records_duplicated=qa_totals["duplicate_inns_coalesced"],
         records_published=(totals["changed"] if check_only else totals["published"]),
     )
     if check_only:
