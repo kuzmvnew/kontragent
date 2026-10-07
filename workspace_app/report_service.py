@@ -58,6 +58,37 @@ class ReportExportValidationError(ActionDenied):
         )
 
 
+def _validate_csv_export_text(text: str) -> None:
+    for character in text:
+        category = unicodedata.category(character)
+        if character == "\x00" or category == "Cs":
+            raise ReportExportValidationError()
+        if category == "Cc" and character not in _CSV_ALLOWED_CONTROLS:
+            raise ReportExportValidationError()
+
+
+def _validate_csv_export_value(value: Any) -> None:
+    """Reject forbidden characters anywhere in a structured CSV field."""
+
+    if isinstance(value, str):
+        _validate_csv_export_text(value)
+        return
+    if isinstance(value, dict):
+        for key, child in value.items():
+            _validate_csv_export_text(str(key))
+            _validate_csv_export_value(child)
+        return
+    if isinstance(value, (list, tuple)):
+        for child in value:
+            _validate_csv_export_value(child)
+        return
+    if isinstance(value, Enum):
+        _validate_csv_export_value(value.value)
+        return
+    if hasattr(value, "model_dump"):
+        _validate_csv_export_value(value.model_dump(mode="json"))
+
+
 @dataclass(frozen=True)
 class ReportListItem:
     id: UUID
@@ -598,18 +629,17 @@ def _csv_safe_text(value: Any) -> str:
     if value is None:
         text = ""
     elif isinstance(value, (dict, list, tuple)):
-        text = canonical_json_bytes(value).decode("utf-8")
+        _validate_csv_export_value(value)
+        try:
+            text = canonical_json_bytes(value).decode("utf-8")
+        except UnicodeError:
+            raise ReportExportValidationError() from None
     elif isinstance(value, bool):
         text = "true" if value else "false"
     else:
         text = str(value)
 
-    for character in text:
-        category = unicodedata.category(character)
-        if character == "\x00" or category == "Cs":
-            raise ReportExportValidationError()
-        if category == "Cc" and character not in _CSV_ALLOWED_CONTROLS:
-            raise ReportExportValidationError()
+    _validate_csv_export_text(text)
 
     for character in text:
         category = unicodedata.category(character)

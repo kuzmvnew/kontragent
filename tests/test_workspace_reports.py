@@ -242,8 +242,12 @@ def test_report_html_api_exports_entitlement_policy_rbac_and_cross_tenant(
             "report_id"
         ] == report_id
 
-        def reject_unsafe_csv(_snapshot):
-            raise ReportExportValidationError()
+        def reject_unsafe_csv(snapshot):
+            unsafe_snapshot = deepcopy(snapshot)
+            unsafe_snapshot["sections"][0]["items"][0]["value"] = {
+                "nested": ["safe", {"surrogate": "\ud800"}]
+            }
+            return report_csv_bytes(unsafe_snapshot)
 
         monkeypatch.setattr(
             "workspace_app.main.report_csv_bytes",
@@ -254,6 +258,10 @@ def test_report_html_api_exports_entitlement_policy_rbac_and_cross_tenant(
         assert unsafe_html.status_code == unsafe_api.status_code == 422
         assert "Экспорт CSV остановлен" in unsafe_html.text
         assert unsafe_api.json()["error"]["code"] == "report_export_invalid_value"
+        assert "content-disposition" not in unsafe_html.headers
+        assert "content-disposition" not in unsafe_api.headers
+        assert not unsafe_html.content.startswith(b"\xef\xbb\xbf")
+        assert not unsafe_api.content.startswith(b"\xef\xbb\xbf")
 
         with Session(engine) as session:
             entitlement = session.scalar(
@@ -442,3 +450,90 @@ def test_csv_forbidden_controls_fail_closed(value):
 
     assert rejected.value.code == "report_export_invalid_value"
     assert rejected.value.status_code == 422
+
+
+def _snapshot_with_csv_value(value):
+    item = projection(sequence=100_300_106)
+    snapshot, *_ = build_report_snapshot(
+        report_id=uuid4(),
+        generated_at=datetime(2026, 10, 7, 10, 30, tzinfo=timezone.utc),
+        projection=item,
+    )
+    snapshot["sections"][0]["items"][0]["value"] = value
+    return snapshot
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        {"x": "\ud800"},
+        ["\udfff"],
+        {"a": [{"b": "\ud800"}]},
+        {"\ud800": "value"},
+        {
+            "level1": [
+                {"level2": [{"level3": "\ud800"}]},
+            ]
+        },
+    ),
+)
+def test_csv_nested_surrogates_fail_closed_before_encoding(value):
+    with pytest.raises(ReportExportValidationError) as rejected:
+        report_csv_bytes(_snapshot_with_csv_value(value))
+
+    assert rejected.value.code == "report_export_invalid_value"
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        {"x": "\x00=1+1"},
+        ["safe", "\x00"],
+        {"a": [{"b": "\x00value"}]},
+        {"\x00key": "value"},
+        {"x": "\x01value"},
+        {"\x1bkey": "value"},
+        ["safe", "\x7fvalue"],
+        {"a": [{"b": ["safe", "\x85value"]}]},
+    ),
+)
+def test_csv_nested_forbidden_controls_fail_closed(value):
+    with pytest.raises(ReportExportValidationError) as rejected:
+        report_csv_bytes(_snapshot_with_csv_value(value))
+
+    assert rejected.value.code == "report_export_invalid_value"
+
+
+def test_csv_nested_allowed_values_preserve_canonical_json_and_determinism():
+    value = {
+        "формула": "=1+1",
+        "текст": ["Проверить договор", "\t", "\n", "\r", "\ufeff", "\u200b"],
+        "tuple": ("ФНС России", True, None, 2026),
+    }
+    snapshot = _snapshot_with_csv_value(value)
+
+    first = report_csv_bytes(snapshot)
+    second = report_csv_bytes(snapshot)
+    row = next(csv.DictReader(io.StringIO(first.decode("utf-8-sig"))))
+
+    assert first == second
+    assert first.startswith(b"\xef\xbb\xbf")
+    assert row["value"] == canonical_json_bytes(value).decode("utf-8")
+    assert not row["value"].startswith("'")
+
+
+def test_csv_structured_encoding_error_is_translated(monkeypatch):
+    snapshot = _snapshot_with_csv_value({"safe": "value"})
+
+    def fail_encoding(_value):
+        raise UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogate")
+
+    monkeypatch.setattr(
+        "workspace_app.report_service.canonical_json_bytes",
+        fail_encoding,
+    )
+
+    with pytest.raises(ReportExportValidationError) as rejected:
+        report_csv_bytes(snapshot)
+
+    assert rejected.value.code == "report_export_invalid_value"

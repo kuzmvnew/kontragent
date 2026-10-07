@@ -88,6 +88,17 @@ prefix. Export is built fully in memory, so an invalid value cannot produce a
 partial download. Both HTML and API CSV routes return the same semantic error
 policy without exposing the rejected content or a stack trace.
 
+Before structured dict, list, or tuple values reach the first UTF-8 encoding
+operation, the CSV boundary recursively validates every nested string as well
+as each dictionary key's normalized string representation. Nested NUL,
+forbidden C0/C1 controls, and surrogate code points therefore fail with the
+same `report_export_invalid_value` contract as scalar fields. Tab, LF, CR, and
+Unicode format characters remain allowed inside structured strings and retain
+canonical JSON escaping. Nested strings are never rewritten for formula
+safety: prefix neutralization applies only to the final flattened CSV cell.
+Unexpected Unicode serialization failures are also translated to the same safe
+export error as defense in depth.
+
 CSV uses RFC-compatible quoting, CRLF records, and UTF-8 with BOM
 (`utf-8-sig`) for reliable Russian-language spreadsheet import. Filenames use
 the same safe pattern with a `.csv` suffix. These transformations affect only
