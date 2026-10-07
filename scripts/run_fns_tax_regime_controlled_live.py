@@ -47,7 +47,11 @@ from app.ingestion.fns_tax_regime import (
 from app.models.source import DataSet
 from app.models.worker import WorkerHandlerRegistration, WorkerPublicationState
 from app.services.factory_scale_service import FactoryScaleConfig
-from app.services.fns_tax_regime_readiness import evaluate_family_readiness
+from app.services.fns_tax_regime_readiness import (
+    evaluate_family_readiness,
+    publication_identity,
+    validate_same_release_identity_chain,
+)
 from app.worker.errors import InvalidDataError
 
 
@@ -194,11 +198,6 @@ def _resource_report(
     }
 
 
-def _publication_identity(state: WorkerPublicationState | None) -> str | None:
-    validation = dict(state.validation_metadata or {}) if state else {}
-    return (validation.get("validation") or {}).get("release_identity")
-
-
 def _bundle_validation_errors(bundle: FnsReleaseBundle, *, now: datetime) -> list[str]:
     """Validate direct preflight inputs as strictly as discovered passports."""
 
@@ -225,6 +224,20 @@ def _bundle_validation_errors(bundle: FnsReleaseBundle, *, now: datetime) -> lis
     if release_operational_status(bundle.actual_until, now=now) != OperationalStatus.CURRENT:
         errors.append("discovered_bundle_not_current")
     return errors
+
+
+def _accepted_pointer_matches_bundle(
+    state: WorkerPublicationState | None, bundle: FnsReleaseBundle, raw_root: Path
+) -> bool:
+    """Pin SAME_RELEASE replay to the descriptor path publication creates."""
+
+    pointer = state.active_pointer if state else None
+    if not isinstance(pointer, str):
+        return False
+    expected = (
+        raw_root / SOURCE_ID / "bundles" / bundle.identity / "normalized-bundle.json"
+    ).resolve().as_uri()
+    return pointer == expected
 
 
 def build_preflight_report(
@@ -278,23 +291,29 @@ def build_preflight_report(
     if source_url_mismatches:
         blockers.append("dataset_source_url_mismatch")
 
-    current_identity = _publication_identity(state)
+    current_identity, publication_error = publication_identity(state)
     release_mode = (
-        "INITIAL_RELEASE"
+        "INVALID_PUBLICATION"
+        if publication_error
+        else "INITIAL_RELEASE"
         if current_identity is None
         else "SAME_RELEASE"
         if current_identity == bundle.identity
         else "NEW_RELEASE"
     )
+    if publication_error:
+        blockers.append(publication_error)
     readiness = evaluate_family_readiness(datasets, now=now)
+    identity_chain = None
+    pointer_valid = None
     if release_mode == "SAME_RELEASE":
+        identity_chain = validate_same_release_identity_chain(bundle, datasets, state)
+        blockers.extend(identity_chain.reasons)
+        pointer_valid = _accepted_pointer_matches_bundle(state, bundle, raw_root)
+        if not pointer_valid:
+            blockers.append("same_release_replay_pointer_mismatch")
         if readiness.state != DataState.FOUND:
             blockers.append("same_release_family_readiness_not_current")
-        elif (
-            readiness.release_identity != current_identity
-            or readiness.source_data_date != bundle.source_data_date
-        ):
-            blockers.append("same_release_family_publication_mismatch")
 
     bundle_errors = _bundle_validation_errors(bundle, now=now)
     if bundle_errors:
@@ -321,6 +340,25 @@ def build_preflight_report(
         "family_readiness_reason": readiness.reason,
         "current_publication_identity": current_identity,
         "discovered_release_identity": bundle.identity,
+        "member_identity_verification": (
+            {
+                "valid": identity_chain.valid and pointer_valid,
+                "reasons": list(identity_chain.reasons) + (
+                    [] if pointer_valid else ["same_release_replay_pointer_mismatch"]
+                ),
+                "replay_pointer_matches_bundle": pointer_valid,
+                "expected_family_identity": identity_chain.expected_family_identity,
+                "persisted_publication_identity": identity_chain.persisted_publication_identity,
+                "persisted_publication_members": identity_chain.persisted_publication_members,
+                "persisted_family_identity": identity_chain.persisted_family_identity,
+                "expected_members": identity_chain.expected_members,
+                "persisted_family_members": identity_chain.persisted_family_members,
+                "persisted_child_members": identity_chain.persisted_child_members,
+                "members": identity_chain.member_verification,
+                "source_dates": identity_chain.source_dates,
+            }
+            if identity_chain else None
+        ),
         "new_release_exists": current_identity != bundle.identity,
         "durable_handler": (
             {
@@ -376,9 +414,71 @@ def _enqueue(raw_root: Path, *, confirm: str) -> dict[str, Any]:
             + ", ".join(report["blockers"])
         )
     with SessionLocal() as session:
-        state = session.get(WorkerPublicationState, SOURCE_ID)
-        validation = dict(state.validation_metadata or {}) if state else {}
-        current_identity = _publication_identity(state)
+        # Serialize the acceptance decision with publication/registration writes.
+        family = session.scalar(
+            select(DataSet)
+            .where(DataSet.code == FAMILY_DATASET_CODE)
+            .with_for_update()
+        )
+        datasets = {
+            row.code: row for row in session.scalars(
+                select(DataSet)
+                .where(DataSet.code.in_((LEGAL_DATASET_CODE, IP_DATASET_CODE)))
+                .order_by(DataSet.code)
+                .with_for_update()
+            )
+        }
+        if family is not None:
+            datasets[FAMILY_DATASET_CODE] = family
+        state = session.scalar(
+            select(WorkerPublicationState)
+            .where(WorkerPublicationState.source_id == SOURCE_ID)
+            .with_for_update()
+        )
+        approval = session.scalar(
+            select(WorkerHandlerRegistration)
+            .where(
+                WorkerHandlerRegistration.source_id == SOURCE_ID,
+                WorkerHandlerRegistration.handler_version == HANDLER_VERSION,
+            )
+            .with_for_update()
+        )
+        current_identity, publication_error = publication_identity(state)
+        current_mode = (
+            "INVALID_PUBLICATION" if publication_error else
+            "INITIAL_RELEASE" if current_identity is None else
+            "SAME_RELEASE" if current_identity == bundle.identity else "NEW_RELEASE"
+        )
+        if current_mode != report["release_mode"]:
+            raise RuntimeError("controlled-live release mode changed after preflight")
+        source_urls = {
+            FAMILY_DATASET_CODE: LEGAL_SOURCE_PAGE_URL,
+            LEGAL_DATASET_CODE: LEGAL_SOURCE_PAGE_URL,
+            IP_DATASET_CODE: IP_SOURCE_PAGE_URL,
+        }
+        registration_valid = (
+            approval is not None
+            and approval.approved and approval.enabled and not approval.live_mode
+            and set(datasets) == set(source_urls)
+            and all(datasets[code].source_url == url for code, url in source_urls.items())
+        )
+        if not registration_valid:
+            raise RuntimeError("controlled-live registration changed after preflight")
+        if current_mode == "SAME_RELEASE":
+            chain = validate_same_release_identity_chain(bundle, datasets, state)
+            readiness = evaluate_family_readiness(datasets, now=datetime.now(timezone.utc))
+            pointer_valid = _accepted_pointer_matches_bundle(state, bundle, raw_root)
+            if not chain.valid or readiness.state != DataState.FOUND or not pointer_valid:
+                reasons = list(chain.reasons)
+                if readiness.state != DataState.FOUND:
+                    reasons.append("same_release_family_readiness_not_current")
+                if not pointer_valid:
+                    reasons.append("same_release_replay_pointer_mismatch")
+                raise RuntimeError(
+                    "controlled-live state changed after preflight: "
+                    + ", ".join(reasons)
+                )
+        validation = state.validation_metadata if state and isinstance(state.validation_metadata, Mapping) else {}
         same_release = current_identity == bundle.identity
         creation = enqueue_bulk_release_bundle(
             session,

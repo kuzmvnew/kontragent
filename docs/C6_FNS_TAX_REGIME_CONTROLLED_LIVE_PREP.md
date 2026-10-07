@@ -278,10 +278,21 @@ classifies the release mode:
   currentness is diagnostic, not a prerequisite for first publication.
 - `NEW_RELEASE`: accepted identity differs from the discovered bundle; old
   family readiness is diagnostic, not a circular blocker for valid new data.
-- `SAME_RELEASE`: identities match; the persisted family and both mandatory
-  members must pass the same canonical currentness and release-compatibility
-  evaluator used by product checks. An unavailable, stale, parse-failed or
-  unverified component blocks confirmed enqueue, with zero Worker jobs.
+- `SAME_RELEASE`: accepted family identity matches fresh discovery, but that
+  alone is insufficient. The fresh official bundle is the authoritative
+  identity/date anchor. The preflight checks the accepted Worker publication,
+  family top-level coverage, the exact `legal`/`ip` family member map, and the
+  `fns_snr`/`fns_snrip` child coverage against the corresponding fresh member
+  identities and dates. Persisted values cannot self-attest: even coordinated
+  legal and child, IP and child, or both-member substitutions are STOP conditions.
+  Persisted publication member identities and dates, when present, must also
+  agree with the fresh bundle; checksums do not replace release identities.
+  Missing/malformed/extra members, swapped identities, stale dates, invalid
+  publication generation/pointer, or unavailable/stale/parse-failed siblings
+  block confirmed enqueue with zero Worker jobs. Enqueue locks and rechecks
+  the SAME_RELEASE identity/readiness chain after read-only preflight. The
+  accepted replay pointer must address this bundle's canonical normalized
+  descriptor under the selected RAW root; a substituted path is STOP.
 
 All modes retain source identity, exact URL/path, handler, registration and
 resource gates. Direct invalid bundle inputs are rejected before HEAD probes.
@@ -291,7 +302,9 @@ Expected preflight result: `READY_FOR_CONTROLLED_LIVE`, exact source/handler,
 both member codes, no blockers, and `release_mode=INITIAL_RELEASE` with
 `new_release_exists=true` for a first publication. On reruns, inspect
 `family_readiness_state`, `family_readiness_reason`,
-`current_publication_identity` and `discovered_release_identity`; do not
+`current_publication_identity`, `discovered_release_identity`, and
+`member_identity_verification` (expected and persisted legal/IP identities,
+dates and deterministic mismatch reasons); do not
 override a `SAME_RELEASE` family blocker. Any other result stops the run.
 
 ## HOME controlled-live package — do not run on Mac
@@ -411,6 +424,8 @@ Stop without publication on any of the following:
   `NEW_RELEASE` generation's state is diagnostic only);
 - F-C6-134-04: `SAME_RELEASE` preflight family readiness is not current or
   the persisted family identity/date differs from the accepted bundle;
+- F-C6-134-05: any SAME_RELEASE identity-chain edge differs from fresh official
+  discovery, including coordinated wrong family/child legal or IP identities;
 - unproven Company negative, stale Company coverage or changed frozen release;
 - ZIP or XSD outside the pinned official dataset path;
 - artifact/XSD structure-version mismatch;

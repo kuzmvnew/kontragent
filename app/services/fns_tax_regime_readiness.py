@@ -66,7 +66,8 @@ def evaluate_family_readiness(
     now = _datetime(now) or datetime.now(timezone.utc)
     family = datasets.get(FAMILY_CODE)
     family_date = _date(_field(family, "last_data_date")) if family else None
-    family_coverage = dict(_field(family, "coverage") or {}) if family else {}
+    raw_coverage = _field(family, "coverage") if family else None
+    family_coverage = raw_coverage if isinstance(raw_coverage, Mapping) else {}
     release_identity = family_coverage.get("release_identity")
     failures: list[tuple[int, DataState, str]] = []
     for code in REQUIRED_CODES:
@@ -107,15 +108,18 @@ def evaluate_family_readiness(
         return FamilyReadiness(state, reason, family_date, release_identity)
 
     dates = {_date(_field(datasets[code], "last_data_date")) for code in REQUIRED_CODES}
-    members = family_coverage.get("members") or {}
+    members = family_coverage.get("members")
     expected = {LEGAL_CODE: "legal", IP_CODE: "ip"}
     compatible = (
         len(dates) == 1
         and bool(release_identity)
+        and isinstance(members, Mapping)
         and all(
-            (members.get(name) or {}).get("release_identity")
-            and (members.get(name) or {}).get("release_identity")
-            == (dict(_field(datasets[code], "coverage") or {})).get("release_identity")
+            isinstance(members.get(name), Mapping)
+            and isinstance(_field(datasets[code], "coverage"), Mapping)
+            and members[name].get("release_identity")
+            and members[name].get("release_identity")
+            == _field(datasets[code], "coverage").get("release_identity")
             for code, name in expected.items()
         )
     )
@@ -124,6 +128,228 @@ def evaluate_family_readiness(
             DataState.NOT_CHECKED, "family_release_unverified", family_date, release_identity
         )
     return FamilyReadiness(DataState.FOUND, None, family_date, release_identity)
+
+
+@dataclass(frozen=True)
+class SameReleaseIdentityChain:
+    """Audit-safe verdict against a freshly discovered, authoritative bundle."""
+
+    valid: bool
+    reasons: tuple[str, ...]
+    expected_family_identity: str
+    persisted_publication_identity: str | None
+    persisted_publication_members: dict[str, str | None]
+    persisted_family_identity: str | None
+    expected_members: dict[str, str]
+    persisted_family_members: dict[str, str | None]
+    persisted_child_members: dict[str, str | None]
+    member_verification: dict[str, dict[str, Any]]
+    source_dates: dict[str, dict[str, str | None]]
+
+
+def publication_identity(state: Any | None) -> tuple[str | None, str | None]:
+    """Read accepted identity without interpreting corrupt state as an initial release."""
+
+    if state is None:
+        return None, None
+    metadata = _field(state, "validation_metadata")
+    if not isinstance(metadata, Mapping):
+        return None, "publication_metadata_invalid"
+    validation = metadata.get("validation")
+    if not isinstance(validation, Mapping):
+        if not metadata and not _field(state, "active_pointer") and not _field(state, "generation"):
+            return None, None
+        return None, "publication_metadata_invalid"
+    identity = validation.get("release_identity")
+    if not isinstance(identity, str) or not identity:
+        return None, "publication_identity_missing"
+    return identity, None
+
+
+def validate_same_release_identity_chain(
+    bundle: Any, datasets: Mapping[str, Any], publication: Any | None
+) -> SameReleaseIdentityChain:
+    """Validate every persisted family/member edge against fresh official discovery.
+
+    The fixed legal→fns_snr and ip→fns_snrip binding is intentional: neither
+    database order nor a persisted map may supply the expected identity.
+    """
+
+    reasons: list[str] = []
+
+    def fail(code: str) -> None:
+        if code not in reasons:
+            reasons.append(code)
+
+    if not isinstance(bundle.releases, Mapping) or set(bundle.releases) != {"legal", "ip"}:
+        accepted, _error = publication_identity(publication)
+        return SameReleaseIdentityChain(
+            valid=False,
+            reasons=("same_release_discovered_member_set_invalid",),
+            expected_family_identity=bundle.identity,
+            persisted_publication_identity=accepted,
+            persisted_publication_members={},
+            persisted_family_identity=None,
+            expected_members={},
+            persisted_family_members={},
+            persisted_child_members={},
+            member_verification={},
+            source_dates={},
+        )
+    expected = {name: bundle.releases[name] for name in ("legal", "ip")}
+    expected_ids = {name: release.identity for name, release in expected.items()}
+    metadata = _field(publication, "validation_metadata")
+    validation = metadata.get("validation") if isinstance(metadata, Mapping) else None
+    publication_members: dict[str, str | None] = {}
+    if isinstance(validation, Mapping) and "member_release_identities" in validation:
+        raw_members = validation["member_release_identities"]
+        if not isinstance(raw_members, Mapping) or set(raw_members) != {"legal", "ip"}:
+            fail("same_release_publication_member_map_invalid")
+        else:
+            publication_members = {
+                name: value if isinstance(value, str) else None
+                for name, value in raw_members.items()
+            }
+            if any(publication_members[name] != expected_ids[name] for name in ("legal", "ip")):
+                fail("same_release_publication_member_identity_mismatch")
+    family = datasets.get(FAMILY_CODE)
+    family_raw = _field(family, "coverage")
+    family_coverage = family_raw if isinstance(family_raw, Mapping) else {}
+    if not isinstance(family_raw, Mapping):
+        fail("same_release_family_coverage_invalid")
+
+    accepted, metadata_error = publication_identity(publication)
+    if metadata_error or publication is None:
+        fail("same_release_publication_invalid")
+    if accepted != bundle.identity:
+        fail("same_release_publication_identity_mismatch")
+    if publication is not None and (
+        not isinstance(_field(publication, "active_pointer"), str)
+        or not _field(publication, "active_pointer")
+        or not isinstance(_field(publication, "generation"), int)
+        or _field(publication, "generation") < 1
+        or not isinstance(_field(publication, "validation_metadata"), Mapping)
+        or not isinstance(_field(publication, "validation_metadata").get("checksum"), str)
+        or not _field(publication, "validation_metadata").get("checksum")
+    ):
+        fail("same_release_publication_generation_invalid")
+
+    family_id = family_coverage.get("release_identity")
+    if not isinstance(family_id, str) or not family_id:
+        fail("same_release_family_identity_missing")
+    elif family_id != bundle.identity:
+        fail("same_release_family_identity_mismatch")
+    if "family_bundle_identity" in family_coverage and family_coverage["family_bundle_identity"] != bundle.identity:
+        fail("same_release_family_bundle_identity_mismatch")
+
+    date_evidence: dict[str, dict[str, str | None]] = {}
+
+    def check_date(label: str, raw: Any, expected_date: date, code: str, *, required: bool) -> None:
+        parsed = _date(raw)
+        date_evidence[label] = {
+            "expected": expected_date.isoformat(),
+            "persisted": parsed.isoformat() if parsed else None,
+        }
+        if (required or raw is not None) and parsed != expected_date:
+            fail(code)
+
+    check_date("family.last_data_date", _field(family, "last_data_date"), bundle.source_data_date,
+               "same_release_family_date_mismatch", required=True)
+    check_date("family.source_as_of", _field(family, "source_as_of"), bundle.source_data_date,
+               "same_release_family_date_mismatch", required=False)
+    if "source_data_date" in family_coverage:
+        check_date("family.coverage.source_data_date", family_coverage["source_data_date"],
+                   bundle.source_data_date, "same_release_family_date_mismatch", required=True)
+    if isinstance(validation, Mapping) and "source_data_date" in validation:
+        check_date("publication.source_data_date", validation["source_data_date"],
+                   bundle.source_data_date, "same_release_publication_date_mismatch", required=True)
+
+    members_raw = family_coverage.get("members")
+    members = members_raw if isinstance(members_raw, Mapping) else {}
+    if not isinstance(members_raw, Mapping):
+        fail("same_release_member_map_invalid")
+    elif set(members) != {"legal", "ip"}:
+        fail("same_release_member_map_invalid")
+    family_member_ids: dict[str, str | None] = {}
+    child_ids: dict[str, str | None] = {}
+    for name, code in (("legal", LEGAL_CODE), ("ip", IP_CODE)):
+        member_raw = members.get(name)
+        member = member_raw if isinstance(member_raw, Mapping) else {}
+        if not isinstance(member_raw, Mapping):
+            fail("same_release_member_map_invalid")
+        member_id = member.get("release_identity")
+        family_member_ids[name] = member_id if isinstance(member_id, str) else None
+        if not isinstance(member_id, str) or not member_id:
+            fail("same_release_member_identity_missing")
+        elif member_id != expected_ids[name]:
+            fail("same_release_member_identity_mismatch")
+        if "source_data_date" in member:
+            check_date(f"members.{name}.source_data_date", member["source_data_date"],
+                       expected[name].source_data_date, "same_release_member_date_mismatch", required=True)
+
+        child = datasets.get(code)
+        child_raw = _field(child, "coverage")
+        child_coverage = child_raw if isinstance(child_raw, Mapping) else {}
+        if not isinstance(child_raw, Mapping):
+            fail("same_release_child_coverage_invalid")
+        child_id = child_coverage.get("release_identity")
+        child_ids[code] = child_id if isinstance(child_id, str) else None
+        if not isinstance(child_id, str) or not child_id:
+            fail("same_release_child_identity_missing")
+        elif child_id != expected_ids[name]:
+            fail("same_release_child_identity_mismatch")
+        if member_id != child_id:
+            fail("same_release_cross_representation_mismatch")
+        check_date(f"{code}.last_data_date", _field(child, "last_data_date"),
+                   expected[name].source_data_date, "same_release_child_date_mismatch", required=True)
+        check_date(f"{code}.source_as_of", _field(child, "source_as_of"),
+                   expected[name].source_data_date, "same_release_child_date_mismatch", required=False)
+        if "source_data_date" in child_coverage:
+            check_date(f"{code}.coverage.source_data_date", child_coverage["source_data_date"],
+                       expected[name].source_data_date, "same_release_child_date_mismatch", required=True)
+
+    member_verification: dict[str, dict[str, Any]] = {}
+    for name, code in (("legal", LEGAL_CODE), ("ip", IP_CODE)):
+        member_id = family_member_ids[name]
+        child_id = child_ids[code]
+        date_labels = (
+            f"members.{name}.source_data_date",
+            f"{code}.last_data_date",
+            f"{code}.source_as_of",
+            f"{code}.coverage.source_data_date",
+        )
+        dates_match = all(
+            date_evidence[label]["persisted"] == date_evidence[label]["expected"]
+            for label in date_labels if label in date_evidence
+        )
+        member_reasons = []
+        if member_id != expected_ids[name]:
+            member_reasons.append("family_member_identity_mismatch")
+        if child_id != expected_ids[name]:
+            member_reasons.append("child_dataset_identity_mismatch")
+        if not dates_match:
+            member_reasons.append("source_date_mismatch")
+        member_verification[name] = {
+            "expected_identity": expected_ids[name],
+            "family_member_identity": member_id,
+            "child_dataset_code": code,
+            "child_identity": child_id,
+            "valid": not member_reasons,
+            "mismatch_reasons": member_reasons,
+        }
+
+    return SameReleaseIdentityChain(
+        valid=not reasons, reasons=tuple(reasons),
+        expected_family_identity=bundle.identity,
+        persisted_publication_identity=accepted,
+        persisted_publication_members=publication_members,
+        persisted_family_identity=family_id if isinstance(family_id, str) else None,
+        expected_members=expected_ids,
+        persisted_family_members=family_member_ids,
+        persisted_child_members=child_ids,
+        member_verification=member_verification,
+        source_dates=date_evidence,
+    )
 
 
 @dataclass(frozen=True)

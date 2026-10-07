@@ -1,3 +1,5 @@
+from copy import deepcopy
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from functools import partial
 from types import SimpleNamespace
@@ -11,6 +13,7 @@ from app.ingestion import fns_bulk_worker as bulk
 from app.ingestion import fns_tax_regime
 from app.models.source import DataSet, DataSource
 from app.models.worker import WorkerHandlerRegistration, WorkerJob, WorkerPublicationState
+from app.services.fns_tax_regime_readiness import validate_same_release_identity_chain
 from scripts import run_fns_tax_regime_controlled_live as operator
 from workspace_app.monitoring_service import _event_type
 
@@ -86,9 +89,13 @@ def _current_datasets(bundle):
         dataset.last_data_date = bundle.source_data_date
         dataset.official_actual_until = bundle.actual_until
         dataset.coverage = {"release_identity": identities[dataset.code]}
+        if dataset.code != "fns_tax_regime":
+            dataset.coverage["source_data_date"] = bundle.source_data_date.isoformat()
+        dataset.source_as_of = datetime.combine(bundle.source_data_date, datetime.min.time(), tzinfo=timezone.utc)
+    datasets[0].coverage["family_bundle_identity"] = bundle.identity
     datasets[0].coverage["members"] = {
-        "legal": {"release_identity": identities["fns_snr"]},
-        "ip": {"release_identity": identities["fns_snrip"]},
+        "legal": {"release_identity": identities["fns_snr"], "source_data_date": bundle.source_data_date.isoformat()},
+        "ip": {"release_identity": identities["fns_snrip"], "source_data_date": bundle.source_data_date.isoformat()},
     }
     return datasets
 
@@ -127,6 +134,10 @@ def preflight_db(monkeypatch, tmp_path):
         join_transaction_mode="create_savepoint",
     )
     bundle = _bundle()
+    raw_root = tmp_path / "raw"
+    accepted_pointer = (
+        raw_root / fns_tax_regime.SOURCE_ID / "bundles" / bundle.identity / "normalized-bundle.json"
+    ).resolve().as_uri()
     with factory() as session:
         source = session.scalar(sa.select(DataSource).where(DataSource.code == "c6_preflight_test"))
         if source is None:
@@ -156,6 +167,7 @@ def preflight_db(monkeypatch, tmp_path):
             dataset.operational_status = expected.operational_status
             dataset.last_success_at = expected.last_success_at
             dataset.last_data_date = expected.last_data_date
+            dataset.source_as_of = expected.source_as_of
             dataset.official_actual_until = expected.official_actual_until
             dataset.coverage = expected.coverage
             dataset.freshness_policy = "irregular"
@@ -179,14 +191,13 @@ def preflight_db(monkeypatch, tmp_path):
             publication = WorkerPublicationState(source_id=fns_tax_regime.SOURCE_ID)
             session.add(publication)
         publication.generation = 1
-        publication.active_pointer = "file:///accepted/c6-bundle.json"
+        publication.active_pointer = accepted_pointer
         publication.validation_metadata = {
             "validation": {"release_identity": bundle.identity},
             "checksum": "a" * 64,
         }
         session.commit()
 
-    raw_root = tmp_path / "raw"
     original_report = operator.build_preflight_report
     monkeypatch.setattr(operator, "SessionLocal", factory)
     monkeypatch.setattr(operator, "_discover_bundle", lambda: bundle)
@@ -224,11 +235,409 @@ def _dataset_state(factory):
                 DataSet.code,
                 DataSet.operational_status,
                 DataSet.last_success_at,
+                DataSet.last_data_date,
+                DataSet.source_as_of,
                 DataSet.last_error,
                 DataSet.coverage,
             ).where(DataSet.code.in_(("fns_tax_regime", "fns_snr", "fns_snrip")))
             .order_by(DataSet.code)
         ).all()
+
+
+def _publication_state(factory):
+    with factory() as session:
+        row = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        return None if row is None else (
+            row.generation, row.active_pointer, deepcopy(row.validation_metadata)
+        )
+
+
+def _alternate_member_identity(bundle, name):
+    release = bundle.releases[name]
+    alternate = replace(
+        release,
+        artifact_url=release.artifact_url.replace("data-20260925", "data-20260926"),
+    )
+    assert alternate.identity != release.identity
+    spec = fns_tax_regime._member_specs()[name]
+    bulk.validate_official_release_url(spec, alternate.artifact_url, artifact=True)
+    return alternate.identity
+
+
+IDENTITY_MUTATIONS = (
+    ("legal_coordinated", "same_release_member_identity_mismatch"),
+    ("ip_coordinated", "same_release_member_identity_mismatch"),
+    ("both_coordinated", "same_release_member_identity_mismatch"),
+    ("swapped", "same_release_member_identity_mismatch"),
+    ("family_legal", "same_release_member_identity_mismatch"),
+    ("family_ip", "same_release_member_identity_mismatch"),
+    ("child_legal", "same_release_child_identity_mismatch"),
+    ("child_ip", "same_release_child_identity_mismatch"),
+    ("missing_member_legal", "same_release_member_identity_missing"),
+    ("missing_member_ip", "same_release_member_identity_missing"),
+    ("missing_child_legal", "same_release_child_identity_missing"),
+    ("missing_child_ip", "same_release_child_identity_missing"),
+    ("missing_map", "same_release_member_map_invalid"),
+    ("null_map", "same_release_member_map_invalid"),
+    ("list_map", "same_release_member_map_invalid"),
+    ("string_map", "same_release_member_map_invalid"),
+    ("partial_legal", "same_release_member_map_invalid"),
+    ("partial_ip", "same_release_member_map_invalid"),
+    ("nested_invalid", "same_release_member_map_invalid"),
+    ("wrong_field_type", "same_release_member_identity_missing"),
+    ("extra_member", "same_release_member_map_invalid"),
+    ("member_date_legal", "same_release_member_date_mismatch"),
+    ("member_date_ip", "same_release_member_date_mismatch"),
+    ("child_coverage_date_legal", "same_release_child_date_mismatch"),
+    ("child_coverage_date_ip", "same_release_child_date_mismatch"),
+    ("child_date_legal", "same_release_child_date_mismatch"),
+    ("child_date_ip", "same_release_child_date_mismatch"),
+    ("family_date", "same_release_family_date_mismatch"),
+    ("family_asof", "same_release_family_date_mismatch"),
+    ("family_identity", "same_release_family_identity_mismatch"),
+    ("missing_family_identity", "same_release_family_identity_missing"),
+    ("family_bundle_identity", "same_release_family_bundle_identity_mismatch"),
+    ("publication_metadata", "same_release_publication_invalid"),
+    ("publication_identity", "same_release_publication_identity_mismatch"),
+    ("publication_pointer", "same_release_publication_generation_invalid"),
+    ("publication_generation", "same_release_publication_generation_invalid"),
+    ("publication_checksum", "same_release_publication_generation_invalid"),
+    ("publication_member_legal", "same_release_publication_member_identity_mismatch"),
+    ("publication_member_ip", "same_release_publication_member_identity_mismatch"),
+    ("publication_member_map", "same_release_publication_member_map_invalid"),
+    ("publication_date", "same_release_publication_date_mismatch"),
+    ("family_coverage_date", "same_release_family_date_mismatch"),
+)
+
+
+def _mutate_identity_graph(datasets, publication, bundle, mutation):
+    family = datasets["fns_tax_regime"]
+    family_coverage = deepcopy(family.coverage)
+    children = {name: datasets[code] for name, code in (("legal", "fns_snr"), ("ip", "fns_snrip"))}
+    child_coverage = {name: deepcopy(child.coverage) for name, child in children.items()}
+    alternatives = {name: _alternate_member_identity(bundle, name) for name in children}
+
+    if mutation in {"legal_coordinated", "ip_coordinated", "both_coordinated"}:
+        names = ("legal", "ip") if mutation == "both_coordinated" else (mutation.split("_")[0],)
+        for name in names:
+            family_coverage["members"][name]["release_identity"] = alternatives[name]
+            child_coverage[name]["release_identity"] = alternatives[name]
+    elif mutation == "swapped":
+        for name, other in (("legal", "ip"), ("ip", "legal")):
+            family_coverage["members"][name]["release_identity"] = bundle.releases[other].identity
+            child_coverage[name]["release_identity"] = bundle.releases[other].identity
+    elif mutation.startswith("family_") and mutation in {"family_legal", "family_ip"}:
+        name = mutation.split("_")[1]
+        family_coverage["members"][name]["release_identity"] = alternatives[name]
+    elif mutation.startswith("child_") and mutation in {"child_legal", "child_ip"}:
+        name = mutation.split("_")[1]
+        child_coverage[name]["release_identity"] = alternatives[name]
+    elif mutation.startswith("missing_member_"):
+        del family_coverage["members"][mutation.removeprefix("missing_member_")]["release_identity"]
+    elif mutation.startswith("missing_child_"):
+        del child_coverage[mutation.removeprefix("missing_child_")]["release_identity"]
+    elif mutation == "missing_map":
+        del family_coverage["members"]
+    elif mutation in {"null_map", "list_map", "string_map"}:
+        family_coverage["members"] = {"null_map": None, "list_map": [], "string_map": "bad"}[mutation]
+    elif mutation.startswith("partial_"):
+        family_coverage["members"].pop("ip" if mutation == "partial_legal" else "legal")
+    elif mutation == "nested_invalid":
+        family_coverage["members"]["legal"] = []
+    elif mutation == "wrong_field_type":
+        family_coverage["members"]["legal"]["release_identity"] = [bundle.releases["legal"].identity]
+    elif mutation == "extra_member":
+        family_coverage["members"]["other"] = {"release_identity": "extra"}
+    elif mutation.startswith("member_date_"):
+        family_coverage["members"][mutation.removeprefix("member_date_")]["source_data_date"] = "2026-08-01"
+    elif mutation.startswith("child_coverage_date_"):
+        child_coverage[mutation.removeprefix("child_coverage_date_")]["source_data_date"] = "2026-08-01"
+    elif mutation.startswith("child_date_"):
+        children[mutation.removeprefix("child_date_")].last_data_date = date(2026, 8, 1)
+    elif mutation == "family_date":
+        family.last_data_date = date(2026, 8, 1)
+    elif mutation == "family_asof":
+        family.source_as_of = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    elif mutation == "family_coverage_date":
+        family_coverage["source_data_date"] = "2026-08-01"
+    elif mutation == "family_identity":
+        family_coverage["release_identity"] = "wrong-family"
+    elif mutation == "missing_family_identity":
+        del family_coverage["release_identity"]
+    elif mutation == "family_bundle_identity":
+        family_coverage["family_bundle_identity"] = "wrong-family"
+    elif mutation == "publication_metadata":
+        publication.validation_metadata = ["bad"]
+    elif mutation == "publication_identity":
+        publication.validation_metadata = {
+            "validation": {"release_identity": "previous-release"}, "checksum": "a" * 64,
+        }
+    elif mutation == "publication_pointer":
+        publication.active_pointer = None
+    elif mutation == "publication_generation":
+        publication.generation = 0
+    elif mutation == "publication_checksum":
+        publication.validation_metadata = {"validation": {"release_identity": bundle.identity}}
+    elif mutation.startswith("publication_member_"):
+        metadata = deepcopy(publication.validation_metadata)
+        member_map = {name: release.identity for name, release in bundle.releases.items()}
+        if mutation == "publication_member_map":
+            member_map["other"] = "extra"
+        else:
+            member_map[mutation.removeprefix("publication_member_")] = alternatives[
+                mutation.removeprefix("publication_member_")
+            ]
+        metadata["validation"]["member_release_identities"] = member_map
+        publication.validation_metadata = metadata
+    elif mutation == "publication_date":
+        metadata = deepcopy(publication.validation_metadata)
+        metadata["validation"]["source_data_date"] = "2026-08-01"
+        publication.validation_metadata = metadata
+    else:
+        raise AssertionError(mutation)
+
+    family.coverage = family_coverage
+    for name, child in children.items():
+        child.coverage = child_coverage[name]
+
+
+@pytest.mark.parametrize(("mutation", "reason"), IDENTITY_MUTATIONS)
+def test_pure_same_release_chain_rejects_identity_graph_mutation(mutation, reason):
+    bundle = _bundle()
+    datasets = {row.code: row for row in _current_datasets(bundle)}
+    publication = SimpleNamespace(
+        validation_metadata={"validation": {"release_identity": bundle.identity}, "checksum": "a" * 64},
+        active_pointer="file:///accepted/c6-bundle.json", generation=1,
+    )
+    _mutate_identity_graph(datasets, publication, bundle, mutation)
+    verdict = validate_same_release_identity_chain(bundle, datasets, publication)
+    assert not verdict.valid
+    assert reason in verdict.reasons
+    if mutation == "legal_coordinated":
+        assert verdict.member_verification["legal"]["mismatch_reasons"] == [
+            "family_member_identity_mismatch", "child_dataset_identity_mismatch"
+        ]
+        assert verdict.member_verification["ip"]["valid"] is True
+
+
+def test_pure_same_release_chain_accepts_only_fresh_authoritative_graph():
+    bundle = _bundle()
+    datasets = {row.code: row for row in _current_datasets(bundle)}
+    publication = SimpleNamespace(
+        validation_metadata={"validation": {"release_identity": bundle.identity}, "checksum": "a" * 64},
+        active_pointer="file:///accepted/c6-bundle.json", generation=1,
+    )
+    verdict = validate_same_release_identity_chain(bundle, datasets, publication)
+    assert verdict.valid
+    assert verdict.reasons == ()
+    assert verdict.expected_members == {name: bundle.releases[name].identity for name in ("legal", "ip")}
+    assert verdict.member_verification["legal"]["valid"] is True
+    assert verdict.member_verification["ip"]["valid"] is True
+
+
+def test_pure_same_release_chain_rejects_incomplete_fresh_bundle_without_exception():
+    bundle = _bundle()
+    incomplete = bulk.FnsReleaseBundle({"legal": bundle.releases["legal"]})
+    datasets = {row.code: row for row in _current_datasets(bundle)}
+    publication = SimpleNamespace(
+        validation_metadata={"validation": {"release_identity": incomplete.identity}, "checksum": "a" * 64},
+        active_pointer="file:///accepted/c6-bundle.json", generation=1,
+    )
+    verdict = validate_same_release_identity_chain(incomplete, datasets, publication)
+    assert not verdict.valid
+    assert verdict.reasons == ("same_release_discovered_member_set_invalid",)
+
+
+def test_pure_same_release_chain_requires_publication_state():
+    bundle = _bundle()
+    datasets = {row.code: row for row in _current_datasets(bundle)}
+    verdict = validate_same_release_identity_chain(bundle, datasets, None)
+    assert not verdict.valid
+    assert "same_release_publication_invalid" in verdict.reasons
+
+
+@pytest.mark.parametrize(("mutation", "reason"), [
+    item for item in IDENTITY_MUTATIONS if item[0] not in {"publication_metadata", "publication_identity"}
+])
+def test_real_postgres_same_release_mutation_blocks_without_side_effects(preflight_db, mutation, reason):
+    with preflight_db.factory() as session:
+        datasets = {row.code: row for row in session.scalars(sa.select(DataSet).where(
+            DataSet.code.in_(("fns_tax_regime", "fns_snr", "fns_snrip"))
+        ))}
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        _mutate_identity_graph(datasets, publication, preflight_db.bundle, mutation)
+        session.commit()
+    before_datasets = _dataset_state(preflight_db.factory)
+    before_publication = _publication_state(preflight_db.factory)
+    before_jobs = _job_count(preflight_db.factory)
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["status"] == "BLOCKED"
+    assert reason in report["blockers"]
+    assert reason in report["member_identity_verification"]["reasons"]
+    assert set(report["member_identity_verification"]["members"]) == {"legal", "ip"}
+    assert _dataset_state(preflight_db.factory) == before_datasets
+    assert _publication_state(preflight_db.factory) == before_publication
+    assert _job_count(preflight_db.factory) == before_jobs
+    assert not preflight_db.raw_root.exists()
+    with pytest.raises(RuntimeError, match=reason):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert _dataset_state(preflight_db.factory) == before_datasets
+    assert _publication_state(preflight_db.factory) == before_publication
+    assert _job_count(preflight_db.factory) == before_jobs
+    assert not preflight_db.raw_root.exists()
+
+
+@pytest.mark.parametrize("metadata", [
+    ["bad"], {"validation": []}, {"validation": {}}, {},
+])
+def test_real_postgres_invalid_accepted_publication_fails_closed(preflight_db, metadata):
+    with preflight_db.factory() as session:
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        publication.validation_metadata = metadata
+        session.commit()
+    before_datasets = _dataset_state(preflight_db.factory)
+    before_publication = _publication_state(preflight_db.factory)
+    before_jobs = _job_count(preflight_db.factory)
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "INVALID_PUBLICATION"
+    assert report["status"] == "BLOCKED"
+    assert any(code.startswith("publication_") for code in report["blockers"])
+    with pytest.raises(RuntimeError, match="publication_"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert _dataset_state(preflight_db.factory) == before_datasets
+    assert _publication_state(preflight_db.factory) == before_publication
+    assert _job_count(preflight_db.factory) == before_jobs
+    assert not preflight_db.raw_root.exists()
+
+
+def test_real_postgres_empty_unaccepted_state_is_initial_release(preflight_db):
+    with preflight_db.factory() as session:
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        publication.active_pointer = None
+        publication.generation = 0
+        publication.validation_metadata = {}
+        session.commit()
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "INITIAL_RELEASE"
+    assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+
+
+def test_real_postgres_substituted_replay_path_blocks_before_job(preflight_db):
+    with preflight_db.factory() as session:
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        publication.active_pointer = "file:///substituted/normalized-bundle.json"
+        session.commit()
+    before = (
+        _dataset_state(preflight_db.factory),
+        _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory),
+    )
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["status"] == "BLOCKED"
+    assert "same_release_replay_pointer_mismatch" in report["blockers"]
+    with pytest.raises(RuntimeError, match="same_release_replay_pointer_mismatch"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory),
+        _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory),
+    ) == before
+    assert not preflight_db.raw_root.exists()
+
+
+@pytest.mark.parametrize(("race", "reason"), [
+    ("member", "same_release_member_identity_mismatch"),
+    ("pointer", "same_release_publication_generation_invalid"),
+    ("pointer_path", "same_release_replay_pointer_mismatch"),
+    ("source_url", "controlled-live registration changed after preflight"),
+    ("handler", "controlled-live registration changed after preflight"),
+])
+def test_confirmed_enqueue_rechecks_state_changed_after_preflight(
+    preflight_db, monkeypatch, race, reason
+):
+    original_preflight = operator._preflight
+    snapshots = []
+
+    def racing_preflight(raw_root):
+        report, bundle = original_preflight(raw_root)
+        assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+        with preflight_db.factory() as session:
+            if race == "member":
+                family = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_tax_regime"))
+                legal = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snr"))
+                family_coverage = deepcopy(family.coverage)
+                legal_coverage = deepcopy(legal.coverage)
+                alternate = _alternate_member_identity(bundle, "legal")
+                family_coverage["members"]["legal"]["release_identity"] = alternate
+                legal_coverage["release_identity"] = alternate
+                family.coverage = family_coverage
+                legal.coverage = legal_coverage
+            elif race in {"pointer", "pointer_path"}:
+                session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID).active_pointer = (
+                    None if race == "pointer" else "file:///substituted/normalized-bundle.json"
+                )
+            elif race == "source_url":
+                ip = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snrip"))
+                ip.source_url = "https://www.nalog.gov.ru/opendata/substituted/"
+            else:
+                approval = session.get(WorkerHandlerRegistration, (
+                    fns_tax_regime.SOURCE_ID, fns_tax_regime.HANDLER_VERSION
+                ))
+                approval.approved = False
+            session.commit()
+        snapshots.append((_dataset_state(preflight_db.factory),
+                          _publication_state(preflight_db.factory),
+                          _job_count(preflight_db.factory)))
+        return report, bundle
+
+    monkeypatch.setattr(operator, "_preflight", racing_preflight)
+    with pytest.raises(RuntimeError, match=reason):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert len(snapshots) == 1
+    assert (_dataset_state(preflight_db.factory),
+            _publication_state(preflight_db.factory),
+            _job_count(preflight_db.factory)) == snapshots[0]
+    assert not preflight_db.raw_root.exists()
+
+
+def test_new_to_same_release_race_cannot_bypass_member_chain(preflight_db, monkeypatch):
+    with preflight_db.factory() as session:
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        publication.validation_metadata = {
+            "validation": {"release_identity": "previous-release"}, "checksum": "a" * 64,
+        }
+        session.commit()
+    original_preflight = operator._preflight
+
+    def racing_preflight(raw_root):
+        report, bundle = original_preflight(raw_root)
+        assert report["release_mode"] == "NEW_RELEASE"
+        assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+        with preflight_db.factory() as session:
+            publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+            publication.validation_metadata = {
+                "validation": {"release_identity": bundle.identity}, "checksum": "a" * 64,
+            }
+            family = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_tax_regime"))
+            legal = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snr"))
+            family_coverage = deepcopy(family.coverage)
+            legal_coverage = deepcopy(legal.coverage)
+            alternate = _alternate_member_identity(bundle, "legal")
+            family_coverage["members"]["legal"]["release_identity"] = alternate
+            legal_coverage["release_identity"] = alternate
+            family.coverage = family_coverage
+            legal.coverage = legal_coverage
+            session.commit()
+        return report, bundle
+
+    monkeypatch.setattr(operator, "_preflight", racing_preflight)
+    before_jobs = _job_count(preflight_db.factory)
+    with pytest.raises(RuntimeError, match="release mode changed after preflight"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert _job_count(preflight_db.factory) == before_jobs
+    assert not preflight_db.raw_root.exists()
 
 
 def test_preflight_is_read_only_scoped_and_reports_new_bundle(tmp_path):
@@ -312,7 +721,9 @@ def test_preflight_recognizes_same_accepted_bundle(tmp_path, monkeypatch):
         validation_metadata={
             "validation": {"release_identity": bundle.identity},
             "checksum": "a" * 64,
-        }
+        },
+        active_pointer=(tmp_path / fns_tax_regime.SOURCE_ID / "bundles" / bundle.identity / "normalized-bundle.json").resolve().as_uri(),
+        generation=1,
     )
     session = FakeSession(state=state)
     monkeypatch.setattr(session, "scalars", lambda _statement: _current_datasets(bundle))
@@ -407,7 +818,7 @@ def test_same_release_persisted_identity_mismatch_blocks(preflight_db):
     report, _bundle = operator._preflight(preflight_db.raw_root)
     assert report["family_readiness_state"] == "FOUND"
     assert report["status"] == "BLOCKED"
-    assert "same_release_family_publication_mismatch" in report["blockers"]
+    assert "same_release_family_identity_mismatch" in report["blockers"]
     assert _job_count(preflight_db.factory) == 0
 
 
@@ -609,6 +1020,13 @@ def test_controlled_enqueue_creates_one_scoped_job_without_running_it(
     bundle = _bundle()
     session = FakeSession()
     session.committed = False
+    session.scalar_calls = 0
+    def scalar(_statement):
+        session.scalar_calls += 1
+        if session.scalar_calls == 1:
+            return _datasets()[0]
+        return None if session.scalar_calls == 2 else session.approval
+    session.scalar = scalar
     session.__enter__ = lambda: session
     session.__exit__ = lambda *_args: None
     session.commit = lambda: setattr(session, "committed", True)
@@ -635,7 +1053,7 @@ def test_controlled_enqueue_creates_one_scoped_job_without_running_it(
     monkeypatch.setattr(
         operator,
         "_preflight",
-        lambda _raw_root: ({"status": "READY_FOR_CONTROLLED_LIVE"}, bundle),
+        lambda _raw_root: ({"status": "READY_FOR_CONTROLLED_LIVE", "release_mode": "INITIAL_RELEASE"}, bundle),
     )
     monkeypatch.setattr(operator, "SessionLocal", SessionContext)
     monkeypatch.setattr(operator, "enqueue_bulk_release_bundle", fake_enqueue)

@@ -1320,6 +1320,7 @@ def publish_fns_tax_regime_worker_result(session, claim, result):
                 "published_facts": published,
                 "freshness": child_status.value,
                 "release_identity": release.identity,
+                "source_data_date": release.source_data_date.isoformat(),
                 "artifact_sha256": member.get("artifact_sha256"),
                 "artifact_size": member.get("artifact_size"),
                 "xsd_sha256": member.get("xsd_sha256"),
