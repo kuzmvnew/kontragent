@@ -78,6 +78,11 @@ def test_valid_accepted_old_release_proof_is_independent_of_fresh_discovery():
     assert verdict.lifecycle == PublicationLifecycle.ACCEPTED_VALID
     assert verdict.proof.release_identity == FAMILY_ID
     assert verdict.proof.member_release_identities == {"legal": LEGAL_ID, "ip": IP_ID}
+    with pytest.raises(TypeError):
+        verdict.proof.member_release_identities["legal"] = "b" * 64
+    evidence = verdict.proof.as_evidence()
+    evidence["member_release_identities"]["legal"] = "b" * 64
+    assert verdict.proof.member_release_identities["legal"] == LEGAL_ID
 
 
 @pytest.mark.parametrize("generation", [True, False, 0, -1, 1.0, "1", None])

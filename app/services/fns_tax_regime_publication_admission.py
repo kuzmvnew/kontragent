@@ -9,6 +9,7 @@ from hashlib import sha256
 import json
 import re
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
 from uuid import UUID
@@ -120,7 +121,7 @@ class AcceptedPublicationProof:
     active_pointer: str
     checksum: str
     source_data_date: date
-    member_release_identities: dict[str, str]
+    member_release_identities: Mapping[str, str]
     last_fencing_token: int
     published_by_run_id: str | None
     updated_at: str | None
@@ -133,7 +134,7 @@ class AcceptedPublicationProof:
             "active_pointer": self.active_pointer,
             "checksum": self.checksum,
             "source_data_date": self.source_data_date.isoformat(),
-            "member_release_identities": self.member_release_identities,
+            "member_release_identities": dict(self.member_release_identities),
             "last_fencing_token": self.last_fencing_token,
             "published_by_run_id": self.published_by_run_id,
             "updated_at": self.updated_at,
@@ -268,7 +269,7 @@ def validate_publication_lifecycle(
         active_pointer=pointer,
         checksum=checksum,
         source_data_date=source_date,
-        member_release_identities=dict(member_ids),
+        member_release_identities=MappingProxyType(dict(member_ids)),
         last_fencing_token=fencing,
         published_by_run_id=str(published_by) if published_by is not None else None,
         updated_at=updated_at.isoformat() if isinstance(updated_at, datetime) else None,
