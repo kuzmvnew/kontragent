@@ -1,11 +1,16 @@
 from datetime import date, datetime, timezone
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.orm import sessionmaker
 
+from app.database.postgres import engine
 from app.ingestion import fns_bulk_worker as bulk
 from app.ingestion import fns_tax_regime
-from app.models.worker import WorkerHandlerRegistration, WorkerPublicationState
+from app.models.source import DataSet, DataSource
+from app.models.worker import WorkerHandlerRegistration, WorkerJob, WorkerPublicationState
 from scripts import run_fns_tax_regime_controlled_live as operator
 from workspace_app.monitoring_service import _event_type
 
@@ -66,6 +71,28 @@ def _datasets():
     ]
 
 
+def _current_datasets(bundle):
+    datasets = _datasets()
+    releases = bundle.releases
+    identities = {
+        "fns_tax_regime": bundle.identity,
+        "fns_snr": releases["legal"].identity,
+        "fns_snrip": releases["ip"].identity,
+    }
+    for dataset in datasets:
+        dataset.enabled = True
+        dataset.operational_status = "current"
+        dataset.last_success_at = NOW
+        dataset.last_data_date = bundle.source_data_date
+        dataset.official_actual_until = bundle.actual_until
+        dataset.coverage = {"release_identity": identities[dataset.code]}
+    datasets[0].coverage["members"] = {
+        "legal": {"release_identity": identities["fns_snr"]},
+        "ip": {"release_identity": identities["fns_snrip"]},
+    }
+    return datasets
+
+
 class FakeSession:
     def __init__(self, *, approval=True, state=None):
         self.approval = (
@@ -86,6 +113,124 @@ class FakeSession:
         return _datasets()
 
 
+@pytest.fixture
+def preflight_db(monkeypatch, tmp_path):
+    """Real PostgreSQL rows, isolated by an outer rollback; no HOME access."""
+
+    connection = engine.connect()
+    transaction = connection.begin()
+    assert connection.scalar(sa.text("SELECT current_database()")) != "kontragent"
+    factory = sessionmaker(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    bundle = _bundle()
+    with factory() as session:
+        source = session.scalar(sa.select(DataSource).where(DataSource.code == "c6_preflight_test"))
+        if source is None:
+            source = DataSource(
+                code="c6_preflight_test",
+                name="C6 preflight test",
+                source_type="official",
+                priority=10,
+                enabled=True,
+            )
+            session.add(source)
+            session.flush()
+        for expected in _current_datasets(bundle):
+            dataset = session.scalar(sa.select(DataSet).where(DataSet.code == expected.code))
+            if dataset is None:
+                dataset = DataSet(
+                    source_id=source.id,
+                    code=expected.code,
+                    name=expected.code,
+                    domain="taxes",
+                    update_mode="bulk",
+                    data_format="xml",
+                )
+                session.add(dataset)
+            dataset.enabled = expected.enabled
+            dataset.source_url = expected.source_url
+            dataset.operational_status = expected.operational_status
+            dataset.last_success_at = expected.last_success_at
+            dataset.last_data_date = expected.last_data_date
+            dataset.official_actual_until = expected.official_actual_until
+            dataset.coverage = expected.coverage
+            dataset.freshness_policy = "irregular"
+            dataset.last_error = None
+        approval = session.get(
+            WorkerHandlerRegistration,
+            (fns_tax_regime.SOURCE_ID, fns_tax_regime.HANDLER_VERSION),
+        )
+        if approval is None:
+            approval = WorkerHandlerRegistration(
+                source_id=fns_tax_regime.SOURCE_ID,
+                handler_version=fns_tax_regime.HANDLER_VERSION,
+                metadata_json={},
+            )
+            session.add(approval)
+        approval.approved = True
+        approval.enabled = True
+        approval.live_mode = False
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        if publication is None:
+            publication = WorkerPublicationState(source_id=fns_tax_regime.SOURCE_ID)
+            session.add(publication)
+        publication.generation = 1
+        publication.active_pointer = "file:///accepted/c6-bundle.json"
+        publication.validation_metadata = {
+            "validation": {"release_identity": bundle.identity},
+            "checksum": "a" * 64,
+        }
+        session.commit()
+
+    raw_root = tmp_path / "raw"
+    original_report = operator.build_preflight_report
+    monkeypatch.setattr(operator, "SessionLocal", factory)
+    monkeypatch.setattr(operator, "_discover_bundle", lambda: bundle)
+    monkeypatch.setattr(
+        operator,
+        "build_preflight_report",
+        partial(
+            original_report,
+            head=_head,
+            disk_usage=lambda _path: SimpleNamespace(
+                total=100 * 1024**3,
+                used=10 * 1024**3,
+                free=90 * 1024**3,
+            ),
+            config=SimpleNamespace(min_disk_free_percent=10),
+            now=NOW,
+        ),
+    )
+    try:
+        yield SimpleNamespace(factory=factory, bundle=bundle, raw_root=raw_root)
+    finally:
+        transaction.rollback()
+        connection.close()
+
+
+def _job_count(factory):
+    with factory() as session:
+        return session.scalar(sa.select(sa.func.count()).select_from(WorkerJob))
+
+
+def _dataset_state(factory):
+    with factory() as session:
+        return session.execute(
+            sa.select(
+                DataSet.code,
+                DataSet.operational_status,
+                DataSet.last_success_at,
+                DataSet.last_error,
+                DataSet.coverage,
+            ).where(DataSet.code.in_(("fns_tax_regime", "fns_snr", "fns_snrip")))
+            .order_by(DataSet.code)
+        ).all()
+
+
 def test_preflight_is_read_only_scoped_and_reports_new_bundle(tmp_path):
     report = operator.build_preflight_report(
         FakeSession(),
@@ -101,6 +246,9 @@ def test_preflight_is_read_only_scoped_and_reports_new_bundle(tmp_path):
     )
 
     assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+    assert report["release_mode"] == "INITIAL_RELEASE"
+    assert report["family_readiness_state"] == "NOT_CHECKED"
+    assert report["discovered_release_identity"] == _bundle().identity
     assert report["source_id"] == "fns_tax_regime"
     assert report["member_dataset_codes"] == ["fns_snr", "fns_snrip"]
     assert report["new_release_exists"] is True
@@ -158,7 +306,7 @@ def test_preflight_fails_closed_for_substituted_dataset_source_url(
     assert "dataset_source_url_mismatch" in report["blockers"]
 
 
-def test_preflight_recognizes_same_accepted_bundle(tmp_path):
+def test_preflight_recognizes_same_accepted_bundle(tmp_path, monkeypatch):
     bundle = _bundle()
     state = SimpleNamespace(
         validation_metadata={
@@ -166,8 +314,10 @@ def test_preflight_recognizes_same_accepted_bundle(tmp_path):
             "checksum": "a" * 64,
         }
     )
+    session = FakeSession(state=state)
+    monkeypatch.setattr(session, "scalars", lambda _statement: _current_datasets(bundle))
     report = operator.build_preflight_report(
-        FakeSession(state=state),
+        session,
         bundle=bundle,
         raw_root=tmp_path,
         head=_head,
@@ -180,7 +330,250 @@ def test_preflight_recognizes_same_accepted_bundle(tmp_path):
     )
 
     assert report["new_release_exists"] is False
+    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["family_readiness_state"] == "FOUND"
+    assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
     assert report["current_publication_identity"] == bundle.identity
+
+
+def test_same_release_current_family_enqueues_one_check_only_job(preflight_db):
+    before = _job_count(preflight_db.factory)
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["family_readiness_state"] == "FOUND"
+    assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+    assert _job_count(preflight_db.factory) == before
+
+    result = operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert result["check_only"] is True
+    assert result["production_scheduler_enabled"] is False
+    assert _job_count(preflight_db.factory) == before + 1
+    assert not preflight_db.raw_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "error", "expected_state"),
+    [
+        ("fns_snr", "unavailable", None, "SOURCE_UNAVAILABLE"),
+        ("fns_snr", "stale", None, "STALE_DATA"),
+        ("fns_snr", "error", "XSD schema mismatch", "PARSING_ERROR"),
+        ("fns_snrip", "unavailable", None, "SOURCE_UNAVAILABLE"),
+        ("fns_snrip", "stale", None, "STALE_DATA"),
+        ("fns_snrip", "error", "XML parse failure", "PARSING_ERROR"),
+        ("fns_tax_regime", "unavailable", None, "SOURCE_UNAVAILABLE"),
+        ("fns_tax_regime", "stale", None, "STALE_DATA"),
+        ("fns_tax_regime", "error", "XSD schema mismatch", "PARSING_ERROR"),
+        ("fns_tax_regime", "unverified", None, "NOT_CHECKED"),
+    ],
+)
+def test_same_release_family_failure_blocks_confirmed_enqueue_without_job(
+    preflight_db, code, status, error, expected_state
+):
+    with preflight_db.factory() as session:
+        dataset = session.scalar(sa.select(DataSet).where(DataSet.code == code))
+        if status == "unverified":
+            dataset.last_success_at = None
+        else:
+            dataset.operational_status = status
+        dataset.last_error = error
+        session.commit()
+
+    before_datasets = _dataset_state(preflight_db.factory)
+    before_jobs = _job_count(preflight_db.factory)
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["current_publication_identity"] == preflight_db.bundle.identity
+    assert report["discovered_release_identity"] == preflight_db.bundle.identity
+    assert report["family_readiness_state"] == expected_state
+    assert report["family_readiness_reason"].startswith(f"{code}:")
+    assert report["status"] == "BLOCKED"
+    assert "same_release_family_readiness_not_current" in report["blockers"]
+    assert _dataset_state(preflight_db.factory) == before_datasets
+    assert _job_count(preflight_db.factory) == before_jobs
+    assert not preflight_db.raw_root.exists()
+
+    with pytest.raises(RuntimeError, match="same_release_family_readiness_not_current"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert _dataset_state(preflight_db.factory) == before_datasets
+    assert _job_count(preflight_db.factory) == before_jobs
+    assert not preflight_db.raw_root.exists()
+
+
+def test_same_release_persisted_identity_mismatch_blocks(preflight_db):
+    with preflight_db.factory() as session:
+        family = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_tax_regime"))
+        family.coverage = {**family.coverage, "release_identity": "different-release"}
+        session.commit()
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["family_readiness_state"] == "FOUND"
+    assert report["status"] == "BLOCKED"
+    assert "same_release_family_publication_mismatch" in report["blockers"]
+    assert _job_count(preflight_db.factory) == 0
+
+
+def test_initial_release_not_blocked_by_unpublished_family(preflight_db):
+    with preflight_db.factory() as session:
+        session.delete(session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID))
+        for dataset in session.scalars(
+            sa.select(DataSet).where(DataSet.code.in_(("fns_tax_regime", "fns_snr", "fns_snrip")))
+        ):
+            dataset.operational_status = "not_configured"
+            dataset.last_success_at = None
+        session.commit()
+    before = _dataset_state(preflight_db.factory)
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "INITIAL_RELEASE"
+    assert report["current_publication_identity"] is None
+    assert report["family_readiness_state"] == "NOT_CHECKED"
+    assert report["new_release_exists"] is True
+    assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+    assert _dataset_state(preflight_db.factory) == before
+    assert _job_count(preflight_db.factory) == 0
+    assert not preflight_db.raw_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("old_status", "expected_state"),
+    [("stale", "STALE_DATA"), ("unavailable", "SOURCE_UNAVAILABLE")],
+)
+def test_new_release_old_family_is_diagnostic_only(
+    preflight_db, old_status, expected_state
+):
+    with preflight_db.factory() as session:
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        publication.validation_metadata = {
+            "validation": {"release_identity": "previous-release"},
+            "checksum": "b" * 64,
+        }
+        ip = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snrip"))
+        ip.operational_status = old_status
+        session.commit()
+    before = _dataset_state(preflight_db.factory)
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "NEW_RELEASE"
+    assert report["current_publication_identity"] == "previous-release"
+    assert report["discovered_release_identity"] == preflight_db.bundle.identity
+    assert report["family_readiness_state"] == expected_state
+    assert report["family_readiness_reason"] == f"fns_snrip:dataset_{old_status}"
+    assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+    assert _dataset_state(preflight_db.factory) == before
+    assert _job_count(preflight_db.factory) == 0
+    assert not preflight_db.raw_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("violation", "blocker"),
+    [
+        ("source_url", "dataset_source_url_mismatch"),
+        ("missing_dataset", "family_or_member_dataset_registration_missing"),
+        ("handler", "durable_handler_approval_inactive_or_live_mode"),
+        ("disk", "fixed_free_space_floor_not_met_after_estimated_peak"),
+        ("missing_member", "discovered_bundle_invalid"),
+        ("bad_path", "discovered_bundle_invalid"),
+    ],
+)
+def test_new_release_keeps_independent_safety_gates(
+    preflight_db, monkeypatch, violation, blocker
+):
+    with preflight_db.factory() as session:
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        publication.validation_metadata = {
+            "validation": {"release_identity": "previous-release"},
+            "checksum": "b" * 64,
+        }
+        if violation == "source_url":
+            ip = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snrip"))
+            ip.source_url = "https://www.nalog.gov.ru/opendata/substituted/"
+        elif violation == "missing_dataset":
+            ip = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snrip"))
+            session.delete(ip)
+        elif violation == "handler":
+            approval = session.get(
+                WorkerHandlerRegistration,
+                (fns_tax_regime.SOURCE_ID, fns_tax_regime.HANDLER_VERSION),
+            )
+            approval.approved = False
+        session.commit()
+
+    if violation == "disk":
+        original = operator.build_preflight_report.func
+        monkeypatch.setattr(
+            operator,
+            "build_preflight_report",
+            partial(
+                original,
+                head=_head,
+                disk_usage=lambda _path: SimpleNamespace(
+                    total=10 * 1024**3,
+                    used=9 * 1024**3,
+                    free=1 * 1024**3,
+                ),
+                config=SimpleNamespace(min_disk_free_percent=10),
+                now=NOW,
+            ),
+        )
+    elif violation == "missing_member":
+        monkeypatch.setattr(
+            operator,
+            "_discover_bundle",
+            lambda: bulk.FnsReleaseBundle({"legal": preflight_db.bundle.releases["legal"]}),
+        )
+    elif violation == "bad_path":
+        legal = preflight_db.bundle.releases["legal"]
+        invalid = bulk.FnsRelease(
+            **{
+                **legal.__dict__,
+                "artifact_url": legal.artifact_url.replace(
+                    "/7707329152-snr/", "/7707329152-snr/../7707329152-snrip/"
+                ),
+            }
+        )
+        monkeypatch.setattr(
+            operator,
+            "_discover_bundle",
+            lambda: bulk.FnsReleaseBundle(
+                {"legal": invalid, "ip": preflight_db.bundle.releases["ip"]}
+            ),
+        )
+    report, _bundle = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "NEW_RELEASE"
+    assert report["status"] == "BLOCKED"
+    assert blocker in report["blockers"]
+    assert _job_count(preflight_db.factory) == 0
+    assert not preflight_db.raw_root.exists()
+
+
+def test_new_release_invalid_path_blocks_before_head(tmp_path, monkeypatch):
+    bundle = _bundle()
+    legal = bundle.releases["legal"]
+    sibling_path = fns_tax_regime._member_specs()["ip"].source_path
+    invalid = bulk.FnsRelease(
+        **{
+            **legal.__dict__,
+            "artifact_url": legal.artifact_url.replace(
+                "/7707329152-snr/", f"/7707329152-snr/../{sibling_path}/"
+            ),
+        }
+    )
+    malformed = bulk.FnsReleaseBundle({"legal": invalid, "ip": bundle.releases["ip"]})
+    session = FakeSession(
+        state=SimpleNamespace(
+            validation_metadata={"validation": {"release_identity": "previous-release"}}
+        )
+    )
+    monkeypatch.setattr(session, "scalars", lambda _statement: _current_datasets(bundle))
+    report = operator.build_preflight_report(
+        session,
+        bundle=malformed,
+        raw_root=tmp_path / "raw",
+        head=lambda _url: pytest.fail("HEAD called for invalid bundle"),
+        now=NOW,
+    )
+    assert report["release_mode"] == "NEW_RELEASE"
+    assert report["status"] == "BLOCKED"
+    assert "discovered_bundle_invalid" in report["blockers"]
+    assert report["resources"] is None
+    assert not (tmp_path / "raw").exists()
 
 
 def test_controlled_enqueue_requires_exact_confirmation_token(tmp_path):

@@ -101,6 +101,19 @@ and `11ab9c913237851bd4dbc8d52e252513041869e5dc9e954a1337a81b6f461e8d`.
 - Discovery and staging use one canonical official URL validator before a
   download or RAW directory is created.
 
+### Correction 2 — QA finding F-C6-134-04
+
+- The HOME preflight now reports `release_mode`, persisted
+  `family_readiness_state`/`family_readiness_reason`, current publication
+  identity and discovered bundle identity. For `SAME_RELEASE`, it reuses the
+  product's canonical three-component family evaluator and blocks enqueue
+  unless the persisted family is current and matches the accepted bundle.
+- `INITIAL_RELEASE` has no accepted identity to compare. `NEW_RELEASE` reports
+  old-family readiness diagnostically but does not let an expired previous
+  generation deadlock ingestion of a valid new bundle. Both modes still require
+  valid official member links, source pins, handler approval, registration and
+  disk gates.
+
 ### NOT VERIFIED by Mac preparation
 
 - Full artifact download, XML validation, normalization and PostgreSQL
@@ -258,12 +271,28 @@ PYTHONPATH=. uv run python -m scripts.run_fns_tax_regime_controlled_live \
 
 The command dynamically discovers both official passports, checks identity,
 bundle compatibility, handler approval, the three dataset registrations,
-whether the bundle is new, live content lengths and disk gates. It rolls back
-its DB session and creates no job or file.
+whether the bundle is new, live content lengths and disk gates. It also
+classifies the release mode:
+
+- `INITIAL_RELEASE`: no accepted publication identity; bootstrap dataset
+  currentness is diagnostic, not a prerequisite for first publication.
+- `NEW_RELEASE`: accepted identity differs from the discovered bundle; old
+  family readiness is diagnostic, not a circular blocker for valid new data.
+- `SAME_RELEASE`: identities match; the persisted family and both mandatory
+  members must pass the same canonical currentness and release-compatibility
+  evaluator used by product checks. An unavailable, stale, parse-failed or
+  unverified component blocks confirmed enqueue, with zero Worker jobs.
+
+All modes retain source identity, exact URL/path, handler, registration and
+resource gates. Direct invalid bundle inputs are rejected before HEAD probes.
+The preflight rolls back its DB session and creates no job or file.
 
 Expected preflight result: `READY_FOR_CONTROLLED_LIVE`, exact source/handler,
-both member codes, no blockers, and `new_release_exists=true` for a first
-publication. Any other result stops the run.
+both member codes, no blockers, and `release_mode=INITIAL_RELEASE` with
+`new_release_exists=true` for a first publication. On reruns, inspect
+`family_readiness_state`, `family_readiness_reason`,
+`current_publication_identity` and `discovered_release_identity`; do not
+override a `SAME_RELEASE` family blocker. Any other result stops the run.
 
 ## HOME controlled-live package — do not run on Mac
 
@@ -377,7 +406,11 @@ Stop without publication on any of the following:
 
 - passport identifier/source-page mismatch;
 - canonical URL authority/path ambiguity, traversal or malformed encoding;
-- mandatory sibling unavailable, stale, parse-failed or release incompatible;
+- mandatory sibling in the discovered release, or persisted `SAME_RELEASE`
+  family, unavailable, stale, parse-failed or release incompatible (an old
+  `NEW_RELEASE` generation's state is diagnostic only);
+- F-C6-134-04: `SAME_RELEASE` preflight family readiness is not current or
+  the persisted family identity/date differs from the accepted bundle;
 - unproven Company negative, stale Company coverage or changed frozen release;
 - ZIP or XSD outside the pinned official dataset path;
 - artifact/XSD structure-version mismatch;

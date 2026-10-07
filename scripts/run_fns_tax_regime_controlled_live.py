@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -28,7 +28,11 @@ from app.ingestion.fns_bulk_worker import (
     FnsReleaseBundle,
     discover_fns_release_bundle,
     enqueue_bulk_release_bundle,
+    release_operational_status,
+    validate_official_release_url,
 )
+from app.contracts.company_view_v1 import DataState
+from app.contracts.data_readiness import OperationalStatus
 from app.ingestion.fns_tax_regime import (
     FAMILY_DATASET_CODE,
     HANDLER_VERSION,
@@ -43,6 +47,8 @@ from app.ingestion.fns_tax_regime import (
 from app.models.source import DataSet
 from app.models.worker import WorkerHandlerRegistration, WorkerPublicationState
 from app.services.factory_scale_service import FactoryScaleConfig
+from app.services.fns_tax_regime_readiness import evaluate_family_readiness
+from app.worker.errors import InvalidDataError
 
 
 CONFIRM_TOKEN = "FNS_TAX_REGIME_CONTROLLED_LIVE"
@@ -193,6 +199,34 @@ def _publication_identity(state: WorkerPublicationState | None) -> str | None:
     return (validation.get("validation") or {}).get("release_identity")
 
 
+def _bundle_validation_errors(bundle: FnsReleaseBundle, *, now: datetime) -> list[str]:
+    """Validate direct preflight inputs as strictly as discovered passports."""
+
+    specs = _member_specs()
+    if set(bundle.releases) != set(specs):
+        return ["required_member_set_mismatch"]
+    errors = []
+    for name, spec in specs.items():
+        release = bundle.releases[name]
+        if release.source_page_url != spec.source_page_url:
+            errors.append(f"{name}:source_page_mismatch")
+        try:
+            _artifact_name, artifact_version = validate_official_release_url(
+                spec, release.artifact_url, artifact=True
+            )
+            _xsd_name, xsd_version = validate_official_release_url(
+                spec, release.xsd_url, artifact=False
+            )
+        except InvalidDataError:
+            errors.append(f"{name}:official_url_invalid")
+        else:
+            if artifact_version != xsd_version:
+                errors.append(f"{name}:structure_version_mismatch")
+    if release_operational_status(bundle.actual_until, now=now) != OperationalStatus.CURRENT:
+        errors.append("discovered_bundle_not_current")
+    return errors
+
+
 def build_preflight_report(
     session: Session,
     *,
@@ -201,7 +235,9 @@ def build_preflight_report(
     head: Callable[[str], Mapping[str, str]] = _head_headers,
     disk_usage: Callable[[Path], Any] = shutil.disk_usage,
     config: FactoryScaleConfig | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
     approval = session.get(
         WorkerHandlerRegistration,
         (SOURCE_ID, HANDLER_VERSION),
@@ -242,15 +278,37 @@ def build_preflight_report(
     if source_url_mismatches:
         blockers.append("dataset_source_url_mismatch")
 
-    resources = _resource_report(
-        bundle,
-        raw_root=raw_root,
-        head=head,
-        disk_usage=disk_usage,
-        config=config,
-    )
-    blockers.extend(resources["blockers"])
     current_identity = _publication_identity(state)
+    release_mode = (
+        "INITIAL_RELEASE"
+        if current_identity is None
+        else "SAME_RELEASE"
+        if current_identity == bundle.identity
+        else "NEW_RELEASE"
+    )
+    readiness = evaluate_family_readiness(datasets, now=now)
+    if release_mode == "SAME_RELEASE":
+        if readiness.state != DataState.FOUND:
+            blockers.append("same_release_family_readiness_not_current")
+        elif (
+            readiness.release_identity != current_identity
+            or readiness.source_data_date != bundle.source_data_date
+        ):
+            blockers.append("same_release_family_publication_mismatch")
+
+    bundle_errors = _bundle_validation_errors(bundle, now=now)
+    if bundle_errors:
+        blockers.append("discovered_bundle_invalid")
+        resources = None
+    else:
+        resources = _resource_report(
+            bundle,
+            raw_root=raw_root,
+            head=head,
+            disk_usage=disk_usage,
+            config=config,
+        )
+        blockers.extend(resources["blockers"])
     return {
         "status": "READY_FOR_CONTROLLED_LIVE" if not blockers else "BLOCKED",
         "source_id": SOURCE_ID,
@@ -258,7 +316,11 @@ def build_preflight_report(
         "family_dataset_code": FAMILY_DATASET_CODE,
         "member_dataset_codes": [LEGAL_DATASET_CODE, IP_DATASET_CODE],
         "bundle": bundle.as_metadata(),
+        "release_mode": release_mode,
+        "family_readiness_state": readiness.state.value,
+        "family_readiness_reason": readiness.reason,
         "current_publication_identity": current_identity,
+        "discovered_release_identity": bundle.identity,
         "new_release_exists": current_identity != bundle.identity,
         "durable_handler": (
             {
@@ -281,6 +343,7 @@ def build_preflight_report(
             for code, dataset in sorted(datasets.items())
         },
         "resources": resources,
+        "bundle_validation_errors": bundle_errors,
         "source_url_mismatches": source_url_mismatches,
         "blockers": blockers,
         "production_mutation": False,
