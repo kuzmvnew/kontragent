@@ -163,6 +163,11 @@ class MonitoringSubscriptionView:
     company_name: str
     inn: str
     status: str
+    is_saved: bool
+    can_pause: bool
+    can_resume: bool
+    resume_denial_code: str | None
+    resume_denial_message: str | None
     started_at: datetime
     paused_at: datetime | None
     last_checked_at: datetime | None
@@ -1092,8 +1097,16 @@ def _subscription_view_statement(workspace_id: UUID):
             MonitoringSubscription,
             Company,
             latest_events.c.latest_event_at,
+            SavedCompany.id.label("saved_company_id"),
         )
         .join(Company, Company.id == MonitoringSubscription.company_id)
+        .outerjoin(
+            SavedCompany,
+            sa.and_(
+                SavedCompany.workspace_id == MonitoringSubscription.workspace_id,
+                SavedCompany.company_id == MonitoringSubscription.company_id,
+            ),
+        )
         .outerjoin(
             latest_events,
             latest_events.c.subscription_id == MonitoringSubscription.id,
@@ -1102,14 +1115,40 @@ def _subscription_view_statement(workspace_id: UUID):
     )
 
 
+def _subscription_action_contract(
+    *, status: str, is_saved: bool
+) -> tuple[bool, bool, str | None, str | None]:
+    if status == "ACTIVE":
+        return True, False, None, None
+    if status == "PAUSED" and is_saved:
+        return False, True, None, None
+    if status == "PAUSED":
+        return (
+            False,
+            False,
+            "saved_company_required",
+            "Для возобновления мониторинга сначала снова сохраните компанию.",
+        )
+    return False, False, None, None
+
+
 def _subscription_view(row) -> MonitoringSubscriptionView:
-    subscription, company, latest_event_at = row
+    subscription, company, latest_event_at, saved_company_id = row
+    is_saved = saved_company_id is not None
+    can_pause, can_resume, denial_code, denial_message = (
+        _subscription_action_contract(status=subscription.status, is_saved=is_saved)
+    )
     return MonitoringSubscriptionView(
         subscription_id=subscription.id,
         company_id=company.id,
         company_name=company.short_name or company.name,
         inn=company.inn,
         status=subscription.status,
+        is_saved=is_saved,
+        can_pause=can_pause,
+        can_resume=can_resume,
+        resume_denial_code=denial_code,
+        resume_denial_message=denial_message,
         started_at=subscription.started_at,
         paused_at=subscription.paused_at,
         last_checked_at=subscription.last_checked_at,

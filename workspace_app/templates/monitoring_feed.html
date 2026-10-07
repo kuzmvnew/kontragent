@@ -11,14 +11,16 @@
     {% if subscriptions %}
       <div class="subscription-list">
       {% for item in subscriptions %}
-        <article class="subscription-row" data-subscription-id="{{ item.subscription_id }}" data-monitoring-state="{{ item.status }}">
+        <article class="subscription-row" data-subscription-id="{{ item.subscription_id }}" data-monitoring-state="{{ item.status }}" data-saved="{{ 'true' if item.is_saved else 'false' }}" data-can-pause="{{ 'true' if item.can_pause else 'false' }}" data-can-resume="{{ 'true' if item.can_resume else 'false' }}">
           <div><strong>{{ item.company_name }}</strong><span>ИНН {{ item.inn }}</span></div>
           <span class="state-badge">{{ item.status }}</span>
           <div class="subscription-meta"><span>Проверка: {{ item.last_checked_at.strftime('%d.%m.%Y %H:%M') if item.last_checked_at else 'ещё не выполнялась' }}</span><span>Последнее событие: {{ item.latest_event_at.strftime('%d.%m.%Y %H:%M') if item.latest_event_at else 'нет событий' }}</span></div>
           <div class="saved-actions">
             <a class="button secondary" href="/app/companies/{{ item.inn }}">Открыть компанию</a>
-            {% if can_manage_monitoring %}{% if item.status == 'ACTIVE' %}<form action="/app/companies/{{ item.inn }}/monitoring/pause" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/monitoring"><button type="submit" class="secondary">Приостановить</button></form>{% else %}<form action="/app/companies/{{ item.inn }}/monitoring/resume" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/monitoring"><button type="submit">Возобновить</button></form>{% endif %}{% endif %}
+            {% if can_manage_monitoring and item.can_pause %}<form action="/app/companies/{{ item.inn }}/monitoring/pause" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/monitoring"><button type="submit" class="secondary">Приостановить</button></form>{% endif %}
+            {% if can_manage_monitoring and item.can_resume %}<form action="/app/companies/{{ item.inn }}/monitoring/resume" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/monitoring"><button type="submit">Возобновить</button></form>{% endif %}
           </div>
+          {% if item.resume_denial_code == 'saved_company_required' %}<p class="hint subscription-action-denial">{{ item.resume_denial_message }}</p>{% endif %}
         </article>
       {% endfor %}
       </div>

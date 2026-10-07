@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.database.postgres import SessionLocal, engine
 from app.models.company import Company
+from app.models.monitoring import MonitoringSubscription, WorkspaceFeedEntry
+from app.models.workspace import SavedCompany
 from app.models.workspace import WorkspaceAuditEvent
 from tests.public_test_support import projection
 from tests.test_monitoring_p0 import (
@@ -27,6 +29,7 @@ from tests.test_workspace_p0 import (
 from workspace_app.dashboard_service import get_workspace_dashboard
 from workspace_app.main import create_app
 from workspace_app.monitoring_service import (
+    _subscription_action_contract,
     get_workspace_subscription,
     list_workspace_feed,
     list_workspace_subscriptions,
@@ -40,6 +43,7 @@ from workspace_app.service import (
     ActionDenied,
     save_company,
     saved_companies,
+    unsave_company,
     update_saved_company_note,
 )
 
@@ -297,6 +301,9 @@ def test_monitoring_overview_subscription_list_feed_filters_and_tenant_scope():
             )
             assert len(listed) == 1
             assert listed[0].latest_event_at == NOW + timedelta(hours=2)
+            assert listed[0].is_saved is True
+            assert listed[0].can_pause is True
+            assert listed[0].can_resume is False
             assert list_workspace_subscriptions(
                 session, user_id=user_b, workspace_id=workspace_b
             ) == ()
@@ -329,6 +336,211 @@ def test_monitoring_overview_subscription_list_feed_filters_and_tenant_scope():
             session.commit()
     finally:
         _cleanup(email_a, email_b, inns=(inn,))
+
+
+def test_subscription_action_contract_tracks_tenant_saved_state_and_recovery():
+    email_a = f"workspace-actions-a-{uuid4()}@example.test"
+    email_b = f"workspace-actions-b-{uuid4()}@example.test"
+    inn = f"95{uuid4().int % 100_000_000:08d}"
+    try:
+        _add_company(inn, "Subscription Action Company")
+        user_a, workspace_a = _bootstrap(email_a, "Action Tenant A")
+        user_b, workspace_b = _bootstrap(email_b, "Action Tenant B")
+        with Session(engine) as session:
+            _enable_entitlement(session, workspace_a)
+            _enable_entitlement(session, workspace_b)
+            save_company(session, user_id=user_a, workspace_id=workspace_a, inn=inn)
+            save_company(session, user_id=user_b, workspace_id=workspace_b, inn=inn)
+            subscription, _created = subscribe_company(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            subscription_id = subscription.id
+
+            active = list_workspace_subscriptions(
+                session, user_id=user_a, workspace_id=workspace_a
+            )[0]
+            assert (active.status, active.is_saved) == ("ACTIVE", True)
+            assert active.can_pause is True
+            assert active.can_resume is False
+
+            pause_subscription(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            paused_saved = list_workspace_subscriptions(
+                session, user_id=user_a, workspace_id=workspace_a
+            )[0]
+            assert (paused_saved.status, paused_saved.is_saved) == ("PAUSED", True)
+            assert paused_saved.can_pause is False
+            assert paused_saved.can_resume is True
+
+            assert unsave_company(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            paused_unsaved = list_workspace_subscriptions(
+                session, user_id=user_a, workspace_id=workspace_a
+            )[0]
+            assert paused_unsaved.subscription_id == subscription_id
+            assert (paused_unsaved.status, paused_unsaved.is_saved) == ("PAUSED", False)
+            assert paused_unsaved.can_pause is False
+            assert paused_unsaved.can_resume is False
+            assert paused_unsaved.resume_denial_code == "saved_company_required"
+            assert paused_unsaved.resume_denial_message
+            assert session.scalar(
+                sa.select(SavedCompany.id).where(
+                    SavedCompany.workspace_id == workspace_b,
+                    SavedCompany.company_id == paused_unsaved.company_id,
+                )
+            ) is not None
+
+            with pytest.raises(ActionDenied) as denied:
+                resume_subscription(
+                    session, user_id=user_a, workspace_id=workspace_a, inn=inn
+                )
+            assert denied.value.code == "saved_company_required"
+            assert session.get(MonitoringSubscription, subscription_id).status == "PAUSED"
+
+            save_company(session, user_id=user_a, workspace_id=workspace_a, inn=inn)
+            recovered = list_workspace_subscriptions(
+                session, user_id=user_a, workspace_id=workspace_a
+            )[0]
+            assert recovered.subscription_id == subscription_id
+            assert recovered.is_saved is True
+            assert recovered.can_resume is True
+            resumed, changed = resume_subscription(
+                session, user_id=user_a, workspace_id=workspace_a, inn=inn
+            )
+            assert changed is True
+            assert resumed.id == subscription_id
+            assert resumed.status == "ACTIVE"
+            session.commit()
+
+        assert _subscription_action_contract(
+            status="UNKNOWN", is_saved=True
+        ) == (False, False, None, None)
+    finally:
+        _cleanup(email_a, email_b, inns=(inn,))
+
+
+def test_monitoring_overview_html_api_parity_for_paused_unsaved_recovery():
+    email = f"workspace-actions-http-{uuid4()}@example.test"
+    item = projection(sequence=100_100_182)
+    inn = item.company.inn
+    try:
+        company_id = _add_company(inn, item.company.name)
+        _user_id, workspace_id = _bootstrap(email, "Action Contract HTTP")
+        with Session(engine) as session:
+            _enable_entitlement(session, workspace_id)
+            fact = _semantic_fact(
+                session,
+                company_id,
+                section="ADDRESS",
+                field="ADDRESS",
+                value="Before",
+            )
+            session.commit()
+
+        web = TestClient(
+            create_app(
+                public_repository=FakePublicRepository((item,)),
+                session_factory=SessionLocal,
+            )
+        )
+        _login(web, email)
+        csrf = web.cookies.get("nextcompany_csrf")
+        headers = {"x-csrf-token": csrf}
+        assert web.post(f"/app/api/companies/{inn}/saved", headers=headers).status_code == 201
+        assert web.post(
+            f"/app/api/companies/{inn}/monitoring/enable", headers=headers
+        ).status_code == 201
+        with Session(engine) as session:
+            fact = session.merge(fact)
+            _set_fact(fact, value="After")
+            session.flush()
+            result = monitor_company_once(
+                session, company_id=company_id, detected_at=NOW + timedelta(hours=1)
+            )
+            assert result.feed_entry_count == 1
+            session.commit()
+
+        assert web.post(
+            f"/app/api/companies/{inn}/monitoring/pause", headers=headers
+        ).status_code == 200
+        assert web.delete(
+            f"/app/api/companies/{inn}/saved", headers=headers
+        ).status_code == 200
+
+        api_unsaved = web.get("/app/api/monitoring").json()
+        assert len(api_unsaved["subscriptions"]) == 1
+        subscription = api_unsaved["subscriptions"][0]
+        subscription_id = subscription["id"]
+        assert subscription["status"] == "PAUSED"
+        assert subscription["is_saved"] is False
+        assert subscription["can_pause"] is False
+        assert subscription["can_resume"] is False
+        assert subscription["resume_denial_code"] == "saved_company_required"
+        assert len(api_unsaved["items"]) == 1
+
+        html_unsaved = web.get("/app/monitoring")
+        assert html_unsaved.status_code == 200
+        assert f'data-subscription-id="{subscription_id}"' in html_unsaved.text
+        assert 'data-monitoring-state="PAUSED"' in html_unsaved.text
+        assert 'data-saved="false"' in html_unsaved.text
+        assert 'data-can-resume="false"' in html_unsaved.text
+        assert f'action="/app/companies/{inn}/monitoring/resume"' not in html_unsaved.text
+        assert "Для возобновления мониторинга сначала снова сохраните компанию." in html_unsaved.text
+        assert f'href="/app/companies/{inn}"' in html_unsaved.text
+
+        direct_resume = web.post(
+            f"/app/companies/{inn}/monitoring/resume",
+            data={"csrf": csrf, "return_to": "/app/monitoring"},
+            follow_redirects=False,
+        )
+        assert direct_resume.status_code == 409
+        assert "Сначала сохраните компанию" in direct_resume.text
+        with Session(engine) as session:
+            persisted = session.get(MonitoringSubscription, subscription_id)
+            assert persisted.status == "PAUSED"
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(WorkspaceFeedEntry)
+                .where(WorkspaceFeedEntry.subscription_id == persisted.id)
+            ) == 1
+
+        card = web.get(f"/app/companies/{inn}")
+        assert "Сохранить компанию" in card.text
+        assert web.post(f"/app/api/companies/{inn}/saved", headers=headers).status_code == 201
+        api_saved = web.get("/app/api/monitoring").json()
+        recovered = api_saved["subscriptions"][0]
+        assert recovered["id"] == subscription_id
+        assert recovered["status"] == "PAUSED"
+        assert recovered["is_saved"] is True
+        assert recovered["can_resume"] is True
+        assert recovered["resume_denial_code"] is None
+        assert len(api_saved["items"]) == 1
+
+        html_saved = web.get("/app/monitoring")
+        assert 'data-saved="true"' in html_saved.text
+        assert 'data-can-resume="true"' in html_saved.text
+        assert f'action="/app/companies/{inn}/monitoring/resume"' in html_saved.text
+        resumed = web.post(
+            f"/app/companies/{inn}/monitoring/resume",
+            data={"csrf": csrf, "return_to": "/app/monitoring"},
+            follow_redirects=False,
+        )
+        assert resumed.status_code == 303
+        api_active = web.get("/app/api/monitoring").json()
+        assert api_active["subscriptions"][0]["id"] == subscription_id
+        assert api_active["subscriptions"][0]["status"] == "ACTIVE"
+        assert api_active["subscriptions"][0]["can_pause"] is True
+        assert len(api_active["items"]) == 1
+        with Session(engine) as session:
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(MonitoringSubscription)
+                .where(MonitoringSubscription.workspace_id == workspace_id)
+            ) == 1
+    finally:
+        _cleanup(email, inns=(inn,))
 
 
 def test_html_note_csrf_and_api_html_saved_filter_parity():

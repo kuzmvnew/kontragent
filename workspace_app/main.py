@@ -408,6 +408,11 @@ def _subscription_payload(item) -> dict:
         "id": str(item.subscription_id),
         "company": {"inn": item.inn, "name": item.company_name},
         "status": item.status,
+        "is_saved": item.is_saved,
+        "can_pause": item.can_pause,
+        "can_resume": item.can_resume,
+        "resume_denial_code": item.resume_denial_code,
+        "resume_denial_message": item.resume_denial_message,
         "started_at": item.started_at.isoformat(),
         "paused_at": item.paused_at.isoformat() if item.paused_at else None,
         "last_checked_at": (

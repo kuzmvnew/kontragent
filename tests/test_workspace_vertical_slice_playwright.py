@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.database.postgres import SessionLocal, engine
 from app.models.company import Company
+from app.models.monitoring import MonitoringSubscription
 from app.models.semantic_fact import CompanySemanticFact
 from app.models.workspace import SavedCompany, WorkspaceMembership
 from tests.test_monitoring_p0 import NOW, _enable_entitlement, _semantic_fact, _set_fact
@@ -222,6 +223,97 @@ def test_browser_monitoring_enable_event_feed_and_pause():
                 "data-monitoring-state", "PAUSED"
             )
             browser.close()
+    finally:
+        _cleanup(email, inns=(item.company.inn,))
+
+
+def test_browser_paused_unsaved_monitoring_requires_resave_before_resume():
+    email = f"browser-monitoring-recovery-{uuid4()}@example.test"
+    item = projection(sequence=100_100_154)
+    try:
+        _seed_company(item)
+        _user_id, workspace_id = _bootstrap(email, "Browser Monitoring Recovery")
+        with Session(engine) as session:
+            _enable_entitlement(session, workspace_id)
+            session.commit()
+
+        _public, workspace = _apps(item)
+        with workspace, sync_playwright() as manager:
+            browser = manager.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page_errors: list[str] = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+            page.goto(f"{workspace.url}/login")
+            _login(page, email)
+            page.get_by_role("link", name="Поиск", exact=True).click()
+            page.get_by_label("Название или ИНН").fill(item.company.inn)
+            page.get_by_role("button", name="Найти").click()
+            page.get_by_role("link", name=re.compile(item.company.name)).click()
+            page.get_by_role("button", name="Сохранить компанию").click()
+            page.get_by_role("link", name="Открыть статус мониторинга").click()
+            page.get_by_role("button", name="Включить мониторинг").click()
+            expect(page.locator(".state-panel")).to_have_attribute(
+                "data-monitoring-state", "ACTIVE"
+            )
+            page.get_by_role("button", name="Приостановить мониторинг").click()
+            expect(page.locator(".state-panel")).to_have_attribute(
+                "data-monitoring-state", "PAUSED"
+            )
+            page.get_by_role("link", name="Вернуться к карточке").click()
+            page.get_by_role("button", name="Удалить из сохранённых").click()
+            expect(page.locator(".company-head")).to_have_attribute(
+                "data-saved", "false"
+            )
+
+            page.get_by_role("link", name="Мониторинг", exact=True).click()
+            subscription = page.locator(".subscription-row")
+            expect(subscription).to_have_count(1)
+            expect(subscription).to_have_attribute("data-monitoring-state", "PAUSED")
+            expect(subscription).to_have_attribute("data-saved", "false")
+            expect(subscription).to_have_attribute("data-can-resume", "false")
+            expect(
+                subscription.get_by_role("button", name="Возобновить", exact=True)
+            ).to_have_count(0)
+            expect(
+                subscription.get_by_text(
+                    "Для возобновления мониторинга сначала снова сохраните компанию."
+                )
+            ).to_be_visible()
+
+            subscription.get_by_role("link", name="Открыть компанию").click()
+            expect(page.locator(".company-head")).to_have_attribute(
+                "data-saved", "false"
+            )
+            page.get_by_role("button", name="Сохранить компанию").click()
+            expect(page.locator(".company-head")).to_have_attribute(
+                "data-saved", "true"
+            )
+            page.get_by_role("link", name="Мониторинг", exact=True).click()
+            subscription = page.locator(".subscription-row")
+            expect(subscription).to_have_attribute("data-monitoring-state", "PAUSED")
+            expect(subscription).to_have_attribute("data-saved", "true")
+            expect(subscription).to_have_attribute("data-can-resume", "true")
+            subscription.get_by_role("button", name="Возобновить", exact=True).click()
+            expect(page.locator(".subscription-row")).to_have_attribute(
+                "data-monitoring-state", "ACTIVE"
+            )
+            expect(page.locator(".subscription-row")).to_have_attribute(
+                "data-can-pause", "true"
+            )
+            assert page_errors == []
+            browser.close()
+
+        with Session(engine) as session:
+            subscriptions = tuple(
+                session.scalars(
+                    sa.select(MonitoringSubscription).where(
+                        MonitoringSubscription.workspace_id == workspace_id
+                    )
+                ).all()
+            )
+            assert len(subscriptions) == 1
+            assert subscriptions[0].status == "ACTIVE"
     finally:
         _cleanup(email, inns=(item.company.inn,))
 
