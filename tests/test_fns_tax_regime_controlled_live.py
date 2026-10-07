@@ -2,6 +2,8 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from functools import partial
+from hashlib import sha256
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +16,7 @@ from app.ingestion import fns_tax_regime
 from app.models.source import DataSet, DataSource
 from app.models.worker import WorkerHandlerRegistration, WorkerJob, WorkerPublicationState
 from app.services.fns_tax_regime_readiness import validate_same_release_identity_chain
+from app.services.fns_tax_regime_publication_admission import canonical_sha256
 from scripts import run_fns_tax_regime_controlled_live as operator
 from workspace_app.monitoring_service import _event_type
 
@@ -44,6 +47,16 @@ def _bundle():
     return bulk.FnsReleaseBundle(releases)
 
 
+def _old_bundle():
+    fresh = _bundle()
+    legal = fresh.releases["legal"]
+    old_legal = replace(
+        legal,
+        artifact_url=legal.artifact_url.replace("data-20260925", "data-20260924"),
+    )
+    return bulk.FnsReleaseBundle({"legal": old_legal, "ip": fresh.releases["ip"]})
+
+
 def _head(url):
     size = 62_028_770 if "snr/" in url else 293_908_849
     if url.endswith(".xsd"):
@@ -52,6 +65,63 @@ def _head(url):
         "Content-Length": str(size),
         "ETag": '"test-etag"',
     }
+
+
+def _accepted_metadata(bundle, checksum):
+    return {
+        "checksum": checksum,
+        "validation": {
+            "release_identity": bundle.identity,
+            "source_data_date": bundle.source_data_date.isoformat(),
+            "member_release_identities": {
+                name: release.identity for name, release in bundle.releases.items()
+            },
+        },
+    }
+
+
+def _seed_accepted_descriptor(raw_root, bundle):
+    members = {}
+    for name, code in (("legal", "fns_snr"), ("ip", "fns_snrip")):
+        release = bundle.releases[name]
+        artifact_checksum = sha256(f"artifact:{name}".encode()).hexdigest()
+        normalized_bytes = (json.dumps({"name": name}, sort_keys=True) + "\n").encode()
+        normalized_checksum = sha256(normalized_bytes).hexdigest()
+        normalized_path = (
+            raw_root / fns_tax_regime.SOURCE_ID / artifact_checksum /
+            f"normalized-{normalized_checksum}.jsonl"
+        )
+        normalized_path.parent.mkdir(parents=True, exist_ok=True)
+        normalized_path.write_bytes(normalized_bytes)
+        members[name] = {
+            "dataset_code": code,
+            "staging_pointer": normalized_path.resolve().as_uri(),
+            "normalized_sha256": normalized_checksum,
+            "artifact_sha256": artifact_checksum,
+            "release": release.as_metadata(),
+        }
+    descriptor = {
+        "manifest_version": 1,
+        "source_id": fns_tax_regime.SOURCE_ID,
+        "release_identity": bundle.identity,
+        "members": members,
+        "immutable": True,
+    }
+    descriptor_path = (
+        raw_root / fns_tax_regime.SOURCE_ID / "bundles" / bundle.identity /
+        "normalized-bundle.json"
+    )
+    descriptor_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (json.dumps(descriptor, ensure_ascii=False, sort_keys=True) + "\n").encode()
+    descriptor_path.write_bytes(payload)
+    return descriptor_path.resolve().as_uri(), sha256(payload).hexdigest()
+
+
+def _raw_state(raw_root):
+    return {
+        str(path.relative_to(raw_root)): sha256(path.read_bytes()).hexdigest()
+        for path in raw_root.rglob("*") if path.is_file()
+    } if raw_root.exists() else {}
 
 
 def _datasets():
@@ -119,6 +189,9 @@ class FakeSession:
     def scalars(self, _statement):
         return _datasets()
 
+    def scalar(self, _statement):
+        return 0
+
 
 @pytest.fixture
 def preflight_db(monkeypatch, tmp_path):
@@ -135,9 +208,8 @@ def preflight_db(monkeypatch, tmp_path):
     )
     bundle = _bundle()
     raw_root = tmp_path / "raw"
-    accepted_pointer = (
-        raw_root / fns_tax_regime.SOURCE_ID / "bundles" / bundle.identity / "normalized-bundle.json"
-    ).resolve().as_uri()
+    accepted_pointer, accepted_checksum = _seed_accepted_descriptor(raw_root, bundle)
+    raw_before = _raw_state(raw_root)
     with factory() as session:
         source = session.scalar(sa.select(DataSource).where(DataSource.code == "c6_preflight_test"))
         if source is None:
@@ -192,10 +264,7 @@ def preflight_db(monkeypatch, tmp_path):
             session.add(publication)
         publication.generation = 1
         publication.active_pointer = accepted_pointer
-        publication.validation_metadata = {
-            "validation": {"release_identity": bundle.identity},
-            "checksum": "a" * 64,
-        }
+        publication.validation_metadata = _accepted_metadata(bundle, accepted_checksum)
         session.commit()
 
     original_report = operator.build_preflight_report
@@ -217,7 +286,11 @@ def preflight_db(monkeypatch, tmp_path):
         ),
     )
     try:
-        yield SimpleNamespace(factory=factory, bundle=bundle, raw_root=raw_root)
+        yield SimpleNamespace(
+            factory=factory, bundle=bundle, raw_root=raw_root,
+            accepted_pointer=accepted_pointer, accepted_checksum=accepted_checksum,
+            raw_before=raw_before,
+        )
     finally:
         transaction.rollback()
         connection.close()
@@ -250,6 +323,27 @@ def _publication_state(factory):
         return None if row is None else (
             row.generation, row.active_pointer, deepcopy(row.validation_metadata)
         )
+
+
+def _set_old_accepted_release(preflight_db, session):
+    old = _old_bundle()
+    pointer, checksum = _seed_accepted_descriptor(preflight_db.raw_root, old)
+    publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+    publication.active_pointer = pointer
+    publication.validation_metadata = _accepted_metadata(old, checksum)
+    family = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_tax_regime"))
+    family_coverage = deepcopy(family.coverage)
+    family_coverage["release_identity"] = old.identity
+    family_coverage["family_bundle_identity"] = old.identity
+    for name, code in (("legal", "fns_snr"), ("ip", "fns_snrip")):
+        family_coverage["members"][name]["release_identity"] = old.releases[name].identity
+        child = session.scalar(sa.select(DataSet).where(DataSet.code == code))
+        child_coverage = deepcopy(child.coverage)
+        child_coverage["release_identity"] = old.releases[name].identity
+        child.coverage = child_coverage
+    family.coverage = family_coverage
+    preflight_db.raw_before = _raw_state(preflight_db.raw_root)
+    return old
 
 
 def _alternate_member_identity(bundle, name):
@@ -471,21 +565,20 @@ def test_real_postgres_same_release_mutation_blocks_without_side_effects(preflig
     before_publication = _publication_state(preflight_db.factory)
     before_jobs = _job_count(preflight_db.factory)
     report, _bundle = operator._preflight(preflight_db.raw_root)
-    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["release_mode"] == "CORRUPT_PUBLICATION"
+    assert report["publication_lifecycle"] == "CORRUPT"
     assert report["status"] == "BLOCKED"
-    assert reason in report["blockers"]
-    assert reason in report["member_identity_verification"]["reasons"]
-    assert set(report["member_identity_verification"]["members"]) == {"legal", "ip"}
+    assert report["publication_proof_reasons"]
     assert _dataset_state(preflight_db.factory) == before_datasets
     assert _publication_state(preflight_db.factory) == before_publication
     assert _job_count(preflight_db.factory) == before_jobs
-    assert not preflight_db.raw_root.exists()
-    with pytest.raises(RuntimeError, match=reason):
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
+    with pytest.raises(RuntimeError, match="controlled-live preflight is blocked"):
         operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
     assert _dataset_state(preflight_db.factory) == before_datasets
     assert _publication_state(preflight_db.factory) == before_publication
     assert _job_count(preflight_db.factory) == before_jobs
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 @pytest.mark.parametrize("metadata", [
@@ -500,18 +593,18 @@ def test_real_postgres_invalid_accepted_publication_fails_closed(preflight_db, m
     before_publication = _publication_state(preflight_db.factory)
     before_jobs = _job_count(preflight_db.factory)
     report, _bundle = operator._preflight(preflight_db.raw_root)
-    assert report["release_mode"] == "INVALID_PUBLICATION"
+    assert report["release_mode"] == "CORRUPT_PUBLICATION"
     assert report["status"] == "BLOCKED"
-    assert any(code.startswith("publication_") for code in report["blockers"])
-    with pytest.raises(RuntimeError, match="publication_"):
+    assert report["publication_proof_reasons"]
+    with pytest.raises(RuntimeError, match="controlled-live preflight is blocked"):
         operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
     assert _dataset_state(preflight_db.factory) == before_datasets
     assert _publication_state(preflight_db.factory) == before_publication
     assert _job_count(preflight_db.factory) == before_jobs
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
-def test_real_postgres_empty_unaccepted_state_is_initial_release(preflight_db):
+def test_real_postgres_empty_existing_state_is_corrupt(preflight_db):
     with preflight_db.factory() as session:
         publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
         publication.active_pointer = None
@@ -519,8 +612,130 @@ def test_real_postgres_empty_unaccepted_state_is_initial_release(preflight_db):
         publication.validation_metadata = {}
         session.commit()
     report, _bundle = operator._preflight(preflight_db.raw_root)
-    assert report["release_mode"] == "INITIAL_RELEASE"
-    assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+    assert report["release_mode"] == "CORRUPT_PUBLICATION"
+    assert report["status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("checksum", [
+    "not-a-sha256", "", "a" * 63, "a" * 65, "A" * 64,
+    "g" * 64, " a" * 64, "a" * 64 + " ",
+])
+@pytest.mark.parametrize("old_release", [False, True])
+def test_real_postgres_checksum_mutation_never_admits(
+    preflight_db, checksum, old_release
+):
+    with preflight_db.factory() as session:
+        if old_release:
+            _set_old_accepted_release(preflight_db, session)
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        metadata = deepcopy(publication.validation_metadata)
+        metadata["checksum"] = checksum
+        publication.validation_metadata = metadata
+        session.commit()
+    before = (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    )
+    report, _ = operator._preflight(preflight_db.raw_root)
+    assert report["publication_lifecycle"] == "CORRUPT"
+    assert "accepted_checksum_invalid" in report["blockers"]
+    assert report["status"] == "BLOCKED"
+    with pytest.raises(RuntimeError, match="controlled-live preflight is blocked"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    ) == before
+
+
+@pytest.mark.parametrize("mutation", ["identity_removed", "identity_modified", "state_deleted"])
+def test_real_postgres_lost_or_corrupt_identity_blocks_zero_jobs(preflight_db, mutation):
+    with preflight_db.factory() as session:
+        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+        if mutation == "state_deleted":
+            session.delete(publication)
+        else:
+            metadata = deepcopy(publication.validation_metadata)
+            if mutation == "identity_removed":
+                del metadata["validation"]["release_identity"]
+            else:
+                metadata["validation"]["release_identity"] = "b" * 64
+            publication.validation_metadata = metadata
+        session.commit()
+    before = (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    )
+    report, _ = operator._preflight(preflight_db.raw_root)
+    assert report["publication_lifecycle"] == "CORRUPT"
+    assert report["release_mode"] == "CORRUPT_PUBLICATION"
+    assert report["status"] == "BLOCKED"
+    assert (
+        "lost_accepted_publication_state" if mutation == "state_deleted" else
+        "accepted_family_composition_mismatch" if mutation == "identity_modified" else
+        "accepted_family_identity_invalid"
+    ) in report["blockers"]
+    with pytest.raises(RuntimeError, match="controlled-live preflight is blocked"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    ) == before
+
+
+@pytest.mark.parametrize("mutation", [
+    "descriptor_missing", "descriptor_bytes", "invalid_json", "wrong_member",
+    "wrong_release", "normalized_missing", "normalized_bytes",
+])
+def test_same_release_descriptor_tamper_blocks_zero_jobs(preflight_db, mutation):
+    descriptor_path = preflight_db.raw_root / fns_tax_regime.SOURCE_ID / "bundles" / (
+        preflight_db.bundle.identity
+    ) / "normalized-bundle.json"
+    original = descriptor_path.read_bytes()
+    descriptor = json.loads(original)
+    if mutation == "descriptor_missing":
+        descriptor_path.unlink()
+    elif mutation == "descriptor_bytes":
+        descriptor_path.write_bytes(original + b" ")
+    elif mutation == "invalid_json":
+        descriptor_path.write_bytes(b"{")
+    elif mutation == "wrong_member":
+        descriptor["members"].pop("ip")
+        descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    elif mutation == "wrong_release":
+        descriptor["members"]["legal"]["release"]["release_identity"] = "b" * 64
+        descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    else:
+        member = descriptor["members"]["legal"]
+        normalized_path = (
+            preflight_db.raw_root / fns_tax_regime.SOURCE_ID /
+            member["artifact_sha256"] / f"normalized-{member['normalized_sha256']}.jsonl"
+        )
+        if mutation == "normalized_missing":
+            normalized_path.unlink()
+        else:
+            normalized_path.write_bytes(b"tampered\n")
+    if mutation in {"invalid_json", "wrong_member", "wrong_release"}:
+        with preflight_db.factory() as session:
+            publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+            metadata = deepcopy(publication.validation_metadata)
+            metadata["checksum"] = sha256(descriptor_path.read_bytes()).hexdigest()
+            publication.validation_metadata = metadata
+            session.commit()
+    before = (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    )
+    report, _ = operator._preflight(preflight_db.raw_root)
+    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["status"] == "BLOCKED"
+    assert report["accepted_descriptor_verdict"]["valid"] is False
+    with pytest.raises(RuntimeError, match="controlled-live preflight is blocked"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    ) == before
 
 
 def test_real_postgres_substituted_replay_path_blocks_before_job(preflight_db):
@@ -534,25 +749,25 @@ def test_real_postgres_substituted_replay_path_blocks_before_job(preflight_db):
         _job_count(preflight_db.factory),
     )
     report, _bundle = operator._preflight(preflight_db.raw_root)
-    assert report["release_mode"] == "SAME_RELEASE"
+    assert report["release_mode"] == "CORRUPT_PUBLICATION"
     assert report["status"] == "BLOCKED"
-    assert "same_release_replay_pointer_mismatch" in report["blockers"]
-    with pytest.raises(RuntimeError, match="same_release_replay_pointer_mismatch"):
+    assert "accepted_pointer_invalid" in report["blockers"]
+    with pytest.raises(RuntimeError, match="accepted_pointer_invalid"):
         operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
     assert (
         _dataset_state(preflight_db.factory),
         _publication_state(preflight_db.factory),
         _job_count(preflight_db.factory),
     ) == before
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 @pytest.mark.parametrize(("race", "reason"), [
-    ("member", "same_release_member_identity_mismatch"),
-    ("pointer", "same_release_publication_generation_invalid"),
-    ("pointer_path", "same_release_replay_pointer_mismatch"),
-    ("source_url", "controlled-live registration changed after preflight"),
-    ("handler", "controlled-live registration changed after preflight"),
+    ("member", "controlled_live_preflight_stale"),
+    ("pointer", "controlled_live_preflight_stale"),
+    ("pointer_path", "controlled_live_preflight_stale"),
+    ("source_url", "controlled_live_preflight_stale"),
+    ("handler", "controlled_live_preflight_stale"),
 ])
 def test_confirmed_enqueue_rechecks_state_changed_after_preflight(
     preflight_db, monkeypatch, race, reason
@@ -599,15 +814,12 @@ def test_confirmed_enqueue_rechecks_state_changed_after_preflight(
     assert (_dataset_state(preflight_db.factory),
             _publication_state(preflight_db.factory),
             _job_count(preflight_db.factory)) == snapshots[0]
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 def test_new_to_same_release_race_cannot_bypass_member_chain(preflight_db, monkeypatch):
     with preflight_db.factory() as session:
-        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
-        publication.validation_metadata = {
-            "validation": {"release_identity": "previous-release"}, "checksum": "a" * 64,
-        }
+        _set_old_accepted_release(preflight_db, session)
         session.commit()
     original_preflight = operator._preflight
 
@@ -617,9 +829,8 @@ def test_new_to_same_release_race_cannot_bypass_member_chain(preflight_db, monke
         assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
         with preflight_db.factory() as session:
             publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
-            publication.validation_metadata = {
-                "validation": {"release_identity": bundle.identity}, "checksum": "a" * 64,
-            }
+            publication.validation_metadata = _accepted_metadata(bundle, preflight_db.accepted_checksum)
+            publication.active_pointer = preflight_db.accepted_pointer
             family = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_tax_regime"))
             legal = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snr"))
             family_coverage = deepcopy(family.coverage)
@@ -634,10 +845,171 @@ def test_new_to_same_release_race_cannot_bypass_member_chain(preflight_db, monke
 
     monkeypatch.setattr(operator, "_preflight", racing_preflight)
     before_jobs = _job_count(preflight_db.factory)
-    with pytest.raises(RuntimeError, match="release mode changed after preflight"):
+    with pytest.raises(RuntimeError, match="controlled_live_preflight_stale"):
         operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
     assert _job_count(preflight_db.factory) == before_jobs
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
+
+
+@pytest.mark.parametrize("attempt", range(5))
+@pytest.mark.parametrize("race", ["generation", "checksum", "state_deleted"])
+def test_repeated_same_release_admission_races_leave_zero_jobs(
+    preflight_db, monkeypatch, race, attempt
+):
+    original_preflight = operator._preflight
+    snapshots = []
+
+    def racing_preflight(raw_root):
+        report, bundle = original_preflight(raw_root)
+        assert report["release_mode"] == "SAME_RELEASE"
+        assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+        with preflight_db.factory() as session:
+            state = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+            if race == "generation":
+                state.generation = 2
+            elif race == "checksum":
+                metadata = deepcopy(state.validation_metadata)
+                metadata["checksum"] = "b" * 64
+                state.validation_metadata = metadata
+            else:
+                session.delete(state)
+            session.commit()
+        snapshots.append((
+            _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+            _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+        ))
+        return report, bundle
+
+    monkeypatch.setattr(operator, "_preflight", racing_preflight)
+    with pytest.raises(RuntimeError, match="controlled_live_preflight_stale"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    ) == snapshots[0]
+
+
+@pytest.mark.parametrize("attempt", range(5))
+def test_repeated_initial_to_accepted_race_is_stale(preflight_db, monkeypatch, attempt):
+    with preflight_db.factory() as session:
+        session.delete(session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID))
+        for row in session.scalars(sa.select(DataSet).where(DataSet.code.in_(
+            ("fns_tax_regime", "fns_snr", "fns_snrip")
+        ))):
+            row.coverage = {}
+            row.last_success_at = None
+            row.last_data_date = None
+            row.source_as_of = None
+            row.published_at = None
+            row.record_count = 0
+        session.commit()
+    original_preflight = operator._preflight
+    snapshots = []
+
+    def racing_preflight(raw_root):
+        report, bundle = original_preflight(raw_root)
+        assert report["release_mode"] == "INITIAL_RELEASE"
+        assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+        with preflight_db.factory() as session:
+            for expected in _current_datasets(bundle):
+                row = session.scalar(sa.select(DataSet).where(DataSet.code == expected.code))
+                row.coverage = expected.coverage
+                row.last_success_at = expected.last_success_at
+                row.last_data_date = expected.last_data_date
+                row.source_as_of = expected.source_as_of
+            session.add(WorkerPublicationState(
+                source_id=fns_tax_regime.SOURCE_ID,
+                generation=1,
+                active_pointer=preflight_db.accepted_pointer,
+                validation_metadata=_accepted_metadata(bundle, preflight_db.accepted_checksum),
+            ))
+            session.commit()
+        snapshots.append((
+            _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+            _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+        ))
+        return report, bundle
+
+    monkeypatch.setattr(operator, "_preflight", racing_preflight)
+    with pytest.raises(RuntimeError, match="controlled_live_preflight_stale"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    ) == snapshots[0]
+
+
+@pytest.mark.parametrize("attempt", range(5))
+@pytest.mark.parametrize("race", ["generation", "checksum"])
+def test_repeated_new_release_old_proof_race_is_stale(
+    preflight_db, monkeypatch, race, attempt
+):
+    with preflight_db.factory() as session:
+        _set_old_accepted_release(preflight_db, session)
+        session.commit()
+    original_preflight = operator._preflight
+    snapshots = []
+
+    def racing_preflight(raw_root):
+        report, bundle = original_preflight(raw_root)
+        assert report["release_mode"] == "NEW_RELEASE"
+        assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+        with preflight_db.factory() as session:
+            state = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
+            if race == "generation":
+                state.generation = 2
+            else:
+                metadata = deepcopy(state.validation_metadata)
+                metadata["checksum"] = "b" * 64
+                state.validation_metadata = metadata
+            session.commit()
+        snapshots.append((
+            _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+            _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+        ))
+        return report, bundle
+
+    monkeypatch.setattr(operator, "_preflight", racing_preflight)
+    with pytest.raises(RuntimeError, match="controlled_live_preflight_stale"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    ) == snapshots[0]
+
+
+def test_disk_safety_is_rechecked_after_ready_preflight(preflight_db, monkeypatch):
+    remaining = {"free": 90 * 1024**3}
+    original_report = operator.build_preflight_report.func
+    monkeypatch.setattr(operator, "build_preflight_report", partial(
+        original_report,
+        head=_head,
+        disk_usage=lambda _path: SimpleNamespace(
+            total=100 * 1024**3, used=100 * 1024**3 - remaining["free"],
+            free=remaining["free"],
+        ),
+        config=SimpleNamespace(min_disk_free_percent=10),
+        now=NOW,
+    ))
+    original_preflight = operator._preflight
+
+    def racing_preflight(raw_root):
+        report, bundle = original_preflight(raw_root)
+        assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+        remaining["free"] = 1 * 1024**3
+        return report, bundle
+
+    monkeypatch.setattr(operator, "_preflight", racing_preflight)
+    before = (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    )
+    with pytest.raises(RuntimeError, match="controlled_live_preflight_stale"):
+        operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
+    assert (
+        _dataset_state(preflight_db.factory), _publication_state(preflight_db.factory),
+        _job_count(preflight_db.factory), _raw_state(preflight_db.raw_root),
+    ) == before
 
 
 def test_preflight_is_read_only_scoped_and_reports_new_bundle(tmp_path):
@@ -717,13 +1089,13 @@ def test_preflight_fails_closed_for_substituted_dataset_source_url(
 
 def test_preflight_recognizes_same_accepted_bundle(tmp_path, monkeypatch):
     bundle = _bundle()
+    pointer, checksum = _seed_accepted_descriptor(tmp_path, bundle)
     state = SimpleNamespace(
-        validation_metadata={
-            "validation": {"release_identity": bundle.identity},
-            "checksum": "a" * 64,
-        },
-        active_pointer=(tmp_path / fns_tax_regime.SOURCE_ID / "bundles" / bundle.identity / "normalized-bundle.json").resolve().as_uri(),
+        source_id=fns_tax_regime.SOURCE_ID,
+        validation_metadata=_accepted_metadata(bundle, checksum),
+        active_pointer=pointer,
         generation=1,
+        last_fencing_token=0,
     )
     session = FakeSession(state=state)
     monkeypatch.setattr(session, "scalars", lambda _statement: _current_datasets(bundle))
@@ -744,6 +1116,9 @@ def test_preflight_recognizes_same_accepted_bundle(tmp_path, monkeypatch):
     assert report["release_mode"] == "SAME_RELEASE"
     assert report["family_readiness_state"] == "FOUND"
     assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
+    assert report["publication_lifecycle"] == "ACCEPTED_VALID"
+    assert report["accepted_descriptor_verdict"]["valid"] is True
+    assert canonical_sha256(report["admission_fingerprint"])
     assert report["current_publication_identity"] == bundle.identity
 
 
@@ -759,7 +1134,7 @@ def test_same_release_current_family_enqueues_one_check_only_job(preflight_db):
     assert result["check_only"] is True
     assert result["production_scheduler_enabled"] is False
     assert _job_count(preflight_db.factory) == before + 1
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 @pytest.mark.parametrize(
@@ -801,13 +1176,13 @@ def test_same_release_family_failure_blocks_confirmed_enqueue_without_job(
     assert "same_release_family_readiness_not_current" in report["blockers"]
     assert _dataset_state(preflight_db.factory) == before_datasets
     assert _job_count(preflight_db.factory) == before_jobs
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
     with pytest.raises(RuntimeError, match="same_release_family_readiness_not_current"):
         operator._enqueue(preflight_db.raw_root, confirm=operator.CONFIRM_TOKEN)
     assert _dataset_state(preflight_db.factory) == before_datasets
     assert _job_count(preflight_db.factory) == before_jobs
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 def test_same_release_persisted_identity_mismatch_blocks(preflight_db):
@@ -818,7 +1193,7 @@ def test_same_release_persisted_identity_mismatch_blocks(preflight_db):
     report, _bundle = operator._preflight(preflight_db.raw_root)
     assert report["family_readiness_state"] == "FOUND"
     assert report["status"] == "BLOCKED"
-    assert "same_release_family_identity_mismatch" in report["blockers"]
+    assert "accepted_family_dataset_identity_mismatch" in report["blockers"]
     assert _job_count(preflight_db.factory) == 0
 
 
@@ -830,17 +1205,23 @@ def test_initial_release_not_blocked_by_unpublished_family(preflight_db):
         ):
             dataset.operational_status = "not_configured"
             dataset.last_success_at = None
+            dataset.last_data_date = None
+            dataset.source_as_of = None
+            dataset.published_at = None
+            dataset.coverage = {}
+            dataset.record_count = 0
         session.commit()
     before = _dataset_state(preflight_db.factory)
     report, _bundle = operator._preflight(preflight_db.raw_root)
     assert report["release_mode"] == "INITIAL_RELEASE"
+    assert report["publication_lifecycle"] == "NO_PUBLICATION"
     assert report["current_publication_identity"] is None
     assert report["family_readiness_state"] == "NOT_CHECKED"
     assert report["new_release_exists"] is True
     assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
     assert _dataset_state(preflight_db.factory) == before
     assert _job_count(preflight_db.factory) == 0
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 @pytest.mark.parametrize(
@@ -851,25 +1232,22 @@ def test_new_release_old_family_is_diagnostic_only(
     preflight_db, old_status, expected_state
 ):
     with preflight_db.factory() as session:
-        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
-        publication.validation_metadata = {
-            "validation": {"release_identity": "previous-release"},
-            "checksum": "b" * 64,
-        }
+        old = _set_old_accepted_release(preflight_db, session)
         ip = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snrip"))
         ip.operational_status = old_status
         session.commit()
     before = _dataset_state(preflight_db.factory)
     report, _bundle = operator._preflight(preflight_db.raw_root)
     assert report["release_mode"] == "NEW_RELEASE"
-    assert report["current_publication_identity"] == "previous-release"
+    assert report["publication_lifecycle"] == "ACCEPTED_VALID"
+    assert report["current_publication_identity"] == old.identity
     assert report["discovered_release_identity"] == preflight_db.bundle.identity
     assert report["family_readiness_state"] == expected_state
     assert report["family_readiness_reason"] == f"fns_snrip:dataset_{old_status}"
     assert report["status"] == "READY_FOR_CONTROLLED_LIVE"
     assert _dataset_state(preflight_db.factory) == before
     assert _job_count(preflight_db.factory) == 0
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 @pytest.mark.parametrize(
@@ -887,11 +1265,7 @@ def test_new_release_keeps_independent_safety_gates(
     preflight_db, monkeypatch, violation, blocker
 ):
     with preflight_db.factory() as session:
-        publication = session.get(WorkerPublicationState, fns_tax_regime.SOURCE_ID)
-        publication.validation_metadata = {
-            "validation": {"release_identity": "previous-release"},
-            "checksum": "b" * 64,
-        }
+        _set_old_accepted_release(preflight_db, session)
         if violation == "source_url":
             ip = session.scalar(sa.select(DataSet).where(DataSet.code == "fns_snrip"))
             ip.source_url = "https://www.nalog.gov.ru/opendata/substituted/"
@@ -947,15 +1321,18 @@ def test_new_release_keeps_independent_safety_gates(
             ),
         )
     report, _bundle = operator._preflight(preflight_db.raw_root)
-    assert report["release_mode"] == "NEW_RELEASE"
+    assert report["release_mode"] == (
+        "CORRUPT_PUBLICATION" if violation == "missing_dataset" else "NEW_RELEASE"
+    )
     assert report["status"] == "BLOCKED"
     assert blocker in report["blockers"]
     assert _job_count(preflight_db.factory) == 0
-    assert not preflight_db.raw_root.exists()
+    assert _raw_state(preflight_db.raw_root) == preflight_db.raw_before
 
 
 def test_new_release_invalid_path_blocks_before_head(tmp_path, monkeypatch):
     bundle = _bundle()
+    old = _old_bundle()
     legal = bundle.releases["legal"]
     sibling_path = fns_tax_regime._member_specs()["ip"].source_path
     invalid = bulk.FnsRelease(
@@ -969,10 +1346,15 @@ def test_new_release_invalid_path_blocks_before_head(tmp_path, monkeypatch):
     malformed = bulk.FnsReleaseBundle({"legal": invalid, "ip": bundle.releases["ip"]})
     session = FakeSession(
         state=SimpleNamespace(
-            validation_metadata={"validation": {"release_identity": "previous-release"}}
+            source_id=fns_tax_regime.SOURCE_ID,
+            validation_metadata=_accepted_metadata(old, "a" * 64),
+            active_pointer=(tmp_path / "raw" / fns_tax_regime.SOURCE_ID / "bundles" /
+                            old.identity / "normalized-bundle.json").resolve().as_uri(),
+            generation=1,
+            last_fencing_token=0,
         )
     )
-    monkeypatch.setattr(session, "scalars", lambda _statement: _current_datasets(bundle))
+    monkeypatch.setattr(session, "scalars", lambda _statement: _current_datasets(old))
     report = operator.build_preflight_report(
         session,
         bundle=malformed,
@@ -1050,11 +1432,13 @@ def test_controlled_enqueue_creates_one_scoped_job_without_running_it(
             ),
         )
 
-    monkeypatch.setattr(
-        operator,
-        "_preflight",
-        lambda _raw_root: ({"status": "READY_FOR_CONTROLLED_LIVE", "release_mode": "INITIAL_RELEASE"}, bundle),
-    )
+    fake_report = {
+        "status": "READY_FOR_CONTROLLED_LIVE",
+        "release_mode": "INITIAL_RELEASE",
+        "admission_fingerprint": "test-fingerprint",
+    }
+    monkeypatch.setattr(operator, "_preflight", lambda _raw_root: (fake_report, bundle))
+    monkeypatch.setattr(operator, "build_preflight_report", lambda *_args, **_kwargs: fake_report)
     monkeypatch.setattr(operator, "SessionLocal", SessionContext)
     monkeypatch.setattr(operator, "enqueue_bulk_release_bundle", fake_enqueue)
 

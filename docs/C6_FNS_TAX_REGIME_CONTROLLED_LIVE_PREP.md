@@ -114,6 +114,36 @@ and `11ab9c913237851bd4dbc8d52e252513041869e5dc9e954a1337a81b6f461e8d`.
   valid official member links, source pins, handler approval, registration and
   disk gates.
 
+### Correction 4 — QA findings F-C6-134-06/07/08
+
+- Publication admission first classifies the durable C6 lifecycle as
+  `NO_PUBLICATION`, `ACCEPTED_VALID`, or `CORRUPT`. The worker creates a
+  `WorkerPublicationState` row only after accepted staging; therefore a row
+  with missing/incomplete validation is corrupt, never pristine bootstrap.
+- Genuine `INITIAL_RELEASE` requires **no** publication-state row **and no**
+  durable prior-publication evidence in the family/member datasets or C6
+  snapshots. A deleted state row beside release coverage, publication dates,
+  record counts, or facts is `CORRUPT` (`lost_accepted_publication_state`).
+- Accepted proof requires strict positive integer generation (booleans and
+  coercions do not count), strict nonnegative fencing token, canonical
+  64-character lowercase SHA-256 checksum and family/member identities,
+  recomputed family composition, valid date/pointer, and coherent family and
+  child coverage. A malformed old accepted graph cannot become `NEW_RELEASE`.
+- `SAME_RELEASE` additionally hashes the accepted descriptor bytes and matches
+  that digest to the persisted checksum. It validates the descriptor's exact
+  family/member structure, release anchors, normalized pointers, and actual
+  normalized file hashes. Missing, malformed, substituted, or modified RAW is
+  a STOP condition; preflight never repairs it.
+- Read-only preflight exposes the publication lifecycle, proof reasons,
+  canonical checksum and descriptor verdicts, and a canonical SHA-256
+  `admission_fingerprint` over the safety-critical observed evidence. Confirmed
+  enqueue locks the family, both children, publication state, and handler in
+  one transaction, recomputes the full admission report against the same
+  discovered bundle, rechecks live resource/disk gates, and compares the
+  fingerprint. A changed generation, checksum, mode, coverage, source URL,
+  handler, descriptor, or readiness yields `controlled_live_preflight_stale`
+  and zero jobs. Re-run preflight after investigating; do not override.
+
 ### NOT VERIFIED by Mac preparation
 
 - Full artifact download, XML validation, normalization and PostgreSQL
@@ -274,10 +304,11 @@ bundle compatibility, handler approval, the three dataset registrations,
 whether the bundle is new, live content lengths and disk gates. It also
 classifies the release mode:
 
-- `INITIAL_RELEASE`: no accepted publication identity; bootstrap dataset
-  currentness is diagnostic, not a prerequisite for first publication.
-- `NEW_RELEASE`: accepted identity differs from the discovered bundle; old
-  family readiness is diagnostic, not a circular blocker for valid new data.
+- `INITIAL_RELEASE`: no state row and no persisted C6 publication evidence;
+  bootstrap dataset currentness is diagnostic, not a prerequisite.
+- `NEW_RELEASE`: a **coherent** accepted old proof has a different identity
+  from the discovered bundle; old family readiness is diagnostic, but old
+  publication integrity is mandatory.
 - `SAME_RELEASE`: accepted family identity matches fresh discovery, but that
   alone is insufficient. The fresh official bundle is the authoritative
   identity/date anchor. The preflight checks the accepted Worker publication,
@@ -288,11 +319,19 @@ classifies the release mode:
   Persisted publication member identities and dates, when present, must also
   agree with the fresh bundle; checksums do not replace release identities.
   Missing/malformed/extra members, swapped identities, stale dates, invalid
-  publication generation/pointer, or unavailable/stale/parse-failed siblings
-  block confirmed enqueue with zero Worker jobs. Enqueue locks and rechecks
-  the SAME_RELEASE identity/readiness chain after read-only preflight. The
-  accepted replay pointer must address this bundle's canonical normalized
-  descriptor under the selected RAW root; a substituted path is STOP.
+  publication generation/pointer/checksum, descriptor bytes/content, or
+  unavailable/stale/parse-failed siblings block confirmed enqueue with zero
+  Worker jobs. Enqueue locks and rechecks the entire admission proof, not
+  merely release mode. The accepted replay pointer must address this bundle's
+  canonical normalized descriptor under the selected RAW root.
+
+`CORRUPT_PUBLICATION` is always `BLOCKED`: it is neither initial nor a new
+release. Do not delete or manually rewrite state/RAW to force another mode;
+investigate and repair under a separate recovery procedure. A stale admission
+fingerprint means state changed between preflight and enqueue; stop and rerun
+preflight, reviewing the difference before another confirmation. The final
+locked check includes current disk safety (at least 10% and 5 GiB after the
+conservative peak estimate), handler approval, and exact source registrations.
 
 All modes retain source identity, exact URL/path, handler, registration and
 resource gates. Direct invalid bundle inputs are rejected before HEAD probes.
@@ -304,7 +343,9 @@ both member codes, no blockers, and `release_mode=INITIAL_RELEASE` with
 `family_readiness_state`, `family_readiness_reason`,
 `current_publication_identity`, `discovered_release_identity`, and
 `member_identity_verification` (expected and persisted legal/IP identities,
-dates and deterministic mismatch reasons); do not
+dates and deterministic mismatch reasons), plus `publication_lifecycle`,
+`publication_proof_reasons`, `accepted_descriptor_verdict`, and
+`admission_fingerprint`; do not
 override a `SAME_RELEASE` family blocker. Any other result stops the run.
 
 ## HOME controlled-live package — do not run on Mac
