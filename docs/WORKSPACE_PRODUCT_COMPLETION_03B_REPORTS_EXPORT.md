@@ -71,11 +71,28 @@ CSV rows flatten stored semantic facts into these columns:
 `source_data_date`, `freshness`, `limitations`.
 
 Mappings and arrays use the same sorted compact JSON serialization; Python
-`repr()` is never emitted. Text whose first meaningful character is `=`, `+`,
-`-`, or `@`, plus leading tab or carriage return, receives a leading apostrophe
-so spreadsheet applications treat it as text. CSV uses RFC-compatible quoting,
-CRLF records, and UTF-8 with BOM (`utf-8-sig`) for reliable Russian-language
-spreadsheet import. Filenames use the same safe pattern with a `.csv` suffix.
+`repr()` is never emitted. One canonical field helper applies serialization and
+the export-safety policy to every scalar and structured field. It preserves
+ordinary customer text, whitespace, and Unicode format characters. When the
+first meaningful character after any leading Unicode whitespace or `Cf` format
+characters is `=`, `+`, `-`, or `@`, the original text receives an apostrophe at
+the very beginning so spreadsheet applications treat it as text; the accepted
+leading characters themselves are never stripped.
+
+NUL fails closed with the deterministic `report_export_invalid_value` error.
+Other C0/C1 controls also fail closed, except tab, LF, and CR, which CSV quoting
+can represent and which still participate in formula-prefix detection. Unicode
+surrogate code points are rejected; Unicode format characters such as U+FEFF
+and zero-width format values are retained but ignored when locating a formula
+prefix. Export is built fully in memory, so an invalid value cannot produce a
+partial download. Both HTML and API CSV routes return the same semantic error
+policy without exposing the rejected content or a stack trace.
+
+CSV uses RFC-compatible quoting, CRLF records, and UTF-8 with BOM
+(`utf-8-sig`) for reliable Russian-language spreadsheet import. Filenames use
+the same safe pattern with a `.csv` suffix. These transformations affect only
+the CSV representation: the stored snapshot, its SHA-256, and JSON export are
+unchanged.
 
 ## Permissions, entitlement, and quota
 

@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -42,6 +43,19 @@ CSV_COLUMNS = (
     "freshness",
     "limitations",
 )
+_CSV_ALLOWED_CONTROLS = frozenset(("\t", "\n", "\r"))
+_CSV_FORMULA_PREFIXES = frozenset(("=", "+", "-", "@"))
+
+
+class ReportExportValidationError(ActionDenied):
+    """Customer-safe, deterministic failure for invalid export values."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "report_export_invalid_value",
+            "Экспорт CSV остановлен: отчёт содержит недопустимый управляющий символ.",
+            status_code=422,
+        )
 
 
 @dataclass(frozen=True)
@@ -578,7 +592,9 @@ def get_report(
     return report
 
 
-def _csv_value(value: Any) -> str:
+def _csv_safe_text(value: Any) -> str:
+    """Serialize one CSV field, reject forbidden controls, and neutralize formulas."""
+
     if value is None:
         text = ""
     elif isinstance(value, (dict, list, tuple)):
@@ -587,8 +603,21 @@ def _csv_value(value: Any) -> str:
         text = "true" if value else "false"
     else:
         text = str(value)
-    if text.startswith(("\t", "\r")) or text.lstrip().startswith(("=", "+", "-", "@")):
-        return "'" + text
+
+    for character in text:
+        category = unicodedata.category(character)
+        if character == "\x00" or category == "Cs":
+            raise ReportExportValidationError()
+        if category == "Cc" and character not in _CSV_ALLOWED_CONTROLS:
+            raise ReportExportValidationError()
+
+    for character in text:
+        category = unicodedata.category(character)
+        if character.isspace() or category == "Cf":
+            continue
+        if character in _CSV_FORMULA_PREFIXES:
+            return "'" + text
+        break
     return text
 
 
@@ -626,7 +655,9 @@ def report_csv_bytes(snapshot: dict[str, Any]) -> bytes:
                 "freshness": source.get("freshness"),
                 "limitations": fact.get("limitations", []),
             }
-            writer.writerow({key: _csv_value(row.get(key)) for key in CSV_COLUMNS})
+            writer.writerow(
+                {key: _csv_safe_text(row.get(key)) for key in CSV_COLUMNS}
+            )
     # UTF-8 BOM is intentional for Russian-language spreadsheet compatibility.
     return output.getvalue().encode("utf-8-sig")
 

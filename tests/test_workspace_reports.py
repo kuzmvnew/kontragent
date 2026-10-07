@@ -30,6 +30,7 @@ from tests.test_workspace_p0 import (
 )
 from workspace_app.main import create_app
 from workspace_app.report_service import (
+    ReportExportValidationError,
     build_report_snapshot,
     canonical_json_bytes,
     generate_report,
@@ -171,7 +172,9 @@ def test_report_service_persists_historical_snapshot_hash_audit_and_tenant_scope
         _cleanup(email_a, email_b, inns=(inn,))
 
 
-def test_report_html_api_exports_entitlement_policy_rbac_and_cross_tenant():
+def test_report_html_api_exports_entitlement_policy_rbac_and_cross_tenant(
+    monkeypatch,
+):
     email_a = f"workspace-report-http-a-{uuid4()}@example.test"
     email_b = f"workspace-report-http-b-{uuid4()}@example.test"
     item = projection(sequence=100_300_102)
@@ -238,6 +241,19 @@ def test_report_html_api_exports_entitlement_policy_rbac_and_cross_tenant():
         assert web_a.get("/app/api/reports").json()["items"][0][
             "report_id"
         ] == report_id
+
+        def reject_unsafe_csv(_snapshot):
+            raise ReportExportValidationError()
+
+        monkeypatch.setattr(
+            "workspace_app.main.report_csv_bytes",
+            reject_unsafe_csv,
+        )
+        unsafe_html = web_a.get(f"/app/reports/{report_id}/export.csv")
+        unsafe_api = web_a.get(f"/app/api/reports/{report_id}/export.csv")
+        assert unsafe_html.status_code == unsafe_api.status_code == 422
+        assert "Экспорт CSV остановлен" in unsafe_html.text
+        assert unsafe_api.json()["error"]["code"] == "report_export_invalid_value"
 
         with Session(engine) as session:
             entitlement = session.scalar(
@@ -344,3 +360,85 @@ def test_csv_export_is_deterministic_structured_utf8_and_formula_safe():
     assert rows[1]["period"] == "'-2026"
     assert rows[1]["value"] == '{"а":[1,2],"б":2}'
     assert "Формулы и структура" in first.decode("utf-8-sig")
+    decoded = first.decode("utf-8-sig")
+    assert "\r\n" in decoded
+    assert "\n" not in decoded.replace("\r\n", "")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("=1+1", "'=1+1"),
+        ("+1+1", "'+1+1"),
+        ("-2026", "'-2026"),
+        ("@SUM(A1:A2)", "'@SUM(A1:A2)"),
+        (" =1+1", "' =1+1"),
+        ("\t=1+1", "'\t=1+1"),
+        ("\r=1+1", "'\r=1+1"),
+        ("\n=1+1", "'\n=1+1"),
+        ("\ufeff=1+1", "'\ufeff=1+1"),
+        ("\u200b=1+1", "'\u200b=1+1"),
+        (" \t\ufeff\u200b=1+1", "' \t\ufeff\u200b=1+1"),
+        ("ООО Ромашка", "ООО Ромашка"),
+        ("ФНС России", "ФНС России"),
+        ("Проверить договор", "Проверить договор"),
+        ("Налоговый режим", "Налоговый режим"),
+    ),
+)
+def test_csv_formula_matrix_preserves_original_text(value, expected):
+    item = projection(sequence=100_300_104)
+    snapshot, *_ = build_report_snapshot(
+        report_id=uuid4(),
+        generated_at=datetime(2026, 10, 7, 10, 30, tzinfo=timezone.utc),
+        projection=item,
+    )
+    snapshot["sections"] = [
+        {
+            "section_key": "formula_matrix",
+            "title": "Матрица формул",
+            "state": "FOUND",
+            "items": [
+                {
+                    "field_key": "value",
+                    "label": "Значение",
+                    "state": "FOUND",
+                    "value": value,
+                    "period": None,
+                    "source": {"name": "ФНС России"},
+                    "limitations": [],
+                }
+            ],
+        }
+    ]
+
+    content = report_csv_bytes(snapshot)
+    row = next(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
+    assert row["value"] == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "\x00=1+1",
+        "\x01=1+1",
+        "\x1b=1+1",
+        "\x7f=1+1",
+        "\x85=1+1",
+        "\t\ufeff\x01=1+1",
+        "\x01Обычный текст",
+    ),
+)
+def test_csv_forbidden_controls_fail_closed(value):
+    item = projection(sequence=100_300_105)
+    snapshot, *_ = build_report_snapshot(
+        report_id=uuid4(),
+        generated_at=datetime(2026, 10, 7, 10, 30, tzinfo=timezone.utc),
+        projection=item,
+    )
+    snapshot["sections"][0]["items"][0]["value"] = value
+
+    with pytest.raises(ReportExportValidationError) as rejected:
+        report_csv_bytes(snapshot)
+
+    assert rejected.value.code == "report_export_invalid_value"
+    assert rejected.value.status_code == 422
