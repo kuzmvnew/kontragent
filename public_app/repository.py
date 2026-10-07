@@ -40,7 +40,7 @@ class PublicRepository:
                          WHERE p.release_id = r.release_id) AS actual_record_count
                 FROM public_publication_state s
                 JOIN public_releases r ON r.release_id = s.active_release_id
-                WHERE s.singleton = TRUE
+                WHERE s.singleton = TRUE AND r.status = 'active'
                 """
             )
             return cursor.fetchone()
@@ -59,6 +59,34 @@ class PublicRepository:
             )
             row = cursor.fetchone()
         return PublicProjection.model_validate(row["payload"]) if row else None
+
+    def get_companies(
+        self,
+        inns: list[str] | tuple[str, ...],
+        *,
+        release_id: str,
+    ) -> list[PublicProjection]:
+        """Read exact INNs from one explicitly pinned public release."""
+
+        exact_inns = tuple(dict.fromkeys(str(inn).strip() for inn in inns))
+        if not release_id:
+            raise ValueError("release_id is required")
+        if not exact_inns:
+            return []
+        if len(exact_inns) > 5_000:
+            raise ValueError("public projection batch is too large")
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.payload
+                FROM public_company_projections p
+                WHERE p.release_id = %s AND p.inn = ANY(%s)
+                ORDER BY p.inn
+                """,
+                (release_id, list(exact_inns)),
+            )
+            rows = cursor.fetchall()
+        return [PublicProjection.model_validate(row["payload"]) for row in rows]
 
     def search(self, query: str, limit: int = 20) -> list[PublicProjection]:
         normalized = " ".join(query.casefold().split())

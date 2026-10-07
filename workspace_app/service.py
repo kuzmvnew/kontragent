@@ -36,6 +36,10 @@ P0_PERMISSIONS = (
     "report.view",
     "report.generate",
     "report.export",
+    "bulk.view",
+    "bulk.create",
+    "bulk.manage",
+    "bulk.export",
     "workspace.members.manage",
 )
 
@@ -51,6 +55,10 @@ ROLE_PERMISSIONS = {
         "report.view",
         "report.generate",
         "report.export",
+        "bulk.view",
+        "bulk.create",
+        "bulk.manage",
+        "bulk.export",
     ),
 }
 
@@ -65,6 +73,10 @@ PERMISSION_ENTITLEMENTS = {
     "report.view": "workspace.core.enabled",
     "report.generate": "reports.enabled",
     "report.export": "workspace.core.enabled",
+    "bulk.view": "workspace.core.enabled",
+    "bulk.create": "bulk_check.enabled",
+    "bulk.manage": "bulk_check.enabled",
+    "bulk.export": "workspace.core.enabled",
     "workspace.members.manage": "workspace_members.enabled",
 }
 
@@ -73,9 +85,10 @@ DEFAULT_ENTITLEMENTS = {
     "saved_companies.enabled": True,
     "monitoring.enabled": False,
     "reports.enabled": True,
+    "bulk_check.enabled": True,
     "workspace_members.enabled": True,
 }
-BOOTSTRAP_POLICY_VERSION = "workspace-reports-v1"
+BOOTSTRAP_POLICY_VERSION = "workspace-bulk-check-v1"
 _DUMMY_PASSWORD_HASH = (
     "scrypt-v1$32768$8$1$d29ya3NwYWNlLXAwLWR1bW0$"
     "6dS6Cf3NriX59EuQ2A5PzSdIXkoy34-HM0xzb0U5x6E"
@@ -354,7 +367,7 @@ def bootstrap_workspace_owner(
                 limit_value=(
                     saved_company_limit
                     if entitlement_key == "saved_companies.enabled"
-                    else None
+                    else (1000 if entitlement_key == "bulk_check.enabled" else None)
                 ),
                 policy_version=BOOTSTRAP_POLICY_VERSION,
             )

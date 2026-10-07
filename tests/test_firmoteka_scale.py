@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 from threading import Barrier, Lock, local
@@ -21,6 +22,30 @@ from app.services.source_factory_registry_service import ensure_source_factory_d
 
 
 NOW = datetime(2026, 9, 25, 10, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _stable_host_pressure_for_scheduler_unit_tests(monkeypatch):
+    """Keep scheduler-unit assertions independent from the developer host load.
+
+    Production pressure thresholds and their dedicated tests remain unchanged;
+    these tests exercise Firmoteka checkpoint selection, claim identity, and
+    lane scaling rather than the live Mac's instantaneous CPU/disk pressure.
+    """
+
+    collect = worker.collect_factory_pressure
+
+    def stable(*args, **kwargs):
+        return replace(
+            collect(*args, **kwargs),
+            database_connection_percent=0.0,
+            host_cpu_percent=0.0,
+            disk_free_percent=100.0,
+            raw_growth_bytes_per_hour=0,
+            disk_free_bytes=10**15,
+        )
+
+    monkeypatch.setattr(worker, "collect_factory_pressure", stable)
 
 
 def _factory():

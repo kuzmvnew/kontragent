@@ -156,7 +156,7 @@ returns the safe `report_not_found` result.
 
 - PDF export and branded print polish are not included; the HTML detail has a
   lightweight print stylesheet.
-- Bulk Check remains a separate 03C architecture task.
+- Bulk Check is implemented separately in 03C and does not mutate reports.
 - Users/Roles UI is not implemented.
 - Settings/Usage UI is not implemented.
 - Demo Workspace is not implemented.

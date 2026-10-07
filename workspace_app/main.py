@@ -10,7 +10,7 @@ from typing import Callable
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -71,6 +71,24 @@ from workspace_app.report_service import (
     report_generation_state,
     report_list_payload,
 )
+from workspace_app.bulk_service import (
+    ITEM_STATUSES,
+    MAX_FILE_BYTES,
+    bulk_csv_bytes,
+    bulk_filename,
+    bulk_json_bytes,
+    cancel_bulk_job,
+    create_bulk_job,
+    get_bulk_job,
+    item_payload,
+    job_payload,
+    list_bulk_items,
+    list_bulk_jobs,
+    process_bulk_job_chunk,
+    record_bulk_export,
+    resume_bulk_job,
+    retry_bulk_job,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -87,6 +105,8 @@ def _active_nav(path: str) -> str:
         return "monitoring"
     if path == "/app/reports" or path.startswith("/app/reports/"):
         return "reports"
+    if path == "/app/bulk" or path.startswith("/app/bulk/"):
+        return "bulk"
     if path == "/app/search" or path.startswith("/app/companies/"):
         return "search"
     return ""
@@ -1364,6 +1384,264 @@ def create_app(
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    @app.get("/app/bulk", response_class=HTMLResponse)
+    def bulk_page(request: Request, limit: int = 50):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.view")
+                jobs = list_bulk_jobs(session, user_id=principal.user_id, workspace_id=context.workspace_id, limit=limit)
+                workspace, role = _workspace_shell(session, context)
+                can_create, create_denial, create_limit = action_state(
+                    session, user_id=principal.user_id, workspace_id=context.workspace_id, permission_key="bulk.create"
+                )
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    return RedirectResponse("/login?return_to=/app/bulk", status_code=303)
+                if exc.code == "workspace_required":
+                    return RedirectResponse("/workspace/select?return_to=/app/bulk", status_code=303)
+                return _html_error(request, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="bulk.html",
+            context={
+                "principal": principal, "workspace": workspace, "role": role,
+                "jobs": jobs, "can_create": can_create,
+                "create_denial": create_denial, "create_limit": create_limit,
+                "csrf": request.cookies.get(CSRF_COOKIE) or "",
+            },
+        )
+
+    @app.post("/app/bulk")
+    async def bulk_create_form(request: Request):
+        form = await request.form()
+        upload = form.get("file")
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                if upload is None or not hasattr(upload, "read"):
+                    raise ActionDenied("bulk_file_required", "Выберите CSV-файл.", status_code=422)
+                content = await upload.read(MAX_FILE_BYTES + 1)
+                job = create_bulk_job(
+                    session, user_id=principal.user_id, workspace_id=principal.active_workspace_id,
+                    filename=getattr(upload, "filename", None), content=content,
+                )
+                job_id = job.id
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+            finally:
+                if isinstance(upload, UploadFile):
+                    await upload.close()
+        return RedirectResponse(f"/app/bulk/{job_id}", status_code=303)
+
+    @app.get("/app/bulk/{job_id}", response_class=HTMLResponse)
+    def bulk_detail_page(
+        request: Request, job_id: UUID, status: str = "", q: str = "",
+        page: int = 1, page_size: int = 50,
+    ):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.view")
+                job = get_bulk_job(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id)
+                items_page = list_bulk_items(
+                    session, user_id=principal.user_id, workspace_id=context.workspace_id,
+                    job_id=job_id, status=status or None, query=q, page=page, page_size=page_size,
+                )
+                workspace, role = _workspace_shell(session, context)
+                can_manage = action_state(session, user_id=principal.user_id, workspace_id=context.workspace_id, permission_key="bulk.manage")[0]
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    return RedirectResponse(f"/login?return_to=/app/bulk/{job_id}", status_code=303)
+                if exc.code == "workspace_required":
+                    return RedirectResponse(f"/workspace/select?return_to=/app/bulk/{job_id}", status_code=303)
+                return _html_error(request, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="bulk_detail.html",
+            context={
+                "principal": principal, "workspace": workspace, "role": role,
+                "job": job, "job_data": job_payload(job), "items_page": items_page,
+                "status_filter": status, "query": q, "item_statuses": sorted(ITEM_STATUSES),
+                "can_manage": can_manage, "csrf": request.cookies.get(CSRF_COOKIE) or "",
+            },
+        )
+
+    async def _bulk_html_mutation(request: Request, job_id: UUID, operation):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                kwargs = dict(session=session, user_id=principal.user_id, workspace_id=principal.active_workspace_id, job_id=job_id)
+                if operation is process_bulk_job_chunk:
+                    kwargs["projection_repository"] = _public_repository(request)
+                operation(**kwargs)
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse(f"/app/bulk/{job_id}", status_code=303)
+
+    @app.post("/app/bulk/{job_id}/process-next")
+    async def bulk_process_form(request: Request, job_id: UUID):
+        return await _bulk_html_mutation(request, job_id, process_bulk_job_chunk)
+
+    @app.post("/app/bulk/{job_id}/cancel")
+    async def bulk_cancel_form(request: Request, job_id: UUID):
+        return await _bulk_html_mutation(request, job_id, cancel_bulk_job)
+
+    @app.post("/app/bulk/{job_id}/resume")
+    async def bulk_resume_form(request: Request, job_id: UUID):
+        return await _bulk_html_mutation(request, job_id, resume_bulk_job)
+
+    @app.post("/app/bulk/{job_id}/retry")
+    async def bulk_retry_form(request: Request, job_id: UUID):
+        return await _bulk_html_mutation(request, job_id, retry_bulk_job)
+
+    @app.get("/app/bulk/{job_id}/export.json")
+    def bulk_json_download(request: Request, job_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.export")
+                job = get_bulk_job(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, permission_key="bulk.export")
+                content = bulk_json_bytes(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id)
+                filename = bulk_filename(job, "json")
+                record_bulk_export(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, format="json")
+                session.commit()
+            except ActionDenied as exc:
+                return _html_error(request, exc)
+        return Response(content=content, media_type="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    @app.get("/app/bulk/{job_id}/export.csv")
+    def bulk_csv_download(request: Request, job_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.export")
+                job = get_bulk_job(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, permission_key="bulk.export")
+                content = bulk_csv_bytes(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id)
+                filename = bulk_filename(job, "csv")
+                record_bulk_export(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, format="csv")
+                session.commit()
+            except ActionDenied as exc:
+                return _html_error(request, exc)
+        return Response(content=content, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    @app.post("/app/api/bulk-jobs")
+    async def api_bulk_create(request: Request):
+        form = await request.form()
+        upload = form.get("file")
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, request.headers.get("x-csrf-token"))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                if upload is None or not hasattr(upload, "read"):
+                    raise ActionDenied("bulk_file_required", "Выберите CSV-файл.", status_code=422)
+                content = await upload.read(MAX_FILE_BYTES + 1)
+                job = create_bulk_job(session, user_id=principal.user_id, workspace_id=principal.active_workspace_id, filename=getattr(upload, "filename", None), content=content)
+                payload = job_payload(job)
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+            finally:
+                if isinstance(upload, UploadFile):
+                    await upload.close()
+        return JSONResponse(payload, status_code=201, headers={"Location": f"/app/api/bulk-jobs/{payload['job_id']}"})
+
+    @app.get("/app/api/bulk-jobs")
+    def api_bulk_jobs(request: Request, limit: int = 50):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.view")
+                jobs = list_bulk_jobs(session, user_id=principal.user_id, workspace_id=context.workspace_id, limit=limit)
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"items": [job_payload(job) for job in jobs]})
+
+    @app.get("/app/api/bulk-jobs/{job_id}")
+    def api_bulk_job(request: Request, job_id: UUID, status: str = "", q: str = "", page: int = 1, page_size: int = 50):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.view")
+                job = get_bulk_job(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id)
+                items = list_bulk_items(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, status=status or None, query=q, page=page, page_size=page_size)
+                payload = job_payload(job)
+                payload["items"] = [item_payload(item) for item in items.items]
+                payload["pagination"] = {"page": items.page, "page_size": items.page_size, "total": items.total, "pages": items.pages}
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(payload)
+
+    def _api_bulk_mutation(request: Request, job_id: UUID, operation):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, request.headers.get("x-csrf-token"))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                kwargs = dict(session=session, user_id=principal.user_id, workspace_id=principal.active_workspace_id, job_id=job_id)
+                if operation is process_bulk_job_chunk:
+                    kwargs["projection_repository"] = _public_repository(request)
+                job = operation(**kwargs)
+                payload = job_payload(job)
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(payload)
+
+    @app.post("/app/api/bulk-jobs/{job_id}/process-next")
+    def api_bulk_process(request: Request, job_id: UUID):
+        return _api_bulk_mutation(request, job_id, process_bulk_job_chunk)
+
+    @app.post("/app/api/bulk-jobs/{job_id}/cancel")
+    def api_bulk_cancel(request: Request, job_id: UUID):
+        return _api_bulk_mutation(request, job_id, cancel_bulk_job)
+
+    @app.post("/app/api/bulk-jobs/{job_id}/resume")
+    def api_bulk_resume(request: Request, job_id: UUID):
+        return _api_bulk_mutation(request, job_id, resume_bulk_job)
+
+    @app.post("/app/api/bulk-jobs/{job_id}/retry")
+    def api_bulk_retry(request: Request, job_id: UUID):
+        return _api_bulk_mutation(request, job_id, retry_bulk_job)
+
+    @app.get("/app/api/bulk-jobs/{job_id}/export.json")
+    def api_bulk_json(request: Request, job_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.export")
+                job = get_bulk_job(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, permission_key="bulk.export")
+                content = bulk_json_bytes(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id)
+                filename = bulk_filename(job, "json")
+                record_bulk_export(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, format="json")
+                session.commit()
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return Response(content=content, media_type="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    @app.get("/app/api/bulk-jobs/{job_id}/export.csv")
+    def api_bulk_csv(request: Request, job_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(request, session, permission="bulk.export")
+                job = get_bulk_job(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, permission_key="bulk.export")
+                content = bulk_csv_bytes(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id)
+                filename = bulk_filename(job, "csv")
+                record_bulk_export(session, user_id=principal.user_id, workspace_id=context.workspace_id, job_id=job_id, format="csv")
+                session.commit()
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return Response(content=content, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     @app.get("/app/companies/{inn}/monitoring", response_class=HTMLResponse)
     def monitoring_entry(request: Request, inn: str):

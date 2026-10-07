@@ -1136,6 +1136,7 @@ def test_workspace_p0_database_constraints_and_role_contract():
                 "saved_companies.enabled",
                 "monitoring.enabled",
                 "reports.enabled",
+                "bulk_check.enabled",
                 "workspace_members.enabled",
             }
             assert entitlement_keys.isdisjoint(
