@@ -46,6 +46,7 @@ def test_structured_domain_data_contains_tax_regime(
         "dataset_code": "fns_snr",
         "source_document_id": None,
         "source_document_date": None,
+        "provenance": None,
     }
 
     unavailable_check = {

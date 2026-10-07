@@ -649,6 +649,7 @@ def load_structured_domain_data(
             "dataset_code": tax_regime_check["member_dataset_code"],
             "source_document_id": tax_regime_check["source_document_id"],
             "source_document_date": tax_regime_check["source_document_date"],
+            "provenance": tax_regime_check.get("provenance"),
         }
         if tax_regime_check.get("result") == "found"
         else None

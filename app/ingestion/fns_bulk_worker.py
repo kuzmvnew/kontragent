@@ -68,6 +68,68 @@ MULTIPART_RANGE_RETRY_BASE_SECONDS = 0.25
 _MULTIPART_ETAG = re.compile(
     r'^"?(?P<digest>[0-9a-fA-F]{32})-(?P<part_count>[1-9][0-9]*)"?$'
 )
+_VALID_PERCENT = re.compile(r"%(?:[0-9A-Fa-f]{2})")
+_ARTIFACT_NAME = re.compile(
+    r"data-\d{8}-structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.zip",
+    re.I,
+)
+_XSD_NAME = re.compile(
+    r"structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.xsd",
+    re.I,
+)
+
+
+def validate_official_release_url(
+    spec: "FnsBulkSourceSpec", url: str, *, artifact: bool
+) -> tuple[str, str]:
+    """Validate one official URL structurally before any download or RAW write."""
+
+    if any(ord(char) < 32 or ord(char) == 127 for char in url):
+        raise InvalidDataError("FNS release URL has a control character")
+    if "?" in url or "#" in url:
+        raise InvalidDataError("FNS release URL has a query or fragment delimiter")
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError as error:
+        raise InvalidDataError("FNS release URL has an invalid authority") from error
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in OFFICIAL_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise InvalidDataError("FNS release URL has an unapproved authority")
+    path = parsed.path
+    for _layer in range(4):
+        if any(ord(char) < 32 or ord(char) == 127 for char in path) or "\\" in path:
+            raise InvalidDataError("FNS release path has a control or backslash")
+        segments = path.split("/")
+        if (
+            len(segments) != 4
+            or segments[0] != ""
+            or segments[1] != "opendata"
+            or segments[2] != spec.source_path
+            or not segments[3]
+            or any(segment in {".", ".."} for segment in segments)
+        ):
+            raise InvalidDataError("FNS release path differs from exact dataset directory")
+        for index, char in enumerate(path):
+            if char == "%" and _VALID_PERCENT.match(path, index) is None:
+                raise InvalidDataError("FNS release path has malformed percent encoding")
+        if "%" not in path:
+            break
+        path = unquote(path)
+    else:
+        raise InvalidDataError("FNS release path has nested percent encoding")
+    filename = path.split("/")[3]
+    match = (_ARTIFACT_NAME if artifact else _XSD_NAME).fullmatch(filename)
+    if match is None:
+        raise InvalidDataError("FNS release filename does not match official structure")
+    return filename, match.group("version")
 
 
 @dataclass(frozen=True)
@@ -128,6 +190,7 @@ class FnsRelease:
     actual_until: date | None
     discovered_at: datetime
     provenance: str
+    source_updated_at: date | None = None
 
     @property
     def identity(self) -> str:
@@ -150,6 +213,11 @@ class FnsRelease:
             "actual_until": self.actual_until.isoformat() if self.actual_until else None,
             "discovered_at": self.discovered_at.isoformat(),
             "provenance": self.provenance,
+            "source_updated_at": (
+                self.source_updated_at.isoformat()
+                if self.source_updated_at
+                else None
+            ),
             "release_identity": self.identity,
         }
 
@@ -163,6 +231,13 @@ class FnsReleaseBundle:
     def __post_init__(self) -> None:
         if not self.releases:
             raise ValueError("FNS release bundle is empty")
+        source_dates = {
+            release.source_data_date for release in self.releases.values()
+        }
+        if len(source_dates) != 1:
+            raise SchemaMismatchError(
+                "FNS release bundle has incompatible member source dates"
+            )
 
     @property
     def identity(self) -> str:
@@ -307,6 +382,20 @@ def discover_fns_release(
     now = _utc(now or datetime.now(timezone.utc))
     raw, _headers = fetch(spec.source_page_url)
     html = unescape(raw.decode("utf-8", errors="replace"))
+    identifier_match = re.search(
+        r'property=["\']dc:identifier["\'][^>]*>\s*([^<]+?)\s*</td>',
+        html,
+        flags=re.I | re.S,
+    )
+    identifier = (
+        re.sub(r"\s+", " ", identifier_match.group(1)).strip()
+        if identifier_match
+        else ""
+    )
+    if identifier != spec.source_path:
+        raise SchemaMismatchError(
+            "official FNS passport identifier differs from source pin"
+        )
     urls = re.findall(r'href=["\'](https://[^"\']+)["\']', html, flags=re.I)
     prefix = f"/opendata/{spec.source_path}/"
     artifact_url = next(
@@ -319,6 +408,16 @@ def discover_fns_release(
     )
     if not artifact_url or not xsd_url:
         raise SchemaMismatchError("official FNS passport has no current ZIP/XSD links")
+    _artifact_name, artifact_version = validate_official_release_url(
+        spec, artifact_url, artifact=True
+    )
+    _xsd_name, xsd_version = validate_official_release_url(
+        spec, xsd_url, artifact=False
+    )
+    if artifact_version != xsd_version:
+        raise SchemaMismatchError(
+            "official FNS artifact and XSD structure versions differ"
+        )
 
     provenance_match = re.search(
         r'property=["\']dc:provenance["\'][^>]*>(.*?)</td>', html, flags=re.I | re.S
@@ -334,10 +433,16 @@ def discover_fns_release(
         r'property=["\']dc:valid["\'][^>]*content=["\']([^"\']+)', html, flags=re.I
     )
     actual_until = _parse_date(valid_match.group(1)) if valid_match else None
-    for candidate in (artifact_url, xsd_url):
-        parsed = urlparse(candidate)
-        if parsed.scheme != "https" or parsed.hostname not in OFFICIAL_HOSTS:
-            raise InvalidDataError(f"official passport points to unapproved URL: {candidate}")
+    modified_match = re.search(
+        r'property=["\']dc:modified["\'][^>]*content=["\']([^"\']+)',
+        html,
+        flags=re.I,
+    )
+    source_updated_at = (
+        _parse_date(modified_match.group(1)) if modified_match else None
+    )
+    if source_updated_at is None:
+        raise SchemaMismatchError("official FNS passport has no source update date")
     return FnsRelease(
         source_page_url=spec.source_page_url,
         artifact_url=artifact_url,
@@ -346,6 +451,7 @@ def discover_fns_release(
         actual_until=actual_until,
         discovered_at=now,
         provenance=provenance,
+        source_updated_at=source_updated_at,
     )
 
 
@@ -664,14 +770,18 @@ def stage_release(
 ) -> tuple[Path, Path, dict[str, Any]]:
     """Download ZIP/XSD and persist checksum-addressed, write-once RAW."""
 
+    if release.source_page_url != spec.source_page_url:
+        raise InvalidDataError("FNS source passport URL differs from source pin")
+    artifact_name, artifact_version = validate_official_release_url(
+        spec, release.artifact_url, artifact=True
+    )
+    xsd_name, xsd_version = validate_official_release_url(
+        spec, release.xsd_url, artifact=False
+    )
+    if artifact_version != xsd_version:
+        raise InvalidDataError("FNS artifact and XSD structure versions differ")
     raw_root = raw_root.resolve()
     raw_root.mkdir(parents=True, exist_ok=True)
-    prefix = f"/opendata/{spec.source_path}/"
-    if any(
-        not urlparse(candidate).path.startswith(prefix)
-        for candidate in (release.artifact_url, release.xsd_url)
-    ):
-        raise InvalidDataError("FNS release path differs from source pin")
     zip_temp, zip_headers = _download_temp(release.artifact_url, raw_root)
     try:
         xsd_temp, xsd_headers = _download_temp(release.xsd_url, raw_root)
@@ -711,8 +821,8 @@ def stage_release(
 
     artifact_dir = raw_root / spec.source_id / zip_checksum
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = artifact_dir / Path(urlparse(release.artifact_url).path).name
-    xsd_path = artifact_dir / Path(urlparse(release.xsd_url).path).name
+    zip_path = artifact_dir / artifact_name
+    xsd_path = artifact_dir / xsd_name
     _persist_download(zip_temp, zip_path, checksum=zip_checksum)
     _persist_download(xsd_temp, xsd_path, checksum=xsd_checksum)
     manifest = {
@@ -769,7 +879,14 @@ def normalize_release(
     )
     os.close(descriptor)
     staging_temp = Path(staging_name)
-    counters = {"records_seen": 0, "records_valid": 0, "records_rejected": 0, "xml_files": 0}
+    counters = {
+        "records_seen": 0,
+        "records_valid": 0,
+        "records_rejected": 0,
+        "xml_files": 0,
+        "unknown_codes": 0,
+    }
+    unknown_code_values: set[str] = set()
     data_dates: set[str] = set()
     try:
         with ZipFile(zip_path, "r") as archive, staging_temp.open("w", encoding="utf-8") as output:
@@ -807,6 +924,9 @@ def normalize_release(
                             continue
                         counters["records_valid"] += 1
                         data_dates.add(str(record["data_date"]))
+                        unknown = tuple(record.get("unknown_codes") or ())
+                        counters["unknown_codes"] += len(unknown)
+                        unknown_code_values.update(str(value) for value in unknown)
                         output.write(_json_record(record) + "\n")
     except SchemaMismatchError:
         staging_temp.unlink(missing_ok=True)
@@ -826,6 +946,7 @@ def normalize_release(
         staging_temp.unlink(missing_ok=True)
         raise SchemaMismatchError("official FNS release has empty or mixed-date normalized data")
     counters["source_data_date"] = next(iter(data_dates))
+    counters["unknown_code_values"] = sorted(unknown_code_values)
     if postprocess is not None:
         original = staging_temp
         try:
@@ -855,6 +976,11 @@ def release_from_metadata(metadata: Mapping[str, Any]) -> FnsRelease:
         actual_until=date.fromisoformat(str(metadata["actual_until"])) if metadata.get("actual_until") else None,
         discovered_at=_utc(datetime.fromisoformat(str(metadata["discovered_at"]))),
         provenance=str(metadata["provenance"]),
+        source_updated_at=(
+            date.fromisoformat(str(metadata["source_updated_at"]))
+            if metadata.get("source_updated_at")
+            else None
+        ),
     )
 
 
@@ -1016,21 +1142,43 @@ def _project_normalized_snapshot(
         session.execute(delete(model).where(model.dataset_id == dataset.id))
     for batch in _iter_jsonl(staging_path):
         inns = {str(row["inn"]) for row in batch}
-        company_statement = select(Company.inn, Company.id).where(
-            Company.inn.in_(inns)
-        )
+        company_statement = select(
+            Company.inn,
+            Company.id,
+            Company.entity_type,
+        ).where(Company.inn.in_(inns))
         if target_company_ids is not None:
             company_statement = company_statement.where(
                 Company.id.in_(target_company_ids)
             )
-        company_ids = dict(session.execute(company_statement).all())
+        company_rows = {
+            str(inn): (int(company_id), entity_type)
+            for inn, company_id, entity_type in session.execute(company_statement)
+        }
         values: list[dict[str, Any]] = []
         payment_items: dict[tuple[int, date], list[dict[str, Any]]] = {}
         for row in batch:
-            company_id = company_ids.get(str(row["inn"]))
-            if company_id is None:
+            company_match = company_rows.get(str(row["inn"]))
+            if company_match is None:
                 unmatched += 1
                 continue
+            company_id, company_entity_type = company_match
+            if spec.kind == "tax_regime":
+                expected_entity_type = str(row.get("entity_type") or "")
+                permitted_types = {
+                    "legal": {None, "legal"},
+                    "individual_entrepreneur": {
+                        None,
+                        "individual_entrepreneur",
+                    },
+                }.get(expected_entity_type)
+                if (
+                    permitted_types is None
+                    or company_entity_type not in permitted_types
+                ):
+                    raise SchemaMismatchError(
+                        "tax-regime exact-INN match conflicts with entity applicability"
+                    )
             matched += 1
             matched_companies.add(int(company_id))
             if spec.kind == "tax_offence":
@@ -1549,6 +1697,7 @@ def enqueue_bulk_release_bundle(
     scheduled_for: date | None = None,
     max_attempts: int = 3,
     timeout_seconds: int = 7200,
+    extra_schedule_metadata: Mapping[str, Any] | None = None,
 ) -> JobCreation:
     """Enqueue several required FNS artifacts as one operational source run."""
 
@@ -1561,6 +1710,27 @@ def enqueue_bulk_release_bundle(
         )
     check_key = (scheduled_for or bundle.discovered_at.date()).isoformat()
     action = f"check:{check_key}" if check_only else "release"
+    extras = dict(extra_schedule_metadata or {})
+    reserved = {
+        "release_identity",
+        "source_data_date",
+        "actual_until",
+        "discovered_at",
+        "releases",
+        "raw_root",
+        "check_only",
+        "replay_snapshot",
+        "replay_pointer",
+        "replay_checksum",
+        "check_frequency",
+        "publication_frequency",
+    }
+    overlap = reserved & set(extras)
+    if overlap:
+        raise ValueError(
+            "extra schedule metadata overrides reserved fields: "
+            + ", ".join(sorted(overlap))
+        )
     return create_job(
         session,
         source_id=spec.source_id,
@@ -1578,6 +1748,7 @@ def enqueue_bulk_release_bundle(
             "replay_checksum": replay_checksum,
             "check_frequency": spec.check_frequency,
             "publication_frequency": "official_release_bundle",
+            **extras,
         },
         max_attempts=max_attempts,
         timeout_seconds=timeout_seconds,

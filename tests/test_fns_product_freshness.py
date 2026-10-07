@@ -8,11 +8,17 @@ from sqlalchemy.orm import sessionmaker
 from app.aggregators import company_aggregator
 from app.database.postgres import engine
 from app.models.company import Company
+from app.models.company_enrichment import CompanyEnrichmentRun, CompanySourceCoverage
 from app.models.headcount import CompanyHeadcount
 from app.models.msp import CompanyMspProfile
 from app.models.source import DataSet, DataSource
 from app.models.tax_regime import CompanyTaxRegimeSnapshot
+from app.models.worker import WorkerPublicationState
 from app.services import headcount_service, msp_service, tax_regime_service
+from app.services.company_view_service import materialize_company_view_v1
+from app.services.company_enrichment_service import _resolve_successful_coverage
+from app.contracts.company_view_v1 import DataState
+from uuid import uuid4
 
 
 BOUNDARY = datetime(2026, 9, 25, 23, 59, tzinfo=timezone.utc)
@@ -71,7 +77,40 @@ def product_db(monkeypatch):
                 dataset.last_data_date = date(2026, 9, 10)
                 dataset.source_as_of = datetime(2026, 9, 10, tzinfo=timezone.utc)
                 dataset.last_success_at = datetime(2026, 9, 25, tzinfo=timezone.utc)
+                if code in {"fns_tax_regime", "fns_snr", "fns_snrip"}:
+                    dataset.enabled = True
+                    dataset.source_url = (
+                        "https://www.nalog.gov.ru/opendata/7707329152-snrip/"
+                        if code == "fns_snrip"
+                        else "https://www.nalog.gov.ru/opendata/7707329152-snr/"
+                    )
+                    dataset.coverage = {
+                        "release_identity": f"{code}-release",
+                        "artifact_sha256": "a" * 64,
+                        "xsd_sha256": "b" * 64,
+                    }
                 datasets[code] = dataset
+            datasets["fns_tax_regime"].coverage = {
+                **datasets["fns_tax_regime"].coverage,
+                "members": {
+                    "legal": {"release_identity": "fns_snr-release"},
+                    "ip": {"release_identity": "fns_snrip-release"},
+                },
+            }
+            session.execute(
+                sa.delete(WorkerPublicationState).where(
+                    WorkerPublicationState.source_id == "fns_tax_regime"
+                )
+            )
+            session.add(WorkerPublicationState(
+                source_id="fns_tax_regime",
+                generation=7,
+                active_pointer="file:///accepted/c6-bundle.json",
+                validation_metadata={
+                    "checksum": "c" * 64,
+                    "validation": {"release_identity": "fns_tax_regime-release"},
+                },
+            ))
 
             companies = {
                 "legal_found": Company(
@@ -127,14 +166,14 @@ def product_db(monkeypatch):
                         company_id=companies["legal_found"].id,
                         dataset_id=datasets["fns_snr"].id,
                         entity_type="legal",
-                        data_date=date(2026, 9, 25),
+                        data_date=date(2026, 9, 10),
                         regime_codes=["usn"],
                     ),
                     CompanyTaxRegimeSnapshot(
                         company_id=companies["ip_found"].id,
                         dataset_id=datasets["fns_snrip"].id,
                         entity_type="individual_entrepreneur",
-                        data_date=date(2026, 9, 25),
+                        data_date=date(2026, 9, 10),
                         regime_codes=["psn"],
                     ),
                 ]
@@ -162,6 +201,22 @@ def test_postgresql_actual_until_boundary_then_next_day_hides_positive_facts(pro
     assert tax_regime_service.get_tax_regime_check_for_company(
         ids["ip_found"], now=BOUNDARY
     )["member_dataset_code"] == "fns_snrip"
+    legal_check = tax_regime_service.get_tax_regime_check_for_company(
+        ids["legal_found"], now=BOUNDARY
+    )
+    assert legal_check["provenance"] == {
+        "source": "fns",
+        "source_id": "fns_tax_regime",
+        "member_dataset_code": "fns_snr",
+        "official_source_url": "https://www.nalog.gov.ru/opendata/7707329152-snr/",
+        "source_data_date": date(2026, 9, 10),
+        "retrieved_at": None,
+        "published_at": None,
+        "family_release_identity": "fns_tax_regime-release",
+        "member_release_identity": "fns_snr-release",
+        "artifact_sha256": "a" * 64,
+        "xsd_sha256": "b" * 64,
+    }
 
     for check in (
         headcount_service.get_headcount_check_for_company(
@@ -177,7 +232,7 @@ def test_postgresql_actual_until_boundary_then_next_day_hides_positive_facts(pro
     ):
         assert check["result"] == "unavailable"
         assert check["checked"] is False
-        assert check["reason"] == "dataset_stale"
+        assert check["reason"].endswith("dataset_stale")
 
     assert headcount_service.get_latest_headcount_for_company(
         ids["legal_found"], now=NEXT_DAY
@@ -199,17 +254,19 @@ def test_postgresql_fresh_absence_is_not_found_and_applicability_is_explicit(pro
         ),
         msp_service.get_msp_check_for_company(ids["legal_missing"], now=BOUNDARY),
         msp_service.get_msp_check_for_company(ids["ip_missing"], now=BOUNDARY),
-        tax_regime_service.get_tax_regime_check_for_company(
-            ids["legal_missing"], now=BOUNDARY
-        ),
-        tax_regime_service.get_tax_regime_check_for_company(
-            ids["ip_missing"], now=BOUNDARY
-        ),
     ):
         assert check["result"] == "not_found"
         assert check["checked"] is True
         assert check["source_data_date"] == date(2026, 9, 10)
         assert check["limitation"]
+
+    for name in ("legal_missing", "ip_missing"):
+        check = tax_regime_service.get_tax_regime_check_for_company(
+            ids[name], now=BOUNDARY
+        )
+        assert check["result"] == "unavailable"
+        assert check["semantic_state"] == "NOT_CHECKED"
+        assert check["reason"] == "company_not_checked_on_current_release"
 
     headcount_ip = headcount_service.get_headcount_check_for_company(
         ids["ip_found"], now=BOUNDARY
@@ -231,6 +288,159 @@ def test_postgresql_error_status_hides_existing_msp_fact(product_db):
     assert msp_service.get_msp_profile_for_company(
         ids["legal_found"], now=BOUNDARY
     ) is None
+
+
+def _tax_semantic_state(session, company_id):
+    view = materialize_company_view_v1(
+        session, company_id=company_id, generated_at=BOUNDARY
+    )
+    return next(
+        fact.state
+        for section in view.sections
+        if section.section_key == "tax"
+        for fact in section.facts
+        if fact.anchor.field_key == "regime"
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "sibling", "status", "error", "expected"),
+    [
+        ("legal_found", "fns_snrip", "unavailable", None, DataState.SOURCE_UNAVAILABLE),
+        ("legal_found", "fns_snrip", "stale", None, DataState.STALE_DATA),
+        ("legal_found", "fns_snrip", "error", "XSD schema mismatch", DataState.PARSING_ERROR),
+        ("legal_found", "fns_snrip", "current", None, DataState.NOT_CHECKED),
+        ("ip_found", "fns_snr", "unavailable", None, DataState.SOURCE_UNAVAILABLE),
+        ("ip_found", "fns_snr", "stale", None, DataState.STALE_DATA),
+        ("ip_found", "fns_snr", "error", "XML parse failed", DataState.PARSING_ERROR),
+        ("ip_found", "fns_snr", "current", None, DataState.NOT_CHECKED),
+    ],
+)
+def test_mandatory_sibling_failure_degrades_service_and_company_view(
+    product_db, target, sibling, status, error, expected
+):
+    factory, ids = product_db
+    with factory() as session:
+        dataset = session.scalar(sa.select(DataSet).where(DataSet.code == sibling))
+        dataset.operational_status = status
+        dataset.last_error = error
+        if expected == DataState.NOT_CHECKED:
+            dataset.last_success_at = None
+        session.flush()
+        check = tax_regime_service.get_tax_regime_check_for_company(
+            ids[target], now=BOUNDARY
+        )
+        assert check["result"] == "unavailable"
+        assert check["semantic_state"] == expected.value
+        assert _tax_semantic_state(session, ids[target]) == expected
+
+
+def _add_tax_coverage(session, company_id, *, status, execution, generation=7):
+    run = CompanyEnrichmentRun(
+        company_id=company_id,
+        trigger="c6-correction-test",
+        idempotency_key=f"c6-{uuid4()}",
+        applicable_sources=[],
+        source_count=1,
+    )
+    session.add(run)
+    session.flush()
+    coverage = CompanySourceCoverage(
+        enrichment_run_id=run.id,
+        company_id=company_id,
+        dataset_id=None,
+        source_id="fns_tax_regime",
+        worker_source_id="fns_tax_regime",
+        mode="local_bulk_replay",
+        status=status,
+        execution_status=execution,
+        source_snapshot={"release_identity": "fns_tax_regime-release"},
+        handler_version="tax-regime-family-official-v1",
+        publication_generation=generation,
+        source_data_date=date(2026, 9, 10),
+        replay_pointer="file:///accepted/c6-bundle.json",
+        replay_checksum="c" * 64,
+        fact_count=0,
+        checked_at=BOUNDARY if execution == "succeeded" else None,
+        updated_at=BOUNDARY,
+    )
+    session.add(coverage)
+    session.flush()
+    return coverage
+
+
+def test_current_company_coverage_proves_negative_only_after_terminal_replay(product_db):
+    factory, ids = product_db
+    company_id = ids["legal_missing"]
+    with factory() as session:
+        assert _tax_semantic_state(session, company_id) == DataState.NOT_CHECKED
+        initial = tax_regime_service.get_tax_regime_check_for_company(
+            company_id, now=BOUNDARY
+        )
+        import main
+
+        card_before = main.templates.env.get_template("partials/tax_regime.html").render(
+            company={"tax_regime_check": initial, "tax_regime_profile": None}
+        )
+        assert "ещё не завершена" in card_before
+        assert "ИНН не найден" not in card_before
+        pending = _add_tax_coverage(
+            session, company_id, status="PENDING", execution="pending"
+        )
+        assert tax_regime_service.get_tax_regime_check_for_company(
+            company_id, now=BOUNDARY
+        )["semantic_state"] == "NOT_CHECKED"
+        assert _tax_semantic_state(session, company_id) == DataState.NOT_CHECKED
+
+        pending.execution_status = "succeeded"
+        _resolve_successful_coverage(session, pending, now=BOUNDARY)
+        session.flush()
+        checked = tax_regime_service.get_tax_regime_check_for_company(
+            company_id, now=BOUNDARY
+        )
+        assert checked["result"] == "not_found"
+        assert checked["provenance"]["family_release_identity"] == "fns_tax_regime-release"
+        assert _tax_semantic_state(session, company_id) == DataState.NOT_FOUND
+        card_after = main.templates.env.get_template("partials/tax_regime.html").render(
+            company={"tax_regime_check": checked, "tax_regime_profile": None}
+        )
+        assert "ИНН не найден" in card_after
+
+        pointer = session.get(WorkerPublicationState, "fns_tax_regime")
+        pointer.generation = 8
+        session.flush()
+        assert tax_regime_service.get_tax_regime_check_for_company(
+            company_id, now=BOUNDARY
+        )["semantic_state"] == "NOT_CHECKED"
+        assert _tax_semantic_state(session, company_id) == DataState.NOT_CHECKED
+
+
+@pytest.mark.parametrize(
+    ("status", "execution", "expected"),
+    [
+        ("PENDING", "queued", DataState.NOT_CHECKED),
+        ("RUNNING", "running", DataState.NOT_CHECKED),
+        ("SOURCE_UNAVAILABLE", "failed", DataState.SOURCE_UNAVAILABLE),
+        ("TIMEOUT", "failed", DataState.TIMEOUT),
+        ("PARSING_ERROR", "failed", DataState.PARSING_ERROR),
+        ("STALE_DATA", "failed", DataState.STALE_DATA),
+        ("ACCESS_REQUIRED", "blocked", DataState.SOURCE_UNAVAILABLE),
+    ],
+)
+def test_nonterminal_or_failed_coverage_never_proves_negative(
+    product_db, status, execution, expected
+):
+    factory, ids = product_db
+    with factory() as session:
+        _add_tax_coverage(
+            session, ids["ip_missing"], status=status, execution=execution
+        )
+        check = tax_regime_service.get_tax_regime_check_for_company(
+            ids["ip_missing"], now=BOUNDARY
+        )
+        assert check["result"] == "unavailable"
+        assert check["semantic_state"] == expected.value
+        assert _tax_semantic_state(session, ids["ip_missing"]) == expected
 
 
 def _product_payload(mode: str):
