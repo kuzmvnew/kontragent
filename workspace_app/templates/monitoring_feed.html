@@ -1,14 +1,44 @@
 {% extends "base.html" %}
-{% block title %}Лента мониторинга — NEXT Company{% endblock %}
+{% block title %}Мониторинг — NEXT Company{% endblock %}
 {% block content %}
 <section class="monitoring-feed">
   <p class="eyebrow">Workspace Monitoring</p>
-  <h1>Лента мониторинга</h1>
-  <p class="workspace-lead">Изменения по компаниям, для которых в этом Workspace включён мониторинг.</p>
+  <h1>Мониторинг</h1>
+  <p class="workspace-lead">Компании на контроле и единая лента изменений этого Workspace.</p>
+
+  <section class="monitoring-overview-section">
+    <div class="section-heading"><div><p class="eyebrow">Компании</p><h2>Компании на мониторинге</h2></div><a href="/app/saved">Открыть сохранённые</a></div>
+    {% if subscriptions %}
+      <div class="subscription-list">
+      {% for item in subscriptions %}
+        <article class="subscription-row" data-subscription-id="{{ item.subscription_id }}" data-monitoring-state="{{ item.status }}">
+          <div><strong>{{ item.company_name }}</strong><span>ИНН {{ item.inn }}</span></div>
+          <span class="state-badge">{{ item.status }}</span>
+          <div class="subscription-meta"><span>Проверка: {{ item.last_checked_at.strftime('%d.%m.%Y %H:%M') if item.last_checked_at else 'ещё не выполнялась' }}</span><span>Последнее событие: {{ item.latest_event_at.strftime('%d.%m.%Y %H:%M') if item.latest_event_at else 'нет событий' }}</span></div>
+          <div class="saved-actions">
+            <a class="button secondary" href="/app/companies/{{ item.inn }}">Открыть компанию</a>
+            {% if can_manage_monitoring %}{% if item.status == 'ACTIVE' %}<form action="/app/companies/{{ item.inn }}/monitoring/pause" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/monitoring"><button type="submit" class="secondary">Приостановить</button></form>{% else %}<form action="/app/companies/{{ item.inn }}/monitoring/resume" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/monitoring"><button type="submit">Возобновить</button></form>{% endif %}{% endif %}
+          </div>
+        </article>
+      {% endfor %}
+      </div>
+    {% else %}
+      {% if monitoring_denial == 'entitlement_blocked' %}<div class="empty-state compact"><h3>Мониторинг не подключён</h3><p>Раздел готов к работе, но функция не включена для этого Workspace.</p><a class="button secondary" href="/app/saved">Открыть сохранённые</a></div>{% elif monitoring_denial == 'permission_denied' %}<div class="empty-state compact"><h3>Нет права управлять мониторингом</h3><p>Вы можете просматривать доступные данные, а изменить подписки может владелец или администратор.</p><a class="button secondary" href="/app">На главную</a></div>{% else %}<div class="empty-state compact"><h3>Нет компаний на мониторинге</h3><p>Откройте сохранённую компанию и включите отслеживание изменений.</p><a class="button" href="/app/saved">Открыть сохранённые</a></div>{% endif %}
+    {% endif %}
+  </section>
+
+  <section class="monitoring-overview-section">
+  <div class="section-heading"><div><p class="eyebrow">События</p><h2>Лента изменений</h2></div></div>
+  <form action="/app/monitoring" method="get" class="feed-filters">
+    <fieldset><legend>Состояние</legend><label><input type="radio" name="state" value="all" {{ 'checked' if read_state == 'all' else '' }}> Все</label><label><input type="radio" name="state" value="unread" {{ 'checked' if read_state == 'unread' else '' }}> Непрочитанные</label><label><input type="radio" name="state" value="read" {{ 'checked' if read_state == 'read' else '' }}> Прочитанные</label></fieldset>
+    <label for="severity">Важность</label>
+    <select id="severity" name="severity"><option value="">Любая</option>{% for value in ['HIGH', 'MEDIUM', 'LOW', 'INFO'] %}<option value="{{ value }}" {{ 'selected' if severity_filter == value else '' }}>{{ value }}</option>{% endfor %}</select>
+    <button type="submit">Применить</button>
+  </form>
   {% if entries %}
     <div class="feed-list">
     {% for item in entries %}
-      <article class="feed-item" data-feed-entry-id="{{ item.entry_id }}" data-read="{{ 'true' if item.read_at else 'false' }}">
+      <article id="event-{{ item.entry_id }}" class="feed-item" data-feed-entry-id="{{ item.entry_id }}" data-read="{{ 'true' if item.read_at else 'false' }}">
         <div class="feed-item-head">
           <div>
             <p class="eyebrow">{{ item.company_name }} · ИНН {{ item.inn }}</p>
@@ -26,6 +56,7 @@
           {% else %}
             <form action="/app/monitoring/feed/{{ item.entry_id }}/read" method="post">
               <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="return_to" value="/app/monitoring?state={{ read_state }}{% if severity_filter %}&amp;severity={{ severity_filter }}{% endif %}">
               <button type="submit" class="secondary">Отметить прочитанным</button>
             </form>
           {% endif %}
@@ -34,7 +65,8 @@
     {% endfor %}
     </div>
   {% else %}
-    <section class="empty-state"><h2>Пока нет событий</h2><p>После первого включения создаётся исходное состояние компании. Новые изменения появятся здесь после проверки.</p></section>
+    {% if read_state != 'all' or severity_filter %}<section class="empty-state compact"><h3>Нет событий по выбранному фильтру</h3><p>Измените фильтр или вернитесь ко всей ленте.</p><a class="button secondary" href="/app/monitoring">Показать все события</a></section>{% else %}<section class="empty-state compact"><h3>Пока нет событий</h3><p>После первого включения создаётся исходное состояние компании. Новые изменения появятся здесь после проверки.</p>{% if subscriptions %}<a class="button secondary" href="/app/saved">Открыть сохранённые</a>{% else %}<a class="button" href="/app/saved">Настроить мониторинг</a>{% endif %}</section>{% endif %}
   {% endif %}
+  </section>
 </section>
 {% endblock %}

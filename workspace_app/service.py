@@ -98,6 +98,17 @@ class SavedCompanyView:
     name: str
     created_at: datetime
     note: str | None
+    monitoring_state: str = "NOT_ENABLED"
+    monitoring_subscription_id: UUID | None = None
+    monitoring_last_checked_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class SavedQuotaUsage:
+    enabled: bool
+    used: int
+    limit: int | None
+    remaining: int | None
 
 
 @dataclass(frozen=True)
@@ -667,6 +678,8 @@ def saved_companies(
     *,
     user_id: UUID,
     workspace_id: UUID,
+    query: str = "",
+    limit: int = 100,
 ) -> tuple[SavedCompanyView, ...]:
     authorize(
         session,
@@ -674,12 +687,31 @@ def saved_companies(
         workspace_id=workspace_id,
         permission_key="company.view",
     )
-    rows = session.execute(
-        sa.select(SavedCompany, Company)
+    normalized_query = " ".join(str(query or "").split())[:160]
+    bounded_limit = max(1, min(int(limit), 200))
+    statement = (
+        sa.select(SavedCompany, Company, MonitoringSubscription)
         .join(Company, Company.id == SavedCompany.company_id)
+        .outerjoin(
+            MonitoringSubscription,
+            sa.and_(
+                MonitoringSubscription.workspace_id == SavedCompany.workspace_id,
+                MonitoringSubscription.company_id == SavedCompany.company_id,
+            ),
+        )
         .where(SavedCompany.workspace_id == workspace_id)
         .order_by(SavedCompany.created_at.desc(), Company.inn)
-    ).all()
+        .limit(bounded_limit)
+    )
+    if normalized_query:
+        statement = statement.where(
+            sa.or_(
+                Company.inn.contains(normalized_query, autoescape=True),
+                Company.name.icontains(normalized_query, autoescape=True),
+                Company.short_name.icontains(normalized_query, autoescape=True),
+            )
+        )
+    rows = session.execute(statement).all()
     return tuple(
         SavedCompanyView(
             saved_company_id=saved.id,
@@ -687,8 +719,13 @@ def saved_companies(
             name=company.short_name or company.name,
             created_at=saved.created_at,
             note=saved.note,
+            monitoring_state=subscription.status if subscription is not None else "NOT_ENABLED",
+            monitoring_subscription_id=subscription.id if subscription is not None else None,
+            monitoring_last_checked_at=(
+                subscription.last_checked_at if subscription is not None else None
+            ),
         )
-        for saved, company in rows
+        for saved, company, subscription in rows
     )
 
 
@@ -708,8 +745,15 @@ def saved_company_by_id(
         permission_key="company.view",
     )
     row = session.execute(
-        sa.select(SavedCompany, Company)
+        sa.select(SavedCompany, Company, MonitoringSubscription)
         .join(Company, Company.id == SavedCompany.company_id)
+        .outerjoin(
+            MonitoringSubscription,
+            sa.and_(
+                MonitoringSubscription.workspace_id == SavedCompany.workspace_id,
+                MonitoringSubscription.company_id == SavedCompany.company_id,
+            ),
+        )
         .where(
             SavedCompany.id == saved_company_id,
             SavedCompany.workspace_id == workspace_id,
@@ -721,13 +765,188 @@ def saved_company_by_id(
             "Сохранённая компания не найдена.",
             status_code=404,
         )
-    saved, company = row
+    saved, company, subscription = row
     return SavedCompanyView(
         saved_company_id=saved.id,
         inn=company.inn,
         name=company.short_name or company.name,
         created_at=saved.created_at,
         note=saved.note,
+        monitoring_state=subscription.status if subscription is not None else "NOT_ENABLED",
+        monitoring_subscription_id=subscription.id if subscription is not None else None,
+        monitoring_last_checked_at=(
+            subscription.last_checked_at if subscription is not None else None
+        ),
+    )
+
+
+def saved_company_for_inn(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    inn: str,
+) -> SavedCompanyView | None:
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="company.view",
+    )
+    company = resolve_legal_company(session, inn)
+    row = session.execute(
+        sa.select(SavedCompany, MonitoringSubscription)
+        .outerjoin(
+            MonitoringSubscription,
+            sa.and_(
+                MonitoringSubscription.workspace_id == SavedCompany.workspace_id,
+                MonitoringSubscription.company_id == SavedCompany.company_id,
+            ),
+        )
+        .where(
+            SavedCompany.workspace_id == workspace_id,
+            SavedCompany.company_id == company.id,
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    saved, subscription = row
+    return SavedCompanyView(
+        saved_company_id=saved.id,
+        inn=company.inn,
+        name=company.short_name or company.name,
+        created_at=saved.created_at,
+        note=saved.note,
+        monitoring_state=subscription.status if subscription is not None else "NOT_ENABLED",
+        monitoring_subscription_id=subscription.id if subscription is not None else None,
+        monitoring_last_checked_at=(
+            subscription.last_checked_at if subscription is not None else None
+        ),
+    )
+
+
+SAVED_NOTE_MAX_LENGTH = 2_000
+
+
+def normalize_saved_note(value: str | None) -> str | None:
+    normalized = " ".join(str(value or "").split())
+    if len(normalized) > SAVED_NOTE_MAX_LENGTH:
+        raise ActionDenied(
+            "saved_note_too_long",
+            f"Заметка не может быть длиннее {SAVED_NOTE_MAX_LENGTH} символов.",
+            status_code=422,
+        )
+    return normalized or None
+
+
+def update_saved_company_note(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    saved_company_id: UUID,
+    note: str | None,
+) -> tuple[SavedCompanyView, bool]:
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="company.save",
+    )
+    row = session.execute(
+        sa.select(SavedCompany, Company)
+        .join(Company, Company.id == SavedCompany.company_id)
+        .where(
+            SavedCompany.id == saved_company_id,
+            SavedCompany.workspace_id == workspace_id,
+        )
+        .with_for_update()
+    ).one_or_none()
+    if row is None:
+        raise ActionDenied(
+            "saved_company_not_found",
+            "Сохранённая компания не найдена.",
+            status_code=404,
+        )
+    saved, company = row
+    normalized_note = normalize_saved_note(note)
+    changed = saved.note != normalized_note
+    if changed:
+        saved.note = normalized_note
+    _audit_saved_company_write(
+        session,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        action=(
+            "company.saved_note.clear"
+            if normalized_note is None
+            else "company.saved_note.update"
+        ),
+        inn=company.inn,
+        outcome="success" if changed else "unchanged",
+    )
+    session.flush()
+    subscription = session.scalar(
+        sa.select(MonitoringSubscription).where(
+            MonitoringSubscription.workspace_id == workspace_id,
+            MonitoringSubscription.company_id == company.id,
+        )
+    )
+    return (
+        SavedCompanyView(
+            saved_company_id=saved.id,
+            inn=company.inn,
+            name=company.short_name or company.name,
+            created_at=saved.created_at,
+            note=saved.note,
+            monitoring_state=(
+                subscription.status if subscription is not None else "NOT_ENABLED"
+            ),
+            monitoring_subscription_id=(
+                subscription.id if subscription is not None else None
+            ),
+            monitoring_last_checked_at=(
+                subscription.last_checked_at if subscription is not None else None
+            ),
+        ),
+        changed,
+    )
+
+
+def saved_quota_usage(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+) -> SavedQuotaUsage:
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="workspace.view",
+    )
+    entitlement = session.scalar(
+        sa.select(WorkspaceEntitlement).where(
+            WorkspaceEntitlement.workspace_id == workspace_id,
+            WorkspaceEntitlement.entitlement_key == "saved_companies.enabled",
+        )
+    )
+    used = int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(SavedCompany)
+            .where(SavedCompany.workspace_id == workspace_id)
+        )
+        or 0
+    )
+    enabled = bool(entitlement is not None and entitlement.enabled)
+    limit = entitlement.limit_value if entitlement is not None else None
+    remaining = None if limit is None else max(limit - used, 0)
+    return SavedQuotaUsage(
+        enabled=enabled,
+        used=used,
+        limit=limit,
+        remaining=remaining,
     )
 
 

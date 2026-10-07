@@ -12,13 +12,12 @@
   <a class="brand" href="/app">NEXT Company</a>
   {% if principal %}
   <nav aria-label="Навигация кабинета">
-    <a href="/app">Главная</a>
-    <a href="/app/search">Поиск</a>
-    <a href="/app/saved">Сохранённые</a>
-    <a href="/app/monitoring">Мониторинг</a>
-    <a href="/workspace/select">Сменить Workspace</a>
+    <a href="/app" class="{{ 'active' if active_nav == 'home' else '' }}"{% if active_nav == 'home' %} aria-current="page"{% endif %}>Главная</a>
+    <a href="/app/search" class="{{ 'active' if active_nav == 'search' else '' }}"{% if active_nav == 'search' %} aria-current="page"{% endif %}>Поиск</a>
+    <a href="/app/saved" class="{{ 'active' if active_nav == 'saved' else '' }}"{% if active_nav == 'saved' %} aria-current="page"{% endif %}>Сохранённые</a>
+    <a href="/app/monitoring" class="{{ 'active' if active_nav == 'monitoring' else '' }}"{% if active_nav == 'monitoring' %} aria-current="page"{% endif %}>Мониторинг</a>
   </nav>
-  {% if workspace %}<div class="workspace-context" aria-label="Активное рабочее пространство"><span>{{ workspace.name }}</span>{% if role %}<small>{{ role.name }}</small>{% endif %}</div>{% endif %}
+  {% if workspace %}<div class="workspace-context" aria-label="Активное рабочее пространство"><span>{{ workspace.name }}</span><small>{{ principal.email }}{% if role %} · {{ role.name }}{% endif %}</small><a href="/workspace/select">Сменить Workspace</a></div>{% endif %}
   <form action="/logout" method="post">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit" class="link-button">Выйти</button>
