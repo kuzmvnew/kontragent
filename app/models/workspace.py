@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -23,6 +24,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -189,3 +191,77 @@ class WorkspaceAuditEvent(Base):
     target_ref: Mapped[str] = mapped_column(String(240), nullable=False)
     outcome: Mapped[str] = mapped_column(String(30), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+class WorkspaceReport(Base):
+    """Immutable customer-safe report snapshot owned by one Workspace."""
+
+    __tablename__ = "workspace_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "report_type::text = 'COMPANY_CHECK_V1'::text",
+            name="ck_workspace_report_type",
+        ),
+        CheckConstraint(
+            "schema_version::text = 'workspace-report-v1'::text",
+            name="ck_workspace_report_schema_version",
+        ),
+        CheckConstraint(
+            "subject_inn::text ~ '^[0-9]{10}$'::text",
+            name="ck_workspace_report_subject_inn",
+        ),
+        CheckConstraint(
+            "snapshot_sha256::text ~ '^[0-9a-f]{64}$'::text",
+            name="ck_workspace_report_snapshot_sha256",
+        ),
+        Index(
+            "ix_workspace_reports_workspace_generated",
+            "workspace_id",
+            "generated_at",
+        ),
+        Index(
+            "ix_workspace_reports_company_generated",
+            "company_id",
+            "generated_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    company_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    generated_by_user_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("customer_users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    report_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    subject_inn: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    subject_name: Mapped[str] = mapped_column(String(1000), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    company_view_contract_version: Mapped[str] = mapped_column(
+        String(80), nullable=False
+    )
+    company_view_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    risk_ref: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    summary_ref: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

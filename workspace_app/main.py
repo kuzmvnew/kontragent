@@ -61,6 +61,16 @@ from workspace_app.monitoring_service import (
     resume_subscription,
     subscribe_company,
 )
+from workspace_app.report_service import (
+    canonical_json_bytes,
+    generate_report,
+    get_report,
+    list_reports,
+    report_csv_bytes,
+    report_filename,
+    report_generation_state,
+    report_list_payload,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -75,6 +85,8 @@ def _active_nav(path: str) -> str:
         path.startswith("/app/companies/") and "/monitoring" in path
     ):
         return "monitoring"
+    if path == "/app/reports" or path.startswith("/app/reports/"):
+        return "reports"
     if path == "/app/search" or path.startswith("/app/companies/"):
         return "search"
     return ""
@@ -331,6 +343,22 @@ def _card_context(session, principal, projection) -> dict:
         "entitlement_blocked": "Сохранённые компании не подключены для этого Workspace.",
         "monitoring_active": "Сначала приостановите мониторинг компании.",
     }.get(unsave_denial, "Удаление из сохранённых недоступно.")
+    (
+        can_generate_report,
+        report_denial,
+        report_limit,
+        report_used,
+        report_remaining,
+    ) = report_generation_state(
+        session,
+        user_id=principal.user_id,
+        workspace_id=workspace_id,
+    )
+    report_denial_message = {
+        "permission_denied": "У вашей роли нет права формировать отчёты.",
+        "entitlement_blocked": "Формирование отчётов не подключено для этого Workspace.",
+        "quota_exceeded": "Достигнут лимит сохранённых отчётов.",
+    }.get(report_denial, "Формирование отчёта недоступно.")
     return {
         "is_saved": saved,
         "saved_note": saved_entry.note if saved_entry is not None else None,
@@ -344,6 +372,12 @@ def _card_context(session, principal, projection) -> dict:
         "unsave_denial_reason": unsave_denial,
         "unsave_denial_message": unsave_denial_message,
         "monitoring": monitoring,
+        "can_generate_report": can_generate_report,
+        "report_denial_reason": report_denial,
+        "report_denial_message": report_denial_message,
+        "report_limit": report_limit,
+        "report_used": report_used,
+        "report_remaining": report_remaining,
     }
 
 
@@ -1053,6 +1087,283 @@ def create_app(
                 return _html_error(request, exc)
         notice = "note_updated" if entry.note else "note_cleared"
         return RedirectResponse(f"/app/saved?notice={notice}", status_code=303)
+
+    @app.post("/app/companies/{inn}/reports")
+    async def generate_report_form(request: Request, inn: str):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request,
+                    session,
+                    principal,
+                    str(form.get("csrf") or ""),
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied(
+                        "workspace_required", "Выберите рабочее пространство."
+                    )
+                report = generate_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    inn=inn,
+                    projection_repository=_public_repository(request),
+                )
+                report_id = report.id
+                session.commit()
+            except ActionDenied as exc:
+                if exc.code == "quota_exceeded":
+                    session.commit()
+                else:
+                    session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse(f"/app/reports/{report_id}", status_code=303)
+
+    @app.get("/app/reports", response_class=HTMLResponse)
+    def reports_page(request: Request, limit: int = 50):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.view"
+                )
+                entries = list_reports(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    limit=limit,
+                )
+                workspace, role = _workspace_shell(session, context)
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    return RedirectResponse(
+                        "/login?return_to=/app/reports", status_code=303
+                    )
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        "/workspace/select?return_to=/app/reports", status_code=303
+                    )
+                return _html_error(request, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="reports.html",
+            context={
+                "principal": principal,
+                "workspace": workspace,
+                "role": role,
+                "reports": entries,
+                "csrf": request.cookies.get(CSRF_COOKIE) or "",
+            },
+        )
+
+    @app.get("/app/reports/{report_id}", response_class=HTMLResponse)
+    def report_detail_page(request: Request, report_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.view"
+                )
+                report = get_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    report_id=report_id,
+                )
+                workspace, role = _workspace_shell(session, context)
+                snapshot = report.snapshot
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    return RedirectResponse(
+                        f"/login?return_to=/app/reports/{report_id}",
+                        status_code=303,
+                    )
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        f"/workspace/select?return_to=/app/reports/{report_id}",
+                        status_code=303,
+                    )
+                return _html_error(request, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="report_detail.html",
+            context={
+                "principal": principal,
+                "workspace": workspace,
+                "role": role,
+                "report": report,
+                "snapshot": snapshot,
+                "csrf": request.cookies.get(CSRF_COOKIE) or "",
+            },
+        )
+
+    @app.get("/app/reports/{report_id}/export.json")
+    def report_json_download(request: Request, report_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.export"
+                )
+                report = get_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    report_id=report_id,
+                    permission_key="report.export",
+                )
+                content = canonical_json_bytes(report.snapshot)
+                filename = report_filename(report, "json")
+            except ActionDenied as exc:
+                return _html_error(request, exc)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/app/reports/{report_id}/export.csv")
+    def report_csv_download(request: Request, report_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.export"
+                )
+                report = get_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    report_id=report_id,
+                    permission_key="report.export",
+                )
+                content = report_csv_bytes(report.snapshot)
+                filename = report_filename(report, "csv")
+            except ActionDenied as exc:
+                return _html_error(request, exc)
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.post("/app/api/companies/{inn}/reports")
+    def api_generate_report(request: Request, inn: str):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request,
+                    session,
+                    principal,
+                    request.headers.get("x-csrf-token"),
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied(
+                        "workspace_required", "Выберите рабочее пространство."
+                    )
+                report = generate_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    inn=inn,
+                    projection_repository=_public_repository(request),
+                )
+                report_id = report.id
+                snapshot = report.snapshot
+                session.commit()
+            except ActionDenied as exc:
+                if exc.code == "quota_exceeded":
+                    session.commit()
+                else:
+                    session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            snapshot,
+            status_code=201,
+            headers={"Location": f"/app/api/reports/{report_id}"},
+        )
+
+    @app.get("/app/api/reports")
+    def api_reports(request: Request, limit: int = 50):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.view"
+                )
+                entries = list_reports(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    limit=limit,
+                )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"items": [report_list_payload(item) for item in entries]})
+
+    @app.get("/app/api/reports/{report_id}")
+    def api_report_detail(request: Request, report_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.view"
+                )
+                report = get_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    report_id=report_id,
+                )
+                content = canonical_json_bytes(report.snapshot)
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return Response(content=content, media_type="application/json")
+
+    @app.get("/app/api/reports/{report_id}/export.json")
+    def api_report_json_download(request: Request, report_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.export"
+                )
+                report = get_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    report_id=report_id,
+                    permission_key="report.export",
+                )
+                content = canonical_json_bytes(report.snapshot)
+                filename = report_filename(report, "json")
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/app/api/reports/{report_id}/export.csv")
+    def api_report_csv_download(request: Request, report_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="report.export"
+                )
+                report = get_report(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    report_id=report_id,
+                    permission_key="report.export",
+                )
+                content = report_csv_bytes(report.snapshot)
+                filename = report_filename(report, "csv")
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.get("/app/companies/{inn}/monitoring", response_class=HTMLResponse)
     def monitoring_entry(request: Request, inn: str):

@@ -1,19 +1,19 @@
 schema_version: 1.0.0
-generated_at: '2026-10-07T07:40:04Z'
-main_sha: fe011401ac924806273959fc3d9edbaf22d24ff6
+generated_at: '2026-10-07T10:50:25Z'
+main_sha: 5456af6d848cad32eb2151b19f4bf96f2bc768dc
 code:
   state: VERIFIED
-  main_sha: fe011401ac924806273959fc3d9edbaf22d24ff6
+  main_sha: 5456af6d848cad32eb2151b19f4bf96f2bc768dc
   latest_relevant_merged_pr:
-    number: 134
-    url: https://github.com/kuzmvnew/kontragent/pull/134
-    merge_sha: fe011401ac924806273959fc3d9edbaf22d24ff6
-    merged_at: '2026-10-07T07:14:58Z'
+    number: 135
+    url: https://github.com/kuzmvnew/kontragent/pull/135
+    merge_sha: 5456af6d848cad32eb2151b19f4bf96f2bc768dc
+    merged_at: '2026-10-07T10:14:52Z'
     evidence:
     - status: VERIFIED
       kind: git
       reference: git log --first-parent --merges -1 origin/main
-      observed_at: '2026-10-07T07:40:04Z'
+      observed_at: '2026-10-07T10:50:25Z'
   migration_heads:
     operational: e4f6a8b0c2d3
     public: public_0002
@@ -21,7 +21,7 @@ code:
     - status: VERIFIED
       kind: git
       reference: Static Alembic revision graph in origin/main:migrations/versions and origin/main:public_migrations/versions
-      observed_at: '2026-10-07T07:40:04Z'
+      observed_at: '2026-10-07T10:50:25Z'
   release_capable_artifact:
     state: PRESENT
     artifact_id: nextcompany-canonical-operational-cohort-40
@@ -31,7 +31,7 @@ code:
     - status: VERIFIED
       kind: release_manifest
       reference: sha256(docs/releases/public-v1-cohort-40.json)
-      observed_at: '2026-10-07T07:40:04Z'
+      observed_at: '2026-10-07T10:50:25Z'
   capabilities:
   - id: transition-aware-public-releases
     name: Transition-aware public cohort updates and withdrawals
@@ -142,23 +142,23 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: PROJECT-STATUS-CANONICALIZATION-01-BASE-SYNC
-  title: 'SYNC PR #111 TO CURRENT QA-PROTECTED MAIN'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03B-REPORTS-EXPORT-01
+  title: 'NEXT COMPANY — WORKSPACE REPORTS + EXPORT P0'
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'PR #111 merged current origin/main without conflicts; independent QA not performed'
-    observed_at: '2026-09-29T12:07:45Z'
+    reference: 'Implementation and local PostgreSQL 18.6, Chromium, and focused regression gates completed on the dedicated task branch; independent exact-head CI remains required'
+    observed_at: '2026-10-07T10:50:32Z'
 next_gate:
-  id: PROJECT-STATUS-CANONICALIZATION-01-QA
-  description: 'Independent QA for exact PR #111 base and head SHA binding'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03B-REPORTS-EXPORT-01-QA
+  description: 'Independent QA and exact-head CI for the unmerged Workspace Reports and Export pull request'
   state: READY
   evidence:
   - status: VERIFIED
     kind: task
-    reference: Base synchronization is complete; no QA PASS attestation was created by this task
-    observed_at: '2026-09-29T12:07:45Z'
+    reference: Local implementation gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
+    observed_at: '2026-10-07T10:50:32Z'
 incidents:
   state: NOT_VERIFIED
   active: []

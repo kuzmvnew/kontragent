@@ -162,6 +162,92 @@ def test_browser_public_login_search_save_saved_open_and_unsave():
         _cleanup(email, inns=(item.company.inn,))
 
 
+def test_browser_report_history_exports_and_historical_snapshot():
+    email = f"browser-reports-{uuid4()}@example.test"
+    item = projection(sequence=100_300_104)
+    try:
+        _seed_company(item)
+        _bootstrap(email, "Browser Reports")
+        repository = FakePublicRepository((item,))
+        workspace = LiveServer(
+            create_workspace_app(
+                public_repository=repository,
+                session_factory=SessionLocal,
+            )
+        )
+        with workspace, sync_playwright() as manager:
+            browser = manager.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page_errors: list[str] = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+            page.goto(f"{workspace.url}/login")
+            _login(page, email)
+            page.get_by_role("link", name="Отчёты", exact=True).click()
+            expect(page.get_by_text("Пока нет отчётов")).to_be_visible()
+            page.get_by_role("link", name="Перейти к поиску").click()
+            page.get_by_label("Название или ИНН").fill(item.company.inn)
+            page.get_by_role("button", name="Найти").click()
+            page.get_by_role("link", name=re.compile(item.company.name)).click()
+            page.get_by_role("button", name="Сформировать отчёт").click()
+            expect(page).to_have_url(re.compile(rf"{re.escape(workspace.url)}/app/reports/[0-9a-f-]+"))
+            report_a_url = page.url
+            expect(
+                page.get_by_text(
+                    "Данные зафиксированы на момент формирования отчёта",
+                    exact=False,
+                )
+            ).to_be_visible()
+            expect(page.get_by_text(item.risk.factors[0].title)).to_be_visible()
+
+            changed_factor = item.risk.factors[0].model_copy(
+                update={"title": "Новый исторический фактор"}
+            )
+            repository.items[item.company.inn] = item.model_copy(
+                update={
+                    "risk": item.risk.model_copy(
+                        update={"factors": (changed_factor,)}
+                    )
+                }
+            )
+            page.reload()
+            expect(page).to_have_url(report_a_url)
+            expect(page.get_by_text(item.risk.factors[0].title)).to_be_visible()
+            expect(page.get_by_text("Новый исторический фактор")).to_have_count(0)
+
+            page.get_by_role("link", name="К карточке компании").click()
+            page.get_by_role("button", name="Сформировать отчёт").click()
+            expect(page.get_by_text("Новый исторический фактор")).to_be_visible()
+            page.get_by_role("link", name="Отчёты", exact=True).click()
+            expect(page.locator(".report-list .saved-row")).to_have_count(2)
+            page.locator(".report-list .saved-row").first.get_by_role(
+                "link", name="Открыть"
+            ).click()
+
+            with page.expect_download() as json_download_info:
+                page.get_by_role("link", name="Скачать JSON").click()
+            json_download = json_download_info.value
+            assert json_download.suggested_filename.endswith(".json")
+            assert "next-company-report-" in json_download.suggested_filename
+            assert item.company.name in json_download.path().read_text(encoding="utf-8")
+
+            with page.expect_download() as csv_download_info:
+                page.get_by_role("link", name="Скачать CSV").click()
+            csv_download = csv_download_info.value
+            assert csv_download.suggested_filename.endswith(".csv")
+            assert item.company.name in csv_download.path().read_text(
+                encoding="utf-8-sig"
+            )
+
+            page.get_by_role("link", name="К карточке компании").click()
+            page.get_by_role("button", name="Выйти").click()
+            expect(page).to_have_url(f"{workspace.url}/login")
+            assert page_errors == []
+            browser.close()
+    finally:
+        _cleanup(email, inns=(item.company.inn,))
+
+
 def test_browser_monitoring_enable_event_feed_and_pause():
     email = f"browser-monitoring-{uuid4()}@example.test"
     item = projection(sequence=100_100_152)

@@ -1135,6 +1135,7 @@ def test_workspace_p0_database_constraints_and_role_contract():
                 "workspace.core.enabled",
                 "saved_companies.enabled",
                 "monitoring.enabled",
+                "reports.enabled",
                 "workspace_members.enabled",
             }
             assert entitlement_keys.isdisjoint(
@@ -1145,6 +1146,9 @@ def test_workspace_p0_database_constraints_and_role_contract():
                     "company.save",
                     "company.unsave",
                     "monitoring.manage",
+                    "report.view",
+                    "report.generate",
+                    "report.export",
                     "workspace.members.manage",
                 }
             )

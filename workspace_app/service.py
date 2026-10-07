@@ -33,6 +33,9 @@ P0_PERMISSIONS = (
     "company.save",
     "company.unsave",
     "monitoring.manage",
+    "report.view",
+    "report.generate",
+    "report.export",
     "workspace.members.manage",
 )
 
@@ -45,6 +48,9 @@ ROLE_PERMISSIONS = {
         "company.view",
         "company.save",
         "company.unsave",
+        "report.view",
+        "report.generate",
+        "report.export",
     ),
 }
 
@@ -55,6 +61,10 @@ PERMISSION_ENTITLEMENTS = {
     "company.save": "saved_companies.enabled",
     "company.unsave": "saved_companies.enabled",
     "monitoring.manage": "monitoring.enabled",
+    # Historical reports remain accessible when new generation is disabled.
+    "report.view": "workspace.core.enabled",
+    "report.generate": "reports.enabled",
+    "report.export": "workspace.core.enabled",
     "workspace.members.manage": "workspace_members.enabled",
 }
 
@@ -62,9 +72,10 @@ DEFAULT_ENTITLEMENTS = {
     "workspace.core.enabled": True,
     "saved_companies.enabled": True,
     "monitoring.enabled": False,
+    "reports.enabled": True,
     "workspace_members.enabled": True,
 }
-BOOTSTRAP_POLICY_VERSION = "workspace-p0-bootstrap-v1"
+BOOTSTRAP_POLICY_VERSION = "workspace-reports-v1"
 _DUMMY_PASSWORD_HASH = (
     "scrypt-v1$32768$8$1$d29ya3NwYWNlLXAwLWR1bW0$"
     "6dS6Cf3NriX59EuQ2A5PzSdIXkoy34-HM0xzb0U5x6E"
