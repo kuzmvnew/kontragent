@@ -33,9 +33,18 @@
     {% else %}
       <p class="blocked">{{ actions.save_denial_message }}</p>
     {% endif %}
+    {% if actions.can_generate_report %}
+      <form action="/app/companies/{{ company.inn }}/reports" method="post">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Сформировать отчёт</button>
+      </form>
+    {% else %}
+      <p class="blocked action-reason">{{ actions.report_denial_message }}</p>
+    {% endif %}
     <a class="button secondary" href="{{ public_origin or '' }}/companies/{{ company.inn }}">Публичная карточка</a>
   </div>
   {% if actions.saved_limit is not none %}<p class="hint">Сохранено {{ actions.saved_used }} из {{ actions.saved_limit }} доступных компаний.</p>{% endif %}
+  {% if actions.report_limit is not none %}<p class="hint">Сформировано {{ actions.report_used }} из {{ actions.report_limit }} доступных отчётов.</p>{% endif %}
   {% if actions.is_saved %}<div class="saved-note-card"><strong>Заметка Workspace</strong><p>{{ actions.saved_note or 'Заметка пока не добавлена.' }}</p><a href="/app/saved">{{ 'Редактировать заметку' if actions.saved_note else 'Добавить заметку' }}</a></div>{% endif %}
 </section>
 

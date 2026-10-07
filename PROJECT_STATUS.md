@@ -4,8 +4,8 @@
 > Regenerate with `uv run python scripts/project_status.py update`.
 
 - Schema version: `1.0.0`
-- Generated at: `2026-10-07T07:40:04Z`
-- Canonical main SHA: `fe011401ac924806273959fc3d9edbaf22d24ff6`
+- Generated at: `2026-10-07T10:50:25Z`
+- Canonical main SHA: `5456af6d848cad32eb2151b19f4bf96f2bc768dc`
 
 Layer states are independent. A merge is not deployment, QA acceptance is
 not deployment, and production deployment is not user-visible verification.
@@ -15,10 +15,10 @@ not deployment, and production deployment is not user-visible verification.
 | Field | Value |
 |---|---|
 | State | VERIFIED |
-| Main SHA | fe011401ac924806273959fc3d9edbaf22d24ff6 |
-| Latest relevant merged PR | #134 — https://github.com/kuzmvnew/kontragent/pull/134 |
-| Merge SHA | fe011401ac924806273959fc3d9edbaf22d24ff6 |
-| Merged at | 2026-10-07T07:14:58Z |
+| Main SHA | 5456af6d848cad32eb2151b19f4bf96f2bc768dc |
+| Latest relevant merged PR | #135 — https://github.com/kuzmvnew/kontragent/pull/135 |
+| Merge SHA | 5456af6d848cad32eb2151b19f4bf96f2bc768dc |
+| Merged at | 2026-10-07T10:14:52Z |
 | Operational migration head in code | e4f6a8b0c2d3 |
 | Public migration head in code | public_0002 |
 | Release-capable artifact state | PRESENT |
@@ -117,12 +117,12 @@ No capability assertions recorded.
 
 | Field | Value |
 |---|---|
-| Active task | PROJECT-STATUS-CANONICALIZATION-01-BASE-SYNC |
+| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03B-REPORTS-EXPORT-01 |
 | Active task state | COMPLETE |
-| Active task title | SYNC PR #111 TO CURRENT QA-PROTECTED MAIN |
-| Next gate | PROJECT-STATUS-CANONICALIZATION-01-QA |
+| Active task title | NEXT COMPANY — WORKSPACE REPORTS + EXPORT P0 |
+| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03B-REPORTS-EXPORT-01-QA |
 | Next gate state | READY |
-| Next gate description | Independent QA for exact PR #111 base and head SHA binding |
+| Next gate description | Independent QA and exact-head CI for the unmerged Workspace Reports and Export pull request |
 
 ## Incidents
 

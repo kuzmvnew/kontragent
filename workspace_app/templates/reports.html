@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Отчёты — NEXT Company{% endblock %}
+{% block content %}
+<section>
+  <p class="eyebrow">Workspace</p>
+  <h1>Отчёты</h1>
+  <p class="workspace-lead">История зафиксированных проверок компаний в {{ workspace.name }}.</p>
+  <div class="list report-list">
+  {% for item in reports %}
+    <article class="saved-row" data-report-id="{{ item.id }}">
+      <div>
+        <div class="saved-title"><strong>{{ item.subject_name }}</strong><span class="state-badge">{{ item.report_type }}</span></div>
+        <span>ИНН {{ item.subject_inn }} · сформирован {{ item.generated_at.strftime('%d.%m.%Y %H:%M') }} · {{ item.schema_version }}</span>
+      </div>
+      <div class="saved-actions">
+        <a class="button" href="/app/reports/{{ item.id }}">Открыть</a>
+        <a class="button secondary" href="/app/reports/{{ item.id }}/export.json">JSON</a>
+        <a class="button secondary" href="/app/reports/{{ item.id }}/export.csv">CSV</a>
+      </div>
+    </article>
+  {% else %}
+    <div class="empty-state">
+      <h2>Пока нет отчётов</h2>
+      <p>Найдите компанию и сформируйте отчёт из авторизованной карточки.</p>
+      <a class="button" href="/app/search">Перейти к поиску</a>
+    </div>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}

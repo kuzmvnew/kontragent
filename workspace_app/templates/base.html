@@ -16,6 +16,7 @@
     <a href="/app/search" class="{{ 'active' if active_nav == 'search' else '' }}"{% if active_nav == 'search' %} aria-current="page"{% endif %}>Поиск</a>
     <a href="/app/saved" class="{{ 'active' if active_nav == 'saved' else '' }}"{% if active_nav == 'saved' %} aria-current="page"{% endif %}>Сохранённые</a>
     <a href="/app/monitoring" class="{{ 'active' if active_nav == 'monitoring' else '' }}"{% if active_nav == 'monitoring' %} aria-current="page"{% endif %}>Мониторинг</a>
+    <a href="/app/reports" class="{{ 'active' if active_nav == 'reports' else '' }}"{% if active_nav == 'reports' %} aria-current="page"{% endif %}>Отчёты</a>
   </nav>
   {% if workspace %}<div class="workspace-context" aria-label="Активное рабочее пространство"><span>{{ workspace.name }}</span><small>{{ principal.email }}{% if role %} · {{ role.name }}{% endif %}</small><a href="/workspace/select">Сменить Workspace</a></div>{% endif %}
   <form action="/logout" method="post">
