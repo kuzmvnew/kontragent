@@ -18,6 +18,9 @@ from app.models.tax_regime import CompanyTaxRegimeSnapshot
 from app.models.worker import WorkerPublicationState
 from app.services import data_readiness_scheduler as scheduler
 from app.services import source_service
+from app.services import tax_regime_service
+from app.services.company_view_service import materialize_company_view_v1
+from app.contracts.company_view_v1 import DataState
 from app.worker.contracts import (
     ExecutionCounters,
     HandlerResult,
@@ -581,6 +584,7 @@ def test_postgresql_new_master_replays_headcount_and_msp_idempotently(
 def test_postgresql_tax_regime_family_atomic_replay_and_applicability(
     next3_db, tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(tax_regime_service, "get_session", next3_db)
     monkeypatch.setattr(bulk, "utc_now", lambda: NOW)
     monkeypatch.setattr(fns_tax_regime, "utc_now", lambda: NOW, raising=False)
     suffix = str(uuid4().int % 10**8).zfill(8)
@@ -701,17 +705,28 @@ def test_postgresql_tax_regime_family_atomic_replay_and_applicability(
         )
         session.flush()
         assert family.record_count == 1
-        session.add_all(
-            [
-                Company(inn=legal_new, name="legal new", entity_type="legal"),
-                Company(
-                    inn=ip_new,
-                    name="ip new",
-                    entity_type="individual_entrepreneur",
-                ),
-            ]
+        legal_late = Company(inn=legal_new, name="legal new", entity_type="legal")
+        ip_late = Company(
+            inn=ip_new, name="ip new", entity_type="individual_entrepreneur"
         )
+        session.add_all([legal_late, ip_late])
         session.flush()
+        for late in (legal_late, ip_late):
+            before = tax_regime_service.get_tax_regime_check_for_company(
+                late.id, now=NOW
+            )
+            assert before["result"] == "unavailable"
+            assert before["semantic_state"] == "NOT_CHECKED"
+            view = materialize_company_view_v1(
+                session, company_id=late.id, generated_at=NOW
+            )
+            assert next(
+                fact.state
+                for section in view.sections
+                if section.section_key == "tax"
+                for fact in section.facts
+                if fact.anchor.field_key == "regime"
+            ) == DataState.NOT_CHECKED
         replay_claim = SimpleNamespace(
             schedule_metadata={
                 **bundle.as_metadata(),
@@ -729,6 +744,21 @@ def test_postgresql_tax_regime_family_atomic_replay_and_applicability(
         )
         assert replay.counters.records_published == 2
         assert again.counters.records_published == 0
+        for late in (legal_late, ip_late):
+            after = tax_regime_service.get_tax_regime_check_for_company(
+                late.id, now=NOW
+            )
+            assert after["result"] == "found"
+            view = materialize_company_view_v1(
+                session, company_id=late.id, generated_at=NOW
+            )
+            assert next(
+                fact.state
+                for section in view.sections
+                if section.section_key == "tax"
+                for fact in section.facts
+                if fact.anchor.field_key == "regime"
+            ) == DataState.FOUND
         rows = session.execute(
             sa.select(
                 Company.inn,

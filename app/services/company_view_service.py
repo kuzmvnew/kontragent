@@ -49,6 +49,11 @@ from app.contracts.company_view_v1 import (
 )
 from app.models.company import Company
 from app.models.semantic_fact import CompanySemanticFact
+from app.services.fns_tax_regime_readiness import (
+    REQUIRED_CODES as TAX_REGIME_DATASET_CODES,
+    evaluate_family_readiness,
+    resolve_current_company_coverage,
+)
 
 
 SECTION_KEYS = (
@@ -1448,19 +1453,18 @@ def _tax_regime_candidate(
         "freshness_policy, source_as_of, freshness_threshold_seconds, coverage, "
         "last_error"
     )
-    family = _one(
-        cursor,
-        f"SELECT {dataset_fields} FROM data_sets WHERE code=%s",
-        ("fns_tax_regime",),
-    )
-    member = _one(
-        cursor,
-        f"SELECT {dataset_fields} FROM data_sets WHERE code=%s",
-        (member_code,),
-    )
+    datasets = {
+        row["code"]: row
+        for code in TAX_REGIME_DATASET_CODES
+        if (row := _one(
+            cursor, f"SELECT {dataset_fields} FROM data_sets WHERE code=%s", (code,)
+        )) is not None
+    }
+    family = datasets.get("fns_tax_regime")
+    member = datasets.get(member_code)
+    readiness = evaluate_family_readiness(datasets, now=observed_at)
     if member is not None:
         shared["source_ref"] = member.get("source_url") or source_url
-    available = family is not None and member is not None
     retrieval = (
         (member or {}).get("retrieved_at")
         or (family or {}).get("retrieved_at")
@@ -1468,39 +1472,44 @@ def _tax_regime_candidate(
     )
     shared["retrieved_at"] = _aware(retrieval)
     source_date = _date((member or {}).get("last_data_date"))
-    state = DataState.NOT_CHECKED
-    if available and family.get("last_success_at") and member.get("last_success_at"):
-        error_text = " ".join(
-            str(item.get("last_error") or "") for item in (family, member)
-        ).casefold()
-        if any(token in error_text for token in ("schema", "xsd", "xml", "parse")):
-            state = DataState.PARSING_ERROR
-        else:
-            family_state = _dataset_observation_state(
-                family, observed_at=observed_at
-            )
-            member_state = _dataset_observation_state(
-                member, observed_at=observed_at
-            )
-            state = max(
-                (family_state, member_state),
-                key=lambda value: _SECTION_STATE_RANK[value],
-            )
+    state = readiness.state
 
     snapshot = (
         _one(
             cursor,
             "SELECT entity_type, data_date, regime_codes, source_document_id, "
             "source_document_date FROM company_tax_regime_snapshots "
-            "WHERE company_id=%s AND dataset_id=%s "
+            "WHERE company_id=%s AND dataset_id=%s AND data_date=%s "
             "ORDER BY data_date DESC, id DESC LIMIT 1",
-            (company_id, member["id"]),
+            (company_id, member["id"], source_date),
         )
         if member is not None
         else None
     )
-    if state == DataState.FOUND:
-        state = DataState.FOUND if snapshot is not None else DataState.NOT_FOUND
+    if state == DataState.FOUND and snapshot is None:
+        publication = _one(
+            cursor,
+            "SELECT generation, active_pointer, validation_metadata "
+            "FROM worker_publication_state WHERE source_id=%s",
+            ("fns_tax_regime",),
+        )
+        coverage_rows = _rows(
+            cursor,
+            "SELECT * FROM company_source_coverage WHERE company_id=%s AND source_id=%s",
+            (company_id, "fns_tax_regime"),
+        )
+        coverage_decision = resolve_current_company_coverage(
+            coverage_rows,
+            publication,
+            company_id=company_id,
+            source_data_date=readiness.source_data_date,
+            release_identity=readiness.release_identity,
+        )
+        state = (
+            DataState.NOT_CHECKED
+            if coverage_decision.state == DataState.FOUND
+            else coverage_decision.state
+        )
     regime_codes = sorted(str(code) for code in (snapshot or {}).get("regime_codes") or ())
     value = {
         "entity_type": (snapshot or {}).get("entity_type") or entity_type,
@@ -1515,7 +1524,7 @@ def _tax_regime_candidate(
         or family_coverage.get("release_identity")
         or "unpublished"
     )
-    value["provenance"] = {
+    provenance = {
         "source": "fns",
         "source_id": "fns_tax_regime",
         "member_dataset_code": member_code,
@@ -1532,9 +1541,13 @@ def _tax_regime_candidate(
         "artifact_sha256": coverage.get("artifact_sha256"),
         "xsd_sha256": coverage.get("xsd_sha256"),
     }
+    if state in {DataState.FOUND, DataState.NOT_FOUND}:
+        value["provenance"] = provenance
+    else:
+        value = None
     limitations = (
         (
-            "Отсутствие означает только отсутствие ИНН в текущем официальном наборе применимых специальных режимов.",
+            "Текущий принятый выпуск ФНС проверен для этого ИНН; специальный режим не найден.",
         )
         if state == DataState.NOT_FOUND
         else (

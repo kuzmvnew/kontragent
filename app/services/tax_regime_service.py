@@ -1,15 +1,22 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 
 from app.database.postgres import get_session
 from app.models.company import Company
+from app.models.company_enrichment import CompanySourceCoverage
 from app.models.source import DataSet
 from app.models.tax_regime import (
     CompanyTaxRegimeSnapshot,
 )
 from app.services.check_result import build_check_result
-from app.services.data_readiness_service import clean_negative_blocker
+from app.models.worker import WorkerPublicationState
+from app.contracts.company_view_v1 import DataState
+from app.services.fns_tax_regime_readiness import (
+    REQUIRED_CODES,
+    evaluate_family_readiness,
+    resolve_current_company_coverage,
+)
 
 
 FAMILY_DATASET_CODE = "fns_tax_regime"
@@ -82,8 +89,9 @@ def get_tax_regime_check_for_company(
     *,
     now: datetime | None = None,
 ):
-    """Return the applicable SNR/SNRIP member under family freshness."""
+    """Return the applicable member only when the complete family is trusted."""
 
+    now = now or datetime.now(timezone.utc)
     session = get_session()
     try:
         company = session.execute(
@@ -100,6 +108,7 @@ def get_tax_regime_check_for_company(
                 dataset_code=FAMILY_DATASET_CODE,
                 source=SOURCE_CODE,
                 reason="company_not_found",
+                semantic_state=DataState.SOURCE_UNAVAILABLE.value,
                 source_data_date=None,
                 member_dataset_code=None,
                 **_empty_payload(),
@@ -134,6 +143,7 @@ def get_tax_regime_check_for_company(
                 dataset_code=FAMILY_DATASET_CODE,
                 source=SOURCE_CODE,
                 reason="legal_or_individual_entrepreneur_only",
+                semantic_state=DataState.NOT_APPLICABLE.value,
                 source_data_date=None,
                 member_dataset_code=None,
                 **_empty_payload(),
@@ -142,40 +152,23 @@ def get_tax_regime_check_for_company(
         datasets = {
             dataset.code: dataset
             for dataset in session.scalars(
-                select(DataSet).where(
-                    DataSet.code.in_((FAMILY_DATASET_CODE, member_code))
-                )
+                select(DataSet).where(DataSet.code.in_(REQUIRED_CODES))
             )
         }
         family = datasets.get(FAMILY_DATASET_CODE)
         member = datasets.get(member_code)
-        if family is None or member is None:
+        readiness = evaluate_family_readiness(datasets, now=now)
+        if readiness.state != DataState.FOUND:
             return build_check_result(
                 checked=False,
                 applicable=True,
                 result="unavailable",
-                data_date=None,
+                data_date=member.last_data_date if member else None,
                 dataset_code=FAMILY_DATASET_CODE,
                 source=SOURCE_CODE,
-                reason="dataset_not_registered",
-                source_data_date=None,
-                member_dataset_code=member_code,
-                **_empty_payload(),
-            )
-
-        blocker = clean_negative_blocker(family, now=now)
-        if blocker is None:
-            blocker = clean_negative_blocker(member, now=now)
-        if blocker is not None:
-            return build_check_result(
-                checked=False,
-                applicable=True,
-                result="unavailable",
-                data_date=member.last_data_date,
-                dataset_code=FAMILY_DATASET_CODE,
-                source=SOURCE_CODE,
-                reason=blocker,
-                source_data_date=member.last_data_date,
+                reason=readiness.reason,
+                semantic_state=readiness.state.value,
+                source_data_date=readiness.source_data_date,
                 member_dataset_code=member_code,
                 **_empty_payload(),
             )
@@ -187,6 +180,7 @@ def get_tax_regime_check_for_company(
             .where(
                 CompanyTaxRegimeSnapshot.company_id == company_id,
                 CompanyTaxRegimeSnapshot.dataset_id == member.id,
+                CompanyTaxRegimeSnapshot.data_date == member.last_data_date,
             )
             .order_by(
                 CompanyTaxRegimeSnapshot.data_date.desc(),
@@ -195,19 +189,41 @@ def get_tax_regime_check_for_company(
             .limit(1)
         )
         if snapshot is None:
+            coverage = resolve_current_company_coverage(
+                session.scalars(
+                    select(CompanySourceCoverage).where(
+                        CompanySourceCoverage.company_id == company_id,
+                        CompanySourceCoverage.source_id == FAMILY_DATASET_CODE,
+                    )
+                ),
+                session.get(WorkerPublicationState, FAMILY_DATASET_CODE),
+                company_id=company_id,
+                source_data_date=readiness.source_data_date,
+                release_identity=readiness.release_identity,
+            )
+            proven_negative = coverage.state == DataState.NOT_FOUND
             return build_check_result(
-                checked=True,
+                checked=proven_negative,
                 applicable=True,
-                result="not_found",
+                result="not_found" if proven_negative else "unavailable",
                 data_date=member.last_data_date,
                 dataset_code=FAMILY_DATASET_CODE,
                 source=SOURCE_CODE,
-                reason=None,
+                reason=coverage.reason,
+                semantic_state=(
+                    DataState.NOT_FOUND.value
+                    if proven_negative
+                    else coverage.state.value
+                    if coverage.state != DataState.FOUND
+                    else DataState.NOT_CHECKED.value
+                ),
                 source_data_date=member.last_data_date,
                 member_dataset_code=member_code,
                 limitation=(
-                    "Отсутствие означает только, что ИНН не найден в текущем "
-                    "официальном наборе применимых специальных режимов."
+                    "Текущий принятый выпуск ФНС проверен для этого ИНН; "
+                    "специальный режим не найден."
+                    if proven_negative
+                    else "Проверка ИНН по текущему принятому выпуску ФНС не завершена."
                 ),
                 **{
                     **_empty_payload(),
@@ -224,6 +240,7 @@ def get_tax_regime_check_for_company(
             dataset_code=FAMILY_DATASET_CODE,
             source=SOURCE_CODE,
             reason=None,
+            semantic_state=DataState.FOUND.value,
             source_data_date=member.last_data_date,
             member_dataset_code=member_code,
             company_id=snapshot.company_id,

@@ -1,6 +1,8 @@
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app.ingestion import fns_bulk_worker as bulk
 from app.ingestion import fns_tax_regime
 from app.models.worker import WorkerHandlerRegistration, WorkerPublicationState
@@ -190,6 +192,23 @@ def test_controlled_enqueue_requires_exact_confirmation_token(tmp_path):
         raise AssertionError("controlled enqueue accepted a substituted token")
 
 
+def test_passport_403_fails_closed_before_session_or_enqueue(tmp_path, monkeypatch):
+    def unavailable():
+        raise bulk.WorkerNetworkError("FNS request failed: HTTP Error 403")
+
+    monkeypatch.setattr(operator, "_discover_bundle", unavailable)
+    monkeypatch.setattr(
+        operator, "SessionLocal", lambda: pytest.fail("preflight opened a session")
+    )
+    monkeypatch.setattr(
+        operator,
+        "enqueue_bulk_release_bundle",
+        lambda *_args, **_kwargs: pytest.fail("unexpected enqueue"),
+    )
+    with pytest.raises(bulk.WorkerNetworkError, match="403"):
+        operator._enqueue(tmp_path, confirm=operator.CONFIRM_TOKEN)
+
+
 def test_controlled_enqueue_creates_one_scoped_job_without_running_it(
     tmp_path,
     monkeypatch,
@@ -246,3 +265,121 @@ def test_controlled_enqueue_creates_one_scoped_job_without_running_it(
 
 def test_tax_regime_semantic_coordinate_uses_generic_monitoring_event():
     assert _event_type("tax", "regime") == "GENERIC_FACT_CHANGED"
+
+
+@pytest.mark.parametrize("member", ("legal", "ip"))
+@pytest.mark.parametrize("path_kind", (
+    "literal_traversal", "encoded_traversal", "nested_traversal",
+    "encoded_separator", "malformed_percent", "wrong_sibling", "backslash",
+))
+def test_discovery_rejects_ambiguous_official_links(member, path_kind):
+    spec = fns_tax_regime._member_specs()[member]
+    sibling = fns_tax_regime._member_specs()["ip" if member == "legal" else "legal"]
+    base = f"/opendata/{spec.source_path}/"
+    name = "data-20260925-structure-20230425.zip"
+    path = {
+        "literal_traversal": base + "../" + sibling.source_path + "/" + name,
+        "encoded_traversal": base + "%2e%2e/" + sibling.source_path + "/" + name,
+        "nested_traversal": base + "%252e%252e/" + sibling.source_path + "/" + name,
+        "encoded_separator": base + "%2F../" + name,
+        "malformed_percent": base + "data-20260925-structure-20230425%GG.zip",
+        "wrong_sibling": f"/opendata/{sibling.source_path}/{name}",
+        "backslash": base + "..\\" + sibling.source_path + "/" + name,
+    }[path_kind]
+    html = f'''
+      <td property="dc:identifier">{spec.source_path}</td>
+      <a href="https://file.nalog.ru{path}">ZIP</a>
+      <a href="https://file.nalog.ru{base}structure-20230425.xsd">XSD</a>
+      <td property="dc:modified" content="25.09.2026">25.09.2026</td>
+      <td property="dc:provenance">Данные на 01.09.2026</td>
+    '''.encode()
+    with pytest.raises((bulk.InvalidDataError, bulk.SchemaMismatchError)):
+        bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
+
+
+@pytest.mark.parametrize("member", ("legal", "ip"))
+@pytest.mark.parametrize("path_kind", (
+    "literal_traversal", "encoded_traversal", "nested_traversal",
+    "wrong_sibling", "xsd_sibling", "encoded_separator", "malformed_percent",
+))
+def test_staging_rejects_ambiguous_links_before_download(
+    member, path_kind, tmp_path, monkeypatch
+):
+    spec = fns_tax_regime._member_specs()[member]
+    sibling = fns_tax_regime._member_specs()["ip" if member == "legal" else "legal"]
+    release = _bundle().releases[member]
+    base = f"https://file.nalog.ru/opendata/{spec.source_path}/"
+    name = release.artifact_url.rsplit("/", 1)[-1]
+    artifact_url = {
+        "literal_traversal": base + "../" + sibling.source_path + "/" + name,
+        "encoded_traversal": base + "%2e%2e/" + sibling.source_path + "/" + name,
+        "nested_traversal": base + "%252e%252e/" + sibling.source_path + "/" + name,
+        "wrong_sibling": f"https://file.nalog.ru/opendata/{sibling.source_path}/{name}",
+        "encoded_separator": base + "%2F../" + name,
+        "malformed_percent": base + name.replace(".zip", "%GG.zip"),
+    }.get(path_kind, release.artifact_url)
+    xsd_url = (
+        f"https://file.nalog.ru/opendata/{sibling.source_path}/"
+        + release.xsd_url.rsplit("/", 1)[-1]
+        if path_kind == "xsd_sibling" else release.xsd_url
+    )
+    calls = []
+    monkeypatch.setattr(
+        bulk, "_download_temp", lambda *args: calls.append(args)
+    )
+    invalid = bulk.FnsRelease(
+        **{**release.__dict__, "artifact_url": artifact_url, "xsd_url": xsd_url}
+    )
+    raw_root = tmp_path / "raw"
+    with pytest.raises(bulk.InvalidDataError):
+        bulk.stage_release(spec, invalid, raw_root=raw_root)
+    assert calls == []
+    assert not raw_root.exists()
+
+
+def test_current_legal_and_ip_urls_pass_canonical_validation():
+    for member, release in _bundle().releases.items():
+        spec = fns_tax_regime._member_specs()[member]
+        assert bulk.validate_official_release_url(
+            spec, release.artifact_url, artifact=True
+        )[1] == bulk.validate_official_release_url(
+            spec, release.xsd_url, artifact=False
+        )[1]
+
+
+@pytest.mark.parametrize("bad", ("%", "%0", "%GG", "%2Z"))
+def test_canonical_url_rejects_malformed_percent_at_each_decode_layer(bad):
+    spec = fns_tax_regime._member_specs()["legal"]
+    url = (
+        "https://file.nalog.ru/opendata/7707329152-snr/"
+        f"data-20260925-structure-20230425{bad}.zip"
+    )
+    with pytest.raises(bulk.InvalidDataError):
+        bulk.validate_official_release_url(spec, url, artifact=True)
+
+
+@pytest.mark.parametrize("url", (
+    "https://user@file.nalog.ru/opendata/7707329152-snr/data-20260925-structure-20230425.zip",
+    "https://file.nalog.ru:443/opendata/7707329152-snr/data-20260925-structure-20230425.zip",
+    "https://file.nalog.ru/opendata/7707329152-snr/data-20260925-structure-20230425.zip?download=1",
+    "https://file.nalog.ru/opendata/7707329152-snr/data-20260925-structure-20230425.zip?",
+    "https://file.nalog.ru/opendata/7707329152-snr/data-20260925-structure-20230425.zip#fragment",
+    "https://file.nalog.ru/opendata/7707329152-snr/data-20260925-structure-20230425.zip#",
+))
+def test_canonical_url_rejects_authority_query_and_fragment(url):
+    with pytest.raises(bulk.InvalidDataError):
+        bulk.validate_official_release_url(
+            fns_tax_regime._member_specs()["legal"], url, artifact=True
+        )
+
+
+@pytest.mark.parametrize("control", ("\r", "\n", "\t", "\x00", "\x7f"))
+def test_canonical_url_rejects_raw_controls_before_urlparse(control):
+    url = (
+        "https://file.nalog.ru/opendata/7707329152-snr/"
+        f"data-20260925-structure-20230425{control}.zip"
+    )
+    with pytest.raises(bulk.InvalidDataError):
+        bulk.validate_official_release_url(
+            fns_tax_regime._member_specs()["legal"], url, artifact=True
+        )

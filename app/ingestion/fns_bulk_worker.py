@@ -68,6 +68,68 @@ MULTIPART_RANGE_RETRY_BASE_SECONDS = 0.25
 _MULTIPART_ETAG = re.compile(
     r'^"?(?P<digest>[0-9a-fA-F]{32})-(?P<part_count>[1-9][0-9]*)"?$'
 )
+_VALID_PERCENT = re.compile(r"%(?:[0-9A-Fa-f]{2})")
+_ARTIFACT_NAME = re.compile(
+    r"data-\d{8}-structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.zip",
+    re.I,
+)
+_XSD_NAME = re.compile(
+    r"structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.xsd",
+    re.I,
+)
+
+
+def validate_official_release_url(
+    spec: "FnsBulkSourceSpec", url: str, *, artifact: bool
+) -> tuple[str, str]:
+    """Validate one official URL structurally before any download or RAW write."""
+
+    if any(ord(char) < 32 or ord(char) == 127 for char in url):
+        raise InvalidDataError("FNS release URL has a control character")
+    if "?" in url or "#" in url:
+        raise InvalidDataError("FNS release URL has a query or fragment delimiter")
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError as error:
+        raise InvalidDataError("FNS release URL has an invalid authority") from error
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in OFFICIAL_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise InvalidDataError("FNS release URL has an unapproved authority")
+    path = parsed.path
+    for _layer in range(4):
+        if any(ord(char) < 32 or ord(char) == 127 for char in path) or "\\" in path:
+            raise InvalidDataError("FNS release path has a control or backslash")
+        segments = path.split("/")
+        if (
+            len(segments) != 4
+            or segments[0] != ""
+            or segments[1] != "opendata"
+            or segments[2] != spec.source_path
+            or not segments[3]
+            or any(segment in {".", ".."} for segment in segments)
+        ):
+            raise InvalidDataError("FNS release path differs from exact dataset directory")
+        for index, char in enumerate(path):
+            if char == "%" and _VALID_PERCENT.match(path, index) is None:
+                raise InvalidDataError("FNS release path has malformed percent encoding")
+        if "%" not in path:
+            break
+        path = unquote(path)
+    else:
+        raise InvalidDataError("FNS release path has nested percent encoding")
+    filename = path.split("/")[3]
+    match = (_ARTIFACT_NAME if artifact else _XSD_NAME).fullmatch(filename)
+    if match is None:
+        raise InvalidDataError("FNS release filename does not match official structure")
+    return filename, match.group("version")
 
 
 @dataclass(frozen=True)
@@ -346,23 +408,13 @@ def discover_fns_release(
     )
     if not artifact_url or not xsd_url:
         raise SchemaMismatchError("official FNS passport has no current ZIP/XSD links")
-    artifact_name = Path(unquote(urlparse(artifact_url).path)).name
-    xsd_name = Path(unquote(urlparse(xsd_url).path)).name
-    artifact_structure = re.fullmatch(
-        r"data-\d{8}-structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.zip",
-        artifact_name,
-        flags=re.I,
+    _artifact_name, artifact_version = validate_official_release_url(
+        spec, artifact_url, artifact=True
     )
-    xsd_structure = re.fullmatch(
-        r"structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.xsd",
-        xsd_name,
-        flags=re.I,
+    _xsd_name, xsd_version = validate_official_release_url(
+        spec, xsd_url, artifact=False
     )
-    if (
-        artifact_structure is None
-        or xsd_structure is None
-        or artifact_structure.group("version") != xsd_structure.group("version")
-    ):
+    if artifact_version != xsd_version:
         raise SchemaMismatchError(
             "official FNS artifact and XSD structure versions differ"
         )
@@ -391,10 +443,6 @@ def discover_fns_release(
     )
     if source_updated_at is None:
         raise SchemaMismatchError("official FNS passport has no source update date")
-    for candidate in (artifact_url, xsd_url):
-        parsed = urlparse(candidate)
-        if parsed.scheme != "https" or parsed.hostname not in OFFICIAL_HOSTS:
-            raise InvalidDataError(f"official passport points to unapproved URL: {candidate}")
     return FnsRelease(
         source_page_url=spec.source_page_url,
         artifact_url=artifact_url,
@@ -722,34 +770,18 @@ def stage_release(
 ) -> tuple[Path, Path, dict[str, Any]]:
     """Download ZIP/XSD and persist checksum-addressed, write-once RAW."""
 
-    raw_root = raw_root.resolve()
-    raw_root.mkdir(parents=True, exist_ok=True)
     if release.source_page_url != spec.source_page_url:
         raise InvalidDataError("FNS source passport URL differs from source pin")
-    prefix = f"/opendata/{spec.source_path}/"
-    if any(
-        not urlparse(candidate).path.startswith(prefix)
-        for candidate in (release.artifact_url, release.xsd_url)
-    ):
-        raise InvalidDataError("FNS release path differs from source pin")
-    artifact_name = Path(unquote(urlparse(release.artifact_url).path)).name
-    xsd_name = Path(unquote(urlparse(release.xsd_url).path)).name
-    artifact_structure = re.fullmatch(
-        r"data-\d{8}-structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.zip",
-        artifact_name,
-        flags=re.I,
+    artifact_name, artifact_version = validate_official_release_url(
+        spec, release.artifact_url, artifact=True
     )
-    xsd_structure = re.fullmatch(
-        r"structure-(?P<version>[A-Za-z0-9][A-Za-z0-9._-]*)\.xsd",
-        xsd_name,
-        flags=re.I,
+    xsd_name, xsd_version = validate_official_release_url(
+        spec, release.xsd_url, artifact=False
     )
-    if (
-        artifact_structure is None
-        or xsd_structure is None
-        or artifact_structure.group("version") != xsd_structure.group("version")
-    ):
+    if artifact_version != xsd_version:
         raise InvalidDataError("FNS artifact and XSD structure versions differ")
+    raw_root = raw_root.resolve()
+    raw_root.mkdir(parents=True, exist_ok=True)
     zip_temp, zip_headers = _download_temp(release.artifact_url, raw_root)
     try:
         xsd_temp, xsd_headers = _download_temp(release.xsd_url, raw_root)
@@ -789,8 +821,8 @@ def stage_release(
 
     artifact_dir = raw_root / spec.source_id / zip_checksum
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = artifact_dir / Path(urlparse(release.artifact_url).path).name
-    xsd_path = artifact_dir / Path(urlparse(release.xsd_url).path).name
+    zip_path = artifact_dir / artifact_name
+    xsd_path = artifact_dir / xsd_name
     _persist_download(zip_temp, zip_path, checksum=zip_checksum)
     _persist_download(xsd_temp, xsd_path, checksum=xsd_checksum)
     manifest = {

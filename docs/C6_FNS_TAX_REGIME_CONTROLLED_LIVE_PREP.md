@@ -90,6 +90,17 @@ and `11ab9c913237851bd4dbc8d52e252513041869e5dc9e954a1337a81b6f461e8d`.
 - Company View now receives a canonical `tax.regime` fact; this makes changes
   structurally monitorable without a source-specific Monitoring engine.
 
+### Correction 1 — QA findings F-C6-134-01/02/03
+
+- The tax-regime service and Company View now share one family evaluator. It
+  requires the family and both mandatory members to be current and release
+  compatible. A failed sibling degrades either entity type.
+- Snapshot absence no longer proves a negative. Terminal
+  `CompanySourceCoverage` must identify the exact current generation, replay
+  pointer, checksum, release identity and source data date.
+- Discovery and staging use one canonical official URL validator before a
+  download or RAW directory is created.
+
 ### NOT VERIFIED by Mac preparation
 
 - Full artifact download, XML validation, normalization and PostgreSQL
@@ -159,18 +170,37 @@ member makes the family non-current.
 
 Product state is explicit:
 
-- `FOUND`: a current family/member and a matched snapshot;
-- `NOT_FOUND`: a current complete official snapshot proves the INN is absent;
-- `NOT_CHECKED`: no accepted family/member publication exists;
+- `FOUND`: all three family components are current and an applicable current
+  member snapshot positively matches the Company;
+- `NOT_FOUND`: all three components are current, no positive snapshot exists,
+  and successful terminal Company coverage proves absence in the accepted
+  frozen release;
+- `NOT_CHECKED`: family readiness or current Company coverage is unverified,
+  pending, running or tied to an older generation;
 - `SOURCE_UNAVAILABLE`: operational/source failure prevents a conclusion;
 - `PARSING_ERROR`: accepted semantic projection sees a parser/schema failure;
 - `STALE_DATA`: the official/currentness boundary expired;
 - `UNKNOWN`: reserved for an unresolved semantic condition, never converted to
   a clean negative.
 
-Absence from a local subset does not prove `NOT_FOUND`. The Worker publication
-is a complete official release projection and the service checks family/member
-freshness before exposing a negative.
+The accepted RAW can contain a Company absent from Master at initial
+publication. Before replay, its missing local snapshot is `NOT_CHECKED`. The
+existing Company Enrichment local bulk replay checks the accepted RAW; if the
+INN is present, it creates a snapshot and terminal `FOUND` coverage. A second
+replay writes zero new facts. A genuinely absent INN becomes `NOT_FOUND` only
+after successful terminal coverage. Advancing the accepted generation,
+pointer, checksum or release identity invalidates historical negatives.
+The compatibility check/Card retains `result=unavailable` for incomplete
+checks and carries `semantic_state` for `NOT_CHECKED`, `STALE_DATA`,
+`PARSING_ERROR` and `SOURCE_UNAVAILABLE`.
+
+The official ZIP/XSD authority must be HTTPS on the FNS allowlist, without
+credentials, port, query or fragment. Exactly three nonempty path segments
+follow the root: `opendata/{pinned-dataset}/{official-filename}`. Literal,
+encoded or nested traversal, encoded separators, backslashes, controls,
+duplicate slashes and malformed percent escapes stop discovery or staging
+before artifact download. A transient passport HTTP 403 fails preflight as
+source/network unavailable; source identity checks remain mandatory.
 
 The card may state the applicable official regimes. It must not infer low tax,
 tax avoidance or tax risk. Risk v3 and Summary v3 do not currently consume Tax
@@ -294,8 +324,16 @@ WHERE j.source_id = 'fns_tax_regime'
 ORDER BY r.started_at DESC LIMIT 3;
 
 SELECT source_id, generation, active_pointer, validation_metadata
-FROM worker_publication_states
+FROM worker_publication_state
 WHERE source_id = 'fns_tax_regime';
+
+SELECT c.company_id, c.source_id, c.status, c.execution_status,
+       c.publication_generation, c.source_data_date, c.replay_pointer,
+       c.replay_checksum, c.source_snapshot->>'release_identity' AS release_identity,
+       c.fact_count, c.checked_at
+FROM company_source_coverage c
+WHERE c.source_id = 'fns_tax_regime'
+ORDER BY c.company_id, c.updated_at DESC;
 
 SELECT code, enabled, operational_status, last_success_at, last_data_date,
        source_as_of, retrieved_at, published_at, record_count, coverage,
@@ -338,6 +376,9 @@ and verify zero additional rows. Do not re-download or edit RAW.
 Stop without publication on any of the following:
 
 - passport identifier/source-page mismatch;
+- canonical URL authority/path ambiguity, traversal or malformed encoding;
+- mandatory sibling unavailable, stale, parse-failed or release incompatible;
+- unproven Company negative, stale Company coverage or changed frozen release;
 - ZIP or XSD outside the pinned official dataset path;
 - artifact/XSD structure-version mismatch;
 - HTTP size, advertised checksum, immutable checksum or replay checksum

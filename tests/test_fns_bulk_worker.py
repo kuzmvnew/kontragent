@@ -124,7 +124,7 @@ def test_official_discovery_rejects_ambiguous_artifact_source_date():
       <td property="dc:provenance">Обновление набора</td>
     """.encode()
 
-    with pytest.raises(bulk.SchemaMismatchError, match="structure versions differ"):
+    with pytest.raises(bulk.InvalidDataError, match="filename does not match"):
         bulk.discover_fns_release(spec, now=NOW, fetch=lambda _url: (html, {}))
 
 

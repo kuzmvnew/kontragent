@@ -471,6 +471,7 @@ def test_tax_regime_snapshot_materializes_as_provenance_backed_semantic_fact():
                 "https://www.nalog.gov.ru/opendata/7707329152-snr/",
             ),
             ("fns_snr", "https://www.nalog.gov.ru/opendata/7707329152-snr/"),
+            ("fns_snrip", "https://www.nalog.gov.ru/opendata/7707329152-snrip/"),
         ):
             dataset = session.scalar(sa.select(DataSet).where(DataSet.code == code))
             if dataset is None:
@@ -500,6 +501,13 @@ def test_tax_regime_snapshot_materializes_as_provenance_backed_semantic_fact():
                 "xsd_sha256": "b" * 64,
             }
             datasets[code] = dataset
+        datasets["fns_tax_regime"].coverage = {
+            **datasets["fns_tax_regime"].coverage,
+            "members": {
+                "legal": {"release_identity": "fns_snr-release"},
+                "ip": {"release_identity": "fns_snrip-release"},
+            },
+        }
         company = Company(
             inn="7701234599",
             name="Tax regime semantic",
