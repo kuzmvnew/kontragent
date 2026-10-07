@@ -156,6 +156,32 @@ class WorkspaceFeedItem:
     read_at: datetime | None
 
 
+@dataclass(frozen=True)
+class MonitoringSubscriptionView:
+    subscription_id: UUID
+    company_id: int
+    company_name: str
+    inn: str
+    status: str
+    is_saved: bool
+    can_pause: bool
+    can_resume: bool
+    resume_denial_code: str | None
+    resume_denial_message: str | None
+    started_at: datetime
+    paused_at: datetime | None
+    last_checked_at: datetime | None
+    latest_event_at: datetime | None
+
+
+@dataclass(frozen=True)
+class MonitoringWorkspaceSummary:
+    active_count: int
+    paused_count: int
+    unread_event_count: int
+    total_event_count: int
+
+
 def _now(value: datetime | None = None) -> datetime:
     result = value or datetime.now(UTC)
     if result.tzinfo is None or result.utcoffset() is None:
@@ -1022,21 +1048,204 @@ def monitor_company_once(
     )
 
 
-def list_workspace_feed(
+def get_workspace_monitoring_summary(
     session: Session,
     *,
     user_id: UUID,
     workspace_id: UUID,
-    limit: int = 100,
-) -> tuple[WorkspaceFeedItem, ...]:
+) -> MonitoringWorkspaceSummary:
     authorize(
         session,
         user_id=user_id,
         workspace_id=workspace_id,
         permission_key="monitoring.manage",
     )
+    status_counts = dict(
+        session.execute(
+            sa.select(MonitoringSubscription.status, sa.func.count())
+            .where(MonitoringSubscription.workspace_id == workspace_id)
+            .group_by(MonitoringSubscription.status)
+        ).all()
+    )
+    unread_count, total_count = session.execute(
+        sa.select(
+            sa.func.count().filter(WorkspaceFeedEntry.read_at.is_(None)),
+            sa.func.count(),
+        ).where(WorkspaceFeedEntry.workspace_id == workspace_id)
+    ).one()
+    return MonitoringWorkspaceSummary(
+        active_count=int(status_counts.get("ACTIVE", 0)),
+        paused_count=int(status_counts.get("PAUSED", 0)),
+        unread_event_count=int(unread_count or 0),
+        total_event_count=int(total_count or 0),
+    )
+
+
+def _subscription_view_statement(workspace_id: UUID):
+    latest_events = (
+        sa.select(
+            WorkspaceFeedEntry.subscription_id.label("subscription_id"),
+            sa.func.max(MonitoringEvent.detected_at).label("latest_event_at"),
+        )
+        .join(MonitoringEvent, MonitoringEvent.id == WorkspaceFeedEntry.event_id)
+        .where(WorkspaceFeedEntry.workspace_id == workspace_id)
+        .group_by(WorkspaceFeedEntry.subscription_id)
+        .subquery()
+    )
+    return (
+        sa.select(
+            MonitoringSubscription,
+            Company,
+            latest_events.c.latest_event_at,
+            SavedCompany.id.label("saved_company_id"),
+        )
+        .join(Company, Company.id == MonitoringSubscription.company_id)
+        .outerjoin(
+            SavedCompany,
+            sa.and_(
+                SavedCompany.workspace_id == MonitoringSubscription.workspace_id,
+                SavedCompany.company_id == MonitoringSubscription.company_id,
+            ),
+        )
+        .outerjoin(
+            latest_events,
+            latest_events.c.subscription_id == MonitoringSubscription.id,
+        )
+        .where(MonitoringSubscription.workspace_id == workspace_id)
+    )
+
+
+def _subscription_action_contract(
+    *, status: str, is_saved: bool
+) -> tuple[bool, bool, str | None, str | None]:
+    if status == "ACTIVE":
+        return True, False, None, None
+    if status == "PAUSED" and is_saved:
+        return False, True, None, None
+    if status == "PAUSED":
+        return (
+            False,
+            False,
+            "saved_company_required",
+            "Для возобновления мониторинга сначала снова сохраните компанию.",
+        )
+    return False, False, None, None
+
+
+def _subscription_view(row) -> MonitoringSubscriptionView:
+    subscription, company, latest_event_at, saved_company_id = row
+    is_saved = saved_company_id is not None
+    can_pause, can_resume, denial_code, denial_message = (
+        _subscription_action_contract(status=subscription.status, is_saved=is_saved)
+    )
+    return MonitoringSubscriptionView(
+        subscription_id=subscription.id,
+        company_id=company.id,
+        company_name=company.short_name or company.name,
+        inn=company.inn,
+        status=subscription.status,
+        is_saved=is_saved,
+        can_pause=can_pause,
+        can_resume=can_resume,
+        resume_denial_code=denial_code,
+        resume_denial_message=denial_message,
+        started_at=subscription.started_at,
+        paused_at=subscription.paused_at,
+        last_checked_at=subscription.last_checked_at,
+        latest_event_at=latest_event_at,
+    )
+
+
+def list_workspace_subscriptions(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    limit: int = 100,
+) -> tuple[MonitoringSubscriptionView, ...]:
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="monitoring.manage",
+    )
+    return _list_workspace_subscriptions(
+        session,
+        workspace_id=workspace_id,
+        limit=limit,
+    )
+
+
+def _list_workspace_subscriptions(
+    session: Session,
+    *,
+    workspace_id: UUID,
+    limit: int,
+) -> tuple[MonitoringSubscriptionView, ...]:
     bounded_limit = max(1, min(int(limit), 200))
     rows = session.execute(
+        _subscription_view_statement(workspace_id)
+        .order_by(
+            sa.case((MonitoringSubscription.status == "ACTIVE", 0), else_=1),
+            MonitoringSubscription.updated_at.desc(),
+            MonitoringSubscription.id,
+        )
+        .limit(bounded_limit)
+    ).all()
+    return tuple(_subscription_view(row) for row in rows)
+
+
+def get_workspace_subscription(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    subscription_id: UUID,
+) -> MonitoringSubscriptionView:
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="monitoring.manage",
+    )
+    row = session.execute(
+        _subscription_view_statement(workspace_id).where(
+            MonitoringSubscription.id == subscription_id
+        )
+    ).one_or_none()
+    if row is None:
+        raise ActionDenied(
+            "monitoring_subscription_not_found",
+            "Подписка мониторинга не найдена.",
+            status_code=404,
+        )
+    return _subscription_view(row)
+
+
+def _workspace_feed_items(
+    session: Session,
+    *,
+    workspace_id: UUID,
+    limit: int,
+    read_state: str,
+    severity: str | None,
+) -> tuple[WorkspaceFeedItem, ...]:
+    normalized_read_state = str(read_state or "all").strip().lower()
+    if normalized_read_state not in {"all", "unread", "read"}:
+        raise ActionDenied(
+            "monitoring_filter_invalid",
+            "Неизвестный фильтр состояния ленты.",
+            status_code=400,
+        )
+    normalized_severity = str(severity or "").strip().upper() or None
+    if normalized_severity not in {None, "INFO", "LOW", "MEDIUM", "HIGH"}:
+        raise ActionDenied(
+            "monitoring_filter_invalid",
+            "Неизвестный фильтр важности события.",
+            status_code=400,
+        )
+    bounded_limit = max(1, min(int(limit), 200))
+    statement = (
         sa.select(WorkspaceFeedEntry, MonitoringEvent, Company)
         .join(MonitoringEvent, MonitoringEvent.id == WorkspaceFeedEntry.event_id)
         .join(Company, Company.id == MonitoringEvent.company_id)
@@ -1047,7 +1256,14 @@ def list_workspace_feed(
             WorkspaceFeedEntry.id.desc(),
         )
         .limit(bounded_limit)
-    ).all()
+    )
+    if normalized_read_state == "unread":
+        statement = statement.where(WorkspaceFeedEntry.read_at.is_(None))
+    elif normalized_read_state == "read":
+        statement = statement.where(WorkspaceFeedEntry.read_at.is_not(None))
+    if normalized_severity is not None:
+        statement = statement.where(MonitoringEvent.severity == normalized_severity)
+    rows = session.execute(statement).all()
     return tuple(
         WorkspaceFeedItem(
             entry_id=entry.id,
@@ -1071,6 +1287,52 @@ def list_workspace_feed(
             read_at=entry.read_at,
         )
         for entry, event_row, company in rows
+    )
+
+
+def list_workspace_feed(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    limit: int = 100,
+    read_state: str = "all",
+    severity: str | None = None,
+) -> tuple[WorkspaceFeedItem, ...]:
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="monitoring.manage",
+    )
+    return _workspace_feed_items(
+        session,
+        workspace_id=workspace_id,
+        limit=limit,
+        read_state=read_state,
+        severity=severity,
+    )
+
+
+def list_workspace_recent_feed(
+    session: Session,
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    limit: int = 5,
+) -> tuple[WorkspaceFeedItem, ...]:
+    authorize(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        permission_key="monitoring.manage",
+    )
+    return _workspace_feed_items(
+        session,
+        workspace_id=workspace_id,
+        limit=max(1, min(int(limit), 10)),
+        read_state="all",
+        severity=None,
     )
 
 

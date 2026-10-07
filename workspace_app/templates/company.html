@@ -21,10 +21,10 @@
   <div class="actions">
     {% if actions.is_saved %}
       <span class="saved-badge">Сохранено</span>
-      <form action="/app/companies/{{ company.inn }}/unsave" method="post">
+      {% if actions.can_unsave %}<form action="/app/companies/{{ company.inn }}/unsave" method="post">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit" class="secondary">Удалить из сохранённых</button>
-      </form>
+      </form>{% else %}<p class="blocked action-reason">{{ actions.unsave_denial_message }}</p>{% endif %}
     {% elif actions.can_save %}
       <form action="/app/companies/{{ company.inn }}/save" method="post">
         <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -36,6 +36,7 @@
     <a class="button secondary" href="{{ public_origin or '' }}/companies/{{ company.inn }}">Публичная карточка</a>
   </div>
   {% if actions.saved_limit is not none %}<p class="hint">Сохранено {{ actions.saved_used }} из {{ actions.saved_limit }} доступных компаний.</p>{% endif %}
+  {% if actions.is_saved %}<div class="saved-note-card"><strong>Заметка Workspace</strong><p>{{ actions.saved_note or 'Заметка пока не добавлена.' }}</p><a href="/app/saved">{{ 'Редактировать заметку' if actions.saved_note else 'Добавить заметку' }}</a></div>{% endif %}
 </section>
 
 <section class="summary">
@@ -92,7 +93,10 @@
 {% if actions.is_saved %}
 <section class="monitoring-preview" data-monitoring-state="{{ actions.monitoring.state }}">
   <div><p class="eyebrow">Monitoring</p><h2>Мониторинг изменений</h2><p>{{ actions.monitoring.message }}</p></div>
-  {% if actions.monitoring.entry_enabled %}<a class="button secondary" href="/app/companies/{{ company.inn }}/monitoring">Открыть статус мониторинга</a>{% endif %}
+  <div class="monitoring-actions">
+    {% if actions.monitoring.entry_enabled %}<a class="button secondary" href="/app/companies/{{ company.inn }}/monitoring">Открыть статус мониторинга</a>{% endif %}
+    {% if actions.monitoring.can_manage and actions.monitoring.state == 'ACTIVE' %}<form action="/app/companies/{{ company.inn }}/monitoring/pause" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/companies/{{ company.inn }}"><button type="submit" class="secondary">Приостановить</button></form>{% elif actions.monitoring.can_manage and actions.monitoring.state == 'PAUSED' %}<form action="/app/companies/{{ company.inn }}/monitoring/resume" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/companies/{{ company.inn }}"><button type="submit">Возобновить</button></form>{% endif %}
+  </div>
   <span class="state-badge">{{ actions.monitoring.state }}</span>
 </section>
 {% endif %}

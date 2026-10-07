@@ -4,14 +4,54 @@
 <section>
   <p class="eyebrow">Workspace</p>
   <h1>{{ workspace.name }}</h1>
-  <p class="workspace-lead">Активное рабочее пространство для {{ principal.email }} · роль {{ role.name }}</p>
-  <div class="home-grid">
-    <div class="metric"><span>Сохранено компаний</span><strong>{{ saved_count }}</strong></div>
-    <div class="metric"><span>Рабочий контекст</span><strong>{{ role.role_key }}</strong></div>
+  <p class="workspace-lead">Рабочий кабинет для {{ principal.email }} · роль {{ role.name }}</p>
+
+  <form action="/app/search" method="get" class="search-form dashboard-search">
+    <label class="sr-only" for="dashboard-q">Название или ИНН</label>
+    <input id="dashboard-q" name="q" maxlength="160" placeholder="Быстрый поиск по названию или ИНН">
+    <button type="submit">Найти компанию</button>
+  </form>
+
+  <div class="metrics-grid" aria-label="Показатели Workspace">
+    <a class="metric" href="/app/saved"><span>Сохранено компаний</span><strong>{{ dashboard.metrics.saved_companies_count }}</strong></a>
+    <a class="metric" href="/app/saved"><span>Лимит сохранённых</span><strong>{{ dashboard.metrics.saved_companies_limit if dashboard.metrics.saved_companies_limit is not none else '∞' }}</strong></a>
+    <a class="metric" href="/app/saved"><span>Осталось мест</span><strong>{{ dashboard.metrics.saved_companies_remaining if dashboard.metrics.saved_companies_remaining is not none else '∞' }}</strong></a>
+    <a class="metric" href="/app/monitoring"><span>Активный мониторинг</span><strong>{{ dashboard.metrics.active_monitoring_count }}</strong></a>
+    <a class="metric" href="/app/monitoring"><span>Приостановлено</span><strong>{{ dashboard.metrics.paused_monitoring_count }}</strong></a>
+    <a class="metric" href="/app/monitoring?state=unread"><span>Непрочитанные события</span><strong>{{ dashboard.metrics.unread_monitoring_event_count }}</strong></a>
   </div>
-  <div class="actions">
-    <a class="button" href="/app/search">Найти компанию</a>
-    <a class="button secondary" href="/app/saved">Открыть сохранённые</a>
-  </div>
+  {% if not dashboard.quota.enabled %}<p class="blocked">Сохранение компаний сейчас не подключено для этого Workspace.</p>{% endif %}
 </section>
+
+<div class="dashboard-columns">
+  <section class="dashboard-panel">
+    <div class="section-heading"><div><p class="eyebrow">Недавние</p><h2>Сохранённые компании</h2></div><a href="/app/saved">Все сохранённые</a></div>
+    {% if dashboard.recent_saved %}
+      <div class="compact-list">
+      {% for item in dashboard.recent_saved %}
+        <a class="compact-row" href="/app/companies/{{ item.inn }}"><span><strong>{{ item.name }}</strong><small>ИНН {{ item.inn }}</small></span><span class="state-badge">{{ item.monitoring_state }}</span></a>
+      {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state compact"><h3>Нет сохранённых компаний</h3><p>Начните с поиска контрагента.</p><a class="button" href="/app/search">Найти компанию</a></div>
+    {% endif %}
+  </section>
+
+  <section class="dashboard-panel">
+    <div class="section-heading"><div><p class="eyebrow">Monitoring</p><h2>Последние события</h2></div><a href="/app/monitoring">Весь мониторинг</a></div>
+    {% if dashboard.recent_events %}
+      <div class="compact-list">
+      {% for item in dashboard.recent_events %}
+        <a class="compact-row" href="/app/companies/{{ item.inn }}"><span><strong>{{ item.title }}</strong><small>{{ item.company_name }} · {{ item.detected_at.strftime('%d.%m.%Y %H:%M') }}</small></span><span class="{{ 'saved-badge' if item.read_at else 'state-badge unread-badge' }}">{{ 'Прочитано' if item.read_at else 'Новое' }}</span></a>
+      {% endfor %}
+      </div>
+    {% elif not dashboard.monitoring_available %}
+      <div class="empty-state compact"><h3>{{ 'Мониторинг не подключён' if dashboard.monitoring_denial == 'entitlement_blocked' else 'Мониторинг недоступен' }}</h3><p>{{ 'Функция не включена для этого Workspace.' if dashboard.monitoring_denial == 'entitlement_blocked' else 'У вашей роли нет права просматривать события мониторинга.' }}</p><a class="button secondary" href="/app/saved">Открыть сохранённые</a></div>
+    {% elif dashboard.metrics.active_monitoring_count or dashboard.metrics.paused_monitoring_count %}
+      <div class="empty-state compact"><h3>Событий пока нет</h3><p>Исходные состояния созданы; новые изменения появятся после проверки.</p><a class="button secondary" href="/app/monitoring">Открыть мониторинг</a></div>
+    {% else %}
+      <div class="empty-state compact"><h3>Мониторинг не настроен</h3><p>Сохраните компанию и включите отслеживание изменений.</p><a class="button secondary" href="/app/saved">Открыть сохранённые</a></div>
+    {% endif %}
+  </section>
+</div>
 {% endblock %}

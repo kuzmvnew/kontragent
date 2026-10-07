@@ -4,17 +4,39 @@
 <section>
   <p class="eyebrow">Workspace</p>
   <h1>Сохранённые компании</h1>
+  {% if notice == 'note_updated' %}<div class="notice success" role="status">Заметка сохранена.</div>{% elif notice == 'note_cleared' %}<div class="notice" role="status">Заметка очищена.</div>{% endif %}
+  <form action="/app/saved" method="get" class="search-form saved-filter">
+    <label class="sr-only" for="saved-q">Название или ИНН</label>
+    <input id="saved-q" name="q" value="{{ query }}" maxlength="160" placeholder="Фильтр по названию или ИНН">
+    <button type="submit">Найти</button>
+    {% if query %}<a class="button secondary" href="/app/saved">Сбросить</a>{% endif %}
+  </form>
   <div class="list">
   {% for item in entries %}
     <article class="saved-row">
-      <div><strong>{{ item.name }}</strong><span>ИНН {{ item.inn }} · добавлено {{ item.created_at.strftime('%d.%m.%Y') }}</span>{% if item.note %}<small>{{ item.note }}</small>{% endif %}</div>
+      <div>
+        <div class="saved-title"><strong>{{ item.name }}</strong><span class="state-badge">{{ item.monitoring_state }}</span></div>
+        <span>ИНН {{ item.inn }} · добавлено {{ item.created_at.strftime('%d.%m.%Y') }}</span>
+        {% if item.note %}<p class="saved-note">{{ item.note }}</p>{% endif %}
+        {% if can_edit_note %}<details class="note-editor">
+          <summary>{{ 'Редактировать заметку' if item.note else 'Добавить заметку' }}</summary>
+          <form action="/app/saved/{{ item.saved_company_id }}/note" method="post" class="stack compact-form">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <label for="note-{{ item.saved_company_id }}">Заметка</label>
+            <textarea id="note-{{ item.saved_company_id }}" name="note" maxlength="2000" rows="3" placeholder="Контекст работы с контрагентом">{{ item.note or '' }}</textarea>
+            <button type="submit">Сохранить заметку</button>
+          </form>
+          {% if item.note %}<form action="/app/saved/{{ item.saved_company_id }}/note" method="post" class="clear-note-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="note" value=""><button type="submit" class="danger-secondary">Очистить заметку</button></form>{% endif %}
+        </details>{% endif %}
+      </div>
       <div class="saved-actions">
         <a class="button secondary" href="/app/companies/{{ item.inn }}">Открыть карточку</a>
-        {% if can_unsave %}<form action="/app/companies/{{ item.inn }}/unsave" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/saved"><button type="submit" class="danger-secondary">Удалить</button></form>{% endif %}
+        <a class="button secondary" href="/app/companies/{{ item.inn }}/monitoring">Мониторинг</a>
+        {% if can_unsave and item.monitoring_state != 'ACTIVE' %}<form action="/app/companies/{{ item.inn }}/unsave" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/app/saved"><button type="submit" class="danger-secondary">Удалить</button></form>{% elif item.monitoring_state == 'ACTIVE' %}<p class="blocked action-reason">Чтобы удалить, сначала приостановите мониторинг.</p>{% endif %}
       </div>
     </article>
   {% else %}
-    <div class="empty-state"><h2>Пока нет сохранённых компаний</h2><p>Найдите компанию и сохраните её карточку в этом Workspace.</p><a class="button" href="/app/search">Перейти к поиску</a></div>
+    {% if query %}<div class="empty-state"><h2>Ничего не найдено</h2><p>В сохранённых компаниях нет совпадений по запросу «{{ query }}».</p><a class="button secondary" href="/app/saved">Показать все</a></div>{% else %}<div class="empty-state"><h2>Пока нет сохранённых компаний</h2><p>Найдите компанию и сохраните её карточку в этом Workspace.</p><a class="button" href="/app/search">Перейти к поиску</a></div>{% endif %}
   {% endfor %}
   </div>
 </section>

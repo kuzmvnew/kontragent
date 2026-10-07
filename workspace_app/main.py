@@ -35,24 +35,27 @@ from workspace_app.auth import (
     set_active_workspace,
     verify_session_csrf,
 )
+from workspace_app.dashboard_service import get_workspace_dashboard
 from workspace_app.service import (
     ActionDenied,
     authenticate_customer_attempt,
     authorize,
     action_state,
-    is_saved,
     list_active_workspaces,
     record_login_audit,
     record_logout_audit,
     record_workspace_selection_audit,
     saved_companies,
+    saved_company_for_inn,
     saved_count,
     save_company,
     unsave_company,
+    update_saved_company_note,
 )
 from workspace_app.monitoring_service import (
     get_monitoring_state,
     list_workspace_feed,
+    list_workspace_subscriptions,
     mark_feed_entry_read,
     pause_subscription,
     resume_subscription,
@@ -61,8 +64,27 @@ from workspace_app.monitoring_service import (
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _active_nav(path: str) -> str:
+    if path == "/app":
+        return "home"
+    if path == "/app/saved" or path.startswith("/app/saved/"):
+        return "saved"
+    if path == "/app/monitoring" or (
+        path.startswith("/app/companies/") and "/monitoring" in path
+    ):
+        return "monitoring"
+    if path == "/app/search" or path.startswith("/app/companies/"):
+        return "search"
+    return ""
+
+
 def _shared_template_context(request: Request) -> dict:
-    return {"public_origin": request.app.state.public_origin}
+    return {
+        "public_origin": request.app.state.public_origin,
+        "active_nav": _active_nav(request.url.path),
+    }
 
 
 templates = Jinja2Templates(
@@ -258,12 +280,13 @@ def _card_context(session, principal, projection) -> dict:
         workspace_id=workspace_id,
         permission_key="company.view",
     )
-    saved = is_saved(
+    saved_entry = saved_company_for_inn(
         session,
         user_id=principal.user_id,
         workspace_id=workspace_id,
         inn=projection.company.inn,
     )
+    saved = saved_entry is not None
     can_save, denial, limit_value = action_state(
         session,
         user_id=principal.user_id,
@@ -294,14 +317,32 @@ def _card_context(session, principal, projection) -> dict:
     )
     monitoring = _monitoring_payload(state)
     monitoring["entry_enabled"] = saved
+    can_unsave, unsave_denial, _unsave_limit = action_state(
+        session,
+        user_id=principal.user_id,
+        workspace_id=workspace_id,
+        permission_key="company.unsave",
+    )
+    if state.state == "ACTIVE":
+        can_unsave = False
+        unsave_denial = "monitoring_active"
+    unsave_denial_message = {
+        "permission_denied": "У вашей роли нет права удалять сохранённые компании.",
+        "entitlement_blocked": "Сохранённые компании не подключены для этого Workspace.",
+        "monitoring_active": "Сначала приостановите мониторинг компании.",
+    }.get(unsave_denial, "Удаление из сохранённых недоступно.")
     return {
         "is_saved": saved,
+        "saved_note": saved_entry.note if saved_entry is not None else None,
         "can_save": can_save and (remaining is None or remaining > 0 or saved),
         "save_denial_reason": effective_save_denial,
         "save_denial_message": save_denial_message,
         "saved_limit": limit_value,
         "saved_used": used,
         "saved_remaining": remaining,
+        "can_unsave": can_unsave,
+        "unsave_denial_reason": unsave_denial,
+        "unsave_denial_message": unsave_denial_message,
         "monitoring": monitoring,
     }
 
@@ -336,6 +377,77 @@ def _feed_payload(item) -> dict:
         "source_code": item.source_code,
         "evidence_refs": list(item.evidence_refs),
         "read_at": item.read_at.isoformat() if item.read_at else None,
+    }
+
+
+def _saved_payload(item) -> dict:
+    return {
+        "id": str(item.saved_company_id),
+        "inn": item.inn,
+        "name": item.name,
+        "note": item.note,
+        "created_at": item.created_at.isoformat(),
+        "monitoring": {
+            "state": item.monitoring_state,
+            "subscription_id": (
+                str(item.monitoring_subscription_id)
+                if item.monitoring_subscription_id
+                else None
+            ),
+            "last_checked_at": (
+                item.monitoring_last_checked_at.isoformat()
+                if item.monitoring_last_checked_at
+                else None
+            ),
+        },
+    }
+
+
+def _subscription_payload(item) -> dict:
+    return {
+        "id": str(item.subscription_id),
+        "company": {"inn": item.inn, "name": item.company_name},
+        "status": item.status,
+        "is_saved": item.is_saved,
+        "can_pause": item.can_pause,
+        "can_resume": item.can_resume,
+        "resume_denial_code": item.resume_denial_code,
+        "resume_denial_message": item.resume_denial_message,
+        "started_at": item.started_at.isoformat(),
+        "paused_at": item.paused_at.isoformat() if item.paused_at else None,
+        "last_checked_at": (
+            item.last_checked_at.isoformat() if item.last_checked_at else None
+        ),
+        "latest_event_at": (
+            item.latest_event_at.isoformat() if item.latest_event_at else None
+        ),
+    }
+
+
+def _dashboard_payload(dashboard) -> dict:
+    metrics = dashboard.metrics
+    return {
+        "metrics": {
+            "saved_companies_count": metrics.saved_companies_count,
+            "saved_companies_limit": metrics.saved_companies_limit,
+            "saved_companies_remaining": metrics.saved_companies_remaining,
+            "active_monitoring_count": metrics.active_monitoring_count,
+            "paused_monitoring_count": metrics.paused_monitoring_count,
+            "unread_monitoring_event_count": metrics.unread_monitoring_event_count,
+            "total_monitoring_event_count": metrics.total_monitoring_event_count,
+        },
+        "quota": {
+            "enabled": dashboard.quota.enabled,
+            "used": dashboard.quota.used,
+            "limit": dashboard.quota.limit,
+            "remaining": dashboard.quota.remaining,
+        },
+        "monitoring_access": {
+            "available": dashboard.monitoring_available,
+            "denial": dashboard.monitoring_denial,
+        },
+        "recent_saved": [_saved_payload(item) for item in dashboard.recent_saved],
+        "recent_events": [_feed_payload(item) for item in dashboard.recent_events],
     }
 
 
@@ -706,8 +818,7 @@ def create_app(
                 principal, context = _require_active_workspace(
                     request, session, permission="workspace.view"
                 )
-                workspace = session.get(Workspace, context.workspace_id)
-                count = saved_count(
+                dashboard = get_workspace_dashboard(
                     session,
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
@@ -726,7 +837,7 @@ def create_app(
                 "principal": principal,
                 "workspace": workspace,
                 "role": role,
-                "saved_count": count,
+                "dashboard": dashboard,
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
             },
         )
@@ -864,7 +975,8 @@ def create_app(
         )
 
     @app.get("/app/saved", response_class=HTMLResponse)
-    def saved(request: Request):
+    def saved(request: Request, q: str = "", notice: str = ""):
+        query = " ".join(str(q or "").split())[:160]
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
@@ -874,6 +986,7 @@ def create_app(
                     session,
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
+                    query=query,
                 )
                 workspace, role = _workspace_shell(session, context)
                 can_unsave, _unsave_denial, _unsave_limit = action_state(
@@ -881,6 +994,12 @@ def create_app(
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
                     permission_key="company.unsave",
+                )
+                can_edit_note, _note_denial, _note_limit = action_state(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    permission_key="company.save",
                 )
             except ActionDenied as exc:
                 if exc.code == "authentication_required":
@@ -899,10 +1018,41 @@ def create_app(
                 "workspace": workspace,
                 "role": role,
                 "entries": entries,
+                "query": query,
+                "notice": notice if notice in {"note_updated", "note_cleared"} else "",
                 "can_unsave": can_unsave,
+                "can_edit_note": can_edit_note,
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
             },
         )
+
+    @app.post("/app/saved/{saved_company_id}/note")
+    async def saved_note_form(request: Request, saved_company_id: UUID):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request,
+                    session,
+                    principal,
+                    str(form.get("csrf") or ""),
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                entry, _changed = update_saved_company_note(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    saved_company_id=saved_company_id,
+                    note=str(form.get("note") or ""),
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        notice = "note_updated" if entry.note else "note_cleared"
+        return RedirectResponse(f"/app/saved?notice={notice}", status_code=303)
 
     @app.get("/app/companies/{inn}/monitoring", response_class=HTMLResponse)
     def monitoring_entry(request: Request, inn: str):
@@ -974,22 +1124,53 @@ def create_app(
                 session.rollback()
                 return _html_error(request, exc)
         return RedirectResponse(
-            f"/app/companies/{inn}/monitoring",
+            safe_return_to(
+                str(form.get("return_to") or ""),
+                default=f"/app/companies/{inn}/monitoring",
+            ),
             status_code=303,
         )
 
     @app.get("/app/monitoring", response_class=HTMLResponse)
-    def monitoring_feed_page(request: Request):
+    def monitoring_feed_page(
+        request: Request,
+        state: str = "all",
+        severity: str = "",
+    ):
+        read_state = str(state or "all").strip().lower()
+        severity_filter = str(severity or "").strip().upper()
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
-                    request, session, permission="monitoring.manage"
+                    request, session, permission="workspace.view"
                 )
-                entries = list_workspace_feed(
+                can_manage_monitoring, monitoring_denial, _monitoring_limit = action_state(
                     session,
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
+                    permission_key="monitoring.manage",
                 )
+                if monitoring_denial == "permission_denied":
+                    raise ActionDenied(
+                        "permission_denied",
+                        "Недостаточно прав для просмотра мониторинга.",
+                    )
+                if can_manage_monitoring:
+                    entries = list_workspace_feed(
+                        session,
+                        user_id=principal.user_id,
+                        workspace_id=context.workspace_id,
+                        read_state=read_state,
+                        severity=severity_filter or None,
+                    )
+                    subscriptions = list_workspace_subscriptions(
+                        session,
+                        user_id=principal.user_id,
+                        workspace_id=context.workspace_id,
+                    )
+                else:
+                    entries = ()
+                    subscriptions = ()
                 workspace, role = _workspace_shell(session, context)
             except ActionDenied as exc:
                 if exc.code == "authentication_required":
@@ -1008,7 +1189,12 @@ def create_app(
                 "principal": principal,
                 "workspace": workspace,
                 "role": role,
+                "subscriptions": subscriptions,
                 "entries": entries,
+                "read_state": read_state,
+                "severity_filter": severity_filter,
+                "can_manage_monitoring": can_manage_monitoring,
+                "monitoring_denial": monitoring_denial,
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
             },
         )
@@ -1032,7 +1218,13 @@ def create_app(
             except ActionDenied as exc:
                 session.rollback()
                 return _html_error(request, exc)
-        return RedirectResponse("/app/monitoring", status_code=303)
+        return RedirectResponse(
+            safe_return_to(
+                str(form.get("return_to") or ""),
+                default="/app/monitoring",
+            ),
+            status_code=303,
+        )
 
     @app.get("/app/api/companies/{inn}/monitoring")
     def api_monitoring_state(request: Request, inn: str):
@@ -1090,7 +1282,11 @@ def create_app(
         )
 
     @app.get("/app/api/monitoring")
-    def api_monitoring_feed(request: Request):
+    def api_monitoring_feed(
+        request: Request,
+        state: str = "all",
+        severity: str = "",
+    ):
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
@@ -1100,10 +1296,28 @@ def create_app(
                     session,
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
+                    read_state=state,
+                    severity=severity or None,
+                )
+                subscriptions = list_workspace_subscriptions(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
                 )
             except ActionDenied as exc:
                 return JSONResponse(_error_payload(exc), status_code=exc.status_code)
-        return JSONResponse({"items": [_feed_payload(item) for item in entries]})
+        return JSONResponse(
+            {
+                "subscriptions": [
+                    _subscription_payload(item) for item in subscriptions
+                ],
+                "items": [_feed_payload(item) for item in entries],
+                "filters": {
+                    "state": str(state or "all").lower(),
+                    "severity": str(severity or "").upper() or None,
+                },
+            }
+        )
 
     @app.post("/app/api/monitoring/feed/{entry_id}/read")
     def api_monitoring_feed_read(request: Request, entry_id: UUID):
@@ -1156,6 +1370,24 @@ def create_app(
             }
         )
 
+    @app.get("/app/api/dashboard")
+    def api_dashboard(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request,
+                    session,
+                    permission="workspace.view",
+                )
+                dashboard = get_workspace_dashboard(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(_dashboard_payload(dashboard))
+
     @app.get("/app/api/csrf")
     def api_csrf(request: Request):
         with _session_factory(request)() as session:
@@ -1191,7 +1423,7 @@ def create_app(
         return response
 
     @app.get("/app/api/saved-companies")
-    def api_saved_companies(request: Request):
+    def api_saved_companies(request: Request, q: str = ""):
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
@@ -1203,22 +1435,54 @@ def create_app(
                     session,
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
+                    query=q,
                 )
             except ActionDenied as exc:
                 return JSONResponse(_error_payload(exc), status_code=exc.status_code)
-        return JSONResponse(
-            {
-                "items": [
-                    {
-                        "inn": item.inn,
-                        "name": item.name,
-                        "note": item.note,
-                        "created_at": item.created_at.isoformat(),
-                    }
-                    for item in entries
-                ]
-            }
-        )
+        return JSONResponse({"items": [_saved_payload(item) for item in entries]})
+
+    @app.patch("/app/api/saved-companies/{saved_company_id}/note")
+    async def api_saved_company_note(request: Request, saved_company_id: UUID):
+        try:
+            payload = await request.json()
+        except (ValueError, TypeError):
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "Invalid JSON body"}},
+                status_code=400,
+            )
+        if not isinstance(payload, dict) or "note" not in payload:
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "note is required"}},
+                status_code=400,
+            )
+        if payload["note"] is not None and not isinstance(payload["note"], str):
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "note must be a string or null"}},
+                status_code=422,
+            )
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request,
+                    session,
+                    principal,
+                    request.headers.get("x-csrf-token"),
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Select a workspace.")
+                entry, changed = update_saved_company_note(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    saved_company_id=saved_company_id,
+                    note=payload["note"],
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"changed": changed, "item": _saved_payload(entry)})
 
     @app.post("/app/api/companies/{inn}/saved")
     def api_save_company(request: Request, inn: str):
@@ -1297,7 +1561,7 @@ def create_app(
         return JSONResponse(payload)
 
     @app.get("/api/app/saved")
-    def saved_api(request: Request):
+    def saved_api(request: Request, q: str = ""):
         with _session_factory(request)() as session:
             try:
                 principal, context = _require_active_workspace(
@@ -1307,22 +1571,11 @@ def create_app(
                     session,
                     user_id=principal.user_id,
                     workspace_id=context.workspace_id,
+                    query=q,
                 )
             except ActionDenied as exc:
                 return JSONResponse(_error_payload(exc), status_code=exc.status_code)
-        return JSONResponse(
-            {
-                "items": [
-                    {
-                        "inn": item.inn,
-                        "name": item.name,
-                        "note": item.note,
-                        "created_at": item.created_at.isoformat(),
-                    }
-                    for item in entries
-                ]
-            }
-        )
+        return JSONResponse({"items": [_saved_payload(item) for item in entries]})
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
