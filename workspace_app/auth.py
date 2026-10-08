@@ -22,6 +22,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.models.workspace import CustomerSession, CustomerUser, Workspace, WorkspaceMembership
+from workspace_app.text_validation import has_forbidden_text_character
 
 
 SESSION_COOKIE = "nextcompany_session"
@@ -57,7 +58,10 @@ def _b64decode(value: str) -> bytes:
 
 
 def normalize_email(value: str) -> str:
-    email = " ".join(str(value or "").strip().split()).casefold()
+    raw = str(value or "")
+    if has_forbidden_text_character(raw):
+        raise ValueError("invalid email")
+    email = " ".join(raw.strip().split()).casefold()
     if len(email) > 320 or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) is None:
         raise ValueError("invalid email")
     return email

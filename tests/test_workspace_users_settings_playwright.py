@@ -8,7 +8,7 @@ from playwright.sync_api import expect, sync_playwright
 from sqlalchemy.orm import Session
 
 from app.database.postgres import SessionLocal, engine
-from app.models.workspace import CustomerUser, WorkspaceMembership, WorkspaceRole
+from app.models.workspace import CustomerUser, Workspace, WorkspaceMembership, WorkspaceRole
 from tests.test_workspace_users_settings import (
     EmptyPublicRepository,
     PASSWORD,
@@ -87,6 +87,13 @@ def test_browser_invite_role_change_accept_and_settings_usage():
             expect(invited_page.locator(".workspace-context")).to_contain_text("Администратор")
 
             invited_page.get_by_role("link", name="Настройки", exact=True).click()
+            invited_page.get_by_label("Название Workspace").fill("bad\u200bname")
+            invited_page.get_by_role("button", name="Сохранить название").click()
+            expect(invited_page.get_by_role("heading", name="Действие недоступно")).to_be_visible()
+            expect(invited_page.get_by_text("Название содержит недопустимые символы.")).to_be_visible()
+            with Session(engine) as session:
+                assert session.get(Workspace, workspace_id).name == "Browser Users"
+            invited_page.goto(f"{workspace.url}/app/settings")
             invited_page.get_by_label("Название Workspace").fill("Renamed in Chromium")
             invited_page.get_by_role("button", name="Сохранить название").click()
             expect(invited_page.locator(".workspace-context")).to_contain_text(

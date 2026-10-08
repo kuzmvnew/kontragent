@@ -65,6 +65,13 @@ reissue. It is never written to the database, audit events, logs, documentation,
 or project status. External email delivery is not part of 03D; the manager
 copies the one-time link and sends it manually.
 
+The canonical email normalizer rejects raw Unicode control (`Cc`), format
+(`Cf`), and surrogate (`Cs`) characters before trimming or casefolding. This
+includes NUL, DEL, C1 controls, zero-width format characters, and BOM. Valid
+emails retain the existing whitespace trim, casefold, length, and simple shape
+contract. Invalid invitation input returns `invalid_email` (400) before any
+invitation, seat reservation, or success audit is written.
+
 ## Acceptance
 
 `GET /invite/{token}` validates the invitation and issues a dedicated,
@@ -113,6 +120,12 @@ entitlements, and Usage. Users with `workspace.settings.manage` may rename an
 active Workspace. Names are whitespace-normalized, required, and limited to
 250 characters. Workspace status is read-only, and 03D has no close/delete
 action.
+
+The rename service rejects the same `Cc`, `Cf`, and `Cs` categories on the raw
+name before whitespace collapse. Invalid characters return
+`workspace_name_invalid_character` (400); empty and overlength names keep
+their separate existing errors. Failed validation leaves the name and success
+audit unchanged.
 
 Entitlements and their limits are product/billing authority. Customer HTML and
 API surfaces expose them read-only and cannot enable paid features or change

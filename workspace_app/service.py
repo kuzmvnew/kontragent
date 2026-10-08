@@ -155,7 +155,9 @@ def login_identity_ref(email: str) -> str:
         raw = normalize_email(raw)
     except ValueError:
         pass
-    digest = hashlib.sha256(f"workspace-login-v1\0{raw}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        f"workspace-login-v1\0{raw}".encode("utf-8", errors="backslashreplace")
+    ).hexdigest()
     return f"sha256:{digest}"
 
 

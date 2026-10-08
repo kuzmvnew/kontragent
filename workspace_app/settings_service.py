@@ -23,6 +23,7 @@ from app.models.workspace import (
     WorkspaceRole,
 )
 from workspace_app.service import ActionDenied, authorize
+from workspace_app.text_validation import has_forbidden_text_character
 
 
 @dataclass(frozen=True)
@@ -275,7 +276,14 @@ def update_workspace_name(
         workspace_id=workspace_id,
         permission_key="workspace.settings.manage",
     )
-    normalized = " ".join(str(name or "").split())
+    raw = str(name or "")
+    if has_forbidden_text_character(raw):
+        raise ActionDenied(
+            "workspace_name_invalid_character",
+            "Название содержит недопустимые символы.",
+            status_code=400,
+        )
+    normalized = " ".join(raw.split())
     if not normalized:
         raise ActionDenied("workspace_name_required", "Укажите название Workspace.", status_code=400)
     if len(normalized) > 250:
