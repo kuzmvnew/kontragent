@@ -11,3 +11,4 @@
 @media(max-width:900px){.inline-admin-form,.settings-overview{grid-template-columns:1fr}.member-row{grid-template-columns:1fr auto}.member-controls{grid-column:1/-1;justify-content:flex-start}}
 @media(max-width:760px){.member-row,.entitlement-list>div{grid-template-columns:1fr}.member-controls,.compact-admin-form{display:grid;width:100%}.member-controls form,.member-controls button,.member-controls select{width:100%}}
 .demo-banner{position:sticky;top:0;z-index:30;padding:9px 18px;background:#7d2d12;color:#fff;text-align:center;font-size:13px;font-weight:800;letter-spacing:.01em}
+@media(max-width:760px){.source-grid header{display:grid;grid-template-columns:minmax(0,1fr)}.source-grid .state-badge{justify-self:start;white-space:normal}}
