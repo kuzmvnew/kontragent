@@ -1,27 +1,27 @@
 schema_version: 1.0.0
-generated_at: '2026-10-08T09:24:17Z'
-main_sha: d51622288968a63cf2f91196564550df620f0b47
+generated_at: '2026-10-08T18:41:38Z'
+main_sha: 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0
 code:
   state: VERIFIED
-  main_sha: d51622288968a63cf2f91196564550df620f0b47
+  main_sha: 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0
   latest_relevant_merged_pr:
-    number: 137
-    url: https://github.com/kuzmvnew/kontragent/pull/137
-    merge_sha: d51622288968a63cf2f91196564550df620f0b47
-    merged_at: '2026-10-08T08:49:19Z'
+    number: 138
+    url: https://github.com/kuzmvnew/kontragent/pull/138
+    merge_sha: 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0
+    merged_at: '2026-10-08T16:18:36Z'
     evidence:
     - status: VERIFIED
       kind: git
       reference: git log --first-parent --merges -1 origin/main
-      observed_at: '2026-10-08T09:20:42Z'
+      observed_at: '2026-10-08T16:55:40Z'
   migration_heads:
     operational: b5d7f9a1c3e6
     public: public_0002
     evidence:
     - status: VERIFIED
       kind: git
-      reference: Static Alembic revision graph in the 03D working tree and origin/main public migrations
-      observed_at: '2026-10-08T09:20:42Z'
+      reference: Static Alembic revision graph in origin/main:migrations/versions and origin/main:public_migrations/versions
+      observed_at: '2026-10-08T16:55:40Z'
   release_capable_artifact:
     state: PRESENT
     artifact_id: nextcompany-canonical-operational-cohort-40
@@ -31,7 +31,7 @@ code:
     - status: VERIFIED
       kind: release_manifest
       reference: sha256(docs/releases/public-v1-cohort-40.json)
-      observed_at: '2026-10-07T10:50:25Z'
+      observed_at: '2026-10-08T16:55:40Z'
   capabilities:
   - id: transition-aware-public-releases
     name: Transition-aware public cohort updates and withdrawals
@@ -67,12 +67,25 @@ code:
       observed_at: '2026-10-08T09:20:42Z'
   - id: workspace-users-roles-settings
     name: Workspace users, invitations, roles, settings and Usage P0
+    status: MERGED
+    evidence:
+    - status: VERIFIED
+      kind: git
+      reference: 'PR #138 / merge 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0'
+      observed_at: '2026-10-08T16:55:40Z'
+  - id: workspace-demo-full-e2e
+    name: Local synthetic Demo 1.0 and full Workspace product E2E
     status: NOT_MERGED
     evidence:
     - status: VERIFIED
       kind: task
-      reference: '03D service, PostgreSQL migration, tenant-safe HTML/API, concurrent owner and invitation tests, real Chromium flows, and clean 2240-pass repository suite on the dedicated branch'
-      observed_at: '2026-10-08T09:24:17Z'
+      reference: 'Dedicated local Demo databases, exact checked-out SHA provenance across manifest,
+        public release and report, ephemeral hosted password, real PublicRepository and product services,
+        fail-closed ownership reset plan with read-only public/operational preflight; Chromium CLEAN/SHOWCASE
+        acceptance: 2 passed with 0 critical skips; complete partitioned repository suite: 2281 passed,
+        21 skipped, 0 failed. This is functional Demo evidence only, not source, production data, or
+        public release acceptance.'
+      observed_at: '2026-10-08T18:41:38Z'
 qa:
   state: NOT_ACCEPTED
   accepted_head_sha: UNKNOWN
@@ -158,23 +171,28 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03D-USERS-ROLES-SETTINGS-01
-  title: 'NEXT COMPANY — USERS / ROLES / WORKSPACE SETTINGS / USAGE P0'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2
+  title: DEMO RESET OWNERSHIP SAFETY — FAIL-CLOSED PREFLIGHT + PROVEN DEMO COMPANY / TENANT IDENTITY
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'Invitation lifecycle, role/member administration, owner concurrency, quota, session cleanup, Settings/Usage, clean migration, real Chromium, and full suite: 2240 passed, 20 skipped, 0 failed'
-    observed_at: '2026-10-08T09:24:17Z'
+    reference: 'Real PostgreSQL 18.6 correction acceptance proved read-only preflight before mutation,
+      complete company provenance, six entitlement markers, active OWNER identity, global-user membership
+      and session scope, exact-ID deletion, unchanged public state on collisions, idempotent reset, CLEAN
+      and SHOWCASE rebuild, and full Chromium product flow. No production, HOME, source-live, mass-ingestion,
+      or public-release mutation.'
+    observed_at: '2026-10-08T18:41:38Z'
 next_gate:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03D-USERS-ROLES-SETTINGS-01-QA
-  description: 'Independent QA and exact-head CI for Workspace Users, Roles, Settings and Usage P0'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2-QA
+  description: Independent QA rerun of reset ownership safety and exact-head hosted Demo evidence
   state: READY
   evidence:
   - status: VERIFIED
     kind: task
-    reference: Implementation gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
-    observed_at: '2026-10-08T09:24:17Z'
+    reference: Correction 2 implementation and local acceptance gates passed; no independent QA acceptance,
+      merge, deployment, production source proof, or production release is asserted
+    observed_at: '2026-10-08T18:41:38Z'
 incidents:
   state: NOT_VERIFIED
   active: []

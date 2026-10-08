@@ -1,0 +1,111 @@
+name: Workspace Demo E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/models/**"
+      - "public_app/**"
+      - "workspace_app/**"
+      - "scripts/*demo*"
+      - "tests/test_workspace_demo*"
+      - "docs/DEMO_WORKSPACE_RUNBOOK.md"
+      - "docs/WORKSPACE_PRODUCT_COMPLETION_03E_DEMO_FULL_E2E.md"
+      - ".github/workflows/workspace-demo-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  demo-full-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: demo_admin
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres -d postgres"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      PGPASSWORD: demo_admin
+      DATABASE_URL: postgresql+psycopg://demo_operational:demo_operational@127.0.0.1:5432/nextcompany_demo_operational
+      PUBLIC_IMPORT_DATABASE_URL: postgresql+psycopg://public_importer:public_importer@127.0.0.1:5432/nextcompany_demo_public
+      PUBLIC_DATABASE_URL: postgresql://public_web:public_web@127.0.0.1:5432/nextcompany_demo_public
+      NEXTCOMPANY_DEMO_MODE: "1"
+      NEXTCOMPANY_DEMO_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PUBLIC_FORCE_NOINDEX: "1"
+      PUBLIC_TRUSTED_HOSTS: 127.0.0.1,localhost,testserver
+      WORKSPACE_TRUSTED_HOSTS: 127.0.0.1,localhost,testserver
+      WORKSPACE_DEMO_E2E: "1"
+      DEMO_E2E_ARTIFACT_DIR: artifacts/workspace-demo-e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Verify exact source checkout
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$NEXTCOMPANY_DEMO_EXPECTED_SHA"
+      - name: Generate ephemeral masked Demo password
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import secrets
+
+          password = secrets.token_urlsafe(32)
+          print(f"::add-mask::{password}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as target:
+              target.write(f"NEXTCOMPANY_DEMO_PASSWORD={password}\n")
+          PY
+      - run: python -m pip install --upgrade uv
+      - run: uv sync --frozen --group dev
+      - name: Create isolated Demo databases and roles
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE demo_operational LOGIN PASSWORD 'demo_operational';
+          CREATE ROLE public_importer LOGIN PASSWORD 'public_importer';
+          CREATE ROLE public_web LOGIN PASSWORD 'public_web';
+          CREATE DATABASE nextcompany_demo_operational OWNER demo_operational;
+          CREATE DATABASE nextcompany_demo_public OWNER public_importer;
+          SQL
+      - name: Migrate isolated Demo databases
+        run: |
+          uv run alembic upgrade head
+          uv run alembic -c public_alembic.ini upgrade head
+      - name: Provision read-only public web role
+        run: |
+          psql -h 127.0.0.1 -U postgres -d nextcompany_demo_public -v ON_ERROR_STOP=1 <<'SQL'
+          REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+          GRANT USAGE ON SCHEMA public TO public_web;
+          GRANT SELECT ON public_releases, public_company_projections, public_publication_state TO public_web;
+          SQL
+      - name: Demo contracts and reset ownership safety
+        run: >-
+          uv run python -m pytest
+          tests/test_workspace_demo.py
+          tests/test_workspace_demo_reset.py
+          -q -ra
+      - name: Install mandatory Chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Full product browser and Showcase acceptance
+        run: uv run python -m pytest tests/test_workspace_demo_full_e2e.py -q -ra
+      - name: Diff hygiene
+        run: git diff --check
+      - name: Upload safe Demo evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-demo-e2e-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/workspace-demo-e2e
+          if-no-files-found: warn

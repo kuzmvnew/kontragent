@@ -8,3 +8,4 @@
 .empty-state{margin:.5rem 0;color:var(--muted,#667085)}
 .domain-state-card .state-badge{display:inline-block;margin:.25rem 0 .65rem}
 .domain-state-card>div+div{margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border,#e5e7eb)}
+.demo-banner{position:sticky;top:0;z-index:30;padding:9px 18px;background:#7d2d12;color:#fff;text-align:center;font-size:13px;font-weight:800;letter-spacing:.01em}.demo-banner+.site-header{top:37px}

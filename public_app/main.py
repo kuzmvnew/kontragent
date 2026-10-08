@@ -33,6 +33,10 @@ MAX_BODY_BYTES = 16_384
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
 
 
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _public_date(value) -> str:
     if value in (None, ""):
         return "—"
@@ -115,6 +119,7 @@ def _workspace_url(request: Request, path: str, *, return_to: str | None = None)
 
 def _page_context(request: Request, **values) -> dict:
     return {
+        "demo_mode": request.app.state.demo_mode,
         "workspace_login_url": _workspace_url(
             request,
             "/login",
@@ -151,12 +156,8 @@ def _card_json_ld(projection: PublicProjection) -> dict:
 
 
 def create_app(repository=None, *, workspace_origin: str | None = None) -> FastAPI:
-    force_noindex = os.getenv("PUBLIC_FORCE_NOINDEX", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    demo_mode = _env_flag("NEXTCOMPANY_DEMO_MODE")
+    force_noindex = _env_flag("PUBLIC_FORCE_NOINDEX") or demo_mode
     app = FastAPI(
         title="NEXT Company Public",
         docs_url=None,
@@ -165,6 +166,7 @@ def create_app(repository=None, *, workspace_origin: str | None = None) -> FastA
     )
     app.state.repository = repository or PublicRepository()
     app.state.force_noindex = force_noindex
+    app.state.demo_mode = demo_mode
     app.state.workspace_origin = _validated_workspace_origin(
         os.getenv("WORKSPACE_ORIGIN", "")
         if workspace_origin is None
