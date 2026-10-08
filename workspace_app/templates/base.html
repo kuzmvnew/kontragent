@@ -18,6 +18,8 @@
     <a href="/app/monitoring" class="{{ 'active' if active_nav == 'monitoring' else '' }}"{% if active_nav == 'monitoring' %} aria-current="page"{% endif %}>Мониторинг</a>
     <a href="/app/reports" class="{{ 'active' if active_nav == 'reports' else '' }}"{% if active_nav == 'reports' %} aria-current="page"{% endif %}>Отчёты</a>
     <a href="/app/bulk" class="{{ 'active' if active_nav == 'bulk' else '' }}"{% if active_nav == 'bulk' %} aria-current="page"{% endif %}>Массовая проверка</a>
+    <a href="/app/users" class="{{ 'active' if active_nav == 'users' else '' }}"{% if active_nav == 'users' %} aria-current="page"{% endif %}>Пользователи</a>
+    <a href="/app/settings" class="{{ 'active' if active_nav == 'settings' else '' }}"{% if active_nav == 'settings' %} aria-current="page"{% endif %}>Настройки</a>
   </nav>
   {% if workspace %}<div class="workspace-context" aria-label="Активное рабочее пространство"><span>{{ workspace.name }}</span><small>{{ principal.email }}{% if role %} · {{ role.name }}{% endif %}</small><a href="/workspace/select">Сменить Workspace</a></div>{% endif %}
   <form action="/logout" method="post">

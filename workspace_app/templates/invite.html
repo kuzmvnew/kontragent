@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Приглашение в {{ preview.workspace_name }} — NEXT Company{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <p class="eyebrow">Приглашение в Workspace</p>
+  <h1>{{ preview.workspace_name }}</h1>
+  <p><strong>{{ preview.email }}</strong></p>
+  <p>Роль: {{ preview.role_name }} ({{ preview.role_key }})</p>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <form action="/invite/{{ token }}" method="post" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{% if preview.existing_user %}Текущий пароль аккаунта{% else %}Создайте пароль{% endif %}
+      <input type="password" name="password" minlength="14" required autocomplete="current-password">
+    </label>
+    {% if not preview.existing_user %}
+    <label>Повторите пароль
+      <input type="password" name="password_confirmation" minlength="14" required autocomplete="new-password">
+    </label>
+    {% endif %}
+    <button type="submit">Принять приглашение</button>
+  </form>
+  <p class="hint">Ссылка одноразовая. После принятия откроется приглашённый Workspace.</p>
+</section>
+{% endblock %}

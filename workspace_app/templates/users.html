@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Пользователи — {{ workspace.name }}{% endblock %}
+{% block content %}
+<section>
+  <p class="eyebrow">Workspace · доступ</p>
+  <h1>Пользователи</h1>
+  <p class="workspace-lead">Участники, приглашения и системные роли {{ workspace.name }}.</p>
+
+  {% if notice %}<div class="notice success">Изменения сохранены.</div>{% endif %}
+  {% if invite_url %}
+  <div class="invite-secret" role="status">
+    <strong>Ссылка приглашения показана один раз</strong>
+    <p>Скопируйте и передайте её пользователю безопасным способом. Внешняя отправка email пока не подключена.</p>
+    <code>{{ invite_url }}</code>
+  </div>
+  {% endif %}
+
+  {% if can_invite %}
+  <section class="admin-panel">
+    <h2>Пригласить пользователя</h2>
+    <form action="/app/users/invitations" method="post" class="inline-admin-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Email
+        <input type="email" name="email" maxlength="320" required autocomplete="off">
+      </label>
+      <label>Роль
+        <select name="role_id" required>
+          {% for option in roles %}
+          {% if role.role_key == 'OWNER' or option.role_key != 'OWNER' %}
+          <option value="{{ option.role_id }}">{{ option.role_name }} ({{ option.role_key }})</option>
+          {% endif %}
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Создать приглашение</button>
+    </form>
+    <p class="hint">Приглашение действует 7 дней и резервирует место в лимите пользователей.</p>
+  </section>
+  {% elif invite_denial == 'entitlement_blocked' %}
+  <div class="state-panel">Новые приглашения отключены тарифом. Управление существующим доступом остаётся доступным.</div>
+  {% endif %}
+
+  <section class="admin-panel">
+    <h2>Участники</h2>
+    <div class="member-list">
+      {% for member in members %}
+      <article class="member-row">
+        <div>
+          <strong>{{ member.email }}</strong>
+          {% if member.is_current_user %}<span class="state-badge">Вы</span>{% endif %}
+          <small>Присоединился {{ member.joined_at.strftime('%d.%m.%Y') }}</small>
+        </div>
+        <span class="state-badge">{{ member.status }}</span>
+        <div class="member-controls">
+          {% set owner_control_allowed = role.role_key == 'OWNER' or member.role_key != 'OWNER' %}
+          {% if can_manage and owner_control_allowed %}
+          <form action="/app/users/members/{{ member.membership_id }}/role" method="post" class="compact-admin-form">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <label class="sr-only" for="role-{{ member.membership_id }}">Роль {{ member.email }}</label>
+            <select id="role-{{ member.membership_id }}" name="role_id">
+              {% for option in roles %}
+              {% if role.role_key == 'OWNER' or option.role_key != 'OWNER' %}
+              <option value="{{ option.role_id }}"{% if option.role_id == member.role_id %} selected{% endif %}>{{ option.role_name }}</option>
+              {% endif %}
+              {% endfor %}
+            </select>
+            <button type="submit" class="secondary">Сменить роль</button>
+          </form>
+          {% else %}
+          <span>{{ member.role_name }}</span>
+          {% endif %}
+
+          {% if can_manage and owner_control_allowed and not member.is_current_user %}
+            {% if member.status == 'active' %}
+            <form action="/app/users/members/{{ member.membership_id }}/status" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="suspended"><button type="submit" class="secondary">Приостановить</button></form>
+            <form action="/app/users/members/{{ member.membership_id }}/status" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="revoked"><button type="submit" class="danger-secondary">Отозвать</button></form>
+            {% elif member.status == 'suspended' %}
+            <form action="/app/users/members/{{ member.membership_id }}/status" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="active"><button type="submit">Восстановить</button></form>
+            <form action="/app/users/members/{{ member.membership_id }}/status" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="revoked"><button type="submit" class="danger-secondary">Отозвать</button></form>
+            {% elif member.status == 'revoked' %}
+            <form action="/app/users/members/{{ member.membership_id }}/status" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="active"><button type="submit">Восстановить</button></form>
+            {% endif %}
+          {% endif %}
+        </div>
+      </article>
+      {% else %}
+      <p class="empty">Участников нет.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="admin-panel">
+    <h2>Приглашения</h2>
+    <div class="member-list">
+      {% for invitation in invitations %}
+      <article class="member-row">
+        <div><strong>{{ invitation.email }}</strong><small>Создано {{ invitation.created_at.strftime('%d.%m.%Y') }} · до {{ invitation.expires_at.strftime('%d.%m.%Y') }}</small></div>
+        <span>{{ invitation.role_name }}</span>
+        <span class="state-badge">{{ invitation.status }}</span>
+        <div class="member-controls">
+          {% if invitation.status in ('PENDING', 'EXPIRED') and can_invite %}
+          <form action="/app/users/invitations/{{ invitation.invitation_id }}/reissue" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="secondary">Перевыпустить</button></form>
+          {% endif %}
+          {% if invitation.status in ('PENDING', 'EXPIRED') and can_manage %}
+          <form action="/app/users/invitations/{{ invitation.invitation_id }}/revoke" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger-secondary">Отозвать</button></form>
+          {% endif %}
+        </div>
+      </article>
+      {% else %}
+      <p class="empty">Приглашений нет.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="admin-panel">
+    <h2>Системные роли</h2>
+    <div class="role-grid">
+      {% for item in roles %}
+      <article class="role-card">
+        <h3>{{ item.role_name }} <small>{{ item.role_key }}</small></h3>
+        <ul>{% for capability in item.capabilities %}<li><code>{{ capability }}</code></li>{% endfor %}</ul>
+      </article>
+      {% endfor %}
+    </div>
+    <p class="hint">Матрица показана из сохранённых capability-записей. Редактирование прав в P0 недоступно.</p>
+  </section>
+</section>
+{% endblock %}

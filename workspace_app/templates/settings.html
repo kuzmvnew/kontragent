@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Настройки — {{ workspace.name }}{% endblock %}
+{% block content %}
+<section>
+  <p class="eyebrow">Workspace</p>
+  <h1>Настройки</h1>
+  <p class="workspace-lead">Параметры рабочего пространства и фактическое использование продукта.</p>
+  {% if notice %}<div class="notice success">Название Workspace обновлено.</div>{% endif %}
+
+  <section class="admin-panel settings-overview">
+    <div>
+      <h2>{{ settings.workspace_name }}</h2>
+      <p>Статус: <strong>{{ settings.workspace_status }}</strong></p>
+      <p>{{ settings.current_user_email }} · {{ settings.current_role_name }} ({{ settings.current_role_key }})</p>
+    </div>
+    {% if can_manage %}
+    <form action="/app/settings/workspace" method="post" class="stack compact-settings-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Название Workspace
+        <input name="name" value="{{ settings.workspace_name }}" maxlength="250" required>
+      </label>
+      <button type="submit">Сохранить название</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <h2>Использование и лимиты</h2>
+  <div class="usage-grid">
+    <article class="metric"><span>Пользователи</span><strong>{{ settings.usage.members.active }}</strong><small>Ожидают: {{ settings.usage.members.pending_invitations }} · лимит: {{ settings.usage.members.limit if settings.usage.members.limit is not none else 'без лимита' }} · осталось: {{ settings.usage.members.remaining if settings.usage.members.remaining is not none else '∞' }}</small></article>
+    <article class="metric"><span>Сохранённые компании</span><strong>{{ settings.usage.saved.used }}</strong><small>Лимит: {{ settings.usage.saved.limit if settings.usage.saved.limit is not none else 'без лимита' }} · осталось: {{ settings.usage.saved.remaining if settings.usage.saved.remaining is not none else '∞' }}</small></article>
+    <article class="metric"><span>Мониторинг</span><strong>{{ 'Включён' if settings.usage.monitoring.enabled else 'Отключён' }}</strong><small>Активных подписок: {{ settings.usage.monitoring.active_subscriptions }} · на паузе: {{ settings.usage.monitoring.paused_subscriptions }}</small></article>
+    <article class="metric"><span>Отчёты</span><strong>{{ settings.usage.reports.used }}</strong><small>Лимит хранения: {{ settings.usage.reports.limit if settings.usage.reports.limit is not none else 'без лимита' }} · осталось: {{ settings.usage.reports.remaining if settings.usage.reports.remaining is not none else '∞' }}</small></article>
+    <article class="metric"><span>Массовая проверка</span><strong>{{ settings.usage.bulk.job_count }} заданий</strong><small>{{ 'Включена' if settings.usage.bulk.enabled else 'Отключена' }} · максимум уникальных ИНН в одном задании: {{ settings.usage.bulk.per_job_unique_inn_limit if settings.usage.bulk.per_job_unique_inn_limit is not none else 'без лимита' }}</small></article>
+    <article class="metric"><span>Workspace</span><strong>{{ settings.usage.workspace_status }}</strong><small>Создан {{ settings.usage.workspace_created_at.strftime('%d.%m.%Y') }}</small></article>
+  </div>
+
+  <section class="admin-panel">
+    <h2>Возможности продукта</h2>
+    <div class="entitlement-list">
+      {% for item in settings.usage.entitlements %}
+      <div><code>{{ item.key }}</code><span>{{ 'включено' if item.enabled else 'отключено' }}</span><span>лимит: {{ item.limit if item.limit is not none else '—' }}</span></div>
+      {% endfor %}
+    </div>
+    <p class="hint">Значения доступны только для просмотра и управляются продуктом или биллингом.</p>
+  </section>
+</section>
+{% endblock %}

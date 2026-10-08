@@ -41,6 +41,8 @@ P0_PERMISSIONS = (
     "bulk.manage",
     "bulk.export",
     "workspace.members.manage",
+    "workspace.members.invite",
+    "workspace.settings.manage",
 )
 
 ROLE_PERMISSIONS = {
@@ -77,7 +79,10 @@ PERMISSION_ENTITLEMENTS = {
     "bulk.create": "bulk_check.enabled",
     "bulk.manage": "bulk_check.enabled",
     "bulk.export": "workspace.core.enabled",
-    "workspace.members.manage": "workspace_members.enabled",
+    # Security cleanup must remain possible even when commercial seat growth is off.
+    "workspace.members.manage": "workspace.core.enabled",
+    "workspace.members.invite": "workspace_members.enabled",
+    "workspace.settings.manage": "workspace.core.enabled",
 }
 
 DEFAULT_ENTITLEMENTS = {
@@ -150,7 +155,9 @@ def login_identity_ref(email: str) -> str:
         raw = normalize_email(raw)
     except ValueError:
         pass
-    digest = hashlib.sha256(f"workspace-login-v1\0{raw}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        f"workspace-login-v1\0{raw}".encode("utf-8", errors="backslashreplace")
+    ).hexdigest()
     return f"sha256:{digest}"
 
 
