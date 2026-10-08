@@ -27,6 +27,7 @@ from app.models.workspace import CustomerSession, CustomerUser, Workspace, Works
 SESSION_COOKIE = "nextcompany_session"
 CSRF_COOKIE = "nextcompany_csrf"
 LOGIN_CSRF_COOKIE = "nextcompany_login_csrf"
+INVITE_CSRF_COOKIE = "nextcompany_invite_csrf"
 HASH_PREFIX = "scrypt-v1"
 _SCRYPT_N = 2**15
 _SCRYPT_R = 8

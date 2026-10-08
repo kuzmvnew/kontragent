@@ -4,8 +4,8 @@
 > Regenerate with `uv run python scripts/project_status.py update`.
 
 - Schema version: `1.0.0`
-- Generated at: `2026-10-07T16:59:40Z`
-- Canonical main SHA: `23b8b51c627f4c1495767f0e924522f37ad4bbaf`
+- Generated at: `2026-10-08T09:24:17Z`
+- Canonical main SHA: `d51622288968a63cf2f91196564550df620f0b47`
 
 Layer states are independent. A merge is not deployment, QA acceptance is
 not deployment, and production deployment is not user-visible verification.
@@ -15,11 +15,11 @@ not deployment, and production deployment is not user-visible verification.
 | Field | Value |
 |---|---|
 | State | VERIFIED |
-| Main SHA | 23b8b51c627f4c1495767f0e924522f37ad4bbaf |
-| Latest relevant merged PR | #136 — https://github.com/kuzmvnew/kontragent/pull/136 |
-| Merge SHA | 23b8b51c627f4c1495767f0e924522f37ad4bbaf |
-| Merged at | 2026-10-07T16:19:21Z |
-| Operational migration head in code | a4c6e8f0b2d4 |
+| Main SHA | d51622288968a63cf2f91196564550df620f0b47 |
+| Latest relevant merged PR | #137 — https://github.com/kuzmvnew/kontragent/pull/137 |
+| Merge SHA | d51622288968a63cf2f91196564550df620f0b47 |
+| Merged at | 2026-10-08T08:49:19Z |
+| Operational migration head in code | b5d7f9a1c3e6 |
 | Public migration head in code | public_0002 |
 | Release-capable artifact state | PRESENT |
 | Release-capable artifact | nextcompany-canonical-operational-cohort-40 |
@@ -33,7 +33,8 @@ not deployment, and production deployment is not user-visible verification.
 | `transition-aware-public-releases` | `MERGED` | PR #109 / merge 9ca2ab22b6597ea0e4c846de33e34946c325d59e |
 | `public-card-binding` | `MERGED` | PR #108 / merge bd9ee511d1180f36d388b042216def8207aeda94 |
 | `post-migration-factory-recovery` | `MERGED` | PR #107 / merge 0ac7607dbb6b33c1cbdf1cc1604a28aee8a86882 |
-| `workspace-bulk-check` | `NOT_MERGED` | 03C implementation, PostgreSQL 18.6 migration, real Chromium flow, focused regressions, and clean full suite pass on the dedicated unmerged branch |
+| `workspace-bulk-check` | `MERGED` | PR #137 / merge d51622288968a63cf2f91196564550df620f0b47 |
+| `workspace-users-roles-settings` | `NOT_MERGED` | 03D service, PostgreSQL migration, tenant-safe HTML/API, concurrent owner and invitation tests, real Chromium flows, and clean 2240-pass repository suite on the dedicated branch |
 
 ## QA
 
@@ -118,12 +119,12 @@ No capability assertions recorded.
 
 | Field | Value |
 |---|---|
-| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-CORRECTION-1 |
+| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03D-USERS-ROLES-SETTINGS-01 |
 | Active task state | COMPLETE |
-| Active task title | BULK CHECK ACCEPTANCE RECOVERY — UPLOAD BOUNDARY + RESULT INTEGRITY + STATE MACHINE + PAGINATION + INPUT SAFETY |
-| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-QA-RERUN |
+| Active task title | NEXT COMPANY — USERS / ROLES / WORKSPACE SETTINGS / USAGE P0 |
+| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03D-USERS-ROLES-SETTINGS-01-QA |
 | Next gate state | READY |
-| Next gate description | Independent QA rerun and exact-head CI for corrected Workspace Bulk Check PR #137 |
+| Next gate description | Independent QA and exact-head CI for Workspace Users, Roles, Settings and Usage P0 |
 
 ## Incidents
 

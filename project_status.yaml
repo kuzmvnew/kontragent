@@ -1,27 +1,27 @@
 schema_version: 1.0.0
-generated_at: '2026-10-07T16:59:40Z'
-main_sha: 23b8b51c627f4c1495767f0e924522f37ad4bbaf
+generated_at: '2026-10-08T09:24:17Z'
+main_sha: d51622288968a63cf2f91196564550df620f0b47
 code:
   state: VERIFIED
-  main_sha: 23b8b51c627f4c1495767f0e924522f37ad4bbaf
+  main_sha: d51622288968a63cf2f91196564550df620f0b47
   latest_relevant_merged_pr:
-    number: 136
-    url: https://github.com/kuzmvnew/kontragent/pull/136
-    merge_sha: 23b8b51c627f4c1495767f0e924522f37ad4bbaf
-    merged_at: '2026-10-07T16:19:21Z'
+    number: 137
+    url: https://github.com/kuzmvnew/kontragent/pull/137
+    merge_sha: d51622288968a63cf2f91196564550df620f0b47
+    merged_at: '2026-10-08T08:49:19Z'
     evidence:
     - status: VERIFIED
       kind: git
       reference: git log --first-parent --merges -1 origin/main
-      observed_at: '2026-10-07T16:59:40Z'
+      observed_at: '2026-10-08T09:20:42Z'
   migration_heads:
-    operational: a4c6e8f0b2d4
+    operational: b5d7f9a1c3e6
     public: public_0002
     evidence:
     - status: VERIFIED
       kind: git
-      reference: Static Alembic revision graph in origin/main:migrations/versions and origin/main:public_migrations/versions
-      observed_at: '2026-10-07T16:59:40Z'
+      reference: Static Alembic revision graph in the 03D working tree and origin/main public migrations
+      observed_at: '2026-10-08T09:20:42Z'
   release_capable_artifact:
     state: PRESENT
     artifact_id: nextcompany-canonical-operational-cohort-40
@@ -59,12 +59,20 @@ code:
       observed_at: '2026-09-29T09:24:27Z'
   - id: workspace-bulk-check
     name: Durable tenant-scoped Workspace Bulk Check P0
+    status: MERGED
+    evidence:
+    - status: VERIFIED
+      kind: git
+      reference: 'PR #137 / merge d51622288968a63cf2f91196564550df620f0b47'
+      observed_at: '2026-10-08T09:20:42Z'
+  - id: workspace-users-roles-settings
+    name: Workspace users, invitations, roles, settings and Usage P0
     status: NOT_MERGED
     evidence:
     - status: VERIFIED
       kind: task
-      reference: '03C implementation, PostgreSQL 18.6 migration, real Chromium flow, focused regressions, and clean full suite pass on the dedicated unmerged branch'
-      observed_at: '2026-10-07T16:59:40Z'
+      reference: '03D service, PostgreSQL migration, tenant-safe HTML/API, concurrent owner and invitation tests, real Chromium flows, and clean 2240-pass repository suite on the dedicated branch'
+      observed_at: '2026-10-08T09:24:17Z'
 qa:
   state: NOT_ACCEPTED
   accepted_head_sha: UNKNOWN
@@ -150,23 +158,23 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-CORRECTION-1
-  title: 'BULK CHECK ACCEPTANCE RECOVERY — UPLOAD BOUNDARY + RESULT INTEGRITY + STATE MACHINE + PAGINATION + INPUT SAFETY'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03D-USERS-ROLES-SETTINGS-01
+  title: 'NEXT COMPANY — USERS / ROLES / WORKSPACE SETTINGS / USAGE P0'
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'All six PR #137 QA findings corrected; adversarial streaming, integrity, lifecycle, pagination, long-input, migration, Chromium, focused regression, and 2227-test full-suite gates passed on the dedicated unmerged branch'
-    observed_at: '2026-10-08T05:18:08Z'
+    reference: 'Invitation lifecycle, role/member administration, owner concurrency, quota, session cleanup, Settings/Usage, clean migration, real Chromium, and full suite: 2240 passed, 20 skipped, 0 failed'
+    observed_at: '2026-10-08T09:24:17Z'
 next_gate:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-QA-RERUN
-  description: 'Independent QA rerun and exact-head CI for corrected Workspace Bulk Check PR #137'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03D-USERS-ROLES-SETTINGS-01-QA
+  description: 'Independent QA and exact-head CI for Workspace Users, Roles, Settings and Usage P0'
   state: READY
   evidence:
   - status: VERIFIED
     kind: task
-    reference: Correction gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
-    observed_at: '2026-10-08T05:18:08Z'
+    reference: Implementation gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
+    observed_at: '2026-10-08T09:24:17Z'
 incidents:
   state: NOT_VERIFIED
   active: []

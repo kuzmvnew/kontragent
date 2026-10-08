@@ -49,7 +49,7 @@ HELPER_VERSION = "DEV-005/1"
 LEGACY_REVISION = "c0c90245de4b"
 CANONICAL_PARENT = "a7d4e9f2c6b1"
 CANONICAL_TARGET = "c8e3f1a6b904"
-CURRENT_SCHEMA_HEAD = "a4c6e8f0b2d4"
+CURRENT_SCHEMA_HEAD = "b5d7f9a1c3e6"
 ARCHIVE_SCHEMA = "legacy_v3_archive"
 RISK_TABLE = "company_risk_assessments_v3"
 SUMMARY_TABLE = "company_summaries_v3"
@@ -92,6 +92,7 @@ POST_CANONICAL_TARGET_TABLES = {
     "workspace_roles",
     "workspace_role_capabilities",
     "workspace_memberships",
+    "workspace_invitations",
     "customer_sessions",
     "workspace_entitlements",
     "saved_companies",

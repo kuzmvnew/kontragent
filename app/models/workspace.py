@@ -24,6 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text as sa_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -107,6 +108,83 @@ class WorkspaceMembership(Base):
     role_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class WorkspaceInvitation(Base):
+    """Single-use, tenant-scoped invitation to an existing system role."""
+
+    __tablename__ = "workspace_invitations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING','ACCEPTED','REVOKED')",
+            name="ck_workspace_invitation_status",
+        ),
+        CheckConstraint(
+            "email::text = lower(btrim(email::text))",
+            name="ck_workspace_invitation_email_normalized",
+        ),
+        CheckConstraint(
+            "token_hash::text ~ '^[0-9a-f]{64}$'::text",
+            name="ck_workspace_invitation_token_hash",
+        ),
+        CheckConstraint(
+            "status::text = 'PENDING'::text AND accepted_at IS NULL "
+            "AND accepted_by_user_id IS NULL AND revoked_at IS NULL OR "
+            "status::text = 'ACCEPTED'::text AND accepted_at IS NOT NULL "
+            "AND accepted_by_user_id IS NOT NULL AND revoked_at IS NULL OR "
+            "status::text = 'REVOKED'::text AND accepted_at IS NULL "
+            "AND accepted_by_user_id IS NULL AND revoked_at IS NOT NULL",
+            name="ck_workspace_invitation_lifecycle",
+        ),
+        ForeignKeyConstraint(
+            ("workspace_id", "role_id"),
+            ("workspace_roles.workspace_id", "workspace_roles.id"),
+            name="fk_workspace_invitation_role_scope",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "uq_workspace_invitation_pending_email",
+            "workspace_id",
+            "email",
+            unique=True,
+            postgresql_where=sa_text("((status)::text = 'PENDING'::text)"),
+        ),
+        Index(
+            "ix_workspace_invitations_workspace_created",
+            "workspace_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    role_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    invited_by_user_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("customer_users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_by_user_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("customer_users.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CustomerSession(Base):

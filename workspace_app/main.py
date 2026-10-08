@@ -24,6 +24,7 @@ from public_app.contracts import valid_legal_inn
 from public_app.repository import PublicRepository
 from workspace_app.auth import (
     CSRF_COOKIE,
+    INVITE_CSRF_COOKIE,
     LOGIN_CSRF_COOKIE,
     SESSION_COOKIE,
     active_membership_workspaces,
@@ -91,6 +92,22 @@ from workspace_app.bulk_service import (
     resume_bulk_job,
     retry_bulk_job,
 )
+from workspace_app.member_service import (
+    accept_invitation,
+    change_member_role,
+    change_member_status,
+    create_invitation,
+    invitation_preview,
+    list_invitations,
+    list_members,
+    list_system_roles,
+    reissue_invitation,
+    revoke_invitation,
+)
+from workspace_app.settings_service import (
+    get_workspace_settings,
+    update_workspace_name,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -109,6 +126,10 @@ def _active_nav(path: str) -> str:
         return "reports"
     if path == "/app/bulk" or path.startswith("/app/bulk/"):
         return "bulk"
+    if path == "/app/users" or path.startswith("/app/users/"):
+        return "users"
+    if path == "/app/settings" or path.startswith("/app/settings/"):
+        return "settings"
     if path == "/app/search" or path.startswith("/app/companies/"):
         return "search"
     return ""
@@ -289,6 +310,17 @@ def _public_repository(request: Request):
 
 def _error_payload(exc: ActionDenied) -> dict:
     return {"error": {"code": exc.code, "message": exc.message}}
+
+
+def _request_uuid(value, *, field: str) -> UUID:
+    try:
+        return UUID(str(value or ""))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ActionDenied(
+            "invalid_request",
+            f"Некорректное поле {field}.",
+            status_code=400,
+        ) from exc
 
 
 def _html_error(request: Request, exc: ActionDenied):
@@ -582,6 +614,165 @@ def _dashboard_payload(dashboard) -> dict:
     }
 
 
+def _member_payload(member) -> dict:
+    return {
+        "id": str(member.membership_id),
+        "email": member.email,
+        "role": {
+            "id": str(member.role_id),
+            "key": member.role_key,
+            "name": member.role_name,
+        },
+        "status": member.status,
+        "joined_at": member.joined_at.isoformat(),
+        "current_user": member.is_current_user,
+    }
+
+
+def _invitation_payload(invitation) -> dict:
+    return {
+        "id": str(invitation.invitation_id),
+        "email": invitation.email,
+        "role": {
+            "id": str(invitation.role_id),
+            "key": invitation.role_key,
+            "name": invitation.role_name,
+        },
+        "status": invitation.status,
+        "created_at": invitation.created_at.isoformat(),
+        "expires_at": invitation.expires_at.isoformat(),
+    }
+
+
+def _role_payload(role) -> dict:
+    return {
+        "id": str(role.role_id),
+        "key": role.role_key,
+        "name": role.role_name,
+        "capabilities": list(role.capabilities),
+    }
+
+
+def _usage_payload(usage) -> dict:
+    return {
+        "workspace": {
+            "status": usage.workspace_status,
+            "created_at": usage.workspace_created_at.isoformat(),
+        },
+        "members": {
+            "active": usage.members.active,
+            "pending_invitations": usage.members.pending_invitations,
+            "enabled": usage.members.enabled,
+            "limit": usage.members.limit,
+            "remaining": usage.members.remaining,
+        },
+        "saved": {
+            "used": usage.saved.used,
+            "enabled": usage.saved.enabled,
+            "limit": usage.saved.limit,
+            "remaining": usage.saved.remaining,
+        },
+        "monitoring": {
+            "enabled": usage.monitoring.enabled,
+            "active_subscriptions": usage.monitoring.active_subscriptions,
+            "paused_subscriptions": usage.monitoring.paused_subscriptions,
+        },
+        "reports": {
+            "used": usage.reports.used,
+            "enabled": usage.reports.enabled,
+            "limit": usage.reports.limit,
+            "remaining": usage.reports.remaining,
+        },
+        "bulk": {
+            "enabled": usage.bulk.enabled,
+            "job_count": usage.bulk.job_count,
+            "per_job_unique_inn_limit": usage.bulk.per_job_unique_inn_limit,
+        },
+        "entitlements": [
+            {"key": item.key, "enabled": item.enabled, "limit": item.limit}
+            for item in usage.entitlements
+        ],
+    }
+
+
+def _settings_payload(settings) -> dict:
+    return {
+        "workspace": {
+            "id": str(settings.workspace_id),
+            "name": settings.workspace_name,
+            "status": settings.workspace_status,
+        },
+        "current_user": {
+            "email": settings.current_user_email,
+            "role": {
+                "key": settings.current_role_key,
+                "name": settings.current_role_name,
+            },
+        },
+        "usage": _usage_payload(settings.usage),
+    }
+
+
+def _users_template_response(
+    request: Request,
+    session,
+    principal,
+    context,
+    *,
+    invitation_secret=None,
+    notice: str = "",
+):
+    workspace, role = _workspace_shell(session, context)
+    members = list_members(
+        session,
+        user_id=principal.user_id,
+        workspace_id=context.workspace_id,
+    )
+    invitations = list_invitations(
+        session,
+        user_id=principal.user_id,
+        workspace_id=context.workspace_id,
+    )
+    roles = list_system_roles(
+        session,
+        user_id=principal.user_id,
+        workspace_id=context.workspace_id,
+    )
+    can_manage, _manage_denial, _manage_limit = action_state(
+        session,
+        user_id=principal.user_id,
+        workspace_id=context.workspace_id,
+        permission_key="workspace.members.manage",
+    )
+    can_invite, invite_denial, _invite_limit = action_state(
+        session,
+        user_id=principal.user_id,
+        workspace_id=context.workspace_id,
+        permission_key="workspace.members.invite",
+    )
+    invite_url = (
+        f"/invite/{invitation_secret.token}" if invitation_secret is not None else None
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="users.html",
+        context={
+            "principal": principal,
+            "workspace": workspace,
+            "role": role,
+            "members": members,
+            "invitations": invitations,
+            "roles": roles,
+            "can_manage": can_manage,
+            "can_invite": can_invite,
+            "invite_denial": invite_denial,
+            "invite_url": invite_url,
+            "notice": notice,
+            "csrf": request.cookies.get(CSRF_COOKIE) or "",
+        },
+    )
+
+
 def create_app(
     public_repository=None,
     session_factory=None,
@@ -873,6 +1064,95 @@ def create_app(
         _clear_session_cookies(response)
         return response
 
+    @app.get("/invite/{token}", response_class=HTMLResponse)
+    def invite_page(request: Request, token: str):
+        with _session_factory(request)() as session:
+            try:
+                preview = invitation_preview(session, token=token)
+            except ActionDenied as exc:
+                return _html_error(request, exc)
+        csrf = new_login_csrf()
+        response = templates.TemplateResponse(
+            request=request,
+            name="invite.html",
+            context={"preview": preview, "token": token, "csrf": csrf},
+        )
+        response.set_cookie(
+            INVITE_CSRF_COOKIE,
+            csrf,
+            httponly=True,
+            secure=app.state.cookie_secure,
+            samesite="strict",
+            path="/invite",
+            max_age=10 * 60,
+        )
+        return response
+
+    @app.post("/invite/{token}")
+    async def invite_accept(request: Request, token: str):
+        form = await request.form()
+        csrf = str(form.get("csrf") or "")
+        if not login_csrf_valid(request.cookies.get(INVITE_CSRF_COOKIE), csrf):
+            return _html_error(
+                request,
+                ActionDenied(
+                    "csrf_invalid",
+                    "Сессия формы истекла. Откройте приглашение снова.",
+                    status_code=403,
+                ),
+            )
+        with _session_factory(request)() as session:
+            try:
+                accepted = accept_invitation(
+                    session,
+                    token=token,
+                    password=str(form.get("password") or ""),
+                    password_confirmation=str(form.get("password_confirmation") or ""),
+                )
+                session_token, session_csrf, _record = create_customer_session(
+                    session,
+                    user=accepted.user,
+                    active_workspace_id=accepted.workspace_id,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                try:
+                    preview = invitation_preview(session, token=token)
+                except ActionDenied:
+                    return _html_error(request, exc)
+                refreshed_csrf = new_login_csrf()
+                response = templates.TemplateResponse(
+                    request=request,
+                    name="invite.html",
+                    context={
+                        "preview": preview,
+                        "token": token,
+                        "csrf": refreshed_csrf,
+                        "error": exc.message,
+                    },
+                    status_code=exc.status_code,
+                )
+                response.set_cookie(
+                    INVITE_CSRF_COOKIE,
+                    refreshed_csrf,
+                    httponly=True,
+                    secure=app.state.cookie_secure,
+                    samesite="strict",
+                    path="/invite",
+                    max_age=10 * 60,
+                )
+                return response
+        response = RedirectResponse("/app", status_code=303)
+        _set_session_cookies(
+            response,
+            token=session_token,
+            csrf=session_csrf,
+            secure=app.state.cookie_secure,
+        )
+        response.delete_cookie(INVITE_CSRF_COOKIE, path="/invite")
+        return response
+
     @app.get("/workspace/select", response_class=HTMLResponse)
     def workspace_select(request: Request, return_to: str = "/app"):
         intended = safe_return_to(return_to)
@@ -929,6 +1209,464 @@ def create_app(
             safe_return_to(str(form.get("return_to") or "")),
             status_code=303,
         )
+
+    @app.get("/app/users", response_class=HTMLResponse)
+    def users_page(request: Request, notice: str = ""):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="workspace.view"
+                )
+                return _users_template_response(
+                    request,
+                    session,
+                    principal,
+                    context,
+                    notice=notice,
+                )
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    return RedirectResponse("/login?return_to=/app/users", status_code=303)
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        "/workspace/select?return_to=/app/users", status_code=303
+                    )
+                return _html_error(request, exc)
+
+    @app.post("/app/users/invitations")
+    async def users_invite(request: Request):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                secret = create_invitation(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    email=str(form.get("email") or ""),
+                    role_id=_request_uuid(form.get("role_id"), field="role_id"),
+                )
+                session.commit()
+                context = authorize(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    permission_key="workspace.view",
+                )
+                return _users_template_response(
+                    request,
+                    session,
+                    principal,
+                    context,
+                    invitation_secret=secret,
+                    notice="invite_created",
+                )
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+
+    @app.post("/app/users/invitations/{invitation_id}/reissue")
+    async def users_invite_reissue(request: Request, invitation_id: UUID):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                secret = reissue_invitation(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    invitation_id=invitation_id,
+                )
+                session.commit()
+                context = authorize(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    permission_key="workspace.view",
+                )
+                return _users_template_response(
+                    request,
+                    session,
+                    principal,
+                    context,
+                    invitation_secret=secret,
+                    notice="invite_reissued",
+                )
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+
+    @app.post("/app/users/invitations/{invitation_id}/revoke")
+    async def users_invite_revoke(request: Request, invitation_id: UUID):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                revoke_invitation(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    invitation_id=invitation_id,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse("/app/users?notice=invite_revoked", status_code=303)
+
+    @app.post("/app/users/members/{membership_id}/role")
+    async def users_member_role(request: Request, membership_id: UUID):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                change_member_role(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    membership_id=membership_id,
+                    role_id=_request_uuid(form.get("role_id"), field="role_id"),
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse("/app/users?notice=role_changed", status_code=303)
+
+    @app.post("/app/users/members/{membership_id}/status")
+    async def users_member_status(request: Request, membership_id: UUID):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                member = change_member_status(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    membership_id=membership_id,
+                    status=str(form.get("status") or ""),
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse(
+            f"/app/users?notice=member_{member.status}", status_code=303
+        )
+
+    @app.get("/app/settings", response_class=HTMLResponse)
+    def settings_page(request: Request, notice: str = ""):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="workspace.view"
+                )
+                workspace, role = _workspace_shell(session, context)
+                settings = get_workspace_settings(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+                can_manage, _denial, _limit = action_state(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                    permission_key="workspace.settings.manage",
+                )
+            except ActionDenied as exc:
+                if exc.code == "authentication_required":
+                    return RedirectResponse("/login?return_to=/app/settings", status_code=303)
+                if exc.code == "workspace_required":
+                    return RedirectResponse(
+                        "/workspace/select?return_to=/app/settings", status_code=303
+                    )
+                return _html_error(request, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="settings.html",
+            context={
+                "principal": principal,
+                "workspace": workspace,
+                "role": role,
+                "settings": settings,
+                "can_manage": can_manage,
+                "notice": notice,
+                "csrf": request.cookies.get(CSRF_COOKIE) or "",
+            },
+        )
+
+    @app.post("/app/settings/workspace")
+    async def settings_workspace_update(request: Request):
+        form = await request.form()
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(request, session, principal, str(form.get("csrf") or ""))
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                update_workspace_name(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    name=str(form.get("name") or ""),
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return _html_error(request, exc)
+        return RedirectResponse("/app/settings?notice=workspace_renamed", status_code=303)
+
+    @app.get("/app/api/users")
+    def api_users(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="workspace.view"
+                )
+                members = list_members(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+                invitations = list_invitations(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+                roles = list_system_roles(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {
+                "members": [_member_payload(item) for item in members],
+                "invitations": [_invitation_payload(item) for item in invitations],
+                "roles": [_role_payload(item) for item in roles],
+            }
+        )
+
+    @app.post("/app/api/invitations")
+    async def api_invitation_create(request: Request):
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "Invalid request"}},
+                status_code=400,
+            )
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                secret = create_invitation(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    email=str(payload.get("email") or ""),
+                    role_id=_request_uuid(payload.get("role_id"), field="role_id"),
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {
+                "invitation": _invitation_payload(secret.invitation),
+                "invite_url": f"/invite/{secret.token}",
+            },
+            status_code=201,
+        )
+
+    @app.post("/app/api/invitations/{invitation_id}/reissue")
+    def api_invitation_reissue(request: Request, invitation_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                secret = reissue_invitation(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    invitation_id=invitation_id,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(
+            {
+                "invitation": _invitation_payload(secret.invitation),
+                "invite_url": f"/invite/{secret.token}",
+            }
+        )
+
+    @app.delete("/app/api/invitations/{invitation_id}")
+    def api_invitation_revoke(request: Request, invitation_id: UUID):
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                invitation = revoke_invitation(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    invitation_id=invitation_id,
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"invitation": _invitation_payload(invitation)})
+
+    @app.patch("/app/api/members/{membership_id}/role")
+    async def api_member_role(request: Request, membership_id: UUID):
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "Invalid request"}},
+                status_code=400,
+            )
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                member = change_member_role(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    membership_id=membership_id,
+                    role_id=_request_uuid(payload.get("role_id"), field="role_id"),
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"member": _member_payload(member)})
+
+    @app.patch("/app/api/members/{membership_id}/status")
+    async def api_member_status(request: Request, membership_id: UUID):
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "Invalid request"}},
+                status_code=400,
+            )
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                member = change_member_status(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    membership_id=membership_id,
+                    status=str(payload.get("status") or ""),
+                )
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse({"member": _member_payload(member)})
+
+    @app.get("/app/api/settings")
+    def api_settings(request: Request):
+        with _session_factory(request)() as session:
+            try:
+                principal, context = _require_active_workspace(
+                    request, session, permission="workspace.view"
+                )
+                settings = get_workspace_settings(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=context.workspace_id,
+                )
+            except ActionDenied as exc:
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(_settings_payload(settings))
+
+    @app.patch("/app/api/settings/workspace")
+    async def api_settings_workspace(request: Request):
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": "Invalid request"}},
+                status_code=400,
+            )
+        with _session_factory(request)() as session:
+            try:
+                principal = _require_principal(request, session)
+                _verify_post_csrf(
+                    request, session, principal, request.headers.get("x-csrf-token")
+                )
+                if principal.active_workspace_id is None:
+                    raise ActionDenied("workspace_required", "Выберите рабочее пространство.")
+                workspace = update_workspace_name(
+                    session,
+                    user_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    name=str(payload.get("name") or ""),
+                )
+                response_payload = {
+                    "workspace": {
+                        "id": str(workspace.id),
+                        "name": workspace.name,
+                        "status": workspace.status,
+                    }
+                }
+                session.commit()
+            except ActionDenied as exc:
+                session.rollback()
+                return JSONResponse(_error_payload(exc), status_code=exc.status_code)
+        return JSONResponse(response_payload)
 
     @app.get("/app", response_class=HTMLResponse)
     def home(request: Request):
