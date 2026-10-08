@@ -133,6 +133,8 @@ from app.models.workspace import (
     WorkspaceEntitlement,
     WorkspaceMembership,
     WorkspaceReport,
+    WorkspaceBulkJob,
+    WorkspaceBulkItem,
     WorkspaceRole,
     WorkspaceRoleCapability,
 )
@@ -151,6 +153,8 @@ __all__ = [
     "WorkspaceRole",
     "WorkspaceMembership",
     "WorkspaceReport",
+    "WorkspaceBulkJob",
+    "WorkspaceBulkItem",
     "WorkspaceEntitlement",
     "WorkspaceAuditEvent",
     "Workspace",

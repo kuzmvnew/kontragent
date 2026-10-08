@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Bulk Job {{ job.id }} — NEXT Company{% endblock %}
+{% block content %}
+<article class="bulk-detail" data-job-id="{{ job.id }}" data-job-status="{{ job.status }}">
+  <header class="report-head">
+    <div>
+      <p class="eyebrow">{{ job.schema_version }}</p>
+      <h1>{{ job.original_filename }}</h1>
+      <p class="workspace-lead">Статус <strong>{{ job.status }}</strong>{% if job.public_release_id %} · выпуск {{ job.public_release_id }}{% endif %}</p>
+    </div>
+    <div class="report-actions">
+      <a class="button" href="/app/bulk/{{ job.id }}/export.csv">Скачать CSV</a>
+      <a class="button secondary" href="/app/bulk/{{ job.id }}/export.json">Скачать JSON</a>
+      <a class="button secondary" href="/app/bulk">К истории</a>
+    </div>
+  </header>
+
+  <section class="bulk-progress card" aria-label="Прогресс">
+    <div class="section-heading"><div><p class="eyebrow">Прогресс</p><h2>{{ job_data.progress.completed }} из {{ job_data.progress.total }}</h2></div><span class="state-badge">{{ job_data.progress.percent }}%</span></div>
+    <progress max="{{ job_data.progress.total or 1 }}" value="{{ job_data.progress.completed }}">{{ job_data.progress.percent }}%</progress>
+    <div class="bulk-counts">
+      <span>Готово <strong>{{ job.ready_count }}</strong></span><span>Не разрешено <strong>{{ job.not_resolved_count }}</strong></span>
+      <span>Не готово <strong>{{ job.not_ready_count }}</strong></span><span>Ошибки <strong>{{ job.failed_count }}</strong></span>
+      <span>Некорректные <strong>{{ job.invalid_count }}</strong></span><span>Дубликаты <strong>{{ job.duplicate_count }}</strong></span>
+      <span>Отменено <strong>{{ job.cancelled_count }}</strong></span>
+    </div>
+    {% if can_manage %}<div class="actions">
+      {% if job.status in ['READY','RUNNING'] %}
+      <form action="/app/bulk/{{ job.id }}/process-next" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Обработать следующий блок</button></form>
+      <form action="/app/bulk/{{ job.id }}/cancel" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger-secondary" type="submit">Отменить</button></form>
+      {% elif job.status == 'CANCELLED' %}
+      <form action="/app/bulk/{{ job.id }}/resume" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Возобновить</button></form>
+      {% endif %}
+      {% if job.failed_count > 0 %}
+      <form action="/app/bulk/{{ job.id }}/retry" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Повторить ошибки</button></form>
+      {% endif %}
+    </div>{% endif %}
+  </section>
+
+  <form class="feed-filters" method="get" action="/app/bulk/{{ job.id }}">
+    <label>Статус<select name="status"><option value="">Все</option>{% for value in item_statuses %}<option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+    <label>ИНН<input name="q" value="{{ query }}" inputmode="numeric"></label>
+    <button type="submit">Фильтровать</button>
+  </form>
+
+  <div class="bulk-table-wrap">
+    <table class="bulk-table">
+      <thead><tr><th>Строка</th><th>Входной ИНН</th><th>Статус</th><th>Результат</th><th></th></tr></thead>
+      <tbody>
+      {% for item in items_page.items %}
+        {% set result = item.result_payload or {} %}{% set company = result.get('company', {}) %}{% set risk = result.get('risk', {}) %}{% set summary = result.get('summary', {}) %}
+        <tr data-row-number="{{ item.row_number }}" data-item-status="{{ item.status }}">
+          <td>{{ item.row_number }}</td><td><code>{{ item.raw_inn }}</code>{% if item.duplicate_of_row %}<small>дубликат строки {{ item.duplicate_of_row }}</small>{% endif %}</td>
+          <td><span class="state-badge">{{ item.status }}</span></td>
+          <td>{% if item.status == 'READY' %}<strong>{{ company.get('name') }}</strong><small>{{ company.get('legal_status') or '—' }} · {{ risk.get('public_status') }}</small><p>{{ summary.get('short_conclusion') }}</p>{% else %}<span>{{ item.error_message or 'Ожидает обработки' }}</span>{% endif %}</td>
+          <td>{% if item.status == 'READY' %}<a class="button secondary" href="/app/companies/{{ item.normalized_inn }}">Открыть компанию</a>{% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="5">Нет строк по выбранному фильтру.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if items_page.pages > 1 %}<nav class="pagination" aria-label="Страницы результатов">{% if items_page.page > 1 %}<a class="button secondary" href="?status={{ status_filter }}&q={{ query }}&page={{ items_page.page - 1 }}">Назад</a>{% endif %}<span>Страница {{ items_page.page }} из {{ items_page.pages }}</span>{% if items_page.page < items_page.pages %}<a class="button secondary" href="?status={{ status_filter }}&q={{ query }}&page={{ items_page.page + 1 }}">Далее</a>{% endif %}</nav>{% endif %}
+</article>
+{% if can_manage and job.status in ['READY','RUNNING'] %}
+<script>
+(() => {
+  const csrf = {{ csrf | tojson }};
+  const jobId = {{ job.id | string | tojson }};
+  let stopped = false;
+  async function next() {
+    if (stopped) return;
+    try {
+      const response = await fetch(`/app/api/bulk-jobs/${jobId}/process-next`, {method: 'POST', headers: {'X-CSRF-Token': csrf}});
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.progress && data.progress.more) { window.setTimeout(next, 150); } else { window.location.reload(); }
+    } catch (_) { stopped = true; }
+  }
+  window.setTimeout(next, 250);
+})();
+</script>
+{% endif %}
+{% endblock %}

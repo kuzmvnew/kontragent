@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Массовая проверка — NEXT Company{% endblock %}
+{% block content %}
+<section>
+  <p class="eyebrow">Workspace</p>
+  <h1>Массовая проверка</h1>
+  <p class="workspace-lead">Загрузите CSV с колонкой INN или ИНН. Проверка использует зафиксированный публичный выпуск next.company.</p>
+  <article class="bulk-upload card">
+    <h2>Новая проверка</h2>
+    {% if can_create %}
+    <form class="stack" action="/app/bulk" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>CSV-файл<input type="file" name="file" accept=".csv,text/csv" required></label>
+      <p class="hint">UTF-8, до 2 МиБ и 5000 строк; до {{ create_limit or 1000 }} уникальных корректных ИНН.</p>
+      <button type="submit">Создать Bulk Job</button>
+    </form>
+    {% else %}
+    <p class="blocked">Создание недоступно: {{ create_denial }}.</p>
+    {% endif %}
+  </article>
+
+  <section class="bulk-history">
+    <h2>История заданий</h2>
+    <div class="list report-list">
+    {% for job in jobs %}
+      <article class="saved-row" data-bulk-job-id="{{ job.id }}">
+        <div>
+          <div class="saved-title"><strong>{{ job.original_filename }}</strong><span class="state-badge">{{ job.status }}</span></div>
+          <span>{{ job.created_at.strftime('%d.%m.%Y %H:%M') }} · строк {{ job.total_rows }} · обработано {{ job.processed_count }} · готово {{ job.ready_count }}</span>
+          {% if job.public_release_id %}<small>Выпуск {{ job.public_release_id }}{% if job.public_result_date %} · данные на {{ job.public_result_date }}{% endif %}</small>{% endif %}
+        </div>
+        <div class="saved-actions"><a class="button" href="/app/bulk/{{ job.id }}">Открыть</a></div>
+      </article>
+    {% else %}
+      <div class="empty-state"><h2>Пока нет массовых проверок</h2><p>Первое задание появится здесь после загрузки CSV.</p></div>
+    {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %}

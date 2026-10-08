@@ -1,27 +1,27 @@
 schema_version: 1.0.0
-generated_at: '2026-10-07T10:50:25Z'
-main_sha: 5456af6d848cad32eb2151b19f4bf96f2bc768dc
+generated_at: '2026-10-07T16:59:40Z'
+main_sha: 23b8b51c627f4c1495767f0e924522f37ad4bbaf
 code:
   state: VERIFIED
-  main_sha: 5456af6d848cad32eb2151b19f4bf96f2bc768dc
+  main_sha: 23b8b51c627f4c1495767f0e924522f37ad4bbaf
   latest_relevant_merged_pr:
-    number: 135
-    url: https://github.com/kuzmvnew/kontragent/pull/135
-    merge_sha: 5456af6d848cad32eb2151b19f4bf96f2bc768dc
-    merged_at: '2026-10-07T10:14:52Z'
+    number: 136
+    url: https://github.com/kuzmvnew/kontragent/pull/136
+    merge_sha: 23b8b51c627f4c1495767f0e924522f37ad4bbaf
+    merged_at: '2026-10-07T16:19:21Z'
     evidence:
     - status: VERIFIED
       kind: git
       reference: git log --first-parent --merges -1 origin/main
-      observed_at: '2026-10-07T10:50:25Z'
+      observed_at: '2026-10-07T16:59:40Z'
   migration_heads:
-    operational: e4f6a8b0c2d3
+    operational: a4c6e8f0b2d4
     public: public_0002
     evidence:
     - status: VERIFIED
       kind: git
       reference: Static Alembic revision graph in origin/main:migrations/versions and origin/main:public_migrations/versions
-      observed_at: '2026-10-07T10:50:25Z'
+      observed_at: '2026-10-07T16:59:40Z'
   release_capable_artifact:
     state: PRESENT
     artifact_id: nextcompany-canonical-operational-cohort-40
@@ -57,6 +57,14 @@ code:
       kind: git
       reference: 'PR #107 / merge 0ac7607dbb6b33c1cbdf1cc1604a28aee8a86882'
       observed_at: '2026-09-29T09:24:27Z'
+  - id: workspace-bulk-check
+    name: Durable tenant-scoped Workspace Bulk Check P0
+    status: NOT_MERGED
+    evidence:
+    - status: VERIFIED
+      kind: task
+      reference: '03C implementation, PostgreSQL 18.6 migration, real Chromium flow, focused regressions, and clean full suite pass on the dedicated unmerged branch'
+      observed_at: '2026-10-07T16:59:40Z'
 qa:
   state: NOT_ACCEPTED
   accepted_head_sha: UNKNOWN
@@ -142,23 +150,23 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03B-REPORTS-EXPORT-01
-  title: 'NEXT COMPANY — WORKSPACE REPORTS + EXPORT P0'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-CORRECTION-1
+  title: 'BULK CHECK ACCEPTANCE RECOVERY — UPLOAD BOUNDARY + RESULT INTEGRITY + STATE MACHINE + PAGINATION + INPUT SAFETY'
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'Implementation and local PostgreSQL 18.6, Chromium, and focused regression gates completed on the dedicated task branch; independent exact-head CI remains required'
-    observed_at: '2026-10-07T10:50:32Z'
+    reference: 'All six PR #137 QA findings corrected; adversarial streaming, integrity, lifecycle, pagination, long-input, migration, Chromium, focused regression, and 2227-test full-suite gates passed on the dedicated unmerged branch'
+    observed_at: '2026-10-08T05:18:08Z'
 next_gate:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03B-REPORTS-EXPORT-01-QA
-  description: 'Independent QA and exact-head CI for the unmerged Workspace Reports and Export pull request'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-QA-RERUN
+  description: 'Independent QA rerun and exact-head CI for corrected Workspace Bulk Check PR #137'
   state: READY
   evidence:
   - status: VERIFIED
     kind: task
-    reference: Local implementation gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
-    observed_at: '2026-10-07T10:50:32Z'
+    reference: Correction gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
+    observed_at: '2026-10-08T05:18:08Z'
 incidents:
   state: NOT_VERIFIED
   active: []
