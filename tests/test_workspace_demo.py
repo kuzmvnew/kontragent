@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -11,14 +12,21 @@ from public_app.main import create_app as create_public_app
 from scripts.public_release_common import load_bundle
 from scripts.workspace_demo_support import (
     DEMO_COHORT,
+    DEMO_EXPECTED_SHA_ENV,
+    DEMO_PASSWORD_ENV,
     DEMO_RELEASE_ID,
     DEMO_SOURCE_CLASS,
     build_demo_bundle,
+    resolve_demo_source_sha,
     reset_demo,
     validate_demo_database_url,
     validate_demo_topology,
 )
 from workspace_app.main import create_app as create_workspace_app
+
+
+SHA_A = "a" * 40
+SHA_B = "b" * 40
 
 
 class DemoProjectionRepository:
@@ -72,14 +80,16 @@ def test_demo_database_safety_refuses_remote_and_production_names():
 
 
 def test_demo_bundle_is_deterministic_safe_and_importer_compatible(tmp_path):
-    first = build_demo_bundle(tmp_path / "first")
-    second = build_demo_bundle(tmp_path / "second")
+    first = build_demo_bundle(tmp_path / "first", source_sha=SHA_A)
+    second = build_demo_bundle(tmp_path / "second", source_sha=SHA_A)
     assert (first / "manifest.json").read_bytes() == (second / "manifest.json").read_bytes()
     assert (first / "companies.jsonl.gz").read_bytes() == (
         second / "companies.jsonl.gz"
     ).read_bytes()
     manifest, projections, _manifest_sha = load_bundle(first)
     assert manifest.release_id == DEMO_RELEASE_ID
+    assert manifest.source_main_sha == SHA_A
+    assert manifest.cohort_source_main_sha == SHA_A
     assert manifest.record_count == len(DEMO_COHORT) == len(projections)
     assert all(not item.publication.index_eligible for item in projections)
     assert all(source.state.value == "NOT_CHECKED" for item in projections for source in item.sources)
@@ -97,8 +107,47 @@ def test_demo_bundle_is_deterministic_safe_and_importer_compatible(tmp_path):
     assert '"index_eligible": false' in rendered
 
 
+def test_demo_bundle_changes_provenance_for_a_different_source_sha(tmp_path):
+    first = build_demo_bundle(tmp_path / "first", source_sha=SHA_A)
+    second = build_demo_bundle(tmp_path / "second", source_sha=SHA_B)
+    first_manifest, _first_items, first_sha = load_bundle(first)
+    second_manifest, _second_items, second_sha = load_bundle(second)
+    assert first_manifest.source_main_sha == first_manifest.cohort_source_main_sha == SHA_A
+    assert second_manifest.source_main_sha == second_manifest.cohort_source_main_sha == SHA_B
+    assert (first / "manifest.json").read_bytes() != (second / "manifest.json").read_bytes()
+    assert (first / "checksums.sha256").read_bytes() != (
+        second / "checksums.sha256"
+    ).read_bytes()
+    assert first_sha != second_sha
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("", "a" * 39, "A" * 40, "g" * 40, "a" * 41, "not-a-git-sha"),
+)
+def test_demo_bundle_rejects_malformed_source_sha_before_writing(tmp_path, value):
+    destination = tmp_path / "bundle"
+    with pytest.raises(ValueError, match="40 lowercase hexadecimal"):
+        build_demo_bundle(destination, source_sha=value)
+    assert not destination.exists()
+
+
+def test_demo_source_sha_is_actual_git_head_and_expected_sha_is_assertion(monkeypatch):
+    monkeypatch.delenv(DEMO_EXPECTED_SHA_ENV, raising=False)
+    actual = resolve_demo_source_sha()
+    assert re.fullmatch(r"[0-9a-f]{40}", actual)
+    monkeypatch.setenv(DEMO_EXPECTED_SHA_ENV, actual)
+    assert resolve_demo_source_sha() == actual
+    monkeypatch.setenv(DEMO_EXPECTED_SHA_ENV, SHA_A if actual != SHA_A else SHA_B)
+    with pytest.raises(RuntimeError, match="does not match"):
+        resolve_demo_source_sha()
+    monkeypatch.setenv(DEMO_EXPECTED_SHA_ENV, "ABC")
+    with pytest.raises(ValueError, match="40 lowercase hexadecimal"):
+        resolve_demo_source_sha()
+
+
 def test_demo_mode_banner_and_public_noindex_are_explicit(monkeypatch, tmp_path):
-    bundle = build_demo_bundle(tmp_path / "bundle")
+    bundle = build_demo_bundle(tmp_path / "bundle", source_sha=SHA_A)
     _manifest, projections, _manifest_sha = load_bundle(bundle)
     repository = DemoProjectionRepository(projections)
     monkeypatch.setenv("NEXTCOMPANY_DEMO_MODE", "1")
@@ -151,3 +200,22 @@ def test_workspace_templates_have_no_dead_primary_controls():
     assert 'href="#"' not in rendered
     assert "href='javascript:void(0)'" not in rendered
     assert 'href="javascript:void(0)' not in rendered
+
+
+def test_hosted_demo_workflow_uses_exact_head_and_ephemeral_masked_password():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/workspace-demo-e2e.yml").read_text(
+        encoding="utf-8"
+    )
+    exact_head = "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert f"ref: {exact_head}" in workflow
+    assert f"{DEMO_EXPECTED_SHA_ENV}: {exact_head}" in workflow
+    assert "git rev-parse HEAD" in workflow
+    assert "secrets.token_urlsafe" in workflow
+    assert "::add-mask::" in workflow
+    assert "GITHUB_ENV" in workflow
+    assert not re.search(
+        rf"^\s*{DEMO_PASSWORD_ENV}:\s*['\"]?[^$\s]",
+        workflow,
+        re.MULTILINE,
+    )

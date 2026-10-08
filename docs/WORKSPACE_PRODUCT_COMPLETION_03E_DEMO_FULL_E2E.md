@@ -66,6 +66,12 @@ validator and activated only through `scripts.import_public_release.import_relea
 Manifest validation, payload hashes, record counts and atomic active release
 switching remain intact.
 
+Bundle provenance is resolved from the checked-out `git HEAD`; no fallback SHA
+is embedded in source. `NEXTCOMPANY_DEMO_EXPECTED_SHA`, when present, must be a
+canonical lowercase 40-character SHA and must equal the actual checkout. Both
+`source_main_sha` and `cohort_source_main_sha` use that value. Reusing the stable
+Demo release ID with content from another SHA fails closed and requires reset.
+
 Web reads use `PUBLIC_DATABASE_URL`; imports use
 `PUBLIC_IMPORT_DATABASE_URL`. Hosted acceptance provisions a separate web role,
 proves `SELECT`, and proves mutation of `public_publication_state` is denied.
@@ -117,7 +123,12 @@ credential.
 `.github/workflows/workspace-demo-e2e.yml` uses PostgreSQL 18.6, fresh
 operational/public Demo databases, both migrations, a read-only Public web role,
 the real release importer, and mandatory Chromium. The critical Demo tests are
-not skipped in that job.
+not skipped in that job. Pull-request runs explicitly checkout the PR head SHA,
+verify it before bootstrap, and expose it only as an expected-SHA assertion.
+The Demo owner password is generated at runtime with `secrets.token_urlsafe`,
+masked immediately and passed only through `GITHUB_ENV`; no repository default
+exists. The acceptance report asserts alignment between actual/expected HEAD,
+manifest source/cohort provenance, the public release row and `report.git_sha`.
 
 ## Evidence boundary
 

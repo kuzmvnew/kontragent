@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
-import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -34,8 +34,11 @@ from app.models.workspace import (
 )
 from public_app.main import create_app as create_public_app
 from public_app.repository import PublicRepository
+from scripts.import_public_release import import_release
+from scripts.public_release_common import load_bundle
 from scripts.workspace_demo_support import (
     DEMO_COHORT,
+    DEMO_EXPECTED_SHA_ENV,
     DEMO_MEMBER_EMAIL,
     DEMO_OWNER_EMAIL,
     DEMO_RELEASE_ID,
@@ -45,7 +48,9 @@ from scripts.workspace_demo_support import (
     RESET_CONFIRMATION,
     advance_demo_event,
     bootstrap_demo,
+    build_demo_bundle,
     demo_acceptance_truth,
+    resolve_demo_source_sha,
     reset_demo,
 )
 from workspace_app.main import create_app as create_workspace_app
@@ -56,8 +61,16 @@ OPERATIONAL_URL = os.getenv("DATABASE_URL", "")
 PUBLIC_IMPORT_URL = os.getenv("PUBLIC_IMPORT_DATABASE_URL", "")
 PUBLIC_WEB_URL = os.getenv("PUBLIC_DATABASE_URL", "")
 DEMO_PASSWORD = os.getenv("NEXTCOMPANY_DEMO_PASSWORD", "")
+EXPECTED_SOURCE_SHA = os.getenv(DEMO_EXPECTED_SHA_ENV, "")
 pytestmark = pytest.mark.skipif(
-    not (RUN_E2E and OPERATIONAL_URL and PUBLIC_IMPORT_URL and PUBLIC_WEB_URL and DEMO_PASSWORD),
+    not (
+        RUN_E2E
+        and OPERATIONAL_URL
+        and PUBLIC_IMPORT_URL
+        and PUBLIC_WEB_URL
+        and DEMO_PASSWORD
+        and EXPECTED_SOURCE_SHA
+    ),
     reason="Workspace Demo E2E environment is not configured",
 )
 
@@ -182,8 +195,39 @@ def _db_truth(workspace_id) -> dict[str, int]:
 
 
 def test_workspace_demo_full_product_e2e(tmp_path):
+    actual_git_sha = resolve_demo_source_sha()
+    assert actual_git_sha == EXPECTED_SOURCE_SHA
     artifacts = Path(os.getenv("DEMO_E2E_ARTIFACT_DIR", str(tmp_path / "demo-artifacts")))
     artifacts.mkdir(parents=True, exist_ok=True)
+    secret_values = {
+        DEMO_PASSWORD,
+        OPERATIONAL_URL,
+        PUBLIC_IMPORT_URL,
+        PUBLIC_WEB_URL,
+    }
+    reset_demo(
+        operational_url=OPERATIONAL_URL,
+        public_import_url=PUBLIC_IMPORT_URL,
+        confirmation=RESET_CONFIRMATION,
+    )
+    import_url = PUBLIC_IMPORT_URL.replace(
+        "postgresql+psycopg://", "postgresql://", 1
+    )
+    previous_source_sha = "0" * 40 if actual_git_sha != "0" * 40 else "1" * 40
+    with tempfile.TemporaryDirectory(prefix="nextcompany-old-demo-") as directory:
+        previous_bundle = build_demo_bundle(
+            Path(directory), source_sha=previous_source_sha
+        )
+        with psycopg.connect(import_url) as connection:
+            import_release(connection, previous_bundle, DEMO_RELEASE_ID)
+    with pytest.raises(RuntimeError, match="Demo reset required"):
+        bootstrap_demo(
+            operational_url=OPERATIONAL_URL,
+            public_import_url=PUBLIC_IMPORT_URL,
+            public_web_url=PUBLIC_WEB_URL,
+            password=DEMO_PASSWORD,
+            profile="clean",
+        )
     reset_demo(
         operational_url=OPERATIONAL_URL,
         public_import_url=PUBLIC_IMPORT_URL,
@@ -205,11 +249,9 @@ def test_workspace_demo_full_product_e2e(tmp_path):
     )
     assert first["status"] == "created"
     assert second["status"] == "already_ready"
+    assert first["source_main_sha"] == second["source_main_sha"] == actual_git_sha
     assert first["company_inns"] == second["company_inns"]
     assert first["counts"] == second["counts"]
-    import_url = PUBLIC_IMPORT_URL.replace(
-        "postgresql+psycopg://", "postgresql://", 1
-    )
     unknown_release = "foreign-local-release"
     with psycopg.connect(import_url) as connection:
         connection.execute(
@@ -266,6 +308,7 @@ def test_workspace_demo_full_product_e2e(tmp_path):
         profile="clean",
     )
     assert clean["company_inns"] == first["company_inns"]
+    assert clean["source_main_sha"] == actual_git_sha
     workspace_id = UUID(clean["workspace_id"])
 
     repository = PublicRepository(PUBLIC_WEB_URL)
@@ -445,6 +488,7 @@ def test_workspace_demo_full_product_e2e(tmp_path):
         page.get_by_role("button", name="Создать приглашение").click()
         invite_path = page.locator(".invite-secret code").inner_text()
         assert invite_path.startswith("/invite/")
+        secret_values.add(invite_path)
         member_context = browser.new_context(
             viewport={"width": 1280, "height": 900}, java_script_enabled=False
         )
@@ -505,6 +549,18 @@ def test_workspace_demo_full_product_e2e(tmp_path):
             persistence["settings"] = session.get(Workspace, workspace_id).name == renamed
         _screenshot(page, artifacts, "08-settings")
 
+        for context in (owner_context, member_context):
+            secret_values.update(
+                cookie["value"]
+                for cookie in context.cookies()
+                if len(cookie.get("value", "")) >= 16
+            )
+        for active_page in (page, member_page):
+            csrf_values = active_page.locator("input[name='csrf']").evaluate_all(
+                "elements => elements.map(element => element.value)"
+            )
+            secret_values.update(value for value in csrf_values if len(value) >= 16)
+
         page.get_by_role("button", name="Выйти").click()
         expect(page).to_have_url(workspace.url + "/login")
         page.goto(workspace.url + "/app")
@@ -521,6 +577,20 @@ def test_workspace_demo_full_product_e2e(tmp_path):
     assert ready_truth["repository_count"] == len(DEMO_COHORT)
     assert ready_truth["release_record_count"] == ready_truth["projection_count"]
     assert ready_truth["index_eligible_count"] == 0
+    with tempfile.TemporaryDirectory(prefix="nextcompany-exact-demo-") as directory:
+        exact_bundle = build_demo_bundle(Path(directory), source_sha=actual_git_sha)
+        manifest, _projections, manifest_sha = load_bundle(exact_bundle)
+    with psycopg.connect(import_url) as connection:
+        release_source_sha, stored_manifest_sha = connection.execute(
+            "SELECT source_main_sha, manifest_sha256 FROM public_releases WHERE release_id=%s",
+            (DEMO_RELEASE_ID,),
+        ).fetchone()
+    assert manifest.source_main_sha == actual_git_sha
+    assert manifest.cohort_source_main_sha == actual_git_sha
+    assert release_source_sha == actual_git_sha
+    assert stored_manifest_sha == manifest_sha
+    assert ready_truth["public_release_source_main_sha"] == actual_git_sha
+    assert ready_truth["public_release_manifest_sha256"] == manifest_sha
     with psycopg.connect(PUBLIC_WEB_URL.replace("postgresql+psycopg://", "postgresql://", 1)) as connection:
         assert connection.execute("SELECT count(*) FROM public_company_projections").fetchone()[0] == len(DEMO_COHORT)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
@@ -530,9 +600,12 @@ def test_workspace_demo_full_product_e2e(tmp_path):
     assert all(persistence.values())
     assert not page_errors
     report = {
-        "git_sha": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1], text=True
-        ).strip(),
+        "git_sha": actual_git_sha,
+        "expected_head_sha": EXPECTED_SOURCE_SHA,
+        "manifest_source_main_sha": manifest.source_main_sha,
+        "manifest_cohort_source_main_sha": manifest.cohort_source_main_sha,
+        "public_release_source_main_sha": release_source_sha,
+        "public_release_manifest_sha256": stored_manifest_sha,
         "operational_migration_head": EXPECTED_OPERATIONAL_HEAD,
         "public_migration_head": EXPECTED_PUBLIC_HEAD,
         "demo_release_id": DEMO_RELEASE_ID,
@@ -544,12 +617,30 @@ def test_workspace_demo_full_product_e2e(tmp_path):
         "page_errors": page_errors,
         "db_truth": _db_truth(workspace_id),
         "public_readonly": True,
+        "artifact_secret_scan": True,
         "production_mutation": False,
     }
-    (artifacts / "report.json").write_text(
+    aligned_shas = {
+        report["git_sha"],
+        report["expected_head_sha"],
+        report["manifest_source_main_sha"],
+        report["manifest_cohort_source_main_sha"],
+        report["public_release_source_main_sha"],
+    }
+    assert aligned_shas == {actual_git_sha}
+    report_path = artifacts / "report.json"
+    report_path.write_text(
         json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    secret_values.add("NEXTCOMPANY_DEMO_PASSWORD")
+    for artifact in artifacts.iterdir():
+        artifact_name = artifact.name.encode("utf-8")
+        artifact_content = artifact.read_bytes()
+        for secret in secret_values:
+            encoded = secret.encode("utf-8")
+            assert encoded not in artifact_name
+            assert encoded not in artifact_content
 
 
 def test_workspace_demo_showcase_profile_is_populated_and_idempotent(tmp_path):

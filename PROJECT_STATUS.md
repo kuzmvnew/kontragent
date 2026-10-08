@@ -4,7 +4,7 @@
 > Regenerate with `uv run python scripts/project_status.py update`.
 
 - Schema version: `1.0.0`
-- Generated at: `2026-10-08T16:55:40Z`
+- Generated at: `2026-10-08T17:56:21Z`
 - Canonical main SHA: `64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0`
 
 Layer states are independent. A merge is not deployment, QA acceptance is
@@ -35,7 +35,7 @@ not deployment, and production deployment is not user-visible verification.
 | `post-migration-factory-recovery` | `MERGED` | PR #107 / merge 0ac7607dbb6b33c1cbdf1cc1604a28aee8a86882 |
 | `workspace-bulk-check` | `MERGED` | PR #137 / merge d51622288968a63cf2f91196564550df620f0b47 |
 | `workspace-users-roles-settings` | `MERGED` | PR #138 / merge 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0 |
-| `workspace-demo-full-e2e` | `NOT_MERGED` | Dedicated local Demo databases, real PublicRepository and product services, Chromium CLEAN/SHOWCASE acceptance: 2 passed with 0 critical skips; clean repository suite: 2265 passed, 22 skipped, 0 failed. This is functional Demo evidence only, not source, production data, or public release acceptance. |
+| `workspace-demo-full-e2e` | `NOT_MERGED` | Dedicated local Demo databases, exact checked-out SHA provenance across manifest, public release and report, ephemeral hosted password, real PublicRepository and product services, Chromium CLEAN/SHOWCASE acceptance: 2 passed with 0 critical skips; clean repository suite: 2274 passed, 22 skipped, 0 failed. This is functional Demo evidence only, not source, production data, or public release acceptance. |
 
 ## QA
 
@@ -120,12 +120,12 @@ No capability assertions recorded.
 
 | Field | Value |
 |---|---|
-| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01 |
+| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-1 |
 | Active task state | COMPLETE |
-| Active task title | NEXT COMPANY — DEMO WORKSPACE 1.0 + FULL PRODUCT END-TO-END ACCEPTANCE |
-| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-QA |
+| Active task title | DEMO 1.0 EVIDENCE INTEGRITY — EXACT HEAD PROVENANCE + EPHEMERAL PASSWORD + HOSTED EXACT-SHA CHECKOUT |
+| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-1-QA |
 | Next gate state | READY |
-| Next gate description | Independent QA and exact-head hosted Workspace Demo E2E for the dedicated 03E branch |
+| Next gate description | Independent QA and exact-head hosted evidence verification for the corrected 03E branch |
 
 ## Incidents
 

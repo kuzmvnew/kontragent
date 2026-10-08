@@ -72,7 +72,15 @@ export PUBLIC_ORIGIN='http://127.0.0.1:8080'
 export WORKSPACE_ORIGIN='http://127.0.0.1:8081'
 export NEXTCOMPANY_DEMO_MODE=1
 export PUBLIC_FORCE_NOINDEX=1
+export NEXTCOMPANY_DEMO_EXPECTED_SHA="$(git rev-parse HEAD)"
 ```
+
+`NEXTCOMPANY_DEMO_EXPECTED_SHA` is an assertion, not an override. Bootstrap
+always resolves the actual repository `HEAD`, requires a canonical 40-character
+lowercase SHA, and fails if the expected value differs. The same exact SHA is
+written to both source provenance fields in the Demo release manifest and to
+`public_releases.source_main_sha`. A stable Demo release created from another
+SHA requires an explicit Demo reset; it is never overwritten in place.
 
 ## 3. Set the Demo owner password
 

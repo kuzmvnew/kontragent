@@ -11,6 +11,8 @@ import gzip
 import hashlib
 import json
 import os
+import re
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -74,6 +76,7 @@ from workspace_app.service import (
 
 DEMO_MODE_ENV = "NEXTCOMPANY_DEMO_MODE"
 DEMO_PASSWORD_ENV = "NEXTCOMPANY_DEMO_PASSWORD"
+DEMO_EXPECTED_SHA_ENV = "NEXTCOMPANY_DEMO_EXPECTED_SHA"
 DEMO_OWNER_EMAIL = "demo.owner@nextcompany.local"
 DEMO_MEMBER_EMAIL = "demo.member@nextcompany.local"
 DEMO_WORKSPACE_NAME = "NEXT Company Demo"
@@ -87,6 +90,8 @@ DEMO_TIMESTAMP = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
 EXPECTED_OPERATIONAL_HEAD = "b5d7f9a1c3e6"
 EXPECTED_PUBLIC_HEAD = "public_0002"
 RESET_CONFIRMATION = "LOCAL_DEMO_ONLY"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 @dataclass(frozen=True)
@@ -210,6 +215,53 @@ def demo_password_from_environment() -> str:
     # Reuse the real password policy. The resulting hash is intentionally discarded.
     hash_password(password)
     return password
+
+
+def validate_demo_source_sha(value: str, *, label: str = "Demo source SHA") -> str:
+    if not SOURCE_SHA_PATTERN.fullmatch(value):
+        raise ValueError(f"{label} must be exactly 40 lowercase hexadecimal characters")
+    return value
+
+
+def resolve_demo_source_sha(
+    *,
+    expected_sha: str | None = None,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> str:
+    """Resolve committed local provenance and optionally assert an expected exact HEAD."""
+
+    try:
+        process = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=repository_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError("cannot resolve Demo source SHA from git HEAD") from exc
+    if process.returncode:
+        raise RuntimeError(
+            "cannot resolve Demo source SHA from git HEAD: "
+            + (process.stderr.strip() or "git rev-parse failed")
+        )
+    actual = validate_demo_source_sha(process.stdout.strip(), label="actual git HEAD")
+    asserted = (
+        os.environ.get(DEMO_EXPECTED_SHA_ENV)
+        if expected_sha is None
+        else expected_sha
+    )
+    if asserted is not None:
+        asserted = validate_demo_source_sha(
+            asserted,
+            label=DEMO_EXPECTED_SHA_ENV,
+        )
+        if actual != asserted:
+            raise RuntimeError(
+                f"actual git HEAD {actual} does not match {DEMO_EXPECTED_SHA_ENV} {asserted}"
+            )
+    return actual
 
 
 def verify_migration_head(database_url: str, *, expected: str, label: str) -> str:
@@ -410,7 +462,8 @@ def build_demo_projection(company: DemoCompany) -> PublicProjection:
     )
 
 
-def build_demo_bundle(bundle_dir: Path) -> Path:
+def build_demo_bundle(bundle_dir: Path, *, source_sha: str) -> Path:
+    source_sha = validate_demo_source_sha(source_sha)
     bundle_dir.mkdir(parents=True, exist_ok=True)
     projections = tuple(build_demo_projection(company) for company in DEMO_COHORT)
     companies_path = bundle_dir / "companies.jsonl.gz"
@@ -424,10 +477,10 @@ def build_demo_bundle(bundle_dir: Path) -> Path:
     manifest = ReleaseManifest(
         schema_version="public-projection-v1",
         release_id=DEMO_RELEASE_ID,
-        source_main_sha="64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0",
+        source_main_sha=source_sha,
         cohort_manifest_path="docs/releases/nextcompany-demo-v1.json",
         cohort_manifest_sha256=cohort_hash,
-        cohort_source_main_sha="64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0",
+        cohort_source_main_sha=source_sha,
         previous_release_id=None,
         created_at=DEMO_TIMESTAMP,
         result_date=DEMO_RESULT_DATE,
@@ -766,7 +819,7 @@ def _public_release_state(public_import_url: str) -> dict[str, Any]:
     with psycopg.connect(_psycopg_url(public_import_url), row_factory=dict_row) as connection:
         row = connection.execute(
             """
-            SELECT r.release_id, r.record_count,
+            SELECT r.release_id, r.record_count, r.source_main_sha, r.manifest_sha256,
                    (SELECT count(*) FROM public_company_projections p
                     WHERE p.release_id=r.release_id) AS projection_count
             FROM public_publication_state s
@@ -796,10 +849,32 @@ def bootstrap_demo(
         operational_url, expected=EXPECTED_OPERATIONAL_HEAD, label="operational"
     )
     verify_migration_head(public_import_url, expected=EXPECTED_PUBLIC_HEAD, label="public")
+    source_sha = resolve_demo_source_sha()
     with tempfile.TemporaryDirectory(prefix="nextcompany-demo-bundle-") as directory:
-        bundle = build_demo_bundle(Path(directory))
+        bundle = build_demo_bundle(Path(directory), source_sha=source_sha)
         with psycopg.connect(_psycopg_url(public_import_url)) as connection:
-            release_result = import_release(connection, bundle, DEMO_RELEASE_ID)
+            existing = connection.execute(
+                "SELECT source_main_sha FROM public_releases WHERE release_id=%s",
+                (DEMO_RELEASE_ID,),
+            ).fetchone()
+            if existing is not None and str(existing[0]) != source_sha:
+                raise RuntimeError(
+                    "existing Demo release belongs to a different source SHA; Demo reset required"
+                )
+            try:
+                release_result = import_release(connection, bundle, DEMO_RELEASE_ID)
+            except ValueError as exc:
+                if "release_id already exists with different content" in str(exc):
+                    raise RuntimeError(
+                        "existing Demo release content differs from exact HEAD; Demo reset required"
+                    ) from exc
+                raise
+            imported_source_sha = connection.execute(
+                "SELECT source_main_sha FROM public_releases WHERE release_id=%s",
+                (DEMO_RELEASE_ID,),
+            ).fetchone()
+            if imported_source_sha is None or str(imported_source_sha[0]) != source_sha:
+                raise RuntimeError("imported Demo release source SHA does not match exact HEAD")
 
     engine = sa.create_engine(operational_url, pool_pre_ping=True)
     DemoSession = sessionmaker(bind=engine, expire_on_commit=False)
@@ -830,6 +905,7 @@ def bootstrap_demo(
                 "workspace": DEMO_WORKSPACE_NAME,
                 "workspace_id": str(workspace.id),
                 "release_id": str(release_result["release_id"]),
+                "source_main_sha": source_sha,
                 "cohort_size": len(DEMO_COHORT),
                 "company_inns": [item.inn for item in DEMO_COHORT],
                 "counts": counts,
@@ -960,6 +1036,8 @@ def demo_acceptance_truth(
         "repository_count": count,
         "release_record_count": int(release.get("record_count") or 0),
         "projection_count": int(release.get("projection_count") or 0),
+        "public_release_source_main_sha": release.get("source_main_sha"),
+        "public_release_manifest_sha256": release.get("manifest_sha256"),
         "index_eligible_count": eligible,
         "workspace_counts": counts,
         "monitoring_events": event_count,
