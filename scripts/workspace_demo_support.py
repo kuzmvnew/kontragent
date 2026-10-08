@@ -30,6 +30,7 @@ from app.models.company import Company
 from app.models.monitoring import MonitoringEvent, MonitoringSubscription, WorkspaceFeedEntry
 from app.models.semantic_fact import CompanySemanticFact
 from app.models.workspace import (
+    CustomerSession,
     CustomerUser,
     SavedCompany,
     Workspace,
@@ -83,6 +84,14 @@ DEMO_WORKSPACE_NAME = "NEXT Company Demo"
 DEMO_RELEASE_ID = "nextcompany-demo-v1"
 DEMO_RELEASE_PREFIX = "nextcompany-demo-"
 DEMO_POLICY_VERSION = "workspace-demo-v1"
+DEMO_ENTITLEMENT_KEYS = (
+    "workspace.core.enabled",
+    "saved_companies.enabled",
+    "monitoring.enabled",
+    "reports.enabled",
+    "bulk_check.enabled",
+    "workspace_members.enabled",
+)
 DEMO_SOURCE_NAME = "Демонстрационный набор next.company"
 DEMO_SOURCE_CLASS = "DEMO_SYNTHETIC"
 DEMO_RESULT_DATE = date(2026, 1, 15)
@@ -103,6 +112,27 @@ class DemoCompany:
     indicator: str
     advanced_indicator: str
     attention: bool = False
+
+
+@dataclass(frozen=True)
+class DemoResetPlan:
+    """Immutable IDs proven to belong to the local Demo before reset starts."""
+
+    public_release_ids: tuple[str, ...]
+    workspace_ids: tuple[UUID, ...]
+    user_ids: tuple[UUID, ...]
+    company_ids: tuple[int, ...]
+
+    @property
+    def is_empty(self) -> bool:
+        return not any(
+            (
+                self.public_release_ids,
+                self.workspace_ids,
+                self.user_ids,
+                self.company_ids,
+            )
+        )
 
 
 DEMO_COHORT = (
@@ -916,6 +946,233 @@ def bootstrap_demo(
         engine.dispose()
 
 
+def _preflight_public_reset(public_import_url: str) -> tuple[str, ...]:
+    """Validate public Demo ownership without changing transaction state."""
+
+    with psycopg.connect(
+        _psycopg_url(public_import_url), row_factory=dict_row
+    ) as connection:
+        connection.execute("SET TRANSACTION READ ONLY")
+        releases = connection.execute(
+            "SELECT release_id FROM public_releases ORDER BY release_id"
+        ).fetchall()
+        release_ids = tuple(str(row["release_id"]) for row in releases)
+        unknown = [
+            release_id
+            for release_id in release_ids
+            if not release_id.startswith(DEMO_RELEASE_PREFIX)
+        ]
+        if unknown:
+            raise RuntimeError("refusing reset: public Demo database contains an unknown release")
+        publication_rows = connection.execute(
+            "SELECT active_release_id FROM public_publication_state WHERE singleton=TRUE"
+        ).fetchall()
+        if len(publication_rows) != 1:
+            raise RuntimeError("refusing reset: public Demo publication state is invalid")
+        active_release_id = publication_rows[0]["active_release_id"]
+        if active_release_id is not None and str(active_release_id) not in release_ids:
+            raise RuntimeError("refusing reset: public Demo active release is not recognized")
+        return release_ids
+
+
+def _require_demo_company_ownership(company: Company) -> None:
+    provenance = company.master_provenance
+    owned = (
+        company.master_source == "NEXTCOMPANY_DEMO"
+        and company.master_authority == "DEMO_SYNTHETIC"
+        and isinstance(provenance, dict)
+        and provenance.get("synthetic") is True
+        and provenance.get("source_class") == DEMO_SOURCE_CLASS
+        and provenance.get("source_name") == DEMO_SOURCE_NAME
+    )
+    if not owned:
+        raise RuntimeError(
+            f"refusing reset: Demo cohort INN belongs to non-Demo company {company.inn}"
+        )
+
+
+def _preflight_operational_reset(operational_url: str) -> tuple[
+    tuple[UUID, ...], tuple[UUID, ...], tuple[int, ...]
+]:
+    """Prove operational ownership and return exact immutable target IDs."""
+
+    engine = sa.create_engine(operational_url, pool_pre_ping=True)
+    DemoSession = sessionmaker(bind=engine, expire_on_commit=False)
+    try:
+        with DemoSession() as session:
+            session.execute(sa.text("SET TRANSACTION READ ONLY"))
+            companies = tuple(
+                session.scalars(
+                    sa.select(Company)
+                    .where(Company.inn.in_(tuple(item.inn for item in DEMO_COHORT)))
+                    .order_by(Company.id)
+                ).all()
+            )
+            for company in companies:
+                _require_demo_company_ownership(company)
+
+            expected_keys = frozenset(DEMO_ENTITLEMENT_KEYS)
+            marker_keys_by_workspace: dict[UUID, set[str]] = {}
+            entitlement_rows = session.execute(
+                sa.select(
+                    WorkspaceEntitlement.workspace_id,
+                    WorkspaceEntitlement.entitlement_key,
+                    WorkspaceEntitlement.policy_version,
+                ).where(WorkspaceEntitlement.entitlement_key.in_(DEMO_ENTITLEMENT_KEYS))
+            ).all()
+            for workspace_id, entitlement_key, policy_version in entitlement_rows:
+                if policy_version == DEMO_POLICY_VERSION:
+                    marker_keys_by_workspace.setdefault(workspace_id, set()).add(
+                        entitlement_key
+                    )
+
+            workspace_ids: list[UUID] = []
+            for workspace_id, marker_keys in sorted(
+                marker_keys_by_workspace.items(), key=lambda item: str(item[0])
+            ):
+                if frozenset(marker_keys) != expected_keys:
+                    raise RuntimeError(
+                        "refusing reset: partial Demo entitlement markers require manual inspection"
+                    )
+                workspace = session.get(Workspace, workspace_id)
+                if (
+                    workspace is None
+                    or workspace.name != DEMO_WORKSPACE_NAME
+                    or workspace.status != "active"
+                ):
+                    raise RuntimeError(
+                        "refusing reset: Demo entitlement markers have inconsistent "
+                        "workspace identity"
+                    )
+                owner_rows = session.execute(
+                    sa.select(WorkspaceMembership, WorkspaceRole)
+                    .join(
+                        CustomerUser,
+                        CustomerUser.id == WorkspaceMembership.user_id,
+                    )
+                    .join(WorkspaceRole, WorkspaceRole.id == WorkspaceMembership.role_id)
+                    .where(
+                        WorkspaceMembership.workspace_id == workspace_id,
+                        CustomerUser.email == DEMO_OWNER_EMAIL,
+                    )
+                ).all()
+                if (
+                    len(owner_rows) != 1
+                    or owner_rows[0][0].status != "active"
+                    or owner_rows[0][1].role_key != "OWNER"
+                ):
+                    raise RuntimeError(
+                        "refusing reset: Demo workspace lacks an active Demo OWNER"
+                    )
+                workspace_ids.append(workspace_id)
+
+            if len(workspace_ids) > 1:
+                raise RuntimeError(
+                    "refusing reset: multiple Demo workspaces require manual inspection"
+                )
+            proven_workspace_ids = frozenset(workspace_ids)
+            same_name_workspace_ids = frozenset(
+                session.scalars(
+                    sa.select(Workspace.id).where(Workspace.name == DEMO_WORKSPACE_NAME)
+                ).all()
+            )
+            if not same_name_workspace_ids.issubset(proven_workspace_ids):
+                raise RuntimeError(
+                    "refusing reset: Demo workspace name belongs to an unproven tenant"
+                )
+
+            users = tuple(
+                session.scalars(
+                    sa.select(CustomerUser)
+                    .where(CustomerUser.email.in_((DEMO_OWNER_EMAIL, DEMO_MEMBER_EMAIL)))
+                    .order_by(CustomerUser.email)
+                ).all()
+            )
+            user_ids: list[UUID] = []
+            for user in users:
+                membership_workspace_ids = frozenset(
+                    session.scalars(
+                        sa.select(WorkspaceMembership.workspace_id).where(
+                            WorkspaceMembership.user_id == user.id
+                        )
+                    ).all()
+                )
+                if not membership_workspace_ids or not membership_workspace_ids.issubset(
+                    proven_workspace_ids
+                ):
+                    raise RuntimeError(
+                        f"refusing reset: Demo user {user.email} has unproven workspace ownership"
+                    )
+                outside_session = session.scalar(
+                    sa.select(CustomerSession.id)
+                    .where(
+                        CustomerSession.user_id == user.id,
+                        CustomerSession.active_workspace_id.is_not(None),
+                        CustomerSession.active_workspace_id.not_in(proven_workspace_ids),
+                    )
+                    .limit(1)
+                )
+                if outside_session is not None:
+                    raise RuntimeError(
+                        f"refusing reset: Demo user {user.email} has a session outside "
+                        "the Demo workspace"
+                    )
+                user_ids.append(user.id)
+
+            return (
+                tuple(workspace_ids),
+                tuple(sorted(user_ids, key=str)),
+                tuple(int(company.id) for company in companies),
+            )
+    finally:
+        engine.dispose()
+
+
+def _execute_operational_reset(operational_url: str, plan: DemoResetPlan) -> None:
+    engine = sa.create_engine(operational_url, pool_pre_ping=True)
+    DemoSession = sessionmaker(bind=engine, expire_on_commit=False)
+    try:
+        with DemoSession.begin() as session:
+            if plan.workspace_ids:
+                result = session.execute(
+                    sa.delete(Workspace).where(Workspace.id.in_(plan.workspace_ids))
+                )
+                if result.rowcount != len(plan.workspace_ids):
+                    raise RuntimeError("Demo workspace reset target changed after preflight")
+            if plan.user_ids:
+                result = session.execute(
+                    sa.delete(CustomerUser).where(CustomerUser.id.in_(plan.user_ids))
+                )
+                if result.rowcount != len(plan.user_ids):
+                    raise RuntimeError("Demo user reset target changed after preflight")
+            if plan.company_ids:
+                result = session.execute(
+                    sa.delete(Company).where(Company.id.in_(plan.company_ids))
+                )
+                if result.rowcount != len(plan.company_ids):
+                    raise RuntimeError("Demo company reset target changed after preflight")
+    finally:
+        engine.dispose()
+
+
+def _execute_public_reset(public_import_url: str, plan: DemoResetPlan) -> None:
+    with psycopg.connect(_psycopg_url(public_import_url)) as connection:
+        connection.execute(
+            "UPDATE public_publication_state SET active_release_id=NULL, updated_at=now() "
+            "WHERE singleton=TRUE"
+        )
+        if plan.public_release_ids:
+            release_ids = list(plan.public_release_ids)
+            connection.execute(
+                "DELETE FROM public_company_projections WHERE release_id = ANY(%s)",
+                (release_ids,),
+            )
+            connection.execute(
+                "DELETE FROM public_releases WHERE release_id = ANY(%s)",
+                (release_ids,),
+            )
+
+
 def reset_demo(
     *,
     operational_url: str,
@@ -924,69 +1181,48 @@ def reset_demo(
 ) -> dict[str, Any]:
     if confirmation != RESET_CONFIRMATION:
         raise ValueError(f"reset requires --confirm {RESET_CONFIRMATION}")
+    require_demo_mode()
     validate_demo_topology(
         operational_url=operational_url,
         public_import_url=public_import_url,
     )
-    with psycopg.connect(_psycopg_url(public_import_url), row_factory=dict_row) as connection:
-        releases = connection.execute(
-            "SELECT release_id FROM public_releases ORDER BY release_id"
-        ).fetchall()
-        unknown = [
-            str(row["release_id"])
-            for row in releases
-            if not str(row["release_id"]).startswith(DEMO_RELEASE_PREFIX)
-        ]
-        if unknown:
-            raise RuntimeError("refusing reset: public Demo database contains an unknown release")
-        connection.execute("DELETE FROM public_publication_state")
-        connection.execute("DELETE FROM public_company_projections")
-        connection.execute("DELETE FROM public_releases")
-        connection.execute(
-            "INSERT INTO public_publication_state(singleton,active_release_id) VALUES(TRUE,NULL)"
-        )
+    public_release_ids = _preflight_public_reset(public_import_url)
+    workspace_ids, user_ids, company_ids = _preflight_operational_reset(operational_url)
+    plan = DemoResetPlan(
+        public_release_ids=public_release_ids,
+        workspace_ids=workspace_ids,
+        user_ids=user_ids,
+        company_ids=company_ids,
+    )
 
-    engine = sa.create_engine(operational_url, pool_pre_ping=True)
-    DemoSession = sessionmaker(bind=engine, expire_on_commit=False)
-    try:
-        with DemoSession() as session:
-            workspace_ids = tuple(
-                session.scalars(
-                    sa.select(Workspace.id)
-                    .outerjoin(
-                        WorkspaceMembership,
-                        WorkspaceMembership.workspace_id == Workspace.id,
-                    )
-                    .outerjoin(
-                        CustomerUser,
-                        CustomerUser.id == WorkspaceMembership.user_id,
-                    )
-                    .where(
-                        sa.or_(
-                            Workspace.name == DEMO_WORKSPACE_NAME,
-                            CustomerUser.email == DEMO_OWNER_EMAIL,
-                        )
-                    )
-                    .distinct()
-                ).all()
-            )
-            if workspace_ids:
-                session.execute(sa.delete(Workspace).where(Workspace.id.in_(workspace_ids)))
-                session.flush()
-            session.execute(
-                sa.delete(CustomerUser).where(
-                    CustomerUser.email.in_((DEMO_OWNER_EMAIL, DEMO_MEMBER_EMAIL))
-                )
-            )
-            session.execute(
-                sa.delete(Company).where(
-                    Company.inn.in_(tuple(item.inn for item in DEMO_COHORT))
-                )
-            )
-            session.commit()
-    finally:
-        engine.dispose()
-    return {"status": "reset", "production_mutation": False}
+    if plan.is_empty:
+        return {
+            "status": "already_reset",
+            "production_mutation": False,
+            "deleted": {
+                "public_releases": 0,
+                "workspaces": 0,
+                "users": 0,
+                "companies": 0,
+            },
+        }
+
+    # PostgreSQL cannot atomically commit across these two databases. All
+    # validation is complete before this point. The operational exact-ID
+    # transaction runs first so an operational constraint failure cannot erase
+    # public evidence; a subsequent public failure is safely retryable.
+    _execute_operational_reset(operational_url, plan)
+    _execute_public_reset(public_import_url, plan)
+    return {
+        "status": "reset",
+        "production_mutation": False,
+        "deleted": {
+            "public_releases": len(plan.public_release_ids),
+            "workspaces": len(plan.workspace_ids),
+            "users": len(plan.user_ids),
+            "companies": len(plan.company_ids),
+        },
+    }
 
 
 def demo_acceptance_truth(

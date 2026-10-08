@@ -35,6 +35,22 @@ Bootstrap verifies migration heads and refuses stale or unknown schemas. Reset
 requires `LOCAL_DEMO_ONLY` and refuses a public database containing any release
 outside the `nextcompany-demo-` namespace.
 
+Reset is ownership-based and fail-closed. Before either database is mutated, a
+read-only public preflight validates the complete release set and a read-only
+operational preflight builds a frozen plan of exact IDs. Cohort companies must
+carry complete `NEXTCOMPANY_DEMO` / `DEMO_SYNTHETIC` provenance. A tenant is
+Demo-owned only when all six required entitlement keys use
+`workspace-demo-v1`, its name is consistent, and the Demo owner has an active
+`OWNER` membership. Demo owner/member identities may have no membership or
+session scope outside that proven tenant. Name, email, INN, or a partial policy
+marker alone cannot select a deletion target.
+
+Mutation uses only IDs from that plan; no broad operational predicate is run a
+second time. The two databases cannot participate in one atomic transaction,
+so reset commits the operational exact-ID transaction before the public
+exact-release transaction. This preserves public evidence on an operational
+failure and makes a later public-phase failure safe to retry.
+
 ## Demo data and provenance
 
 The deterministic cohort contains six valid 10-digit legal-entity INNs with

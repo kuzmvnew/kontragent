@@ -174,8 +174,25 @@ databases and requires the exact confirmation token:
 uv run python scripts/bootstrap_workspace_demo.py reset --confirm LOCAL_DEMO_ONLY
 ```
 
-The reset refuses an unknown public release. It removes the Demo Workspace,
-accounts, product state, cohort companies and recognized Demo public releases.
+Reset completes a read-only ownership preflight across both databases before
+the first mutation. Public releases must all use the `nextcompany-demo-`
+namespace. Every cohort company must carry the complete `NEXTCOMPANY_DEMO` /
+`DEMO_SYNTHETIC` provenance object. A Demo Workspace is recognized only when
+all six required entitlements use `policy_version=workspace-demo-v1` and the
+Demo owner has an active `OWNER` membership. Display-name, email and cohort-INN
+matches alone never authorize deletion.
+
+The preflight also refuses partial entitlement markers, a same-name unproven
+tenant, Demo owner/member memberships outside the proven tenant, or a Demo user
+session scoped to another Workspace. On refusal, both databases remain
+unchanged. After a successful preflight, reset deletes only the exact immutable
+Workspace, user, company and public-release IDs in the validated plan.
+
+Operational and public databases cannot share one atomic PostgreSQL commit.
+Reset therefore validates everything first, commits the operational exact-ID
+transaction, then clears the already-validated public release IDs. If the
+operational transaction fails, public evidence is untouched; the public phase
+is retryable if its later commit fails.
 
 ## What this proves
 

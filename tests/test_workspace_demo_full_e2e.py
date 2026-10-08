@@ -548,6 +548,11 @@ def test_workspace_demo_full_product_e2e(tmp_path):
         with Session(engine) as session:
             persistence["settings"] = session.get(Workspace, workspace_id).name == renamed
         _screenshot(page, artifacts, "08-settings")
+        page.get_by_label("Название Workspace").fill(DEMO_WORKSPACE_NAME)
+        page.get_by_role("button", name="Сохранить название").click()
+        expect(page.locator(".workspace-context")).to_contain_text(DEMO_WORKSPACE_NAME)
+        with Session(engine) as session:
+            assert session.get(Workspace, workspace_id).name == DEMO_WORKSPACE_NAME
 
         for context in (owner_context, member_context):
             secret_values.update(

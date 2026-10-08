@@ -1,5 +1,5 @@
 schema_version: 1.0.0
-generated_at: '2026-10-08T17:56:21Z'
+generated_at: '2026-10-08T18:41:38Z'
 main_sha: 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0
 code:
   state: VERIFIED
@@ -81,10 +81,11 @@ code:
       kind: task
       reference: 'Dedicated local Demo databases, exact checked-out SHA provenance across manifest,
         public release and report, ephemeral hosted password, real PublicRepository and product services,
-        Chromium CLEAN/SHOWCASE acceptance: 2 passed with 0 critical skips; clean repository suite:
-        2274 passed, 22 skipped, 0 failed. This is functional Demo evidence only, not source, production
-        data, or public release acceptance.'
-      observed_at: '2026-10-08T17:56:21Z'
+        fail-closed ownership reset plan with read-only public/operational preflight; Chromium CLEAN/SHOWCASE
+        acceptance: 2 passed with 0 critical skips; complete partitioned repository suite: 2281 passed,
+        21 skipped, 0 failed. This is functional Demo evidence only, not source, production data, or
+        public release acceptance.'
+      observed_at: '2026-10-08T18:41:38Z'
 qa:
   state: NOT_ACCEPTED
   accepted_head_sha: UNKNOWN
@@ -170,27 +171,28 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-1
-  title: DEMO 1.0 EVIDENCE INTEGRITY — EXACT HEAD PROVENANCE + EPHEMERAL PASSWORD + HOSTED EXACT-SHA CHECKOUT
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2
+  title: DEMO RESET OWNERSHIP SAFETY — FAIL-CLOSED PREFLIGHT + PROVEN DEMO COMPANY / TENANT IDENTITY
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'Local correction acceptance aligned actual/expected Git HEAD, manifest source/cohort
-      provenance, public release source SHA and report SHA; verified ephemeral-password workflow contract,
-      real PostgreSQL/Chromium Demo E2E, secret-safe artifacts, and a clean 2274-pass suite. No production,
-      HOME, source-live, mass-ingestion, or public-release mutation.'
-    observed_at: '2026-10-08T17:56:21Z'
+    reference: 'Real PostgreSQL 18.6 correction acceptance proved read-only preflight before mutation,
+      complete company provenance, six entitlement markers, active OWNER identity, global-user membership
+      and session scope, exact-ID deletion, unchanged public state on collisions, idempotent reset, CLEAN
+      and SHOWCASE rebuild, and full Chromium product flow. No production, HOME, source-live, mass-ingestion,
+      or public-release mutation.'
+    observed_at: '2026-10-08T18:41:38Z'
 next_gate:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-1-QA
-  description: Independent QA and exact-head hosted evidence verification for the corrected 03E branch
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2-QA
+  description: Independent QA rerun of reset ownership safety and exact-head hosted Demo evidence
   state: READY
   evidence:
   - status: VERIFIED
     kind: task
-    reference: Correction implementation and local acceptance gates passed; no independent QA acceptance,
+    reference: Correction 2 implementation and local acceptance gates passed; no independent QA acceptance,
       merge, deployment, production source proof, or production release is asserted
-    observed_at: '2026-10-08T17:56:21Z'
+    observed_at: '2026-10-08T18:41:38Z'
 incidents:
   state: NOT_VERIFIED
   active: []

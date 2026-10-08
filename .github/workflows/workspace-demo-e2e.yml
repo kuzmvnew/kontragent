@@ -90,8 +90,12 @@ jobs:
           GRANT USAGE ON SCHEMA public TO public_web;
           GRANT SELECT ON public_releases, public_company_projections, public_publication_state TO public_web;
           SQL
-      - name: Demo contracts and safety
-        run: uv run python -m pytest tests/test_workspace_demo.py -q
+      - name: Demo contracts and reset ownership safety
+        run: >-
+          uv run python -m pytest
+          tests/test_workspace_demo.py
+          tests/test_workspace_demo_reset.py
+          -q -ra
       - name: Install mandatory Chromium
         run: uv run playwright install --with-deps chromium
       - name: Full product browser and Showcase acceptance
