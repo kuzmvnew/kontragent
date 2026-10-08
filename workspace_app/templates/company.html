@@ -89,7 +89,7 @@
 <section class="source-section">
   <p class="eyebrow">Источники и актуальность</p>
   <h2>Покрытие проверки</h2>
-  <div class="source-grid">{% for source in projection.sources %}<article><header><h3>{{ source.public_name }}</h3><span class="state-badge">{{ source.state }}</span></header><p>{{ source.public_explanation }}</p><small>Дата данных: {{ source.source_data_date.strftime('%d.%m.%Y') if source.source_data_date else 'не указана' }} · результат: {{ source.result_date.strftime('%d.%m.%Y') }}</small></article>{% endfor %}</div>
+  <div class="source-grid">{% for source in projection.sources %}<article><header><h3>{{ source.public_name }}</h3><span class="state-badge">{{ source.public_status }}</span></header><p>{{ source.public_explanation }}</p><small>Дата данных: {{ source.source_data_date.strftime('%d.%m.%Y') if source.source_data_date else 'не указана' }} · результат: {{ source.result_date.strftime('%d.%m.%Y') }}</small></article>{% endfor %}</div>
 </section>
 
 {% if projection.public_limitations or projection.summary.recommendations %}

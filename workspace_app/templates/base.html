@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/workspace-static/workspace.css">
 </head>
 <body>
+{% if demo_mode %}<div class="demo-banner" role="status">Демо-среда · синтетические данные · не использовать для проверки реальных контрагентов.</div>{% endif %}
 <header class="app-header">
   <a class="brand" href="/app">NEXT Company</a>
   {% if principal %}

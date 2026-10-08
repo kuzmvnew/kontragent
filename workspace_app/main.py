@@ -139,6 +139,7 @@ def _shared_template_context(request: Request) -> dict:
     return {
         "public_origin": request.app.state.public_origin,
         "active_nav": _active_nav(request.url.path),
+        "demo_mode": request.app.state.demo_mode,
     }
 
 
@@ -788,6 +789,12 @@ def create_app(
     app.state.public_repository = public_repository or PublicRepository()
     app.state.session_factory = session_factory or SessionLocal
     app.state.cookie_secure = _cookie_secure()
+    app.state.demo_mode = os.getenv("NEXTCOMPANY_DEMO_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     app.state.public_origin = _validated_public_origin(
         os.getenv("PUBLIC_ORIGIN", "") if public_origin is None else public_origin
     )
