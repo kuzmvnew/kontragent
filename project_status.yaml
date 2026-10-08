@@ -150,23 +150,23 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01
-  title: 'NEXT COMPANY — WORKSPACE BULK CHECK P0'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-CORRECTION-1
+  title: 'BULK CHECK ACCEPTANCE RECOVERY — UPLOAD BOUNDARY + RESULT INTEGRITY + STATE MACHINE + PAGINATION + INPUT SAFETY'
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'Implementation and local PostgreSQL 18.6, Chromium, migration, focused regression, and 2214-test full-suite gates completed on the dedicated task branch; independent exact-head CI remains required'
-    observed_at: '2026-10-07T16:59:40Z'
+    reference: 'All six PR #137 QA findings corrected; adversarial streaming, integrity, lifecycle, pagination, long-input, migration, Chromium, focused regression, and 2227-test full-suite gates passed on the dedicated unmerged branch'
+    observed_at: '2026-10-08T05:18:08Z'
 next_gate:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-QA
-  description: 'Independent QA and exact-head CI for the unmerged Workspace Bulk Check pull request'
+  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-QA-RERUN
+  description: 'Independent QA rerun and exact-head CI for corrected Workspace Bulk Check PR #137'
   state: READY
   evidence:
   - status: VERIFIED
     kind: task
-    reference: Local implementation gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
-    observed_at: '2026-10-07T16:59:40Z'
+    reference: Correction gates passed; no QA acceptance, merge, deployment, or production mutation is asserted
+    observed_at: '2026-10-08T05:18:08Z'
 incidents:
   state: NOT_VERIFIED
   active: []

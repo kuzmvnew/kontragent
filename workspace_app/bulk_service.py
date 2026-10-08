@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hmac
 import io
 import unicodedata
 from dataclasses import dataclass
@@ -28,7 +29,10 @@ from workspace_app.service import ActionDenied, authorize
 JOB_SCHEMA_VERSION = "workspace-bulk-check-v1"
 RESULT_SCHEMA_VERSION = "workspace-bulk-result-v1"
 MAX_FILE_BYTES = 2 * 1024 * 1024
+MAX_BULK_MULTIPART_BODY_BYTES = MAX_FILE_BYTES + 64 * 1024
 MAX_TOTAL_ROWS = 5_000
+MAX_BULK_PAGE = MAX_TOTAL_ROWS
+MAX_NORMALIZED_INN_LENGTH = 32
 DEFAULT_CHUNK_SIZE = 75
 MAX_CHUNK_SIZE = 100
 DEFAULT_PAGE_SIZE = 50
@@ -148,6 +152,8 @@ def parse_bulk_csv(content: bytes) -> tuple[ParsedBulkRow, ...]:
                 rows.append(ParsedBulkRow(row_number, raw, None, "INVALID_INN", error_code="empty_inn", error_message="ИНН не указан."))
             elif len(normalized) == 12 and normalized.isdigit():
                 rows.append(ParsedBulkRow(row_number, raw, normalized, "INVALID_INN", error_code="ip_inn_unsupported", error_message="12-значный ИНН ИП не поддерживается в Bulk Check P0."))
+            elif len(normalized) > MAX_NORMALIZED_INN_LENGTH:
+                rows.append(ParsedBulkRow(row_number, raw, None, "INVALID_INN", error_code="inn_too_long", error_message="Значение ИНН превышает допустимую длину."))
             elif not valid_legal_inn(normalized):
                 rows.append(ParsedBulkRow(row_number, raw, normalized, "INVALID_INN", error_code="invalid_legal_inn", error_message="Требуется корректный 10-значный ИНН юридического лица."))
             elif normalized in first_valid_row:
@@ -234,7 +240,7 @@ def list_bulk_items(
     page_size: int = DEFAULT_PAGE_SIZE, permission_key: str = "bulk.view",
 ) -> BulkItemsPage:
     authorize(session, user_id=user_id, workspace_id=workspace_id, permission_key=permission_key)
-    _load_job(session, workspace_id=workspace_id, job_id=job_id)
+    job = _load_job(session, workspace_id=workspace_id, job_id=job_id)
     if status and status not in ITEM_STATUSES:
         raise ActionDenied("bulk_status_invalid", "Неизвестный статус строки.", status_code=422)
     normalized_query = " ".join(str(query or "").split())[:160]
@@ -243,11 +249,25 @@ def list_bulk_items(
         filters.append(WorkspaceBulkItem.status == status)
     if normalized_query:
         filters.append(sa.or_(WorkspaceBulkItem.raw_inn.contains(normalized_query, autoescape=True), WorkspaceBulkItem.normalized_inn.contains(normalized_query, autoescape=True)))
-    bounded_page = max(1, int(page))
-    bounded_size = max(1, min(int(page_size), MAX_PAGE_SIZE))
+    try:
+        requested_page = int(page)
+        requested_size = int(page_size)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ActionDenied("bulk_page_invalid", "Некорректная страница результатов.", status_code=422) from exc
+    if requested_page > MAX_BULK_PAGE:
+        raise ActionDenied("bulk_page_invalid", "Номер страницы превышает допустимый предел.", status_code=422)
+    bounded_page = max(1, requested_page)
+    bounded_size = max(1, min(requested_size, MAX_PAGE_SIZE))
     total = int(session.scalar(sa.select(sa.func.count()).select_from(WorkspaceBulkItem).where(*filters)) or 0)
-    items = tuple(session.scalars(sa.select(WorkspaceBulkItem).where(*filters).order_by(WorkspaceBulkItem.row_number).offset((bounded_page - 1) * bounded_size).limit(bounded_size)).all())
     pages = max(1, (total + bounded_size - 1) // bounded_size)
+    if bounded_page > pages:
+        items: tuple[WorkspaceBulkItem, ...] = ()
+    else:
+        offset = (bounded_page - 1) * bounded_size
+        if offset > MAX_TOTAL_ROWS:
+            raise ActionDenied("bulk_page_invalid", "Смещение страницы превышает допустимый предел.", status_code=422)
+        items = tuple(session.scalars(sa.select(WorkspaceBulkItem).where(*filters).order_by(WorkspaceBulkItem.row_number).offset(offset).limit(bounded_size)).all())
+    _validate_bulk_items_result_integrity(items, job)
     return BulkItemsPage(items, bounded_page, bounded_size, total, pages)
 
 
@@ -321,6 +341,81 @@ def _refresh_counters(session: Session, job: WorkspaceBulkJob) -> dict[str, int]
     return counts
 
 
+def _resolve_bulk_job_status(
+    job: WorkspaceBulkJob,
+    counts: dict[str, int],
+    *,
+    processing: bool = False,
+    now: datetime | None = None,
+) -> str:
+    """Resolve lifecycle state from item truth without stranding cancelled work."""
+
+    resolved_at = now or datetime.now(timezone.utc)
+    if counts["PENDING"]:
+        job.status = "RUNNING" if processing else "READY"
+        job.completed_at = None
+    elif counts["CANCELLED"]:
+        job.status = "CANCELLED"
+        job.completed_at = resolved_at
+    elif counts["PROCESSING_ERROR"]:
+        job.status = "COMPLETED_WITH_ERRORS"
+        job.completed_at = resolved_at
+    else:
+        job.status = "COMPLETED"
+        job.completed_at = resolved_at
+    return job.status
+
+
+def _bulk_result_integrity_error() -> ActionDenied:
+    return ActionDenied(
+        "bulk_result_integrity_failed",
+        "Сохранённый результат Bulk Check не прошёл проверку целостности.",
+        status_code=409,
+    )
+
+
+def _validate_bulk_item_result_integrity(
+    item: WorkspaceBulkItem,
+    job: WorkspaceBulkJob,
+) -> None:
+    """Fail closed when a stored result is incomplete, altered, or rebound."""
+
+    if item.status != "READY":
+        if item.result_payload is not None or item.result_sha256 is not None:
+            raise _bulk_result_integrity_error()
+        return
+    payload = item.result_payload
+    stored_hash = item.result_sha256
+    if not isinstance(payload, dict) or not isinstance(stored_hash, str):
+        raise _bulk_result_integrity_error()
+    if len(stored_hash) != 64 or any(character not in "0123456789abcdef" for character in stored_hash):
+        raise _bulk_result_integrity_error()
+    try:
+        actual_hash = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+    except Exception as exc:
+        raise _bulk_result_integrity_error() from exc
+    if not hmac.compare_digest(actual_hash, stored_hash):
+        raise _bulk_result_integrity_error()
+    company = payload.get("company")
+    if (
+        payload.get("schema_version") != RESULT_SCHEMA_VERSION
+        or not job.public_release_id
+        or payload.get("release_id") != job.public_release_id
+        or not isinstance(company, dict)
+        or not item.normalized_inn
+        or company.get("inn") != item.normalized_inn
+    ):
+        raise _bulk_result_integrity_error()
+
+
+def _validate_bulk_items_result_integrity(
+    items: tuple[WorkspaceBulkItem, ...] | list[WorkspaceBulkItem],
+    job: WorkspaceBulkJob,
+) -> None:
+    for item in items:
+        _validate_bulk_item_result_integrity(item, job)
+
+
 def process_bulk_job_chunk(
     session: Session, *, user_id: UUID, workspace_id: UUID, job_id: UUID,
     projection_repository: Any, chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -384,9 +479,8 @@ def process_bulk_job_chunk(
                 item.error_message = "Не удалось зафиксировать безопасный результат строки."
     session.flush()
     counts = _refresh_counters(session, job)
-    if counts["PENDING"] == 0:
-        job.status = "COMPLETED_WITH_ERRORS" if counts["PROCESSING_ERROR"] else "COMPLETED"
-        job.completed_at = now
+    resolved_status = _resolve_bulk_job_status(job, counts, processing=True, now=now)
+    if resolved_status in TERMINAL_JOB_STATUSES:
         _audit(session, workspace_id=workspace_id, user_id=user_id, action="bulk.process", job_id=job.id, outcome=job.status.lower())
     session.flush()
     return job
@@ -403,9 +497,9 @@ def cancel_bulk_job(session: Session, *, user_id: UUID, workspace_id: UUID, job_
     job.cancel_requested_at = now
     session.execute(sa.update(WorkspaceBulkItem).where(WorkspaceBulkItem.workspace_id == workspace_id, WorkspaceBulkItem.job_id == job_id, WorkspaceBulkItem.status == "PENDING").values(status="CANCELLED", processed_at=now, error_code="cancelled_by_user", error_message="Обработка строки отменена пользователем."))
     job.status = "CANCELLED"
-    job.completed_at = now
     session.flush()
-    _refresh_counters(session, job)
+    counts = _refresh_counters(session, job)
+    _resolve_bulk_job_status(job, counts, now=now)
     _audit(session, workspace_id=workspace_id, user_id=user_id, action="bulk.cancel", job_id=job.id, outcome="success")
     session.flush()
     return job
@@ -419,11 +513,10 @@ def resume_bulk_job(session: Session, *, user_id: UUID, workspace_id: UUID, job_
     if job.status != "CANCELLED":
         raise ActionDenied("bulk_job_not_resumable", "Возобновить можно только отменённое задание.", status_code=409)
     session.execute(sa.update(WorkspaceBulkItem).where(WorkspaceBulkItem.workspace_id == workspace_id, WorkspaceBulkItem.job_id == job_id, WorkspaceBulkItem.status == "CANCELLED").values(status="PENDING", processed_at=None, error_code=None, error_message=None))
-    job.status = "READY"
-    job.completed_at = None
     job.cancel_requested_at = None
     session.flush()
-    _refresh_counters(session, job)
+    counts = _refresh_counters(session, job)
+    _resolve_bulk_job_status(job, counts)
     _audit(session, workspace_id=workspace_id, user_id=user_id, action="bulk.resume", job_id=job.id, outcome="success")
     session.flush()
     return job
@@ -435,13 +528,12 @@ def retry_bulk_job(session: Session, *, user_id: UUID, workspace_id: UUID, job_i
     retried = int(session.scalar(sa.select(sa.func.count()).select_from(WorkspaceBulkItem).where(WorkspaceBulkItem.workspace_id == workspace_id, WorkspaceBulkItem.job_id == job_id, WorkspaceBulkItem.status == "PROCESSING_ERROR")) or 0)
     if not retried:
         return job
-    session.execute(sa.update(WorkspaceBulkItem).where(WorkspaceBulkItem.workspace_id == workspace_id, WorkspaceBulkItem.job_id == job_id, WorkspaceBulkItem.status == "PROCESSING_ERROR").values(status="PENDING", company_id=None, result_payload=None, result_sha256=None, processed_at=None, error_code=None, error_message=None))
-    job.status = "READY"
-    job.completed_at = None
+    session.execute(sa.update(WorkspaceBulkItem).where(WorkspaceBulkItem.workspace_id == workspace_id, WorkspaceBulkItem.job_id == job_id, WorkspaceBulkItem.status == "PROCESSING_ERROR").values(status="PENDING", company_id=None, result_payload=sa.null(), result_sha256=None, processed_at=None, error_code=None, error_message=None))
     job.error_code = None
     job.error_message = None
     session.flush()
-    _refresh_counters(session, job)
+    counts = _refresh_counters(session, job)
+    _resolve_bulk_job_status(job, counts)
     _audit(session, workspace_id=workspace_id, user_id=user_id, action="bulk.retry", job_id=job.id, outcome="success")
     session.flush()
     return job
@@ -470,6 +562,12 @@ def job_payload(job: WorkspaceBulkJob) -> dict[str, Any]:
             "percent": 100 if not job.unique_valid_count else min(100, int(done * 100 / job.unique_valid_count)),
             "more": not terminal and done < job.unique_valid_count,
         },
+        "actions": {
+            "process": job.status in {"READY", "RUNNING"},
+            "cancel": job.status in {"READY", "RUNNING"},
+            "resume": job.status == "CANCELLED" and job.cancelled_count > 0,
+            "retry": job.failed_count > 0,
+        },
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
@@ -489,13 +587,15 @@ def item_payload(item: WorkspaceBulkItem) -> dict[str, Any]:
     }
 
 
-def _all_export_items(session: Session, *, workspace_id: UUID, job_id: UUID) -> tuple[WorkspaceBulkItem, ...]:
-    return tuple(session.scalars(sa.select(WorkspaceBulkItem).where(WorkspaceBulkItem.workspace_id == workspace_id, WorkspaceBulkItem.job_id == job_id).order_by(WorkspaceBulkItem.row_number).limit(MAX_TOTAL_ROWS)).all())
+def _all_export_items(session: Session, *, job: WorkspaceBulkJob) -> tuple[WorkspaceBulkItem, ...]:
+    items = tuple(session.scalars(sa.select(WorkspaceBulkItem).where(WorkspaceBulkItem.workspace_id == job.workspace_id, WorkspaceBulkItem.job_id == job.id).order_by(WorkspaceBulkItem.row_number).limit(MAX_TOTAL_ROWS)).all())
+    _validate_bulk_items_result_integrity(items, job)
+    return items
 
 
 def bulk_json_bytes(session: Session, *, user_id: UUID, workspace_id: UUID, job_id: UUID) -> bytes:
     job = get_bulk_job(session, user_id=user_id, workspace_id=workspace_id, job_id=job_id, permission_key="bulk.export")
-    payload = {"job": job_payload(job), "items": [item_payload(item) for item in _all_export_items(session, workspace_id=workspace_id, job_id=job.id)]}
+    payload = {"job": job_payload(job), "items": [item_payload(item) for item in _all_export_items(session, job=job)]}
     return canonical_json_bytes(payload)
 
 
@@ -505,7 +605,7 @@ def bulk_csv_bytes(session: Session, *, user_id: UUID, workspace_id: UUID, job_i
     writer = csv.DictWriter(output, fieldnames=BULK_CSV_COLUMNS, extrasaction="ignore", lineterminator="\r\n")
     writer.writeheader()
     try:
-        for item in _all_export_items(session, workspace_id=workspace_id, job_id=job.id):
+        for item in _all_export_items(session, job=job):
             result = item.result_payload or {}
             company = result.get("company") or {}
             risk = result.get("risk") or {}

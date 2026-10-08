@@ -118,12 +118,12 @@ No capability assertions recorded.
 
 | Field | Value |
 |---|---|
-| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01 |
+| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-CORRECTION-1 |
 | Active task state | COMPLETE |
-| Active task title | NEXT COMPANY — WORKSPACE BULK CHECK P0 |
-| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-QA |
+| Active task title | BULK CHECK ACCEPTANCE RECOVERY — UPLOAD BOUNDARY + RESULT INTEGRITY + STATE MACHINE + PAGINATION + INPUT SAFETY |
+| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03C-BULK-CHECK-01-QA-RERUN |
 | Next gate state | READY |
-| Next gate description | Independent QA and exact-head CI for the unmerged Workspace Bulk Check pull request |
+| Next gate description | Independent QA rerun and exact-head CI for corrected Workspace Bulk Check PR #137 |
 
 ## Incidents
 

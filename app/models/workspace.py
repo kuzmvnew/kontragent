@@ -353,6 +353,11 @@ class WorkspaceBulkItem(Base):
             name="ck_workspace_bulk_item_result_sha256",
         ),
         CheckConstraint(
+            "status::text = 'READY'::text AND result_payload IS NOT NULL AND result_sha256 IS NOT NULL "
+            "OR status::text <> 'READY'::text AND result_payload IS NULL AND result_sha256 IS NULL",
+            name="ck_workspace_bulk_item_result_state",
+        ),
+        CheckConstraint(
             "duplicate_of_row IS NULL OR duplicate_of_row < row_number",
             name="ck_workspace_bulk_item_duplicate_row",
         ),

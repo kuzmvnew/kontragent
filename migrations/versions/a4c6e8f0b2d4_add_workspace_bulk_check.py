@@ -88,6 +88,11 @@ def upgrade() -> None:
         sa.CheckConstraint("row_number > 0", name="ck_workspace_bulk_item_row_number"),
         sa.CheckConstraint("status IN ('PENDING','INVALID_INN','DUPLICATE','READY','NOT_RESOLVED','NOT_READY','PROCESSING_ERROR','CANCELLED')", name="ck_workspace_bulk_item_status"),
         sa.CheckConstraint("result_sha256 IS NULL OR result_sha256 ~ '^[0-9a-f]{64}$'", name="ck_workspace_bulk_item_result_sha256"),
+        sa.CheckConstraint(
+            "status::text = 'READY'::text AND result_payload IS NOT NULL AND result_sha256 IS NOT NULL "
+            "OR status::text <> 'READY'::text AND result_payload IS NULL AND result_sha256 IS NULL",
+            name="ck_workspace_bulk_item_result_state",
+        ),
         sa.CheckConstraint("duplicate_of_row IS NULL OR duplicate_of_row < row_number", name="ck_workspace_bulk_item_duplicate_row"),
     )
     op.create_index("ix_workspace_bulk_items_job_row", "workspace_bulk_items", ["job_id", "row_number"])

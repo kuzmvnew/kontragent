@@ -15,8 +15,15 @@ route is mounted in the public application.
 ## Input contract
 
 - CSV only, decoded strictly as UTF-8; UTF-8 BOM is accepted.
-- Maximum upload size is 2 MiB. Routes read at most `limit + 1` bytes and the
-  service independently enforces the limit.
+- Maximum file size is exactly 2 MiB. The two Bulk create routes alone receive
+  a 2 MiB + 64 KiB multipart-envelope allowance; all other Workspace routes
+  retain the 32 KiB request limit. A route-aware ASGI receive wrapper counts
+  actual streamed bytes, including requests without or with false
+  `Content-Length`, and stops reading once the envelope is exceeded.
+- Session, active Workspace, permission, and entitlement are checked before
+  multipart parsing. API CSRF is also checked before parsing; HTML CSRF is
+  rechecked after bounded parsing because its token is a form field. Both
+  create routes repeat canonical authorization before persistence.
 - Maximum 5000 nonblank data rows.
 - A trimmed, case-insensitive `inn` or `инн` header is required exactly once.
 - Comma, semicolon, and tab are the only supported delimiters. Ambiguous
@@ -31,6 +38,9 @@ route is mounted in the public application.
   explicit `ip_inn_unsupported` row outcome.
 - Leading/trailing whitespace is removed only for validation and matching;
   `raw_inn` remains available for row accounting and safe export.
+- Values longer than the 32-character normalized identity capacity remain
+  `INVALID_INN` with `inn_too_long`; their `normalized_inn` is null rather than
+  truncated, while `raw_inn` remains available for safe audit/export.
 
 The original upload is not stored. The database receives a SHA-256 of the
 input, a path-independent/control-normalized filename capped at 240 characters,
@@ -83,8 +93,10 @@ exist. `NOT_READY` means the canonical company exists but the pinned public
 release has no customer-safe projection. Master/RAW fields are not substituted.
 
 Counters are recalculated from item states after every chunk or lifecycle
-mutation. Invalid, duplicate, not-resolved, and not-ready outcomes do not turn
-the job into an infrastructure failure.
+mutation. One shared resolver determines job state. Any remaining `CANCELLED`
+row keeps the job `CANCELLED`, even after retrying another failed row; Resume
+can therefore reopen all cancelled work. Invalid, duplicate, not-resolved, and
+not-ready outcomes do not turn the job into an infrastructure failure.
 
 ## Public release pinning and processing
 
@@ -112,9 +124,14 @@ FastAPI background task, thread queue, or browser memory is authoritative.
 Successful items store `workspace-bulk-result-v1` with release ID, checked and
 result dates, minimized company identity, public Risk state/status/title and
 explanation, Summary conclusion, existing Company View section-state keys, and
-the limitation count. The SHA-256 covers canonical JSON bytes. Internal IDs,
-RAW data, provider payloads, parser objects, and operational references are
-excluded. Opening an individual result links to `/app/companies/{inn}`.
+the limitation count. The SHA-256 covers canonical JSON bytes. Every HTML/API
+result read and every CSV/JSON export verifies the hash, result schema, pinned
+release, and row INN. READY rows require a payload/hash and non-READY rows
+forbid them at both the database and service boundary. An inconsistency fails
+the whole read/export with `bulk_result_integrity_failed`; no corrupt payload
+or partial export is returned. Internal IDs, RAW data, provider payloads,
+parser objects, and operational references are excluded. Opening an individual
+result links to `/app/companies/{inn}`.
 
 The stored payload is historical. Later releases do not alter an old job or
 its exports.
@@ -151,6 +168,10 @@ idempotent process endpoint; reload or browser close cannot corrupt the job.
 
 Equivalent API routes live under `/app/api/bulk-jobs`. HTML and API share the
 same services and authorization rules.
+
+Page numbers are bounded by the 5000-row technical job limit before an SQL
+offset is constructed. Non-positive pages normalize to page 1, page sizes are
+bounded to 1–100, and absurd page numbers fail with `bulk_page_invalid`.
 
 ## Exports
 
