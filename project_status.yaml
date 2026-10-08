@@ -1,19 +1,19 @@
 schema_version: 1.0.0
-generated_at: '2026-10-08T18:41:38Z'
-main_sha: 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0
+generated_at: '2026-10-08T19:40:27Z'
+main_sha: 4256f6717047e664a775d82ecd8405ed2b4025a8
 code:
   state: VERIFIED
-  main_sha: 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0
+  main_sha: 4256f6717047e664a775d82ecd8405ed2b4025a8
   latest_relevant_merged_pr:
-    number: 138
-    url: https://github.com/kuzmvnew/kontragent/pull/138
-    merge_sha: 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0
-    merged_at: '2026-10-08T16:18:36Z'
+    number: 139
+    url: https://github.com/kuzmvnew/kontragent/pull/139
+    merge_sha: 4256f6717047e664a775d82ecd8405ed2b4025a8
+    merged_at: '2026-10-08T19:22:27Z'
     evidence:
     - status: VERIFIED
       kind: git
       reference: git log --first-parent --merges -1 origin/main
-      observed_at: '2026-10-08T16:55:40Z'
+      observed_at: '2026-10-08T19:40:27Z'
   migration_heads:
     operational: b5d7f9a1c3e6
     public: public_0002
@@ -75,31 +75,77 @@ code:
       observed_at: '2026-10-08T16:55:40Z'
   - id: workspace-demo-full-e2e
     name: Local synthetic Demo 1.0 and full Workspace product E2E
+    status: MERGED
+    evidence:
+    - status: VERIFIED
+      kind: git
+      reference: 'PR #139 / merge 4256f6717047e664a775d82ecd8405ed2b4025a8'
+      observed_at: '2026-10-08T19:40:27Z'
+  - id: workspace-visual-ux-polish-04a-core-shell-card
+    name: Workspace shell, dashboard, Company Card and Settings visual UX polish
     status: NOT_MERGED
     evidence:
     - status: VERIFIED
       kind: task
-      reference: 'Dedicated local Demo databases, exact checked-out SHA provenance across manifest,
-        public release and report, ephemeral hosted password, real PublicRepository and product services,
-        fail-closed ownership reset plan with read-only public/operational preflight; Chromium CLEAN/SHOWCASE
-        acceptance: 2 passed with 0 critical skips; complete partitioned repository suite: 2281 passed,
-        21 skipped, 0 failed. This is functional Demo evidence only, not source, production data, or
-        public release acceptance.'
-      observed_at: '2026-10-08T18:41:38Z'
+      reference: '04A implementation is complete on its dedicated branch with Chromium desktop/mobile
+        visual-structure acceptance and six safe screenshots; independent QA and merge remain pending.'
+      observed_at: '2026-10-08T19:40:27Z'
 qa:
   state: NOT_ACCEPTED
   accepted_head_sha: UNKNOWN
   qa_task_id: UNKNOWN
   verdict: NOT_ACCEPTED
-  evidence_reference: No accepted QA task for current main SHA was supplied or found in repository evidence
+  evidence_reference: Functional Workspace completion 03A-03E is accepted; visual polish 04A awaits independent QA
   merge_allowed: false
   tested_at: UNKNOWN
   evidence:
   - status: NOT_VERIFIED
     kind: qa_task
-    reference: Current main SHA has no canonical accepted QA task in this status snapshot
-    observed_at: '2026-09-29T09:24:27Z'
-  capabilities: []
+    reference: Independent QA has not yet accepted the unmerged 04A visual polish head
+    observed_at: '2026-10-08T19:40:27Z'
+  capabilities:
+  - id: workspace-core-03a
+    status: ACCEPTED
+    evidence:
+    - status: VERIFIED
+      kind: task
+      reference: Functional product completion 03A was supplied as a DONE / QA ACCEPTED baseline for 04A
+      observed_at: '2026-10-08T19:40:27Z'
+  - id: workspace-reports-export-03b
+    status: ACCEPTED
+    evidence:
+    - status: VERIFIED
+      kind: task
+      reference: Functional product completion 03B was supplied as a DONE / QA ACCEPTED baseline for 04A
+      observed_at: '2026-10-08T19:40:27Z'
+  - id: workspace-bulk-check-03c
+    status: ACCEPTED
+    evidence:
+    - status: VERIFIED
+      kind: task
+      reference: Functional product completion 03C was supplied as a DONE / QA ACCEPTED baseline for 04A
+      observed_at: '2026-10-08T19:40:27Z'
+  - id: workspace-users-settings-03d
+    status: ACCEPTED
+    evidence:
+    - status: VERIFIED
+      kind: task
+      reference: Functional product completion 03D was supplied as a DONE / QA ACCEPTED baseline for 04A
+      observed_at: '2026-10-08T19:40:27Z'
+  - id: workspace-demo-full-e2e-03e
+    status: ACCEPTED
+    evidence:
+    - status: VERIFIED
+      kind: task
+      reference: Functional product completion 03E was supplied as a DONE / QA ACCEPTED baseline for 04A
+      observed_at: '2026-10-08T19:40:27Z'
+  - id: workspace-visual-ux-polish-04a
+    status: NOT_ACCEPTED
+    evidence:
+    - status: NOT_VERIFIED
+      kind: qa_task
+      reference: Independent QA has not yet accepted the 04A implementation head
+      observed_at: '2026-10-08T19:40:27Z'
 production:
   state: PARTIALLY_VERIFIED
   runtime_sha: UNKNOWN
@@ -171,28 +217,26 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2
-  title: DEMO RESET OWNERSHIP SAFETY — FAIL-CLOSED PREFLIGHT + PROVEN DEMO COMPANY / TENANT IDENTITY
+  id: MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01
+  title: NEXT COMPANY — CORE WORKSPACE SHELL + DASHBOARD + COMPANY CARD VISUAL POLISH
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'Real PostgreSQL 18.6 correction acceptance proved read-only preflight before mutation,
-      complete company provenance, six entitlement markers, active OWNER identity, global-user membership
-      and session scope, exact-ID deletion, unchanged public state on collisions, idempotent reset, CLEAN
-      and SHOWCASE rebuild, and full Chromium product flow. No production, HOME, source-live, mass-ingestion,
-      or public-release mutation.'
-    observed_at: '2026-10-08T18:41:38Z'
+    reference: 'Presentation-only 04A implementation adds the operational shell, four-metric Dashboard,
+      dossier-style Company Card, readable Settings usage and entitlements, accessibility checks, responsive
+      Chromium acceptance, and six safe screenshots without data/model/API/permission changes.'
+    observed_at: '2026-10-08T19:40:27Z'
 next_gate:
-  id: MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2-QA
-  description: Independent QA rerun of reset ownership safety and exact-head hosted Demo evidence
+  id: MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01-QA
+  description: Independent QA of the exact 04A PR head, desktop/mobile screenshots, and functional regressions
   state: READY
   evidence:
   - status: VERIFIED
     kind: task
-    reference: Correction 2 implementation and local acceptance gates passed; no independent QA acceptance,
-      merge, deployment, production source proof, or production release is asserted
-    observed_at: '2026-10-08T18:41:38Z'
+    reference: 04A is ready for independent QA; no merge, deployment, production mutation, source-live run,
+      mass ingestion, or production release is asserted
+    observed_at: '2026-10-08T19:40:27Z'
 incidents:
   state: NOT_VERIFIED
   active: []

@@ -1,35 +1,86 @@
+{% macro nav_item(href, key, label, icon) -%}
+<a href="{{ href }}" class="nav-item{{ ' active' if active_nav == key else '' }}"{% if active_nav == key %} aria-current="page"{% endif %}>
+  <span class="nav-icon" aria-hidden="true" data-icon="{{ icon }}"></span>
+  <span>{{ label }}</span>
+</a>
+{%- endmacro %}
 <!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,nosnippet">
+  <meta name="theme-color" content="#ffffff">
   <title>{% block title %}NEXT Company — Workspace{% endblock %}</title>
   <link rel="stylesheet" href="/workspace-static/workspace.css">
 </head>
 <body>
 {% if demo_mode %}<div class="demo-banner" role="status">Демо-среда · синтетические данные · не использовать для проверки реальных контрагентов.</div>{% endif %}
-<header class="app-header">
-  <a class="brand" href="/app">NEXT Company</a>
+<div class="app-shell{{ ' app-shell--guest' if not principal else '' }}">
   {% if principal %}
-  <nav aria-label="Навигация кабинета">
-    <a href="/app" class="{{ 'active' if active_nav == 'home' else '' }}"{% if active_nav == 'home' %} aria-current="page"{% endif %}>Главная</a>
-    <a href="/app/search" class="{{ 'active' if active_nav == 'search' else '' }}"{% if active_nav == 'search' %} aria-current="page"{% endif %}>Поиск</a>
-    <a href="/app/saved" class="{{ 'active' if active_nav == 'saved' else '' }}"{% if active_nav == 'saved' %} aria-current="page"{% endif %}>Сохранённые</a>
-    <a href="/app/monitoring" class="{{ 'active' if active_nav == 'monitoring' else '' }}"{% if active_nav == 'monitoring' %} aria-current="page"{% endif %}>Мониторинг</a>
-    <a href="/app/reports" class="{{ 'active' if active_nav == 'reports' else '' }}"{% if active_nav == 'reports' %} aria-current="page"{% endif %}>Отчёты</a>
-    <a href="/app/bulk" class="{{ 'active' if active_nav == 'bulk' else '' }}"{% if active_nav == 'bulk' %} aria-current="page"{% endif %}>Массовая проверка</a>
-    <a href="/app/users" class="{{ 'active' if active_nav == 'users' else '' }}"{% if active_nav == 'users' %} aria-current="page"{% endif %}>Пользователи</a>
-    <a href="/app/settings" class="{{ 'active' if active_nav == 'settings' else '' }}"{% if active_nav == 'settings' %} aria-current="page"{% endif %}>Настройки</a>
-  </nav>
-  {% if workspace %}<div class="workspace-context" aria-label="Активное рабочее пространство"><span>{{ workspace.name }}</span><small>{{ principal.email }}{% if role %} · {{ role.name }}{% endif %}</small><a href="/workspace/select">Сменить Workspace</a></div>{% endif %}
-  <form action="/logout" method="post">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit" class="link-button">Выйти</button>
-  </form>
+  <aside class="sidebar" aria-label="Основная навигация">
+    <a class="brand" href="/app" aria-label="NEXT Company">
+      <span class="wordmark" aria-hidden="true"><span>ne</span><span class="wordmark-x">x</span><span>t.</span><span class="wordmark-company">company</span></span>
+      <span class="sr-only">NEXT Company</span>
+    </a>
+    <nav class="sidebar-nav" aria-label="Разделы кабинета">
+      <div class="nav-group">
+        <span class="nav-group-title">Работа</span>
+        {{ nav_item('/app', 'home', 'Главная', '⌂') }}
+        {{ nav_item('/app/search', 'search', 'Поиск', '⌕') }}
+        {{ nav_item('/app/saved', 'saved', 'Сохранённые', '☆') }}
+        {{ nav_item('/app/monitoring', 'monitoring', 'Мониторинг', '◉') }}
+        {{ nav_item('/app/bulk', 'bulk', 'Массовая проверка', '⇄') }}
+        {{ nav_item('/app/reports', 'reports', 'Отчёты', '▤') }}
+      </div>
+      <div class="nav-group">
+        <span class="nav-group-title">Команда</span>
+        {{ nav_item('/app/users', 'users', 'Пользователи', '◎') }}
+      </div>
+      <div class="nav-group">
+        <span class="nav-group-title">Аккаунт</span>
+        {{ nav_item('/app/settings', 'settings', 'Настройки', '⚙') }}
+      </div>
+    </nav>
+    <a class="sidebar-public-link" href="{{ public_origin or '' }}/">Публичный поиск компаний</a>
+  </aside>
   {% endif %}
-</header>
-<main class="shell">{% block content %}{% endblock %}</main>
-<footer class="app-footer"><a href="{{ public_origin or '' }}/">Публичный поиск компаний</a><span>NEXT Company</span></footer>
+
+  <div class="app-frame">
+    <header class="topbar">
+      {% if principal %}
+      <form class="topbar-search" action="/app/search" method="get" role="search">
+        <label class="sr-only" for="global-q">Глобальный поиск компании</label>
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="global-q" name="q" inputmode="search" placeholder="Название или ИНН" maxlength="160">
+        <button type="submit" aria-label="Запустить глобальный поиск">Найти</button>
+      </form>
+
+      {% if workspace %}
+      <div class="workspace-context" aria-label="Активное рабочее пространство">
+        <span class="workspace-context-label">Workspace</span>
+        <strong>{{ workspace.name }}</strong>
+        <small>{{ principal.email }}{% if role %} · {{ role.name }}{% endif %}</small>
+      </div>
+      <div class="topbar-actions">
+        <a class="workspace-switch" href="/workspace/select">Сменить Workspace</a>
+        <form action="/logout" method="post">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="link-button">Выйти</button>
+        </form>
+      </div>
+      {% endif %}
+      {% else %}
+      <a class="brand guest-brand" href="/app" aria-label="NEXT Company">
+        <span class="wordmark" aria-hidden="true"><span>ne</span><span class="wordmark-x">x</span><span>t.</span><span class="wordmark-company">company</span></span>
+        <span class="sr-only">NEXT Company</span>
+      </a>
+      {% endif %}
+    </header>
+
+    <main class="shell" id="main-content">{% block content %}{% endblock %}</main>
+    <footer class="app-footer"><a href="{{ public_origin or '' }}/">Публичный поиск компаний</a><span>NEXT Company</span></footer>
+  </div>
+</div>
 </body>
 </html>

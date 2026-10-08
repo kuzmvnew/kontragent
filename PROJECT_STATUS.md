@@ -4,8 +4,8 @@
 > Regenerate with `uv run python scripts/project_status.py update`.
 
 - Schema version: `1.0.0`
-- Generated at: `2026-10-08T18:41:38Z`
-- Canonical main SHA: `64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0`
+- Generated at: `2026-10-08T19:40:27Z`
+- Canonical main SHA: `4256f6717047e664a775d82ecd8405ed2b4025a8`
 
 Layer states are independent. A merge is not deployment, QA acceptance is
 not deployment, and production deployment is not user-visible verification.
@@ -15,10 +15,10 @@ not deployment, and production deployment is not user-visible verification.
 | Field | Value |
 |---|---|
 | State | VERIFIED |
-| Main SHA | 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0 |
-| Latest relevant merged PR | #138 — https://github.com/kuzmvnew/kontragent/pull/138 |
-| Merge SHA | 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0 |
-| Merged at | 2026-10-08T16:18:36Z |
+| Main SHA | 4256f6717047e664a775d82ecd8405ed2b4025a8 |
+| Latest relevant merged PR | #139 — https://github.com/kuzmvnew/kontragent/pull/139 |
+| Merge SHA | 4256f6717047e664a775d82ecd8405ed2b4025a8 |
+| Merged at | 2026-10-08T19:22:27Z |
 | Operational migration head in code | b5d7f9a1c3e6 |
 | Public migration head in code | public_0002 |
 | Release-capable artifact state | PRESENT |
@@ -35,7 +35,8 @@ not deployment, and production deployment is not user-visible verification.
 | `post-migration-factory-recovery` | `MERGED` | PR #107 / merge 0ac7607dbb6b33c1cbdf1cc1604a28aee8a86882 |
 | `workspace-bulk-check` | `MERGED` | PR #137 / merge d51622288968a63cf2f91196564550df620f0b47 |
 | `workspace-users-roles-settings` | `MERGED` | PR #138 / merge 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0 |
-| `workspace-demo-full-e2e` | `NOT_MERGED` | Dedicated local Demo databases, exact checked-out SHA provenance across manifest, public release and report, ephemeral hosted password, real PublicRepository and product services, fail-closed ownership reset plan with read-only public/operational preflight; Chromium CLEAN/SHOWCASE acceptance: 2 passed with 0 critical skips; complete partitioned repository suite: 2281 passed, 21 skipped, 0 failed. This is functional Demo evidence only, not source, production data, or public release acceptance. |
+| `workspace-demo-full-e2e` | `MERGED` | PR #139 / merge 4256f6717047e664a775d82ecd8405ed2b4025a8 |
+| `workspace-visual-ux-polish-04a-core-shell-card` | `NOT_MERGED` | 04A implementation is complete on its dedicated branch with Chromium desktop/mobile visual-structure acceptance and six safe screenshots; independent QA and merge remain pending. |
 
 ## QA
 
@@ -45,17 +46,24 @@ not deployment, and production deployment is not user-visible verification.
 | Accepted head SHA | UNKNOWN |
 | QA task ID | UNKNOWN |
 | Verdict | NOT_ACCEPTED |
-| Evidence reference | No accepted QA task for current main SHA was supplied or found in repository evidence |
+| Evidence reference | Functional Workspace completion 03A-03E is accepted; visual polish 04A awaits independent QA |
 | Merge allowed | false |
 | Tested at | UNKNOWN |
 
 ### QA capabilities
 
-No capability assertions recorded.
+| Capability | Status | Evidence |
+|---|---|---|
+| `workspace-core-03a` | `ACCEPTED` | Functional product completion 03A was supplied as a DONE / QA ACCEPTED baseline for 04A |
+| `workspace-reports-export-03b` | `ACCEPTED` | Functional product completion 03B was supplied as a DONE / QA ACCEPTED baseline for 04A |
+| `workspace-bulk-check-03c` | `ACCEPTED` | Functional product completion 03C was supplied as a DONE / QA ACCEPTED baseline for 04A |
+| `workspace-users-settings-03d` | `ACCEPTED` | Functional product completion 03D was supplied as a DONE / QA ACCEPTED baseline for 04A |
+| `workspace-demo-full-e2e-03e` | `ACCEPTED` | Functional product completion 03E was supplied as a DONE / QA ACCEPTED baseline for 04A |
+| `workspace-visual-ux-polish-04a` | `NOT_ACCEPTED` | Independent QA has not yet accepted the 04A implementation head |
 
 ### QA provenance
 
-- `NOT_VERIFIED` / `qa_task` — Current main SHA has no canonical accepted QA task in this status snapshot (observed `2026-09-29T09:24:27Z`)
+- `NOT_VERIFIED` / `qa_task` — Independent QA has not yet accepted the unmerged 04A visual polish head (observed `2026-10-08T19:40:27Z`)
 
 ## PRODUCTION
 
@@ -120,12 +128,12 @@ No capability assertions recorded.
 
 | Field | Value |
 |---|---|
-| Active task | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2 |
+| Active task | MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01 |
 | Active task state | COMPLETE |
-| Active task title | DEMO RESET OWNERSHIP SAFETY — FAIL-CLOSED PREFLIGHT + PROVEN DEMO COMPANY / TENANT IDENTITY |
-| Next gate | MAC-OFFLINE-WORKSPACE-PRODUCT-COMPLETION-03E-DEMO-FULL-E2E-01-CORRECTION-2-QA |
+| Active task title | NEXT COMPANY — CORE WORKSPACE SHELL + DASHBOARD + COMPANY CARD VISUAL POLISH |
+| Next gate | MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01-QA |
 | Next gate state | READY |
-| Next gate description | Independent QA rerun of reset ownership safety and exact-head hosted Demo evidence |
+| Next gate description | Independent QA of the exact 04A PR head, desktop/mobile screenshots, and functional regressions |
 
 ## Incidents
 
