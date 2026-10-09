@@ -536,12 +536,12 @@ def test_workspace_demo_full_product_e2e(tmp_path):
         expect(page.locator(".workspace-context")).to_contain_text(renamed)
         truth = _db_truth(workspace_id)
         expect(
-            page.locator(".usage-grid article.metric")
+            page.locator(".usage-list article.usage-row")
             .filter(has_text="Сохранённые компании")
             .locator("strong")
         ).to_have_text(str(truth["saved"]))
         expect(
-            page.locator(".usage-grid article.metric")
+            page.locator(".usage-list article.usage-row")
             .filter(has_text="Отчёты")
             .locator("strong")
         ).to_have_text(str(truth["reports"]))

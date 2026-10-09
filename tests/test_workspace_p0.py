@@ -712,6 +712,67 @@ def test_workspace_p0_session_revoke_blocks_private_routes():
         _cleanup(email)
 
 
+def test_workspace_shell_logout_visibility_and_csrf_without_active_workspace():
+    selected_email = f"workspace-logout-selected-{uuid4()}@example.test"
+    selecting_email = f"workspace-logout-selecting-{uuid4()}@example.test"
+    other_email = f"workspace-logout-other-{uuid4()}@example.test"
+    try:
+        _bootstrap(selected_email, "Selected Workspace")
+        selecting_user_id, _workspace_a = _bootstrap(
+            selecting_email,
+            "Selecting Workspace A",
+        )
+        _other_user_id, workspace_b = _bootstrap(
+            other_email,
+            "Selecting Workspace B",
+        )
+        _grant_membership(selecting_user_id, workspace_b)
+
+        selected = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+        anonymous_page = selected.get("/login")
+        assert anonymous_page.status_code == 200
+        assert 'action="/logout"' not in anonymous_page.text
+
+        selected_login = _login(selected, selected_email)
+        assert selected_login.headers["location"] == "/app"
+        selected_page = selected.get("/app")
+        assert selected_page.status_code == 200
+        assert selected_page.text.count('action="/logout"') == 1
+        assert 'class="workspace-switch"' in selected_page.text
+
+        selecting = TestClient(
+            create_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+        selecting_login = _login(selecting, selecting_email)
+        assert selecting_login.headers["location"] == "/workspace/select"
+        selection_page = selecting.get("/workspace/select")
+        assert selection_page.status_code == 200
+        assert selection_page.text.count('action="/logout"') == 1
+        assert 'class="workspace-switch"' not in selection_page.text
+        assert _csrf_from_html(selection_page.text) == selecting.cookies[CSRF_COOKIE]
+
+        logout = selecting.post(
+            "/logout",
+            data={"csrf": selecting.cookies[CSRF_COOKIE]},
+            follow_redirects=False,
+        )
+        assert logout.status_code == 303
+        assert logout.headers["location"] == "/login"
+        private = selecting.get("/app", follow_redirects=False)
+        assert private.status_code == 303
+        assert private.headers["location"].startswith("/login")
+    finally:
+        _cleanup(selected_email, selecting_email, other_email)
+
+
 def test_workspace_p0_login_rolls_back_when_audit_insert_fails(monkeypatch):
     email = f"workspace-audit-login-rollback-{uuid4()}@example.test"
     try:
