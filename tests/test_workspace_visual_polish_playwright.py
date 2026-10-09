@@ -13,7 +13,12 @@ from public_app.contracts import PublicCompanyViewV1, PublicViewSection
 from public_app.main import create_app as create_public_app
 from tests.public_test_support import projection
 from tests.test_public_card_data_binding import NOW, _fact
-from tests.test_workspace_p0 import FakePublicRepository, _bootstrap, _cleanup
+from tests.test_workspace_p0 import (
+    FakePublicRepository,
+    _bootstrap,
+    _cleanup,
+    _grant_membership,
+)
 from tests.test_workspace_vertical_slice_playwright import LiveServer, _login
 from workspace_app.main import create_app as create_workspace_app
 from workspace_app.service import save_company
@@ -177,6 +182,7 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             expect(desktop_workspace_switch).to_have_attribute(
                 "href", "/workspace/select"
             )
+            expect(page.get_by_role("button", name="Выйти")).to_be_visible()
             assert _heading_size(page) <= 38
             assert _has_no_page_overflow(page)
             _assert_keyboard_focus(page)
@@ -196,6 +202,7 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             expect(mobile_workspace_switch).to_have_attribute(
                 "href", "/workspace/select"
             )
+            expect(page.get_by_role("button", name="Выйти")).to_be_visible()
             assert mobile_workspace_switch.evaluate(
                 "element => element.tabIndex >= 0"
             )
@@ -264,3 +271,47 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             browser.close()
     finally:
         _cleanup(email, inns=(item.company.inn,))
+
+
+def test_workspace_select_keeps_logout_visible_without_workspace_context():
+    email = f"visual-logout-{uuid4()}@example.test"
+    other_email = f"visual-logout-other-{uuid4()}@example.test"
+    try:
+        user_id, _workspace_a = _bootstrap(email, "Logout Visual A")
+        _other_user_id, workspace_b = _bootstrap(other_email, "Logout Visual B")
+        _grant_membership(user_id, workspace_b)
+        workspace = LiveServer(
+            create_workspace_app(
+                public_repository=FakePublicRepository(()),
+                session_factory=SessionLocal,
+            )
+        )
+
+        with workspace, sync_playwright() as manager:
+            browser = manager.chromium.launch(headless=True)
+            page = browser.new_page(viewport=DESKTOP)
+            page.goto(f"{workspace.url}/login")
+            expect(page.locator("form[action='/logout']")).to_have_count(0)
+            _login(page, email)
+            expect(page).to_have_url(f"{workspace.url}/workspace/select")
+
+            logout = page.get_by_role("button", name="Выйти")
+            expect(logout).to_be_visible()
+            expect(page.locator(".workspace-switch")).to_have_count(0)
+            assert _has_no_page_overflow(page)
+
+            page.set_viewport_size(MOBILE)
+            expect(logout).to_be_visible()
+            expect(page.locator(".workspace-switch")).to_have_count(0)
+            logout_box = logout.bounding_box()
+            assert logout_box is not None
+            assert logout_box["height"] >= 44 or logout_box["width"] >= 44
+            _assert_visible_focus(page, "form[action='/logout'] button")
+            assert _has_no_page_overflow(page)
+
+            logout.click()
+            expect(page).to_have_url(f"{workspace.url}/login")
+            expect(page.locator("form[action='/logout']")).to_have_count(0)
+            browser.close()
+    finally:
+        _cleanup(email, other_email)

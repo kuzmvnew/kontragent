@@ -62,17 +62,19 @@
         <strong>{{ workspace.name }}</strong>
         <small>{{ principal.email }}{% if role %} · {{ role.name }}{% endif %}</small>
       </div>
+      {% endif %}
       <div class="topbar-actions">
+        {% if workspace %}
         <a class="workspace-switch" href="/workspace/select" aria-label="Сменить Workspace">
           <span class="workspace-switch-label workspace-switch-label--full" aria-hidden="true">Сменить Workspace</span>
           <span class="workspace-switch-label workspace-switch-label--compact" aria-hidden="true">Сменить</span>
         </a>
+        {% endif %}
         <form action="/logout" method="post">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <button type="submit" class="link-button">Выйти</button>
         </form>
       </div>
-      {% endif %}
       {% else %}
       <a class="brand guest-brand" href="/app" aria-label="NEXT Company">
         <span class="wordmark" aria-hidden="true"><span>ne</span><span class="wordmark-x">x</span><span>t.</span><span class="wordmark-company">company</span></span>
