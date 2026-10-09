@@ -376,6 +376,10 @@ code {
   white-space: nowrap;
 }
 
+.workspace-switch-label--compact {
+  display: none;
+}
+
 .guest-brand {
   justify-self: start;
 }
@@ -1717,10 +1721,15 @@ summary:focus-visible {
     grid-column: 2;
     grid-row: 2;
     justify-content: flex-end;
+    gap: 4px;
   }
 
-  .workspace-switch {
+  .workspace-switch-label--full {
     display: none;
+  }
+
+  .workspace-switch-label--compact {
+    display: inline;
   }
 
   .sidebar {

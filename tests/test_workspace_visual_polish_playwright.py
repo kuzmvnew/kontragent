@@ -61,6 +61,22 @@ def _assert_keyboard_focus(page: Page) -> None:
     assert outline["width"] != "0px"
 
 
+def _assert_visible_focus(page: Page, selector: str) -> None:
+    control = page.locator(selector)
+    control.focus()
+    expect(control).to_be_focused()
+    outline = control.evaluate(
+        """
+        element => {
+          const style = getComputedStyle(element);
+          return {style: style.outlineStyle, width: style.outlineWidth};
+        }
+        """
+    )
+    assert outline["style"] != "none"
+    assert outline["width"] != "0px"
+
+
 def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monkeypatch):
     email = f"visual-04a-{uuid4()}@example.test"
     base_item = projection(sequence=100_100_181)
@@ -154,6 +170,13 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             assert page.locator(".sidebar").evaluate(
                 "element => Math.round(element.getBoundingClientRect().width)"
             ) == 224
+            desktop_workspace_switch = page.get_by_role(
+                "link", name="Сменить Workspace", exact=True
+            )
+            expect(desktop_workspace_switch).to_be_visible()
+            expect(desktop_workspace_switch).to_have_attribute(
+                "href", "/workspace/select"
+            )
             assert _heading_size(page) <= 38
             assert _has_no_page_overflow(page)
             _assert_keyboard_focus(page)
@@ -166,6 +189,20 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
                 "element => getComputedStyle(element).position"
             ) == "relative"
             expect(page.locator(".topbar-search input")).to_be_visible()
+            mobile_workspace_switch = page.get_by_role(
+                "link", name="Сменить Workspace", exact=True
+            )
+            expect(mobile_workspace_switch).to_be_visible()
+            expect(mobile_workspace_switch).to_have_attribute(
+                "href", "/workspace/select"
+            )
+            assert mobile_workspace_switch.evaluate(
+                "element => element.tabIndex >= 0"
+            )
+            switch_box = mobile_workspace_switch.bounding_box()
+            assert switch_box is not None
+            assert switch_box["height"] >= 44 or switch_box["width"] >= 44
+            _assert_visible_focus(page, ".workspace-switch")
             assert _heading_size(page) <= 28
             assert _has_no_page_overflow(page)
             touch_heights = page.locator(
