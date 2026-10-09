@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.local_real_preview_support import (
     INN,
+    LIBPQ_ENDPOINT_ENVIRONMENT,
     require_preview_mode,
     validate_database_topology,
     verify_preview,
@@ -36,7 +37,12 @@ def main() -> int:
         source_url=source_url,
         operational_url=operational_url,
         public_url=public_url,
+        environment=environment,
     )
+    # The guard has already rejected every inherited libpq endpoint source.
+    # Remove them defensively before either server process is created.
+    for name in LIBPQ_ENDPOINT_ENVIRONMENT:
+        environment.pop(name, None)
     verify_preview(operational_url, public_url)
 
     public_origin = f"http://127.0.0.1:{args.public_port}"

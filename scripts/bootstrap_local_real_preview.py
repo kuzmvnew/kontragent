@@ -25,6 +25,7 @@ from scripts.local_real_preview_support import (
 
 
 def _urls() -> tuple[str, str, str]:
+    environment = dict(os.environ)
     source = os.getenv("ALAN_PREVIEW_SOURCE_DATABASE_URL", "")
     operational = os.getenv("DATABASE_URL", "")
     public = os.getenv("PUBLIC_IMPORT_DATABASE_URL") or os.getenv("PUBLIC_DATABASE_URL", "")
@@ -32,6 +33,7 @@ def _urls() -> tuple[str, str, str]:
         source_url=source,
         operational_url=operational,
         public_url=public,
+        environment=environment,
     )
     return source, operational, public
 

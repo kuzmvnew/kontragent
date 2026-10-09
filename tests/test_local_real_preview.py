@@ -64,11 +64,12 @@ def test_real_preview_guard_accepts_only_fixed_distinct_local_databases():
             operational_url=_url("kontragent"),
             public_url=_url(PUBLIC_DATABASE),
         )
-    with pytest.raises(ValueError, match="local PostgreSQL"):
+    with pytest.raises(ValueError, match="database rejected"):
         validate_database_topology(
-            source_url=f"postgresql://production.example/{SOURCE_DATABASE}",
+            source_url=f"postgresql+psycopg://production.example/{SOURCE_DATABASE}",
             operational_url=_url(OPERATIONAL_DATABASE),
             public_url=_url(PUBLIC_DATABASE),
+            environment={},
         )
 
 

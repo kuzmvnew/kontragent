@@ -10,16 +10,20 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import ipaddress
 import json
+import os
+import socket
 import subprocess
+from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 import psycopg
 import sqlalchemy as sa
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
@@ -56,6 +60,20 @@ CANONICAL_MAIN = "c9bdb49768dc503af8ec82bdaa97653bc7412f3b"
 PREVIEW_POLICY = "local-real-preview-alan-v1"
 OPERATIONAL_SCHEMA_HEAD = "b5d7f9a1c3e6"
 PUBLIC_SCHEMA_HEAD = "public_0002"
+APPROVED_POSTGRES_PORT = "5432"
+APPROVED_UNIX_SOCKET = "/tmp"
+LIBPQ_ENDPOINT_ENVIRONMENT = frozenset(
+    {
+        "PGDATABASE",
+        "PGHOST",
+        "PGHOSTADDR",
+        "PGPORT",
+        "PGSERVICE",
+        "PGSERVICEFILE",
+        "PGSYSCONFDIR",
+    }
+)
+LIBPQ_SERVICE_PARAMETERS = frozenset({"service", "servicefile"})
 
 
 def _enabled(value: str | None) -> bool:
@@ -69,25 +87,146 @@ def require_preview_mode(environment: dict[str, str]) -> None:
         raise ValueError("synthetic demo mode must be disabled for the real-data preview")
 
 
-def _database_name(database_url: str) -> str:
+def _psycopg_url(database_url: str) -> str:
+    return database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+
+def _reject_libpq_endpoint_environment(environment: Mapping[str, str]) -> None:
+    configured = sorted(name for name in LIBPQ_ENDPOINT_ENVIRONMENT if name in environment)
+    if configured:
+        raise ValueError(
+            "libpq endpoint/service environment is forbidden for the local preview: "
+            + ", ".join(configured)
+        )
+
+
+def _effective_connection_parameters(database_url: str) -> dict[str, str]:
+    """Parse the parameters used by both pinned SQLAlchemy and psycopg.
+
+    SQLAlchemy query parameters override URL authority fields before psycopg is
+    called.  Comparing both real parsers makes that precedence explicit and
+    fails closed if their endpoint interpretation ever diverges.
+    """
+
     try:
-        name = make_url(database_url).database
-    except Exception as exc:  # pragma: no cover - SQLAlchemy owns URL parsing
-        raise ValueError("invalid PostgreSQL URL") from exc
-    if not name:
-        raise ValueError("database URL must name a database")
-    return name
+        url = make_url(database_url)
+        if url.drivername != "postgresql+psycopg":
+            raise ValueError("database URL must use the postgresql+psycopg driver")
+        if any(key in url.query for key in LIBPQ_SERVICE_PARAMETERS):
+            raise ValueError("libpq service parameters are forbidden")
+        args, sqlalchemy_parameters = url.get_dialect()().create_connect_args(url)
+        if args:
+            raise ValueError("positional database connection arguments are forbidden")
+        sqlalchemy_parameters = {
+            key: value
+            for key, value in sqlalchemy_parameters.items()
+            if key != "context"
+        }
+        psycopg_parameters = conninfo_to_dict(
+            _psycopg_url(url.render_as_string(hide_password=False))
+        )
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("invalid or ambiguous PostgreSQL URL") from exc
+
+    relevant = ("dbname", "host", "hostaddr", "port", "service", "servicefile")
+    for key in relevant:
+        sqlalchemy_value = sqlalchemy_parameters.get(key)
+        psycopg_value = psycopg_parameters.get(key)
+        if sqlalchemy_value is None and psycopg_value is None:
+            continue
+        if not isinstance(sqlalchemy_value, (str, int)) or not isinstance(
+            psycopg_value, (str, int)
+        ):
+            raise ValueError(f"ambiguous PostgreSQL {key} parameter")
+        if str(sqlalchemy_value) != str(psycopg_value):
+            raise ValueError(f"SQLAlchemy and psycopg disagree about {key}")
+    return {key: str(value) for key, value in psycopg_parameters.items()}
 
 
-def _is_local_database_url(database_url: str) -> bool:
-    parsed = urlsplit(database_url.replace("postgresql+psycopg://", "postgresql://", 1))
-    query = parse_qs(parsed.query)
-    host = parsed.hostname or (query.get("host") or [""])[0]
-    return host in {"", "localhost", "127.0.0.1", "/tmp"} or str(host).startswith("/")
+def _resolved_localhost_is_loopback(host: str) -> bool:
+    try:
+        addresses = {
+            ipaddress.ip_address(item[4][0])
+            for item in socket.getaddrinfo(
+                host,
+                None,
+                family=socket.AF_UNSPEC,
+                type=socket.SOCK_STREAM,
+            )
+        }
+    except (OSError, ValueError) as exc:
+        raise ValueError("localhost could not be resolved safely") from exc
+    return bool(addresses) and all(address.is_loopback for address in addresses)
+
+
+def _validate_endpoint(parameters: Mapping[str, str]) -> None:
+    if parameters.get("service") or parameters.get("servicefile"):
+        raise ValueError("libpq service parameters are forbidden")
+    host = parameters.get("host", "")
+    if not host or "," in host:
+        raise ValueError("an explicit single local PostgreSQL host is required")
+    port = parameters.get("port") or APPROVED_POSTGRES_PORT
+    if "," in port or port != APPROVED_POSTGRES_PORT:
+        raise ValueError(f"PostgreSQL port must be exactly {APPROVED_POSTGRES_PORT}")
+
+    hostaddr = parameters.get("hostaddr", "")
+    if "," in hostaddr:
+        raise ValueError("multi-host PostgreSQL hostaddr is forbidden")
+    if host.startswith("/"):
+        if host != APPROVED_UNIX_SOCKET:
+            raise ValueError(f"Unix socket must be exactly {APPROVED_UNIX_SOCKET}")
+        if hostaddr:
+            raise ValueError("hostaddr cannot be combined with a Unix socket")
+        socket_directory = Path(host)
+        if not socket_directory.is_dir() or not socket_directory.resolve().samefile(
+            Path(APPROVED_UNIX_SOCKET).resolve()
+        ):
+            raise ValueError("approved Unix socket directory is unavailable")
+        return
+
+    try:
+        host_address = ipaddress.ip_address(host)
+    except ValueError:
+        if host.casefold() != "localhost" or not _resolved_localhost_is_loopback(host):
+            raise ValueError("PostgreSQL hostname must resolve only to loopback")
+    else:
+        if not host_address.is_loopback:
+            raise ValueError("PostgreSQL address must be loopback")
+
+    if hostaddr:
+        try:
+            hostaddr_address = ipaddress.ip_address(hostaddr)
+        except ValueError as exc:
+            raise ValueError("PostgreSQL hostaddr must be one loopback IP") from exc
+        if not hostaddr_address.is_loopback:
+            raise ValueError("PostgreSQL hostaddr must be loopback")
+
+
+def _validated_database_name(
+    database_url: str,
+    expected_database: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    _reject_libpq_endpoint_environment(os.environ if environment is None else environment)
+    parameters = _effective_connection_parameters(database_url)
+    _validate_endpoint(parameters)
+    observed = parameters.get("dbname", "")
+    if observed != expected_database:
+        raise ValueError(
+            f"database must be exactly {expected_database}, got {observed or '<empty>'}"
+        )
+    return observed
 
 
 def validate_database_topology(
-    *, source_url: str, operational_url: str, public_url: str
+    *,
+    source_url: str,
+    operational_url: str,
+    public_url: str,
+    environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     values = {
         "source": (source_url, SOURCE_DATABASE),
@@ -95,22 +234,21 @@ def validate_database_topology(
         "public": (public_url, PUBLIC_DATABASE),
     }
     resolved: dict[str, str] = {}
+    effective_environment = os.environ if environment is None else environment
     for role, (url, expected) in values.items():
         if not url:
             raise ValueError(f"{role} database URL is required")
-        if not _is_local_database_url(url):
-            raise ValueError(f"{role} database must use a local PostgreSQL host/socket")
-        observed = _database_name(url)
-        if observed != expected:
-            raise ValueError(f"{role} database must be exactly {expected}, got {observed}")
-        resolved[role] = observed
+        try:
+            resolved[role] = _validated_database_name(
+                url,
+                expected,
+                environment=effective_environment,
+            )
+        except ValueError as exc:
+            raise ValueError(f"{role} database rejected: {exc}") from exc
     if len(set(resolved.values())) != 3:
         raise ValueError("source, operational clone, and public database must be distinct")
     return resolved
-
-
-def _psycopg_url(database_url: str) -> str:
-    return database_url.replace("postgresql+psycopg://", "postgresql://", 1)
 
 
 def _git_head() -> str:
@@ -134,6 +272,7 @@ def _jsonable(value):
 def inspect_source(source_url: str) -> tuple[dict, object]:
     """Read and validate the exact retained source revision and build its projection."""
 
+    _validated_database_name(source_url, SOURCE_DATABASE)
     with psycopg.connect(_psycopg_url(source_url), row_factory=dict_row) as connection:
         connection.execute("SET TRANSACTION READ ONLY")
         with connection.cursor() as cursor:
@@ -308,6 +447,7 @@ def build_bundle(source_url: str, output_root: Path) -> tuple[Path, dict]:
 
 
 def import_public_bundle(public_url: str, bundle_dir: Path) -> dict:
+    _validated_database_name(public_url, PUBLIC_DATABASE)
     with psycopg.connect(_psycopg_url(public_url), row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT version_num FROM alembic_version")
@@ -329,6 +469,7 @@ def import_public_bundle(public_url: str, bundle_dir: Path) -> dict:
 def bootstrap_workspace(operational_url: str, password: str) -> dict:
     if len(password) < 16:
         raise ValueError("NEXTCOMPANY_PREVIEW_PASSWORD must contain at least 16 characters")
+    _validated_database_name(operational_url, OPERATIONAL_DATABASE)
     engine = sa.create_engine(operational_url, pool_pre_ping=True)
     with Session(engine, expire_on_commit=False) as session:
         database = session.scalar(sa.text("SELECT current_database()"))
@@ -388,6 +529,8 @@ def bootstrap_workspace(operational_url: str, password: str) -> dict:
 
 
 def verify_preview(operational_url: str, public_url: str) -> dict:
+    _validated_database_name(public_url, PUBLIC_DATABASE)
+    _validated_database_name(operational_url, OPERATIONAL_DATABASE)
     repository = PublicRepository(public_url)
     ready, release_id, count = repository.ready()
     projection = repository.get_company(INN)

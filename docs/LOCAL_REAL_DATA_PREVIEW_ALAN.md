@@ -14,9 +14,13 @@ does not run HOME, ingestion, crawlers, workers, or monitoring checks.
 - Public release: `local-real-preview-alan-v1`, exactly one company, never index eligible.
 - Owner: `alan.preview.owner@nextcompany.local`.
 
-The bootstrap rejects remote database hosts, unexpected database names, reused
-production/release databases, demo mode, and a checkout that is not based on the
-fixed canonical revision. The source connection uses `SET TRANSACTION READ ONLY`.
+The bootstrap resolves effective connection parameters through both the pinned
+SQLAlchemy and psycopg parsers. It rejects query overrides, `hostaddr`,
+multi-host or implicit hosts, libpq service configuration, inherited endpoint
+variables, non-loopback TCP, Unix sockets other than `/tmp`, unexpected database
+names, reused production/release databases, demo mode, and a checkout that is
+not based on the fixed canonical revision. Rejection happens before creating an
+engine or connection. The source connection uses `SET TRANSACTION READ ONLY`.
 
 ## 1. Create disposable databases
 
@@ -32,11 +36,16 @@ commands create new databases; they do not change the retained source.
 ```
 
 Set local URLs. Choose a fresh password of at least 16 characters; it is only
-used for the disposable Workspace owner.
+used for the disposable Workspace owner. The preview intentionally fails if any
+of `PGDATABASE`, `PGHOST`, `PGHOSTADDR`, `PGPORT`, `PGSERVICE`, `PGSERVICEFILE`,
+or `PGSYSCONFDIR` is present; unset those variables rather than relying on libpq
+precedence. Approved endpoints are an explicit loopback address on port 5432 or
+the exact local socket directory `/tmp` used below.
 
 ```sh
 export NEXTCOMPANY_LOCAL_REAL_PREVIEW=1
 export NEXTCOMPANY_DEMO_MODE=0
+unset PGDATABASE PGHOST PGHOSTADDR PGPORT PGSERVICE PGSERVICEFILE PGSYSCONFDIR
 export ALAN_PREVIEW_SOURCE_DATABASE_URL='postgresql+psycopg://localhost/public_card_binding_impl_01_20260928?host=/tmp'
 export DATABASE_URL='postgresql+psycopg://localhost/alan_preview_operational_20261009?host=/tmp'
 export PUBLIC_IMPORT_DATABASE_URL='postgresql+psycopg://localhost/alan_preview_public_20261009?host=/tmp'
@@ -104,6 +113,10 @@ After `prepare`, run:
 
 ```sh
 uv run python -m pytest tests/test_local_real_preview.py -q
+uv run python -m pytest tests/test_local_real_preview_topology.py -q
+LOCAL_REAL_PREVIEW_SOCKET_TEST=1 uv run python -m pytest \
+  tests/test_local_real_preview_topology.py \
+  -k approved_tmp_socket_opens_the_expected_real_local_database -q
 LOCAL_REAL_PREVIEW_E2E=1 uv run python -m pytest \
   tests/test_local_real_preview_alan_e2e.py -q
 uv run python -m pytest \
