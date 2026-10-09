@@ -140,6 +140,7 @@ def _shared_template_context(request: Request) -> dict:
         "public_origin": request.app.state.public_origin,
         "active_nav": _active_nav(request.url.path),
         "demo_mode": request.app.state.demo_mode,
+        "local_real_preview": request.app.state.local_real_preview,
     }
 
 
@@ -795,6 +796,11 @@ def create_app(
         "yes",
         "on",
     }
+    app.state.local_real_preview = os.getenv(
+        "NEXTCOMPANY_LOCAL_REAL_PREVIEW", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if app.state.demo_mode and app.state.local_real_preview:
+        raise ValueError("demo mode and local real-data preview are mutually exclusive")
     app.state.public_origin = _validated_public_origin(
         os.getenv("PUBLIC_ORIGIN", "") if public_origin is None else public_origin
     )

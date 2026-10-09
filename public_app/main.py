@@ -120,6 +120,7 @@ def _workspace_url(request: Request, path: str, *, return_to: str | None = None)
 def _page_context(request: Request, **values) -> dict:
     return {
         "demo_mode": request.app.state.demo_mode,
+        "local_real_preview": request.app.state.local_real_preview,
         "workspace_login_url": _workspace_url(
             request,
             "/login",
@@ -157,7 +158,10 @@ def _card_json_ld(projection: PublicProjection) -> dict:
 
 def create_app(repository=None, *, workspace_origin: str | None = None) -> FastAPI:
     demo_mode = _env_flag("NEXTCOMPANY_DEMO_MODE")
-    force_noindex = _env_flag("PUBLIC_FORCE_NOINDEX") or demo_mode
+    local_real_preview = _env_flag("NEXTCOMPANY_LOCAL_REAL_PREVIEW")
+    if demo_mode and local_real_preview:
+        raise ValueError("demo mode and local real-data preview are mutually exclusive")
+    force_noindex = _env_flag("PUBLIC_FORCE_NOINDEX") or demo_mode or local_real_preview
     app = FastAPI(
         title="NEXT Company Public",
         docs_url=None,
@@ -167,6 +171,7 @@ def create_app(repository=None, *, workspace_origin: str | None = None) -> FastA
     app.state.repository = repository or PublicRepository()
     app.state.force_noindex = force_noindex
     app.state.demo_mode = demo_mode
+    app.state.local_real_preview = local_real_preview
     app.state.workspace_origin = _validated_workspace_origin(
         os.getenv("WORKSPACE_ORIGIN", "")
         if workspace_origin is None

@@ -2,6 +2,7 @@
 {% block title %}Мониторинг {{ company.name }} — NEXT Company{% endblock %}
 {% block content %}
 <section class="monitoring-card">
+  {% if local_real_preview %}<div class="notice" data-preview-monitoring-limit><strong>LOCAL REAL DATA PREVIEW</strong><p>Создаётся только исходное состояние. Live-проверки отключены; отсутствие событий не означает отсутствие изменений.</p></div>{% endif %}
   <p class="eyebrow">Мониторинг компании</p>
   <h1>{{ company.name }}</h1>
   <p>ИНН {{ company.inn }}</p>
