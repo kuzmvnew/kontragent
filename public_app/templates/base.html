@@ -10,6 +10,7 @@
 </head>
 <body>
   {% if demo_mode %}<div class="demo-banner" role="status">Демо-среда · синтетические данные · не использовать для проверки реальных контрагентов.</div>{% endif %}
+  {% if local_real_preview %}<div class="demo-banner" role="status" data-preview-mode="local-real">LOCAL REAL DATA PREVIEW · сохранённые реальные данные · NON-PRODUCTION · без обновления источников.</div>{% endif %}
   <header class="site-header">
     <a class="brand" href="/" aria-label="NEXT Company — на главную"><span>NEXT</span> Company</a>
     <form class="header-search" action="/search" method="get" role="search">

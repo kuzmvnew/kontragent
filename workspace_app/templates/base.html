@@ -16,6 +16,7 @@
 </head>
 <body>
 {% if demo_mode %}<div class="demo-banner" role="status">Демо-среда · синтетические данные · не использовать для проверки реальных контрагентов.</div>{% endif %}
+{% if local_real_preview %}<div class="demo-banner" role="status" data-preview-mode="local-real">LOCAL REAL DATA PREVIEW · сохранённые реальные данные · NON-PRODUCTION · без обновления источников.</div>{% endif %}
 <div class="app-shell{{ ' app-shell--guest' if not principal else '' }}">
   {% if principal %}
   <aside class="sidebar" aria-label="Основная навигация">

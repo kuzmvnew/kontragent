@@ -2,6 +2,7 @@
 {% block title %}Мониторинг — NEXT Company{% endblock %}
 {% block content %}
 <section class="monitoring-feed">
+  {% if local_real_preview %}<div class="notice" data-preview-monitoring-limit><strong>LOCAL REAL DATA PREVIEW</strong><p>Лента не запускает проверки источников. Отсутствие событий означает только отсутствие запущенных live-проверок.</p></div>{% endif %}
   <p class="eyebrow">Workspace Monitoring</p>
   <h1>Мониторинг</h1>
   <p class="workspace-lead">Компании на контроле и единая лента изменений этого Workspace.</p>
@@ -67,7 +68,7 @@
     {% endfor %}
     </div>
   {% else %}
-    {% if read_state != 'all' or severity_filter %}<section class="empty-state compact"><h3>Нет событий по выбранному фильтру</h3><p>Измените фильтр или вернитесь ко всей ленте.</p><a class="button secondary" href="/app/monitoring">Показать все события</a></section>{% else %}<section class="empty-state compact"><h3>Пока нет событий</h3><p>После первого включения создаётся исходное состояние компании. Новые изменения появятся здесь после проверки.</p>{% if subscriptions %}<a class="button secondary" href="/app/saved">Открыть сохранённые</a>{% else %}<a class="button" href="/app/saved">Настроить мониторинг</a>{% endif %}</section>{% endif %}
+    {% if read_state != 'all' or severity_filter %}<section class="empty-state compact"><h3>Нет событий по выбранному фильтру</h3><p>Измените фильтр или вернитесь ко всей ленте.</p><a class="button secondary" href="/app/monitoring">Показать все события</a></section>{% else %}<section class="empty-state compact"><h3>Пока нет событий</h3><p>{% if local_real_preview %}В LOCAL PREVIEW live-проверки отключены; отсутствие событий не является чистым результатом.{% else %}После первого включения создаётся исходное состояние компании. Новые изменения появятся здесь после проверки.{% endif %}</p>{% if subscriptions %}<a class="button secondary" href="/app/saved">Открыть сохранённые</a>{% else %}<a class="button" href="/app/saved">Настроить мониторинг</a>{% endif %}</section>{% endif %}
   {% endif %}
   </section>
 </section>

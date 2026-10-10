@@ -4,7 +4,7 @@
 {% set company = projection.company %}
 {% if notice == 'saved' %}<div class="notice success" role="status">Компания сохранена в {{ workspace.name }}.</div>{% elif notice == 'unsaved' %}<div class="notice" role="status">Компания удалена из сохранённых.</div>{% endif %}
 
-<section id="overview" class="company-head page-header" data-company-inn="{{ company.inn }}" data-saved="{{ 'true' if actions.is_saved else 'false' }}">
+<section id="overview" class="company-head page-header" data-company-inn="{{ company.inn }}" data-saved="{{ 'true' if actions.is_saved else 'false' }}"{% if projection.company_view %} data-view-contract="{{ projection.company_view.contract_version }}" data-view-revision="{{ projection.company_view.revision }}"{% endif %}>
   <div class="company-title-group">
     <p class="eyebrow">Авторизованная карточка</p>
     <div class="company-title-line">
@@ -149,6 +149,7 @@
 {% if actions.is_saved %}
 <section id="monitoring" class="monitoring-preview" data-monitoring-state="{{ actions.monitoring.state }}">
   <div><p class="eyebrow">Monitoring</p><h2>Мониторинг изменений</h2><p>{{ actions.monitoring.message }}</p></div>
+  {% if local_real_preview %}<p class="limitation" data-preview-monitoring-limit>LOCAL PREVIEW: создаётся только исходное состояние. Live-проверки отключены; отсутствие событий не означает отсутствие изменений.</p>{% endif %}
   <span class="status-badge state-badge">{{ actions.monitoring.state }}</span>
   <div class="monitoring-actions">
     {% if actions.monitoring.entry_enabled %}<a class="button secondary" href="/app/companies/{{ company.inn }}/monitoring">Открыть статус мониторинга</a>{% endif %}

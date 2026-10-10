@@ -1,19 +1,19 @@
 schema_version: 1.0.0
-generated_at: '2026-10-08T19:40:27Z'
-main_sha: 4256f6717047e664a775d82ecd8405ed2b4025a8
+generated_at: '2026-10-10T07:52:31Z'
+main_sha: c9bdb49768dc503af8ec82bdaa97653bc7412f3b
 code:
   state: VERIFIED
-  main_sha: 4256f6717047e664a775d82ecd8405ed2b4025a8
+  main_sha: c9bdb49768dc503af8ec82bdaa97653bc7412f3b
   latest_relevant_merged_pr:
-    number: 139
-    url: https://github.com/kuzmvnew/kontragent/pull/139
-    merge_sha: 4256f6717047e664a775d82ecd8405ed2b4025a8
-    merged_at: '2026-10-08T19:22:27Z'
+    number: 140
+    url: https://github.com/kuzmvnew/kontragent/pull/140
+    merge_sha: c9bdb49768dc503af8ec82bdaa97653bc7412f3b
+    merged_at: '2026-10-09T06:43:51Z'
     evidence:
     - status: VERIFIED
       kind: git
       reference: git log --first-parent --merges -1 origin/main
-      observed_at: '2026-10-08T19:40:27Z'
+      observed_at: '2026-10-10T07:52:31Z'
   migration_heads:
     operational: b5d7f9a1c3e6
     public: public_0002
@@ -21,7 +21,7 @@ code:
     - status: VERIFIED
       kind: git
       reference: Static Alembic revision graph in origin/main:migrations/versions and origin/main:public_migrations/versions
-      observed_at: '2026-10-08T16:55:40Z'
+      observed_at: '2026-10-10T07:52:31Z'
   release_capable_artifact:
     state: PRESENT
     artifact_id: nextcompany-canonical-operational-cohort-40
@@ -31,7 +31,7 @@ code:
     - status: VERIFIED
       kind: release_manifest
       reference: sha256(docs/releases/public-v1-cohort-40.json)
-      observed_at: '2026-10-08T16:55:40Z'
+      observed_at: '2026-10-10T07:52:31Z'
   capabilities:
   - id: transition-aware-public-releases
     name: Transition-aware public cohort updates and withdrawals
@@ -83,26 +83,33 @@ code:
       observed_at: '2026-10-08T19:40:27Z'
   - id: workspace-visual-ux-polish-04a-core-shell-card
     name: Workspace shell, dashboard, Company Card and Settings visual UX polish
+    status: MERGED
+    evidence:
+    - status: VERIFIED
+      kind: git
+      reference: 'PR #140 https://github.com/kuzmvnew/kontragent/pull/140 merged as c9bdb49768dc503af8ec82bdaa97653bc7412f3b'
+      observed_at: '2026-10-10T07:52:31Z'
+  - id: real-data-local-preview-alan-01
+    name: Guarded local real-data preview for Alan on disposable databases
     status: NOT_MERGED
     evidence:
     - status: VERIFIED
-      kind: task
-      reference: '04A implementation is complete on its dedicated branch with Chromium desktop/mobile
-        visual-structure acceptance and six safe screenshots; independent QA and merge remain pending.'
-      observed_at: '2026-10-08T19:40:27Z'
+      kind: git
+      reference: 'PR #141 https://github.com/kuzmvnew/kontragent/pull/141 is OPEN at exact head 653d46f4bc6f144cb0190e9a1995dd45cbce7245'
+      observed_at: '2026-10-10T07:52:31Z'
 qa:
   state: NOT_ACCEPTED
   accepted_head_sha: UNKNOWN
   qa_task_id: UNKNOWN
   verdict: NOT_ACCEPTED
-  evidence_reference: Functional Workspace completion 03A-03E is accepted; visual polish 04A awaits independent QA
+  evidence_reference: 'PR #141 exact head 653d46f4bc6f144cb0190e9a1995dd45cbce7245 awaits trusted independent QA acceptance'
   merge_allowed: false
   tested_at: UNKNOWN
   evidence:
   - status: NOT_VERIFIED
     kind: qa_task
-    reference: Independent QA has not yet accepted the unmerged 04A visual polish head
-    observed_at: '2026-10-08T19:40:27Z'
+    reference: 'https://github.com/kuzmvnew/kontragent/actions/runs/38032203968 reports NO_TRUSTED_ATTESTATION for open PR #141 exact head 653d46f4bc6f144cb0190e9a1995dd45cbce7245'
+    observed_at: '2026-10-10T07:52:31Z'
   capabilities:
   - id: workspace-core-03a
     status: ACCEPTED
@@ -140,12 +147,19 @@ qa:
       reference: Functional product completion 03E was supplied as a DONE / QA ACCEPTED baseline for 04A
       observed_at: '2026-10-08T19:40:27Z'
   - id: workspace-visual-ux-polish-04a
+    status: ACCEPTED
+    evidence:
+    - status: VERIFIED
+      kind: qa_task
+      reference: 'PR #140 trusted QA PASS for exact head 00c25c17cda6c71481075369fbfde808bb933c2c: https://github.com/kuzmvnew/kontragent/pull/140#issuecomment-6075820438'
+      observed_at: '2026-10-09T06:41:42Z'
+  - id: real-data-local-preview-alan-01
     status: NOT_ACCEPTED
     evidence:
     - status: NOT_VERIFIED
       kind: qa_task
-      reference: Independent QA has not yet accepted the 04A implementation head
-      observed_at: '2026-10-08T19:40:27Z'
+      reference: 'PR #141 EV-01 normalized provenance and EV-02 Report contract corrections require trusted independent exact-head QA; no attestation is published for 653d46f4bc6f144cb0190e9a1995dd45cbce7245'
+      observed_at: '2026-10-10T07:52:31Z'
 production:
   state: PARTIALLY_VERIFIED
   runtime_sha: UNKNOWN
@@ -217,26 +231,27 @@ user_visible:
         data
       observed_at: '2026-09-29T09:24:19Z'
 active_task:
-  id: MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01
-  title: NEXT COMPANY — CORE WORKSPACE SHELL + DASHBOARD + COMPANY CARD VISUAL POLISH
+  id: REAL-DATA-LOCAL-PREVIEW-ALAN-01-CORRECTION-02
+  title: Guarded Alan Real Data Preview provenance and Report contract correction
   state: COMPLETE
   evidence:
   - status: VERIFIED
     kind: task
-    reference: 'Presentation-only 04A implementation adds the operational shell, four-metric Dashboard,
-      dossier-style Company Card, readable Settings usage and entitlements, accessibility checks, responsive
-      Chromium acceptance, and six safe screenshots without data/model/API/permission changes.'
-    observed_at: '2026-10-08T19:40:27Z'
-next_gate:
-  id: MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01-QA
-  description: Independent QA of the exact 04A PR head, desktop/mobile screenshots, and functional regressions
-  state: READY
-  evidence:
+    reference: 'EV-01 result VERIFIED_LEGACY_DB_PROJECTION: recorded normalized hashes bind the canonical DB projection reconstructed from immutable raw; the retained richer normalized file has different physical bytes and no separate immutable projection file was found'
+    observed_at: '2026-10-10T07:52:31Z'
   - status: VERIFIED
     kind: task
-    reference: 04A is ready for independent QA; no merge, deployment, production mutation, source-live run,
-      mass ingestion, or production release is asserted
-    observed_at: '2026-10-08T19:40:27Z'
+    reference: 'EV-02 updated only stale Alan opt-in E2E assertions to the canonical subject/assessment/summary Report contract; real Chromium E2E and local HEAD/BASE regressions passed'
+    observed_at: '2026-10-10T07:52:31Z'
+next_gate:
+  id: REAL-DATA-LOCAL-PREVIEW-ALAN-01-CORRECTION-02-QA
+  description: Independent exact-head QA of EV-01 provenance evidence, EV-02 real Chromium E2E, and regression results
+  state: READY
+  evidence:
+  - status: NOT_VERIFIED
+    kind: qa_task
+    reference: 'PR #141 remains OPEN and unmerged; trusted exact-head QA must decide the EV-01 legacy hash-scope limitation and EV-02 correction before merge. No deployment, production mutation, ingestion, mass crawl, or public release is asserted.'
+    observed_at: '2026-10-10T07:52:31Z'
 incidents:
   state: NOT_VERIFIED
   active: []
