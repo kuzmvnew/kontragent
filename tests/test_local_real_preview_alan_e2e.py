@@ -135,9 +135,12 @@ def test_real_alan_public_login_search_save_monitoring_report(monkeypatch):
         report_response = page.request.get(f"{workspace.url}{href}")
         assert report_response.status == 200
         report = json.loads(report_response.body())
-        assert report["company"]["inn"] == INN
+        assert report["subject"]["inn"] == INN
+        assert report["assessment"]["status"] == "Проверка выполнена частично"
+        assert report["summary"]["short_conclusion"].startswith("Недостаточно данных")
+        assert any(source["source_data_date"] for source in report["sources"])
         report_text = json.dumps(report, ensure_ascii=False)
-        assert "risk" in report and "summary" in report
+        assert "assessment" in report and "summary" in report
         assert "company_id" not in report_text and "workspace_id" not in report_text
         browser.close()
 

@@ -16,7 +16,7 @@ import os
 import socket
 import subprocess
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -28,6 +28,7 @@ from psycopg.rows import dict_row
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
+from app.ingestion.firmoteka_parser import parse_firmoteka_page
 from app.models.workspace import (
     CustomerUser,
     Workspace,
@@ -43,7 +44,7 @@ from public_app.contracts import (
 from public_app.repository import PublicRepository
 from scripts.export_public_release import CANONICAL_COHORT_PATH, build_projection
 from scripts.import_public_release import import_release
-from scripts.public_release_common import canonical_json, sha256_file, write_checksums
+from scripts.public_release_common import canonical_json, write_checksums
 from workspace_app.auth import hash_password, verify_password
 from workspace_app.service import bootstrap_workspace_owner
 
@@ -60,6 +61,11 @@ CANONICAL_MAIN = "c9bdb49768dc503af8ec82bdaa97653bc7412f3b"
 PREVIEW_POLICY = "local-real-preview-alan-v1"
 OPERATIONAL_SCHEMA_HEAD = "b5d7f9a1c3e6"
 PUBLIC_SCHEMA_HEAD = "public_0002"
+LEGACY_FIRMOTEKA_SNAPSHOT_ID = "a3b097ca-dd3e-491d-94e9-3f31ef75c430"
+LEGACY_FIRMOTEKA_PARSER_COMMIT = "723458d728cd60e578b41338e0957512a0f12886"
+LEGACY_NORMALIZED_ARTIFACT_SHA256 = (
+    "3eaa984793ea0919f0a25ec88a18c1b9cbe32ba33e540728d4f7df8ac77254e6"
+)
 APPROVED_POSTGRES_PORT = "5432"
 APPROVED_UNIX_SOCKET = "/tmp"
 LIBPQ_ENDPOINT_ENVIRONMENT = frozenset(
@@ -269,6 +275,122 @@ def _jsonable(value):
     return value
 
 
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _legacy_firmoteka_projection(raw: bytes, snapshot: Mapping[str, object]) -> dict:
+    """Reproduce the parser shape used by the retained 2026-09-28 snapshot.
+
+    The snapshot was created immediately before parser commit 723458d.  The
+    only later parser change in ef2c4ba added manager_details and its fact row.
+    Removing exactly those additions reproduces the immutable snapshot from
+    the retained raw response without rewriting either source artifact.
+    """
+
+    projection = snapshot["projection"]
+    if not isinstance(projection, dict):
+        raise ValueError("retained Firmoteka projection is not an object")
+    fetched_at = datetime.fromisoformat(str(projection.get("fetched_at")))
+    retrieved_at = snapshot["retrieved_at"]
+    if not isinstance(retrieved_at, datetime) or _utc(fetched_at) != _utc(retrieved_at):
+        raise ValueError("retained Firmoteka projection timestamp is inconsistent")
+    rebuilt = parse_firmoteka_page(
+        raw,
+        requested_inn=INN,
+        url=str(snapshot["source_url"]),
+        fetched_at=fetched_at,
+    )
+    rebuilt.pop("manager_details", None)
+    rebuilt["facts"] = [
+        item
+        for item in rebuilt.get("facts", [])
+        if item.get("field_name") != "manager_details"
+    ]
+    return rebuilt
+
+
+def _verify_firmoteka_provenance(
+    snapshot: Mapping[str, object], raw_path: Path, normalized_path: Path
+) -> dict[str, object]:
+    stored_raw = raw_path.read_bytes()
+    try:
+        raw = gzip.decompress(stored_raw)
+        raw_hash_scope = "DECOMPRESSED_HTTP_BODY"
+    except OSError:
+        raw = stored_raw
+        raw_hash_scope = "STORED_BYTES"
+    raw_sha256 = hashlib.sha256(raw).hexdigest()
+    if raw_sha256 != snapshot["raw_sha256"]:
+        raise ValueError("retained Firmoteka raw artifact checksum mismatch")
+    if len(raw) != snapshot["raw_size_bytes"]:
+        raise ValueError("retained Firmoteka raw artifact size mismatch")
+
+    normalized_bytes = normalized_path.read_bytes()
+    normalized_file_sha256 = hashlib.sha256(normalized_bytes).hexdigest()
+    try:
+        normalized_document = json.loads(normalized_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("retained Firmoteka normalized artifact is invalid JSON") from exc
+    if not isinstance(normalized_document, dict) or (
+        normalized_document.get("requested_inn") != INN
+        or normalized_document.get("page_sha256") != raw_sha256
+    ):
+        raise ValueError("retained Firmoteka normalized artifact has broken raw lineage")
+
+    projection = snapshot["projection"]
+    if not isinstance(projection, dict):
+        raise ValueError("retained Firmoteka projection is not an object")
+    projection_sha256 = hashlib.sha256(canonical_json(projection)).hexdigest()
+    if not (
+        projection_sha256
+        == snapshot["normalized_sha256"]
+        == snapshot["content_hash"]
+    ):
+        raise ValueError("retained Firmoteka projection checksum mismatch")
+
+    if normalized_file_sha256 == snapshot["normalized_sha256"]:
+        status = "VERIFIED_FILE_BYTES"
+        normalized_hash_scope = "NORMALIZED_FILE_BYTES"
+        raw_reparse_matches_projection = None
+    else:
+        if (
+            str(snapshot["snapshot_id"]) != LEGACY_FIRMOTEKA_SNAPSHOT_ID
+            or normalized_file_sha256 != LEGACY_NORMALIZED_ARTIFACT_SHA256
+        ):
+            raise ValueError("retained Firmoteka normalized artifact checksum mismatch")
+        rebuilt = _legacy_firmoteka_projection(raw, snapshot)
+        if rebuilt != projection:
+            raise ValueError("retained Firmoteka raw reparse differs from projection")
+        rebuilt_sha256 = hashlib.sha256(canonical_json(rebuilt)).hexdigest()
+        if rebuilt_sha256 != projection_sha256:
+            raise ValueError("retained Firmoteka raw reparse checksum mismatch")
+        status = "VERIFIED_LEGACY_DB_PROJECTION"
+        normalized_hash_scope = "CANONICAL_DB_PROJECTION_JSON"
+        raw_reparse_matches_projection = True
+
+    return {
+        "status": status,
+        "raw_hash_scope": raw_hash_scope,
+        "raw_sha256": raw_sha256,
+        "raw_stored_sha256": hashlib.sha256(stored_raw).hexdigest(),
+        "normalized_hash_scope": normalized_hash_scope,
+        "normalized_file_sha256": normalized_file_sha256,
+        "normalized_projection_sha256": projection_sha256,
+        "normalized_file_matches_recorded_sha256": (
+            normalized_file_sha256 == snapshot["normalized_sha256"]
+        ),
+        "raw_reparse_matches_projection": raw_reparse_matches_projection,
+        "historical_parser_commit": (
+            LEGACY_FIRMOTEKA_PARSER_COMMIT
+            if status == "VERIFIED_LEGACY_DB_PROJECTION"
+            else None
+        ),
+    }
+
+
 def inspect_source(source_url: str) -> tuple[dict, object]:
     """Read and validate the exact retained source revision and build its projection."""
 
@@ -293,10 +415,15 @@ def inspect_source(source_url: str) -> tuple[dict, object]:
                 raise ValueError("retained Alan company row is missing or has changed identity")
             cursor.execute(
                 """SELECT s.id AS snapshot_id, s.dataset_id, s.retrieved_at,
+                          s.created_at AS snapshot_created_at,
                           s.source_as_of, s.raw_sha256, s.normalized_sha256,
-                          s.normalized_path, s.source_url,
+                          s.normalized_path, s.source_url, s.content_hash,
+                          s.projection,
                           s.projection->'enforcements'->>'snapshot' AS enforcement_source_data_date,
-                          a.stored_path AS raw_path
+                          a.stored_path AS raw_path, a.size_bytes AS raw_size_bytes,
+                          a.retrieved_at AS raw_retrieved_at,
+                          a.created_at AS raw_record_created_at,
+                          a.parser_version AS raw_parser_version
                    FROM firmoteka_company_snapshots s
                    JOIN firmoteka_raw_artifacts a ON a.sha256=s.raw_sha256
                    WHERE s.company_id=%s AND s.is_current=TRUE
@@ -354,13 +481,13 @@ def inspect_source(source_url: str) -> tuple[dict, object]:
     normalized_path = Path(snapshot["normalized_path"])
     if not raw_path.is_file() or not normalized_path.is_file():
         raise ValueError("retained Firmoteka physical artifacts are not readable")
-    with gzip.open(raw_path, "rb") as stream:
-        raw_digest = hashlib.sha256(stream.read()).hexdigest()
-    if raw_digest != snapshot["raw_sha256"]:
-        # Some retained inventories hash the stored gzip bytes. Accept only that
-        # explicitly verifiable representation as the alternate convention.
-        if sha256_file(raw_path) != snapshot["raw_sha256"]:
-            raise ValueError("retained Firmoteka raw artifact checksum mismatch")
+    provenance_verification = _verify_firmoteka_provenance(
+        snapshot, raw_path, normalized_path
+    )
+    firmoteka_evidence = {
+        key: _jsonable(snapshot[key]) for key in snapshot if key != "projection"
+    }
+    firmoteka_evidence["provenance_verification"] = provenance_verification
     evidence = {
         "mode": "LOCAL_REAL_DATA_PREVIEW",
         "non_production": True,
@@ -370,7 +497,7 @@ def inspect_source(source_url: str) -> tuple[dict, object]:
         "inn": INN,
         "company": {key: _jsonable(company[key]) for key in company if key != "id"},
         "company_id_in_disposable_clone": company["id"],
-        "firmoteka": {key: _jsonable(snapshot[key]) for key in snapshot},
+        "firmoteka": firmoteka_evidence,
         "risk": {key: _jsonable(risk[key]) for key in risk},
         "summary": {key: _jsonable(summary[key]) for key in summary},
         "semantic_facts": {"total": semantic["total"], "current": semantic["current"]},
@@ -384,6 +511,9 @@ def inspect_source(source_url: str) -> tuple[dict, object]:
             "Risk and Summary are persisted v3 results and are not recalculated by UI code.",
             "Monitoring captures a zero-event baseline only; live checks are disabled.",
             "This retained source is not the pinned canonical real E2E revision.",
+            "Legacy normalized_sha256 binds canonical DB projection JSON reconstructed "
+            "from the immutable raw response; normalized_path points to the earlier, "
+            "richer pilot JSON and therefore has a different byte-level SHA-256.",
         ],
     }
     return evidence, projection
