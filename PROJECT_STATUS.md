@@ -4,8 +4,8 @@
 > Regenerate with `uv run python scripts/project_status.py update`.
 
 - Schema version: `1.0.0`
-- Generated at: `2026-10-08T19:40:27Z`
-- Canonical main SHA: `4256f6717047e664a775d82ecd8405ed2b4025a8`
+- Generated at: `2026-10-10T07:52:31Z`
+- Canonical main SHA: `c9bdb49768dc503af8ec82bdaa97653bc7412f3b`
 
 Layer states are independent. A merge is not deployment, QA acceptance is
 not deployment, and production deployment is not user-visible verification.
@@ -15,10 +15,10 @@ not deployment, and production deployment is not user-visible verification.
 | Field | Value |
 |---|---|
 | State | VERIFIED |
-| Main SHA | 4256f6717047e664a775d82ecd8405ed2b4025a8 |
-| Latest relevant merged PR | #139 — https://github.com/kuzmvnew/kontragent/pull/139 |
-| Merge SHA | 4256f6717047e664a775d82ecd8405ed2b4025a8 |
-| Merged at | 2026-10-08T19:22:27Z |
+| Main SHA | c9bdb49768dc503af8ec82bdaa97653bc7412f3b |
+| Latest relevant merged PR | #140 — https://github.com/kuzmvnew/kontragent/pull/140 |
+| Merge SHA | c9bdb49768dc503af8ec82bdaa97653bc7412f3b |
+| Merged at | 2026-10-09T06:43:51Z |
 | Operational migration head in code | b5d7f9a1c3e6 |
 | Public migration head in code | public_0002 |
 | Release-capable artifact state | PRESENT |
@@ -36,7 +36,8 @@ not deployment, and production deployment is not user-visible verification.
 | `workspace-bulk-check` | `MERGED` | PR #137 / merge d51622288968a63cf2f91196564550df620f0b47 |
 | `workspace-users-roles-settings` | `MERGED` | PR #138 / merge 64bb84a1e34bc4173ea1dc26daef2bfdfb87b2f0 |
 | `workspace-demo-full-e2e` | `MERGED` | PR #139 / merge 4256f6717047e664a775d82ecd8405ed2b4025a8 |
-| `workspace-visual-ux-polish-04a-core-shell-card` | `NOT_MERGED` | 04A implementation is complete on its dedicated branch with Chromium desktop/mobile visual-structure acceptance and six safe screenshots; independent QA and merge remain pending. |
+| `workspace-visual-ux-polish-04a-core-shell-card` | `MERGED` | PR #140 https://github.com/kuzmvnew/kontragent/pull/140 merged as c9bdb49768dc503af8ec82bdaa97653bc7412f3b |
+| `real-data-local-preview-alan-01` | `NOT_MERGED` | PR #141 https://github.com/kuzmvnew/kontragent/pull/141 is OPEN at exact head 653d46f4bc6f144cb0190e9a1995dd45cbce7245 |
 
 ## QA
 
@@ -46,7 +47,7 @@ not deployment, and production deployment is not user-visible verification.
 | Accepted head SHA | UNKNOWN |
 | QA task ID | UNKNOWN |
 | Verdict | NOT_ACCEPTED |
-| Evidence reference | Functional Workspace completion 03A-03E is accepted; visual polish 04A awaits independent QA |
+| Evidence reference | PR #141 exact head 653d46f4bc6f144cb0190e9a1995dd45cbce7245 awaits trusted independent QA acceptance |
 | Merge allowed | false |
 | Tested at | UNKNOWN |
 
@@ -59,11 +60,12 @@ not deployment, and production deployment is not user-visible verification.
 | `workspace-bulk-check-03c` | `ACCEPTED` | Functional product completion 03C was supplied as a DONE / QA ACCEPTED baseline for 04A |
 | `workspace-users-settings-03d` | `ACCEPTED` | Functional product completion 03D was supplied as a DONE / QA ACCEPTED baseline for 04A |
 | `workspace-demo-full-e2e-03e` | `ACCEPTED` | Functional product completion 03E was supplied as a DONE / QA ACCEPTED baseline for 04A |
-| `workspace-visual-ux-polish-04a` | `NOT_ACCEPTED` | Independent QA has not yet accepted the 04A implementation head |
+| `workspace-visual-ux-polish-04a` | `ACCEPTED` | PR #140 trusted QA PASS for exact head 00c25c17cda6c71481075369fbfde808bb933c2c: https://github.com/kuzmvnew/kontragent/pull/140#issuecomment-6075820438 |
+| `real-data-local-preview-alan-01` | `NOT_ACCEPTED` | PR #141 EV-01 normalized provenance and EV-02 Report contract corrections require trusted independent exact-head QA; no attestation is published for 653d46f4bc6f144cb0190e9a1995dd45cbce7245 |
 
 ### QA provenance
 
-- `NOT_VERIFIED` / `qa_task` — Independent QA has not yet accepted the unmerged 04A visual polish head (observed `2026-10-08T19:40:27Z`)
+- `NOT_VERIFIED` / `qa_task` — https://github.com/kuzmvnew/kontragent/actions/runs/38032203968 reports NO_TRUSTED_ATTESTATION for open PR #141 exact head 653d46f4bc6f144cb0190e9a1995dd45cbce7245 (observed `2026-10-10T07:52:31Z`)
 
 ## PRODUCTION
 
@@ -128,12 +130,12 @@ No capability assertions recorded.
 
 | Field | Value |
 |---|---|
-| Active task | MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01 |
+| Active task | REAL-DATA-LOCAL-PREVIEW-ALAN-01-CORRECTION-02 |
 | Active task state | COMPLETE |
-| Active task title | NEXT COMPANY — CORE WORKSPACE SHELL + DASHBOARD + COMPANY CARD VISUAL POLISH |
-| Next gate | MAC-OFFLINE-WORKSPACE-VISUAL-UX-POLISH-04A-CORE-SHELL-CARD-01-QA |
+| Active task title | Guarded Alan Real Data Preview provenance and Report contract correction |
+| Next gate | REAL-DATA-LOCAL-PREVIEW-ALAN-01-CORRECTION-02-QA |
 | Next gate state | READY |
-| Next gate description | Independent QA of the exact 04A PR head, desktop/mobile screenshots, and functional regressions |
+| Next gate description | Independent exact-head QA of EV-01 provenance evidence, EV-02 real Chromium E2E, and regression results |
 
 ## Incidents
 
