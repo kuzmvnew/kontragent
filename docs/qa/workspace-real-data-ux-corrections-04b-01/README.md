@@ -1,6 +1,6 @@
 # Workspace Real Data UX Corrections 04B-01
 
-Task: `WORKSPACE-REAL-DATA-UX-CORRECTIONS-04B-01`  
+Task: `WORKSPACE-REAL-DATA-UX-CORRECTIONS-04B-01`
 Canonical base: `0504498ef21505489ce9fd437c21e35785adad43`
 
 ## Baseline and affected components
