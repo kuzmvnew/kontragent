@@ -4,7 +4,7 @@
 <article class="report-detail" data-report-id="{{ report.id }}">
   <header class="report-head">
     <div>
-      <p class="eyebrow">{{ snapshot.report_type }} · {{ snapshot.schema_version }}</p>
+      <p class="eyebrow">Зафиксированный отчёт</p>
       <h1>{{ snapshot.subject.name }}</h1>
       <p class="workspace-lead">Отчёт сформирован {{ report.generated_at.strftime('%d.%m.%Y %H:%M') }}</p>
       <p class="snapshot-notice">Данные зафиксированы на момент формирования отчёта и не изменяются при последующем обновлении карточки компании.</p>
@@ -22,39 +22,39 @@
       <div><dt>ИНН</dt><dd>{{ snapshot.subject.inn }}</dd></div>
       <div><dt>КПП</dt><dd>{{ snapshot.subject.kpp or '—' }}</dd></div>
       <div><dt>ОГРН</dt><dd>{{ snapshot.subject.ogrn or '—' }}</dd></div>
-      <div><dt>Статус</dt><dd>{{ snapshot.subject.legal_status or '—' }}</dd></div>
+      <div><dt>Статус</dt><dd>{{ snapshot.subject.legal_status | company_status }}</dd></div>
       <div class="wide"><dt>Адрес</dt><dd>{{ snapshot.subject.address or '—' }}</dd></div>
     </dl>
   </section>
 
   <section class="summary report-block">
-    <p class="eyebrow">Risk &amp; Summary</p>
+    <p class="eyebrow">Вывод и оценка</p>
     <h2>{{ snapshot.summary.short_conclusion }}</h2>
     <p>{{ snapshot.assessment.explanation }}</p>
-    <div class="summary-meta"><span>{{ snapshot.assessment.status }}</span><span>Оценка на {{ snapshot.assessment.assessment_date }}</span></div>
+    <div class="summary-meta"><span>{{ snapshot.assessment.status | ui_label }}</span><span>Оценка на {{ snapshot.assessment.assessment_date }}</span></div>
     {% if snapshot.recommendations %}<h3>Рекомендации</h3><ul>{% for item in snapshot.recommendations %}<li>{{ item | workspace_value }}</li>{% endfor %}</ul>{% endif %}
     {% if snapshot.limitations %}<h3>Ограничения</h3><ul>{% for item in snapshot.limitations %}<li>{{ item | workspace_value }}</li>{% endfor %}</ul>{% endif %}
   </section>
 
   <section class="semantic-section report-block">
-    <div class="section-heading"><div><p class="eyebrow">Snapshot</p><h2>Сведения проверки</h2></div><span class="contract-badge">{{ snapshot.company_view.contract_version }}</span></div>
+    <div class="section-heading"><div><p class="eyebrow">Сведения на дату отчёта</p><h2>Результаты проверки</h2></div></div>
     <div class="domain-grid">
     {% for section in snapshot.sections %}
       <article class="domain-card" data-section-key="{{ section.section_key }}" data-section-state="{{ section.state }}">
-        <header><div><p class="domain-key">{{ section.section_key }}</p><h3>{{ section.title or section.section_key }}</h3></div><span class="state-badge">{{ section.state }}</span></header>
+        <header><div><h3>{{ section.title or 'Сведения' }}</h3></div><span class="state-badge">{{ section.state | ui_label }}</span></header>
         {% if section['items'] %}
           <dl class="fact-list">
           {% for item in section['items'] %}
             <div>
-              <dt>{{ item.label or item.field_key }}{% if item.period %}<small>{{ item.period }}</small>{% endif %}</dt>
+              <dt>{{ item.label or 'Сведения' }}{% if item.period %}<small>{{ item.period }}</small>{% endif %}</dt>
               <dd>{{ item.value | workspace_value }}</dd>
-              {% if item.source %}<dd class="fact-meta">{{ item.state }} · {{ item.source.name }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date }}{% endif %}{% if item.source.freshness %} · {{ item.source.freshness }}{% endif %}</dd>{% endif %}
+              {% if item.source %}<dd class="fact-meta">{{ item.state | ui_label }} · {{ item.source.name }}{% if item.source.source_data_date %} · данные на {{ item.source.source_data_date }}{% endif %}{% if item.source.freshness %} · {{ item.source.freshness | freshness_label }}{% endif %}</dd>{% endif %}
               {% if item.limitations %}<dd class="limitation">{{ item.limitations | join(' ') }}</dd>{% endif %}
             </div>
           {% endfor %}
           </dl>
         {% else %}
-          <p class="empty">Факты отсутствуют. Состояние домена: {{ section.state }}.</p>
+          <p class="empty">{{ section.state | ui_label }}. В текущем покрытии нет фактов для показа; это не подтверждает их отсутствие.</p>
         {% endif %}
       </article>
     {% endfor %}

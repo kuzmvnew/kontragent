@@ -83,7 +83,8 @@ def test_public_preview_is_noindex_and_not_labeled_synthetic(monkeypatch):
     assert response.status_code == 200
     assert response.headers["x-robots-tag"] == "noindex, nofollow, nosnippet"
     assert 'data-preview-mode="local-real"' in response.text
-    assert "LOCAL REAL DATA PREVIEW" in response.text
+    assert "Локальный просмотр реальных данных" in response.text
+    assert "LOCAL REAL DATA PREVIEW" not in response.text
     assert "синтетические данные" not in response.text
 
 
@@ -95,7 +96,8 @@ def test_workspace_preview_has_distinct_banner_and_monitoring_warning(monkeypatc
     ).get("/login")
     assert response.status_code == 200
     assert 'data-preview-mode="local-real"' in response.text
-    assert "LOCAL REAL DATA PREVIEW" in response.text
+    assert "Локальный просмотр реальных данных" in response.text
+    assert "LOCAL REAL DATA PREVIEW" not in response.text
     assert "синтетические данные" not in response.text
 
 
@@ -107,4 +109,4 @@ def test_authorized_card_exposes_same_company_view_revision_contract():
     )
     assert 'data-view-contract="{{ projection.company_view.contract_version }}"' in template
     assert 'data-view-revision="{{ projection.company_view.revision }}"' in template
-    assert "отсутствие событий не означает отсутствие изменений" in template
+    assert "отсутствие событий не означает отсутствия изменений" in template

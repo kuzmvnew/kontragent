@@ -1,8 +1,26 @@
 {% extends "base.html" %}
+{% set capability_labels = {
+  'workspace.view': 'Просмотр рабочего пространства',
+  'company.search': 'Поиск компаний',
+  'company.view': 'Просмотр карточек компаний',
+  'company.save': 'Сохранение компаний',
+  'company.unsave': 'Удаление из сохранённых',
+  'monitoring.manage': 'Управление мониторингом',
+  'report.view': 'Просмотр отчётов',
+  'report.generate': 'Формирование отчётов',
+  'report.export': 'Выгрузка отчётов',
+  'bulk.view': 'Просмотр массовых проверок',
+  'bulk.create': 'Создание массовых проверок',
+  'bulk.manage': 'Управление массовыми проверками',
+  'bulk.export': 'Выгрузка массовых проверок',
+  'workspace.members.manage': 'Управление участниками',
+  'workspace.members.invite': 'Приглашение участников',
+  'workspace.settings.manage': 'Управление настройками'
+} %}
 {% block title %}Пользователи — {{ workspace.name }}{% endblock %}
 {% block content %}
 <section>
-  <p class="eyebrow">Workspace · доступ</p>
+  <p class="eyebrow">Рабочее пространство · доступ</p>
   <h1>Пользователи</h1>
   <p class="workspace-lead">Участники, приглашения и системные роли {{ workspace.name }}.</p>
 
@@ -27,7 +45,7 @@
         <select name="role_id" required>
           {% for option in roles %}
           {% if role.role_key == 'OWNER' or option.role_key != 'OWNER' %}
-          <option value="{{ option.role_id }}">{{ option.role_name }} ({{ option.role_key }})</option>
+          <option value="{{ option.role_id }}">{{ option.role_name }}</option>
           {% endif %}
           {% endfor %}
         </select>
@@ -50,7 +68,7 @@
           {% if member.is_current_user %}<span class="state-badge">Вы</span>{% endif %}
           <small>Присоединился {{ member.joined_at.strftime('%d.%m.%Y') }}</small>
         </div>
-        <span class="state-badge">{{ member.status }}</span>
+        <span class="state-badge">{{ member.status | record_status }}</span>
         <div class="member-controls">
           {% set owner_control_allowed = role.role_key == 'OWNER' or member.role_key != 'OWNER' %}
           {% if can_manage and owner_control_allowed %}
@@ -96,7 +114,7 @@
       <article class="member-row">
         <div><strong>{{ invitation.email }}</strong><small>Создано {{ invitation.created_at.strftime('%d.%m.%Y') }} · до {{ invitation.expires_at.strftime('%d.%m.%Y') }}</small></div>
         <span>{{ invitation.role_name }}</span>
-        <span class="state-badge">{{ invitation.status }}</span>
+        <span class="state-badge">{{ invitation.status | record_status }}</span>
         <div class="member-controls">
           {% if invitation.status in ('PENDING', 'EXPIRED') and can_invite %}
           <form action="/app/users/invitations/{{ invitation.invitation_id }}/reissue" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="secondary">Перевыпустить</button></form>
@@ -117,12 +135,12 @@
     <div class="role-grid">
       {% for item in roles %}
       <article class="role-card">
-        <h3>{{ item.role_name }} <small>{{ item.role_key }}</small></h3>
-        <ul>{% for capability in item.capabilities %}<li><code>{{ capability }}</code></li>{% endfor %}</ul>
+        <h3>{{ item.role_name }}</h3>
+        <ul>{% for capability in item.capabilities %}<li>{{ capability_labels.get(capability, 'Дополнительное право доступа') }}</li>{% endfor %}</ul>
       </article>
       {% endfor %}
     </div>
-    <p class="hint">Матрица показана из сохранённых capability-записей. Редактирование прав в P0 недоступно.</p>
+    <p class="hint">Права ролей доступны только для просмотра. Редактирование набора прав пока недоступно.</p>
   </section>
 </section>
 {% endblock %}

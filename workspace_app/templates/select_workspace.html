@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Выбор Workspace — NEXT Company{% endblock %}
+{% block title %}Выбор рабочего пространства — NEXT Company{% endblock %}
 {% block content %}
 <section>
   <p class="eyebrow">Рабочее пространство</p>
-  <h1>Выберите Workspace</h1>
+  <h1>Выберите рабочее пространство</h1>
   <div class="grid">
   {% for workspace in workspaces %}
     <form action="/workspace/select" method="post" class="card">

@@ -2,7 +2,7 @@
 {% block title %}{{ workspace.name }} — NEXT Company{% endblock %}
 {% block content %}
 <section class="page-header">
-  <p class="eyebrow">Workspace</p>
+  <p class="eyebrow">Рабочее пространство</p>
   <h1>{{ workspace.name }}</h1>
   <p class="workspace-lead">Рабочий кабинет для {{ principal.email }} · роль {{ role.name }}</p>
 
@@ -12,13 +12,13 @@
     <button type="submit">Найти компанию</button>
   </form>
 
-  <div class="metrics-grid" aria-label="Показатели Workspace">
-    <a class="kpi" href="/app/saved"><span>Сохранено</span><strong>{{ dashboard.metrics.saved_companies_count }}</strong><small>Компании в текущем Workspace</small></a>
+  <div class="metrics-grid" aria-label="Показатели рабочего пространства">
+    <a class="kpi" href="/app/saved"><span>Сохранено</span><strong>{{ dashboard.metrics.saved_companies_count }}</strong><small>Компании в текущем рабочем пространстве</small></a>
     <a class="kpi" href="/app/monitoring"><span>На мониторинге</span><strong>{{ dashboard.metrics.active_monitoring_count }}</strong><small>Приостановлено: {{ dashboard.metrics.paused_monitoring_count }}</small></a>
     <a class="kpi" href="/app/monitoring?state=unread"><span>Новых событий</span><strong>{{ dashboard.metrics.unread_monitoring_event_count }}</strong><small>Непрочитанные изменения</small></a>
     <a class="kpi" href="/app/saved"><span>Лимит сохранённых</span><strong>{{ dashboard.metrics.saved_companies_count }} / {{ dashboard.metrics.saved_companies_limit if dashboard.metrics.saved_companies_limit is not none else '∞' }}</strong><small>{% if dashboard.metrics.saved_companies_remaining is not none %}Осталось мест: {{ dashboard.metrics.saved_companies_remaining }}{% else %}Без ограничения{% endif %}</small></a>
   </div>
-  {% if not dashboard.quota.enabled %}<p class="blocked">Сохранение компаний сейчас не подключено для этого Workspace.</p>{% endif %}
+  {% if not dashboard.quota.enabled %}<p class="blocked">Сохранение компаний сейчас не подключено для этого рабочего пространства.</p>{% endif %}
 </section>
 
 <div class="dashboard-columns">
@@ -27,7 +27,7 @@
     {% if dashboard.recent_saved %}
       <div class="data-list compact-list">
       {% for item in dashboard.recent_saved %}
-        <a class="data-row compact-row" href="/app/companies/{{ item.inn }}"><span><strong>{{ item.name }}</strong><small>ИНН {{ item.inn }}</small></span><span class="status-badge state-badge">{{ item.monitoring_state }}</span></a>
+        <a class="data-row compact-row" href="/app/companies/{{ item.inn }}"><span><strong>{{ item.name }}</strong><small>ИНН {{ item.inn }}</small></span><span class="status-badge state-badge">{{ item.monitoring_state | monitoring_status }}</span></a>
       {% endfor %}
       </div>
     {% else %}
@@ -36,7 +36,7 @@
   </section>
 
   <section class="panel dashboard-panel">
-    <div class="section-heading"><div><p class="eyebrow">Monitoring</p><h2>Последние события</h2></div><a href="/app/monitoring">Весь мониторинг</a></div>
+    <div class="section-heading"><div><p class="eyebrow">Мониторинг</p><h2>Последние события</h2></div><a href="/app/monitoring">Весь мониторинг</a></div>
     {% if dashboard.recent_events %}
       <div class="data-list compact-list">
       {% for item in dashboard.recent_events %}
@@ -44,7 +44,7 @@
       {% endfor %}
       </div>
     {% elif not dashboard.monitoring_available %}
-      <div class="empty-state compact"><h3>{{ 'Мониторинг не подключён' if dashboard.monitoring_denial == 'entitlement_blocked' else 'Мониторинг недоступен' }}</h3><p>{{ 'Функция не включена для этого Workspace.' if dashboard.monitoring_denial == 'entitlement_blocked' else 'У вашей роли нет права просматривать события мониторинга.' }}</p><a class="button secondary" href="/app/saved">Открыть сохранённые</a></div>
+      <div class="empty-state compact"><h3>{{ 'Мониторинг не подключён' if dashboard.monitoring_denial == 'entitlement_blocked' else 'Мониторинг недоступен' }}</h3><p>{{ 'Функция не включена для этого рабочего пространства.' if dashboard.monitoring_denial == 'entitlement_blocked' else 'У вашей роли нет права просматривать события мониторинга.' }}</p><a class="button secondary" href="/app/saved">Открыть сохранённые</a></div>
     {% elif dashboard.metrics.active_monitoring_count or dashboard.metrics.paused_monitoring_count %}
       <div class="empty-state compact"><h3>Событий пока нет</h3><p>Исходные состояния созданы; новые изменения появятся после проверки.</p><a class="button secondary" href="/app/monitoring">Открыть мониторинг</a></div>
     {% else %}

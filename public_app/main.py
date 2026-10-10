@@ -22,6 +22,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from public_app.contracts import PublicProjection, valid_legal_inn
+from public_app.presentation import (
+    company_status_label,
+    company_status_tone,
+    field_label,
+    freshness_label,
+    public_value,
+    relation_status_label,
+    ui_label,
+)
 from public_app.repository import PublicRepository
 
 
@@ -76,6 +85,13 @@ def _public_period(value) -> str:
 templates.env.filters["public_date"] = _public_date
 templates.env.filters["public_number"] = _public_number
 templates.env.filters["public_period"] = _public_period
+templates.env.filters["public_value"] = public_value
+templates.env.filters["company_status"] = company_status_label
+templates.env.filters["company_status_tone"] = company_status_tone
+templates.env.filters["field_label"] = field_label
+templates.env.filters["freshness_label"] = freshness_label
+templates.env.filters["relation_status"] = relation_status_label
+templates.env.filters["ui_label"] = ui_label
 
 
 def _repo(request: Request):

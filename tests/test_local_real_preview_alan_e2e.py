@@ -69,7 +69,7 @@ def test_real_alan_public_login_search_save_monitoring_report(monkeypatch):
         expect(page.locator('[data-preview-mode="local-real"]')).to_be_visible()
         expect(page.get_by_role("heading", name='ООО "АЛАН"')).to_be_visible()
         expect(page.locator(".identity-grid")).to_contain_text(INN)
-        expect(page.locator('[data-section-key="finances"]')).to_be_visible()
+        expect(page.locator("#finances")).to_be_visible()
         expect(page.locator('[data-section-key="risk"]')).to_contain_text(
             "Оценка содержит ограничения"
         )
@@ -104,7 +104,8 @@ def test_real_alan_public_login_search_save_monitoring_report(monkeypatch):
         page.get_by_role("link", name=re.compile('ООО "АЛАН"')).click()
         authorized = page.locator(".company-head")
         expect(authorized).to_have_attribute("data-view-revision", public_revision)
-        expect(authorized).to_contain_text(INN)
+        expect(authorized).to_have_attribute("data-company-inn", INN)
+        expect(page.locator("#requisites")).to_contain_text(INN)
 
         save = page.get_by_role("button", name="Сохранить компанию")
         if save.count():
@@ -113,7 +114,7 @@ def test_real_alan_public_login_search_save_monitoring_report(monkeypatch):
 
         page.get_by_role("link", name="Открыть статус мониторинга").click()
         expect(page.locator("[data-preview-monitoring-limit]")).to_contain_text(
-            "Live-проверки отключены"
+            "Проверки источников отключены"
         )
         enable = page.get_by_role("button", name="Включить мониторинг")
         if enable.count():

@@ -461,7 +461,7 @@ def test_workspace_demo_full_product_e2e(tmp_path):
         page.get_by_label("CSV-файл").set_input_files(
             {"name": "demo-e2e.csv", "mimeType": "text/csv", "buffer": bulk_content}
         )
-        page.get_by_role("button", name="Создать Bulk Job").click()
+        page.get_by_role("button", name="Создать задание").click()
         page.get_by_role("button", name="Обработать следующий блок").click()
         expect(page.locator("[data-job-status='COMPLETED']")).to_be_visible()
         expect(page.locator("tr[data-item-status='READY']")).to_have_count(2)
@@ -483,7 +483,7 @@ def test_workspace_demo_full_product_e2e(tmp_path):
         page.get_by_role("link", name="Пользователи", exact=True).click()
         page.get_by_label("Email", exact=True).fill(DEMO_MEMBER_EMAIL)
         page.locator("form[action='/app/users/invitations'] select").select_option(
-            label="Администратор (ADMIN)"
+            label="Администратор"
         )
         page.get_by_role("button", name="Создать приглашение").click()
         invite_path = page.locator(".invite-secret code").inner_text()

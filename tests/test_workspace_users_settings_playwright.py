@@ -69,7 +69,7 @@ def test_browser_invite_role_change_accept_and_settings_usage():
 
             owner_page.get_by_label("Email", exact=True).fill(invited_email)
             owner_page.locator("form[action='/app/users/invitations'] select").select_option(
-                label="Администратор (ADMIN)"
+                label="Администратор"
             )
             owner_page.get_by_role("button", name="Создать приглашение").click()
             expect(owner_page.get_by_text("Ссылка приглашения показана один раз")).to_be_visible()
@@ -141,7 +141,7 @@ def test_browser_existing_user_invitation_requires_current_password():
             owner_page.get_by_role("link", name="Пользователи", exact=True).click()
             owner_page.get_by_label("Email", exact=True).fill(existing_email)
             owner_page.locator("form[action='/app/users/invitations'] select").select_option(
-                label="Участник (MEMBER)"
+                label="Участник"
             )
             owner_page.get_by_role("button", name="Создать приглашение").click()
             invite_path = owner_page.locator(".invite-secret code").inner_text()

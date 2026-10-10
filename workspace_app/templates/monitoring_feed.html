@@ -2,8 +2,8 @@
 {% block title %}Мониторинг — NEXT Company{% endblock %}
 {% block content %}
 <section class="monitoring-feed">
-  {% if local_real_preview %}<div class="notice" data-preview-monitoring-limit><strong>LOCAL REAL DATA PREVIEW</strong><p>Лента не запускает проверки источников. Отсутствие событий означает только отсутствие запущенных live-проверок.</p></div>{% endif %}
-  <p class="eyebrow">Workspace Monitoring</p>
+  {% if local_real_preview %}<div class="notice" data-preview-monitoring-limit><strong>Локальный просмотр реальных данных</strong><p>Лента не запускает проверки источников. Отсутствие событий означает только отсутствие выполненных проверок.</p></div>{% endif %}
+  <p class="eyebrow">Рабочее пространство</p>
   <h1>Мониторинг</h1>
   <p class="workspace-lead">Компании на контроле и единая лента изменений этого Workspace.</p>
 
@@ -14,7 +14,7 @@
       {% for item in subscriptions %}
         <article class="subscription-row" data-subscription-id="{{ item.subscription_id }}" data-monitoring-state="{{ item.status }}" data-saved="{{ 'true' if item.is_saved else 'false' }}" data-can-pause="{{ 'true' if item.can_pause else 'false' }}" data-can-resume="{{ 'true' if item.can_resume else 'false' }}">
           <div><strong>{{ item.company_name }}</strong><span>ИНН {{ item.inn }}</span></div>
-          <span class="state-badge">{{ item.status }}</span>
+          <span class="state-badge">{{ item.status | monitoring_status }}</span>
           <div class="subscription-meta"><span>Проверка: {{ item.last_checked_at.strftime('%d.%m.%Y %H:%M') if item.last_checked_at else 'ещё не выполнялась' }}</span><span>Последнее событие: {{ item.latest_event_at.strftime('%d.%m.%Y %H:%M') if item.latest_event_at else 'нет событий' }}</span></div>
           <div class="saved-actions">
             <a class="button secondary" href="/app/companies/{{ item.inn }}">Открыть компанию</a>
@@ -35,7 +35,7 @@
   <form action="/app/monitoring" method="get" class="feed-filters">
     <fieldset><legend>Состояние</legend><label><input type="radio" name="state" value="all" {{ 'checked' if read_state == 'all' else '' }}> Все</label><label><input type="radio" name="state" value="unread" {{ 'checked' if read_state == 'unread' else '' }}> Непрочитанные</label><label><input type="radio" name="state" value="read" {{ 'checked' if read_state == 'read' else '' }}> Прочитанные</label></fieldset>
     <label for="severity">Важность</label>
-    <select id="severity" name="severity"><option value="">Любая</option>{% for value in ['HIGH', 'MEDIUM', 'LOW', 'INFO'] %}<option value="{{ value }}" {{ 'selected' if severity_filter == value else '' }}>{{ value }}</option>{% endfor %}</select>
+    <select id="severity" name="severity"><option value="">Любая</option>{% for value in ['HIGH', 'MEDIUM', 'LOW', 'INFO'] %}<option value="{{ value }}" {{ 'selected' if severity_filter == value else '' }}>{{ value | ui_label }}</option>{% endfor %}</select>
     <button type="submit">Применить</button>
   </form>
   {% if entries %}
@@ -47,11 +47,11 @@
             <p class="eyebrow">{{ item.company_name }} · ИНН {{ item.inn }}</p>
             <h2>{{ item.title }}</h2>
           </div>
-          <span class="state-badge">{{ item.severity }}</span>
+          <span class="state-badge">{{ item.severity | ui_label }}</span>
         </div>
         <p>{{ item.old_value | workspace_value }} → {{ item.new_value | workspace_value }}</p>
-        {% if item.old_state != item.new_state %}<p class="hint">Состояние: {{ item.old_state or '—' }} → {{ item.new_state or '—' }}</p>{% endif %}
-        <p class="fact-meta">Обнаружено: {{ item.detected_at.strftime('%d.%m.%Y %H:%M') }}{% if item.source_code %} · Источник: {{ item.source_code }}{% endif %}{% if item.evidence_refs %} · Свидетельство: {{ item.evidence_refs | join(', ') }}{% endif %}</p>
+        {% if item.old_state != item.new_state %}<p class="hint">Состояние: {{ item.old_state | ui_label }} → {{ item.new_state | ui_label }}</p>{% endif %}
+        <p class="fact-meta">Обнаружено: {{ item.detected_at.strftime('%d.%m.%Y %H:%M') }}</p>
         <div class="actions">
           <a class="button secondary" href="/app/companies/{{ item.inn }}">Открыть карточку</a>
           {% if item.read_at %}
@@ -68,7 +68,7 @@
     {% endfor %}
     </div>
   {% else %}
-    {% if read_state != 'all' or severity_filter %}<section class="empty-state compact"><h3>Нет событий по выбранному фильтру</h3><p>Измените фильтр или вернитесь ко всей ленте.</p><a class="button secondary" href="/app/monitoring">Показать все события</a></section>{% else %}<section class="empty-state compact"><h3>Пока нет событий</h3><p>{% if local_real_preview %}В LOCAL PREVIEW live-проверки отключены; отсутствие событий не является чистым результатом.{% else %}После первого включения создаётся исходное состояние компании. Новые изменения появятся здесь после проверки.{% endif %}</p>{% if subscriptions %}<a class="button secondary" href="/app/saved">Открыть сохранённые</a>{% else %}<a class="button" href="/app/saved">Настроить мониторинг</a>{% endif %}</section>{% endif %}
+    {% if read_state != 'all' or severity_filter %}<section class="empty-state compact"><h3>Нет событий по выбранному фильтру</h3><p>Измените фильтр или вернитесь ко всей ленте.</p><a class="button secondary" href="/app/monitoring">Показать все события</a></section>{% else %}<section class="empty-state compact"><h3>Пока нет событий</h3><p>{% if local_real_preview %}В локальном просмотре проверки источников отключены; отсутствие событий не является положительным результатом.{% else %}После первого включения создаётся исходное состояние компании. Новые изменения появятся здесь после проверки.{% endif %}</p>{% if subscriptions %}<a class="button secondary" href="/app/saved">Открыть сохранённые</a>{% else %}<a class="button" href="/app/saved">Настроить мониторинг</a>{% endif %}</section>{% endif %}
   {% endif %}
   </section>
 </section>
