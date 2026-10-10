@@ -132,6 +132,14 @@ def _assert_search_text_clearance(page: Page) -> None:
     _assert_visible_focus(page, "#global-q")
 
 
+def _assert_equal_action_heights(page: Page, selector: str) -> None:
+    heights = page.locator(selector).evaluate_all(
+        "elements => elements.filter(el => el.offsetParent !== null).map(el => el.getBoundingClientRect().height)"
+    )
+    assert heights and min(heights) >= 43.5
+    assert max(heights) - min(heights) <= 0.25
+
+
 def _assert_anchor_navigation(page: Page, label: str, anchor: str) -> None:
     page.locator(".company-local-nav").get_by_role(
         "link", name=label, exact=True
@@ -359,11 +367,17 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             public_text = page.locator("body").inner_text()
             for technical in ("COMPANY VIEW", "company-view-v1", "IDENTITY", "ACTIVE", "CURRENT"):
                 assert technical not in public_text
+            _assert_equal_action_heights(
+                page, ".hero-actions button, .hero-actions a"
+            )
             _assert_anchor_navigation(page, "Налоги", "tax")
             assert _has_no_page_overflow(page)
 
             page.set_viewport_size(MOBILE)
             expect(page.locator(".company-local-nav")).to_be_visible()
+            _assert_equal_action_heights(
+                page, ".hero-actions button, .hero-actions a"
+            )
             _assert_anchor_navigation(page, "Источники и актуальность", "sources")
             assert _has_no_page_overflow(page)
 
