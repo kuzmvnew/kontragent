@@ -104,3 +104,34 @@ def test_workspace_shell_has_only_real_routes_and_requested_grouping():
     assert "Тариф и лимиты" not in base
     assert "next. company" not in base  # wordmark stays semantic markup, not fallback text.
     assert 'aria-label="NEXT Company"' in base
+
+
+def test_workspace_shell_uses_one_svg_icon_system_and_protects_search_text():
+    base = (TEMPLATE_ROOT / "base.html").read_text(encoding="utf-8")
+    css = CSS_PATH.read_text(encoding="utf-8")
+
+    assert base.count("{{ nav_item(") == 8
+    for icon in ("home", "search", "saved", "monitoring", "bulk", "reports", "users", "settings"):
+        assert f"icon == '{icon}'" in base
+    assert '<svg viewBox="0 0 24 24"' in base
+    assert "stroke-width: 1.8" in css
+    assert ".topbar-search #global-q" in css
+    assert "padding: 10px 12px 10px 44px" in css
+
+
+def test_company_card_exposes_the_required_russian_navigation():
+    company = (TEMPLATE_ROOT / "company.html").read_text(encoding="utf-8")
+    for label in (
+        "Обзор",
+        "Реквизиты",
+        "Руководство и владельцы",
+        "Финансы",
+        "Налоги",
+        "Суды",
+        "Исполнительные производства",
+        "Лицензии",
+        "Связи",
+        "Источники и актуальность",
+    ):
+        assert f">{label}</a>" in company
+    assert "Это не означает отсутствия фактов" in company

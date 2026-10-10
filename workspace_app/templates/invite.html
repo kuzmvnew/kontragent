@@ -2,10 +2,10 @@
 {% block title %}Приглашение в {{ preview.workspace_name }} — NEXT Company{% endblock %}
 {% block content %}
 <section class="auth-card">
-  <p class="eyebrow">Приглашение в Workspace</p>
+  <p class="eyebrow">Приглашение в рабочее пространство</p>
   <h1>{{ preview.workspace_name }}</h1>
   <p><strong>{{ preview.email }}</strong></p>
-  <p>Роль: {{ preview.role_name }} ({{ preview.role_key }})</p>
+  <p>Роль: {{ preview.role_name }}</p>
   {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
   <form action="/invite/{{ token }}" method="post" class="stack">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -19,6 +19,6 @@
     {% endif %}
     <button type="submit">Принять приглашение</button>
   </form>
-  <p class="hint">Ссылка одноразовая. После принятия откроется приглашённый Workspace.</p>
+  <p class="hint">Ссылка одноразовая. После принятия откроется приглашённое рабочее пространство.</p>
 </section>
 {% endblock %}

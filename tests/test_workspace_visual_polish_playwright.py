@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -80,6 +81,82 @@ def _assert_visible_focus(page: Page, selector: str) -> None:
     )
     assert outline["style"] != "none"
     assert outline["width"] != "0px"
+
+
+def _assert_sidebar_icon_system(page: Page) -> None:
+    icons = page.locator(".sidebar-nav .nav-icon svg")
+    expect(icons).to_have_count(8)
+    geometry = icons.evaluate_all(
+        """
+        elements => elements.map(element => {
+          const box = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return {
+            viewBox: element.getAttribute('viewBox'),
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+            strokeWidth: style.strokeWidth,
+          };
+        })
+        """
+    )
+    assert {item["viewBox"] for item in geometry} == {"0 0 24 24"}
+    assert len({item["width"] for item in geometry}) == 1
+    assert len({item["height"] for item in geometry}) == 1
+    assert geometry[0]["width"] >= 20
+    assert geometry[0]["height"] >= 20
+    assert {item["strokeWidth"] for item in geometry} == {"1.8px"}
+
+
+def _assert_search_text_clearance(page: Page) -> None:
+    search = page.locator("#global-q")
+    search.fill("ООО АЛАН длинный поисковый запрос для проверки поля")
+    search.focus()
+    expect(search).to_be_focused()
+    geometry = page.evaluate(
+        """
+        () => {
+          const input = document.querySelector('#global-q');
+          const icon = document.querySelector('.topbar-search .search-icon');
+          const inputBox = input.getBoundingClientRect();
+          const iconBox = icon.getBoundingClientRect();
+          const style = getComputedStyle(input);
+          return {
+            textStart: inputBox.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
+            iconRight: iconBox.right,
+          };
+        }
+        """
+    )
+    assert geometry["textStart"] - geometry["iconRight"] >= 8
+    _assert_visible_focus(page, "#global-q")
+
+
+def _assert_equal_action_heights(page: Page, selector: str) -> None:
+    heights = page.locator(selector).evaluate_all(
+        "elements => elements.filter(el => el.offsetParent !== null).map(el => el.getBoundingClientRect().height)"
+    )
+    assert heights and min(heights) >= 43.5
+    assert max(heights) - min(heights) <= 0.25
+
+
+def _assert_anchor_navigation(page: Page, label: str, anchor: str) -> None:
+    page.locator(".company-local-nav").get_by_role(
+        "link", name=label, exact=True
+    ).click()
+    expect(page).to_have_url(re.compile(rf"#{re.escape(anchor)}$"))
+    target = page.locator(f"#{anchor}")
+    expect(target).to_be_visible()
+    page.wait_for_function(
+        "anchor => { const box = document.querySelector('#' + anchor).getBoundingClientRect(); return box.top >= 0 && box.top < innerHeight; }",
+        arg=anchor,
+    )
+    box = target.bounding_box()
+    assert box is not None
+    assert 0 <= box["y"] < page.viewport_size["height"]
+    page.evaluate(
+        "history.replaceState(null, '', location.pathname + location.search); window.scrollTo(0, 0)"
+    )
 
 
 def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monkeypatch):
@@ -172,6 +249,11 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             expect(page.locator(".topbar-search input")).to_be_visible()
             expect(page.locator(".dashboard-search input")).to_be_visible()
             expect(page.locator(".kpi")).to_have_count(4)
+            _assert_sidebar_icon_system(page)
+            _assert_search_text_clearance(page)
+            assert page.locator(".wordmark").first.evaluate(
+                "element => parseFloat(getComputedStyle(element).fontSize)"
+            ) >= 22
             assert page.locator(".sidebar").evaluate(
                 "element => Math.round(element.getBoundingClientRect().width)"
             ) == 224
@@ -195,6 +277,11 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
                 "element => getComputedStyle(element).position"
             ) == "relative"
             expect(page.locator(".topbar-search input")).to_be_visible()
+            _assert_sidebar_icon_system(page)
+            _assert_search_text_clearance(page)
+            assert page.locator(".wordmark").first.evaluate(
+                "element => parseFloat(getComputedStyle(element).fontSize)"
+            ) >= 22
             mobile_workspace_switch = page.get_by_role(
                 "link", name="Сменить Workspace", exact=True
             )
@@ -232,6 +319,30 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             expect(page.locator(".source-row").first).to_be_visible()
             expect(page.get_by_role("button", name="Сформировать отчёт")).to_be_visible()
             expect(page.get_by_role("link", name="Публичная карточка")).to_be_visible()
+            expect(page.get_by_text("Действующая организация", exact=True)).to_be_visible()
+            for label in (
+                "Обзор",
+                "Реквизиты",
+                "Руководство и владельцы",
+                "Финансы",
+                "Налоги",
+                "Суды",
+                "Исполнительные производства",
+                "Лицензии",
+                "Связи",
+                "Источники и актуальность",
+            ):
+                expect(page.locator(".company-local-nav").get_by_role("link", name=label, exact=True)).to_be_visible()
+            _assert_anchor_navigation(page, "Налоги", "tax")
+            visible_text = page.locator("body").inner_text()
+            for technical in ("COMPANY VIEW", "company-view-v1", "IDENTITY", "ACTIVE", "CURRENT"):
+                assert technical not in visible_text
+            action_heights = page.locator(
+                ".company-actions button, .company-actions .button, .company-actions .action-control"
+            ).evaluate_all(
+                "elements => elements.filter(el => el.offsetParent !== null).map(el => Math.round(el.getBoundingClientRect().height))"
+            )
+            assert action_heights and max(action_heights) - min(action_heights) <= 1
             assert _heading_size(page) <= 38
             assert _has_no_page_overflow(page)
             _capture(page, artifact_dir, "03-company-desktop")
@@ -243,9 +354,32 @@ def test_workspace_visual_shell_dashboard_company_settings_and_screenshots(monke
             expect(page.locator(".monitoring-preview")).to_have_attribute(
                 "data-monitoring-state", "NOT_ACTIVE"
             )
+            _assert_anchor_navigation(page, "Источники и актуальность", "sources")
             assert _heading_size(page) <= 28
             assert _has_no_page_overflow(page)
             _capture(page, artifact_dir, "04-company-mobile")
+
+            # Public card — the same customer vocabulary and thematic structure.
+            page.set_viewport_size(DESKTOP)
+            page.goto(f"{public.url}/companies/{item.company.inn}")
+            expect(page.get_by_text("Действующая организация", exact=True)).to_be_visible()
+            expect(page.locator(".company-local-nav")).to_be_visible()
+            public_text = page.locator("body").inner_text()
+            for technical in ("COMPANY VIEW", "company-view-v1", "IDENTITY", "ACTIVE", "CURRENT"):
+                assert technical not in public_text
+            _assert_equal_action_heights(
+                page, ".hero-actions button, .hero-actions a"
+            )
+            _assert_anchor_navigation(page, "Налоги", "tax")
+            assert _has_no_page_overflow(page)
+
+            page.set_viewport_size(MOBILE)
+            expect(page.locator(".company-local-nav")).to_be_visible()
+            _assert_equal_action_heights(
+                page, ".hero-actions button, .hero-actions a"
+            )
+            _assert_anchor_navigation(page, "Источники и актуальность", "sources")
+            assert _has_no_page_overflow(page)
 
             # Settings — readable labels, explicit numeric usage and usable form.
             page.set_viewport_size(DESKTOP)

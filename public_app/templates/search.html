@@ -12,7 +12,7 @@
     {% for item in results %}
     <a class="result-card" href="/companies/{{ item.company.inn }}">
       <strong>{{ item.company.name }}</strong>
-      <span>ИНН {{ item.company.inn }}{% if item.company.legal_status %} · {{ item.company.legal_status }}{% endif %}</span>
+      <span>ИНН {{ item.company.inn }} · {{ item.company.legal_status | company_status }}</span>
       <span class="arrow">→</span>
     </a>
     {% endfor %}

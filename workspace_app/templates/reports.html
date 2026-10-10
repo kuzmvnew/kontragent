@@ -10,7 +10,7 @@
     <article class="saved-row" data-report-id="{{ item.id }}">
       <div>
         <div class="saved-title"><strong>{{ item.subject_name }}</strong><span class="state-badge">{{ item.report_type }}</span></div>
-        <span>ИНН {{ item.subject_inn }} · сформирован {{ item.generated_at.strftime('%d.%m.%Y %H:%M') }} · {{ item.schema_version }}</span>
+        <span>ИНН {{ item.subject_inn }} · сформирован {{ item.generated_at.strftime('%d.%m.%Y %H:%M') }}</span>
       </div>
       <div class="saved-actions">
         <a class="button" href="/app/reports/{{ item.id }}">Открыть</a>

@@ -2,7 +2,7 @@
 {% block title %}Сохранённые — NEXT Company{% endblock %}
 {% block content %}
 <section>
-  <p class="eyebrow">Workspace</p>
+  <p class="eyebrow">Рабочее пространство</p>
   <h1>Сохранённые компании</h1>
   {% if notice == 'note_updated' %}<div class="notice success" role="status">Заметка сохранена.</div>{% elif notice == 'note_cleared' %}<div class="notice" role="status">Заметка очищена.</div>{% endif %}
   <form action="/app/saved" method="get" class="search-form saved-filter">
@@ -15,7 +15,7 @@
   {% for item in entries %}
     <article class="saved-row">
       <div>
-        <div class="saved-title"><strong>{{ item.name }}</strong><span class="state-badge">{{ item.monitoring_state }}</span></div>
+        <div class="saved-title"><strong>{{ item.name }}</strong><span class="state-badge">{{ item.monitoring_state | monitoring_status }}</span></div>
         <span>ИНН {{ item.inn }} · добавлено {{ item.created_at.strftime('%d.%m.%Y') }}</span>
         {% if item.note %}<p class="saved-note">{{ item.note }}</p>{% endif %}
         {% if can_edit_note %}<details class="note-editor">
@@ -36,7 +36,7 @@
       </div>
     </article>
   {% else %}
-    {% if query %}<div class="empty-state"><h2>Ничего не найдено</h2><p>В сохранённых компаниях нет совпадений по запросу «{{ query }}».</p><a class="button secondary" href="/app/saved">Показать все</a></div>{% else %}<div class="empty-state"><h2>Пока нет сохранённых компаний</h2><p>Найдите компанию и сохраните её карточку в этом Workspace.</p><a class="button" href="/app/search">Перейти к поиску</a></div>{% endif %}
+    {% if query %}<div class="empty-state"><h2>Ничего не найдено</h2><p>В сохранённых компаниях нет совпадений по запросу «{{ query }}».</p><a class="button secondary" href="/app/saved">Показать все</a></div>{% else %}<div class="empty-state"><h2>Пока нет сохранённых компаний</h2><p>Найдите компанию и сохраните её карточку в этом рабочем пространстве.</p><a class="button" href="/app/search">Перейти к поиску</a></div>{% endif %}
   {% endfor %}
   </div>
 </section>

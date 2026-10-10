@@ -1,6 +1,19 @@
+{% macro icon_svg(icon) -%}
+<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+  {% if icon == 'home' %}<path d="M3.5 10.8 12 3.7l8.5 7.1"></path><path d="M5.5 9.9v10h13v-10"></path><path d="M9.5 19.9v-6h5v6"></path>
+  {% elif icon == 'search' %}<circle cx="10.8" cy="10.8" r="6.3"></circle><path d="m15.6 15.6 4.4 4.4"></path>
+  {% elif icon == 'saved' %}<path d="M6.5 3.5h11v17L12 17l-5.5 3.5z"></path>
+  {% elif icon == 'monitoring' %}<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M9.8 20.5h4.4"></path>
+  {% elif icon == 'bulk' %}<rect x="3.5" y="4" width="17" height="16" rx="2"></rect><path d="M8 8h8M8 12h8M8 16h5"></path>
+  {% elif icon == 'reports' %}<path d="M6 3.5h8l4 4v13H6z"></path><path d="M14 3.5v4h4M9 12h6M9 16h6"></path>
+  {% elif icon == 'users' %}<path d="M16.5 20v-1.7a4.3 4.3 0 0 0-4.3-4.3H7.8a4.3 4.3 0 0 0-4.3 4.3V20"></path><circle cx="10" cy="7" r="3.5"></circle><path d="M17 10.5a3 3 0 1 0 0-6M18 14a4 4 0 0 1 2.5 3.7V20"></path>
+  {% elif icon == 'settings' %}<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"></path>
+  {% endif %}
+</svg>
+{%- endmacro %}
 {% macro nav_item(href, key, label, icon) -%}
 <a href="{{ href }}" class="nav-item{{ ' active' if active_nav == key else '' }}"{% if active_nav == key %} aria-current="page"{% endif %}>
-  <span class="nav-icon" aria-hidden="true" data-icon="{{ icon }}"></span>
+  <span class="nav-icon" aria-hidden="true" data-icon="{{ icon }}">{{ icon_svg(icon) }}</span>
   <span>{{ label }}</span>
 </a>
 {%- endmacro %}
@@ -16,7 +29,7 @@
 </head>
 <body>
 {% if demo_mode %}<div class="demo-banner" role="status">Демо-среда · синтетические данные · не использовать для проверки реальных контрагентов.</div>{% endif %}
-{% if local_real_preview %}<div class="demo-banner" role="status" data-preview-mode="local-real">LOCAL REAL DATA PREVIEW · сохранённые реальные данные · NON-PRODUCTION · без обновления источников.</div>{% endif %}
+{% if local_real_preview %}<div class="demo-banner" role="status" data-preview-mode="local-real">Локальный просмотр реальных данных · сохранённые сведения · не производственная среда · обновление источников отключено.</div>{% endif %}
 <div class="app-shell{{ ' app-shell--guest' if not principal else '' }}">
   {% if principal %}
   <aside class="sidebar" aria-label="Основная навигация">
@@ -27,20 +40,20 @@
     <nav class="sidebar-nav" aria-label="Разделы кабинета">
       <div class="nav-group">
         <span class="nav-group-title">Работа</span>
-        {{ nav_item('/app', 'home', 'Главная', '⌂') }}
-        {{ nav_item('/app/search', 'search', 'Поиск', '⌕') }}
-        {{ nav_item('/app/saved', 'saved', 'Сохранённые', '☆') }}
-        {{ nav_item('/app/monitoring', 'monitoring', 'Мониторинг', '◉') }}
-        {{ nav_item('/app/bulk', 'bulk', 'Массовая проверка', '⇄') }}
-        {{ nav_item('/app/reports', 'reports', 'Отчёты', '▤') }}
+        {{ nav_item('/app', 'home', 'Главная', 'home') }}
+        {{ nav_item('/app/search', 'search', 'Поиск', 'search') }}
+        {{ nav_item('/app/saved', 'saved', 'Сохранённые', 'saved') }}
+        {{ nav_item('/app/monitoring', 'monitoring', 'Мониторинг', 'monitoring') }}
+        {{ nav_item('/app/bulk', 'bulk', 'Массовая проверка', 'bulk') }}
+        {{ nav_item('/app/reports', 'reports', 'Отчёты', 'reports') }}
       </div>
       <div class="nav-group">
         <span class="nav-group-title">Команда</span>
-        {{ nav_item('/app/users', 'users', 'Пользователи', '◎') }}
+        {{ nav_item('/app/users', 'users', 'Пользователи', 'users') }}
       </div>
       <div class="nav-group">
         <span class="nav-group-title">Аккаунт</span>
-        {{ nav_item('/app/settings', 'settings', 'Настройки', '⚙') }}
+        {{ nav_item('/app/settings', 'settings', 'Настройки', 'settings') }}
       </div>
     </nav>
     <a class="sidebar-public-link" href="{{ public_origin or '' }}/">Публичный поиск компаний</a>
@@ -52,14 +65,14 @@
       {% if principal %}
       <form class="topbar-search" action="/app/search" method="get" role="search">
         <label class="sr-only" for="global-q">Глобальный поиск компании</label>
-        <span class="search-icon" aria-hidden="true">⌕</span>
-        <input id="global-q" name="q" inputmode="search" placeholder="Название или ИНН" maxlength="160">
+        <span class="search-icon" aria-hidden="true">{{ icon_svg('search') }}</span>
+        <input id="global-q" name="q" type="search" inputmode="search" placeholder="Название или ИНН" maxlength="160" autocomplete="off">
         <button type="submit" aria-label="Запустить глобальный поиск">Найти</button>
       </form>
 
       {% if workspace %}
       <div class="workspace-context" aria-label="Активное рабочее пространство">
-        <span class="workspace-context-label">Workspace</span>
+        <span class="workspace-context-label">Рабочее пространство</span>
         <strong>{{ workspace.name }}</strong>
         <small>{{ principal.email }}{% if role %} · {{ role.name }}{% endif %}</small>
       </div>

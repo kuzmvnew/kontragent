@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Bulk Job {{ job.id }} — NEXT Company{% endblock %}
+{% block title %}Массовая проверка — NEXT Company{% endblock %}
 {% block content %}
 <article class="bulk-detail" data-job-id="{{ job.id }}" data-job-status="{{ job.status }}">
   <header class="report-head">
     <div>
-      <p class="eyebrow">{{ job.schema_version }}</p>
+      <p class="eyebrow">Задание массовой проверки</p>
       <h1>{{ job.original_filename }}</h1>
-      <p class="workspace-lead">Статус <strong>{{ job.status }}</strong>{% if job.public_release_id %} · выпуск {{ job.public_release_id }}{% endif %}</p>
+      <p class="workspace-lead">Статус: <strong>{{ job.status | ui_label }}</strong>{% if job.public_result_date %} · данные выпуска на {{ job.public_result_date }}{% endif %}</p>
     </div>
     <div class="report-actions">
       <a class="button" href="/app/bulk/{{ job.id }}/export.csv">Скачать CSV</a>
@@ -38,7 +38,7 @@
   </section>
 
   <form class="feed-filters" method="get" action="/app/bulk/{{ job.id }}">
-    <label>Статус<select name="status"><option value="">Все</option>{% for value in item_statuses %}<option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+    <label>Статус<select name="status"><option value="">Все</option>{% for value in item_statuses %}<option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ value | ui_label }}</option>{% endfor %}</select></label>
     <label>ИНН<input name="q" value="{{ query }}" inputmode="numeric"></label>
     <button type="submit">Фильтровать</button>
   </form>
@@ -51,8 +51,8 @@
         {% set result = item.result_payload or {} %}{% set company = result.get('company', {}) %}{% set risk = result.get('risk', {}) %}{% set summary = result.get('summary', {}) %}
         <tr data-row-number="{{ item.row_number }}" data-item-status="{{ item.status }}">
           <td>{{ item.row_number }}</td><td><code>{{ item.raw_inn }}</code>{% if item.duplicate_of_row %}<small>дубликат строки {{ item.duplicate_of_row }}</small>{% endif %}</td>
-          <td><span class="state-badge">{{ item.status }}</span></td>
-          <td>{% if item.status == 'READY' %}<strong>{{ company.get('name') }}</strong><small>{{ company.get('legal_status') or '—' }} · {{ risk.get('public_status') }}</small><p>{{ summary.get('short_conclusion') }}</p>{% else %}<span>{{ item.error_message or 'Ожидает обработки' }}</span>{% endif %}</td>
+          <td><span class="state-badge">{{ item.status | ui_label }}</span></td>
+          <td>{% if item.status == 'READY' %}<strong>{{ company.get('name') }}</strong><small>{{ company.get('legal_status') | company_status }} · {{ risk.get('public_status') }}</small><p>{{ summary.get('short_conclusion') }}</p>{% else %}<span>{{ item.error_message or 'Ожидает обработки' }}</span>{% endif %}</td>
           <td>{% if item.status == 'READY' %}<a class="button secondary" href="/app/companies/{{ item.normalized_inn }}">Открыть компанию</a>{% endif %}</td>
         </tr>
       {% else %}<tr><td colspan="5">Нет строк по выбранному фильтру.</td></tr>{% endfor %}

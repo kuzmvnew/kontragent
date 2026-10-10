@@ -14,14 +14,14 @@
     {% for item in results %}
       <a class="row" href="/app/companies/{{ item.company.inn }}">
         <strong>{{ item.company.name }}</strong>
-        <span>ИНН {{ item.company.inn }} · {{ item.company.legal_status or 'Статус уточняется' }}</span>
+        <span>ИНН {{ item.company.inn }} · {{ item.company.legal_status | company_status }}</span>
       </a>
     {% else %}
       <p class="empty">Совпадений нет.</p>
     {% endfor %}
   </div>
   {% else %}
-    <div class="empty-state"><h2>Введите ИНН или название</h2><p>Поиск работает по принятой семантической проекции компаний.</p></div>
+    <div class="empty-state"><h2>Введите ИНН или название</h2><p>Поиск работает по опубликованным сведениям о компаниях.</p></div>
   {% endif %}
 </section>
 {% endblock %}

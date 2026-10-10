@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
@@ -107,6 +106,18 @@ from workspace_app.member_service import (
 from workspace_app.settings_service import (
     get_workspace_settings,
     update_workspace_name,
+)
+from workspace_app.presentation import (
+    build_company_themes,
+    company_status_label,
+    company_status_tone,
+    field_label,
+    freshness_label,
+    monitoring_status_label,
+    record_status_label,
+    relation_status_label,
+    ui_label,
+    workspace_value,
 )
 
 
@@ -226,46 +237,15 @@ class RequestBodyLimitMiddleware:
         await response(scope, receive, send)
 
 
-_VALUE_LABELS = {
-    "amount": "Сумма",
-    "count": "Количество",
-    "currency": "Валюта",
-    "name": "Наименование",
-    "number": "Номер",
-    "position": "Должность",
-    "record_count": "Количество записей",
-    "registry_number": "Номер в реестре",
-    "result": "Результат",
-    "share": "Доля",
-    "status": "Статус",
-    "total": "Итого",
-    "value": "Значение",
-}
-
-
-def _workspace_value(value) -> str:
-    """Render already-minimized semantic values without exposing internals."""
-
-    if value is None or value == "":
-        return "—"
-    if isinstance(value, bool):
-        return "Да" if value else "Нет"
-    if isinstance(value, (date, datetime)):
-        return value.strftime("%d.%m.%Y")
-    if hasattr(value, "model_dump"):
-        value = value.model_dump(mode="json")
-    if isinstance(value, Mapping):
-        parts = []
-        for key, child in value.items():
-            label = _VALUE_LABELS.get(str(key), str(key).replace("_", " ").capitalize())
-            parts.append(f"{label}: {_workspace_value(child)}")
-        return " · ".join(parts) or "—"
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return "; ".join(_workspace_value(item) for item in value) or "—"
-    return str(value)
-
-
-templates.env.filters["workspace_value"] = _workspace_value
+templates.env.filters["workspace_value"] = workspace_value
+templates.env.filters["company_status"] = company_status_label
+templates.env.filters["company_status_tone"] = company_status_tone
+templates.env.filters["field_label"] = field_label
+templates.env.filters["freshness_label"] = freshness_label
+templates.env.filters["monitoring_status"] = monitoring_status_label
+templates.env.filters["record_status"] = record_status_label
+templates.env.filters["relation_status"] = relation_status_label
+templates.env.filters["ui_label"] = ui_label
 
 
 def _cookie_secure() -> bool:
@@ -1784,6 +1764,9 @@ def create_app(
                 "workspace": workspace,
                 "role": role,
                 "projection": projection,
+                "company_presentation": build_company_themes(
+                    projection.company_view
+                ),
                 "actions": actions,
                 "notice": notice if notice in {"saved", "unsaved"} else "",
                 "csrf": request.cookies.get(CSRF_COOKIE) or "",
